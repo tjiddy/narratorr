@@ -566,6 +566,261 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.author).toBe('Sanderson');
       });
     });
+
+    describe('TITLE_DASH_SERIES_BOOK pattern (Title - Series, Book N) (issue #1034)', () => {
+      it('AC2: narrator-paren disambiguator — The Dark Forest - The Three-Body Problem, Book 2 (Bruno Roubicek)', () => {
+        expect(parseFolderStructure(['The Dark Forest - The Three-Body Problem, Book 2 (Bruno Roubicek)'])).toEqual({
+          title: 'The Dark Forest',
+          author: null,
+          series: 'The Three-Body Problem',
+          seriesPosition: 2,
+        });
+      });
+
+      it('AC3: by-Author disambiguator — Imagine Me - Shatter Me Series, Book 6 by Tahereh Mafi', () => {
+        expect(parseFolderStructure(['Imagine Me - Shatter Me Series, Book 6 by Tahereh Mafi'])).toEqual({
+          title: 'Imagine Me',
+          author: 'Tahereh Mafi',
+          series: 'Shatter Me Series',
+          seriesPosition: 6,
+        });
+      });
+
+      it('AC4: fractional position via narrator-paren — Mistborn - Mistborn, Book 1.5 (Michael Kramer)', () => {
+        expect(parseFolderStructure(['Mistborn - Mistborn, Book 1.5 (Michael Kramer)'])).toEqual({
+          title: 'Mistborn',
+          author: null,
+          series: 'Mistborn',
+          seriesPosition: 1.5,
+        });
+      });
+
+      it('AC5: rightmost-dash split — Some Long Title - With Dashes - Series Name, Book 5 (Narrator)', () => {
+        const result = parseFolderStructure(['Some Long Title - With Dashes - Series Name, Book 5 (Narrator)']);
+        expect(result.title).toBe('Some Long Title - With Dashes');
+        expect(result.series).toBe('Series Name');
+        expect(result.seriesPosition).toBe(5);
+        expect(result.author).toBeNull();
+      });
+
+      it('series-keyword disambiguator (saga) fires without narrator paren or by-Author', () => {
+        const result = parseFolderStructure(['The Last Stand - Galactic Saga, Book 3']);
+        expect(result.title).toBe('The Last Stand');
+        expect(result.series).toBe('Galactic Saga');
+        expect(result.seriesPosition).toBe(3);
+        expect(result.author).toBeNull();
+      });
+
+      it('series-keyword disambiguator is case-insensitive (CHRONICLES)', () => {
+        const result = parseFolderStructure(['Foo - Bar CHRONICLES, Book 2']);
+        expect(result.series).toBe('Bar CHRONICLES');
+        expect(result.seriesPosition).toBe(2);
+      });
+
+      it('AC6: no disambiguator — Brandon Sanderson - Mistborn, Book 1 falls through to dash heuristic', () => {
+        const result = parseFolderStructure(['Brandon Sanderson - Mistborn, Book 1']);
+        expect(result.author).toBe('Brandon Sanderson');
+        expect(result.title).toBe('Mistborn');
+        expect(result.series).toBeNull();
+      });
+
+      it('AC7: year-paren rejected as narrator disambiguator — Brandon Sanderson - Mistborn, Book 1 (2020)', () => {
+        const result = parseFolderStructure(['Brandon Sanderson - Mistborn, Book 1 (2020)']);
+        expect(result.author).toBe('Brandon Sanderson');
+        expect(result.series).toBeNull();
+        expect(result.title).not.toBe('Brandon Sanderson');
+      });
+
+      it('AC8: codec-paren rejected as narrator disambiguator — Author - Title, Book 1 (Unabridged)', () => {
+        const result = parseFolderStructure(['Author - Title, Book 1 (Unabridged)']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBeNull();
+      });
+
+      it('AC9: edition-paren rejected as narrator disambiguator — Author - Title, Book 1 (Anniversary Edition)', () => {
+        const result = parseFolderStructure(['Author - Title, Book 1 (Anniversary Edition)']);
+        expect(result.author).toBe('Author');
+        expect(result.series).toBeNull();
+      });
+
+      it('AC10: existing #977 regression preserved — Brandon Sanderson - The Way of Kings - The Stormlight Archive 1 [GA]', () => {
+        const result = parseFolderStructure(['Brandon Sanderson - The Way of Kings - The Stormlight Archive 1 [GA]']);
+        expect(result.author).toBe('Brandon Sanderson');
+        expect(result.title).toBe('The Way of Kings - The Stormlight Archive 1');
+        expect(result.series).toBeNull();
+      });
+
+      it('preserves P4 ordering — Discworld, Book 16 - Soul Music still hits SERIES_BOOK_DASH_TITLE_REGEX', () => {
+        const result = parseFolderStructure(['Discworld, Book 16 - Soul Music']);
+        expect(result.series).toBe('Discworld');
+        expect(result.seriesPosition).toBe(16);
+        expect(result.title).toBe('Soul Music');
+        expect(result.author).toBeNull();
+      });
+
+      it('does NOT preempt all-numeric short-circuit — 1.5', () => {
+        expect(parseFolderStructure(['1.5'])).toEqual({ title: '1.5', author: null, series: null });
+      });
+
+      it('AC22 raw parity: AC2 case', () => {
+        const result = parseFolderStructureRaw(['The Dark Forest - The Three-Body Problem, Book 2 (Bruno Roubicek)']);
+        expect(result.author).toBeNull();
+        expect(result.series).toBe('The Three-Body Problem');
+        expect(result.seriesPosition).toBe(2);
+        expect(result.title).toBe('The Dark Forest');
+      });
+
+      it('AC22 raw parity: AC3 case', () => {
+        const result = parseFolderStructureRaw(['Imagine Me - Shatter Me Series, Book 6 by Tahereh Mafi']);
+        expect(result.title).toBe('Imagine Me');
+        expect(result.series).toBe('Shatter Me Series');
+        expect(result.author).toBe('Tahereh Mafi');
+        expect(result.seriesPosition).toBe(6);
+      });
+
+      it('AC22 raw parity: AC4 fractional position', () => {
+        const result = parseFolderStructureRaw(['Mistborn - Mistborn, Book 1.5 (Michael Kramer)']);
+        expect(result.seriesPosition).toBe(1.5);
+        expect(result.title).toBe('Mistborn');
+        expect(result.series).toBe('Mistborn');
+        expect(result.author).toBeNull();
+      });
+    });
+
+    describe('cross-segment agreement (2-part Series-folder + series-prefixed filename) (issue #1034)', () => {
+      it('AC17: Roman + underscore — Dune Saga / Dune Chronicles I_ Dune', () => {
+        expect(parseFolderStructure(['Dune Saga', 'Dune Chronicles I_ Dune'])).toEqual({
+          title: 'Dune',
+          author: null,
+          series: 'Dune Saga',
+          seriesPosition: 1,
+        });
+      });
+
+      it('AC18: decimal + hyphen, no whitespace — Reacher / Reacher 00.15-Second Son', () => {
+        expect(parseFolderStructure(['Reacher', 'Reacher 00.15-Second Son'])).toEqual({
+          title: 'Second Son',
+          author: null,
+          series: 'Reacher',
+          seriesPosition: 0.15,
+        });
+      });
+
+      it('AC16: ASIN preserved — Reacher / Reacher 00.15-Second Son [B0D18DYG5C]', () => {
+        const result = parseFolderStructure(['Reacher', 'Reacher 00.15-Second Son [B0D18DYG5C]']);
+        expect(result).toEqual({
+          title: 'Second Son',
+          author: null,
+          series: 'Reacher',
+          seriesPosition: 0.15,
+          asin: 'B0D18DYG5C',
+        });
+      });
+
+      it('AC19: distinctive-token negative — The Series / The Adventure (only stopwords overlap)', () => {
+        const result = parseFolderStructure(['The Series', 'The Adventure']);
+        expect(result.author).toBe('The Series');
+        expect(result.title).toBe('The Adventure');
+        expect(result.series).toBeNull();
+      });
+
+      it('AC20: filename-evidence required — Dune Saga / Some Random Book', () => {
+        const result = parseFolderStructure(['Dune Saga', 'Some Random Book']);
+        expect(result.author).toBe('Dune Saga');
+        expect(result.title).toBe('Some Random Book');
+        expect(result.series).toBeNull();
+      });
+
+      it('AC21: author-not-confused — Andy Weir / Project Hail Mary', () => {
+        const result = parseFolderStructure(['Andy Weir', 'Project Hail Mary']);
+        expect(result.author).toBe('Andy Weir');
+        expect(result.title).toBe('Project Hail Mary');
+        expect(result.series).toBeNull();
+      });
+
+      it('subtractive Roman (IV) — Foundation IV / Foundation IV_The Quickening', () => {
+        const result = parseFolderStructure(['Foundation IV', 'Foundation IV_The Quickening']);
+        expect(result.series).toBe('Foundation IV');
+        expect(result.seriesPosition).toBe(4);
+        expect(result.title).toBe('The Quickening');
+        expect(result.author).toBeNull();
+      });
+
+      it('multi-token Roman (XII) — Foundation XII / Foundation XII_Forward', () => {
+        const result = parseFolderStructure(['Foundation XII', 'Foundation XII_Forward']);
+        expect(result.seriesPosition).toBe(12);
+        expect(result.title).toBe('Forward');
+        expect(result.series).toBe('Foundation XII');
+      });
+
+      it('plain Arabic via cross-segment (underscore avoids WORDS_NUM_DASH preempt) — Foundation / Foundation 2_Chapter Two', () => {
+        const result = parseFolderStructure(['Foundation', 'Foundation 2_Chapter Two']);
+        expect(result.seriesPosition).toBe(2);
+        expect(result.title).toBe('Chapter Two');
+        expect(result.series).toBe('Foundation');
+      });
+
+      it('regex-miss fallback (NOT undefined-branch coverage) — Foundation / Foundation ABC_Title', () => {
+        const result = parseFolderStructure(['Foundation', 'Foundation ABC_Title']);
+        // SERIES_PREFIX_POSITION_REGEX cannot match (`ABC` is neither decimal nor IVX);
+        // helper returns null at the regex check before parseRomanOrArabicPosition.
+        // Falls through to 2-part default; cleanName normalizes `_` to space.
+        expect(result.author).toBe('Foundation');
+        expect(result.title).toBe('Foundation ABC Title');
+        expect(result.series).toBeNull();
+        expect(result.seriesPosition).toBeUndefined();
+      });
+
+      it('whitespace-tolerant separator — Reacher / Reacher 00.15- Second Son (space after only)', () => {
+        const result = parseFolderStructure(['Reacher', 'Reacher 00.15- Second Son']);
+        expect(result.seriesPosition).toBe(0.15);
+        expect(result.title).toBe('Second Son');
+        expect(result.series).toBe('Reacher');
+      });
+
+      it('whitespace-tolerant separator — Reacher / Reacher 00.15 - Second Son (spaces both sides)', () => {
+        const result = parseFolderStructure(['Reacher', 'Reacher 00.15 - Second Son']);
+        expect(result.seriesPosition).toBe(0.15);
+        expect(result.title).toBe('Second Son');
+        expect(result.series).toBe('Reacher');
+      });
+
+      it('cleanName leadingNumeric does NOT preempt — Reacher / 00.15-Second Son falls through (no series-prefix)', () => {
+        const result = parseFolderStructure(['Reacher', '00.15-Second Son']);
+        expect(result.seriesPosition).toBeUndefined();
+      });
+
+      it('AC22 raw parity: AC17 — Dune Saga / Dune Chronicles I_ Dune', () => {
+        const result = parseFolderStructureRaw(['Dune Saga', 'Dune Chronicles I_ Dune']);
+        expect(result.title).toBe('Dune');
+        expect(result.series).toBe('Dune Saga');
+        expect(result.seriesPosition).toBe(1);
+        expect(result.author).toBeNull();
+      });
+
+      it('AC22 raw parity: AC18 — Reacher / Reacher 00.15-Second Son', () => {
+        const result = parseFolderStructureRaw(['Reacher', 'Reacher 00.15-Second Son']);
+        expect(result.title).toBe('Second Son');
+        expect(result.series).toBe('Reacher');
+        expect(result.seriesPosition).toBe(0.15);
+        expect(result.author).toBeNull();
+      });
+
+      it('AC22 raw parity: AC16 — ASIN bracket stripped from raw title', () => {
+        const result = parseFolderStructureRaw(['Reacher', 'Reacher 00.15-Second Son [B0D18DYG5C]']);
+        expect(result.asin).toBe('B0D18DYG5C');
+        expect(result.title).toBe('Second Son');
+        expect(result.title).not.toContain('B0D18DYG5C');
+        expect(result.series).toBe('Reacher');
+        expect(result.seriesPosition).toBe(0.15);
+      });
+
+      it('AC22 raw parity: subtractive Roman — Foundation IV / Foundation IV_The Quickening', () => {
+        const result = parseFolderStructureRaw(['Foundation IV', 'Foundation IV_The Quickening']);
+        expect(result.seriesPosition).toBe(4);
+        expect(result.title).toBe('The Quickening');
+      });
+    });
   });
 
   describe('cleanName', () => {
