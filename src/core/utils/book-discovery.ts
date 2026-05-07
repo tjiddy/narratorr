@@ -203,6 +203,7 @@ function handleLeafFolder(
       fileCount: info.audioFiles.length,
       decision: classification.decision,
       reason: classification.reason,
+      stems: info.audioFiles.map(f => basename(f.path, extname(f.path))),
     },
     'Leaf folder classified',
   );
