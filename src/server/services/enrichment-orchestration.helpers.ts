@@ -184,14 +184,21 @@ export function buildImportedEventPayload(
  * Extract metadata fields from an import item for the background import flow.
  * Centralizes the nullable coalescing that inflates cyclomatic complexity.
  */
+function resolveEnrichmentNarrators(
+  itemNarrators: string[] | undefined,
+  metaNarrators: string[] | undefined,
+): Array<{ name: string }> | null {
+  if (itemNarrators?.length) return itemNarrators.map(name => ({ name }));
+  if (metaNarrators?.length) return metaNarrators.map(name => ({ name }));
+  return null;
+}
+
 export function extractImportMetadata(item: ImportConfirmItem) {
   const meta = item.metadata ?? null;
   const narratorName = item.narrators?.[0] ?? meta?.narrators?.[0] ?? null;
   const duration = meta?.duration ?? null;
   const coverUrl = item.coverUrl || meta?.coverUrl || null;
-  const enrichmentNarrators = item.narrators?.length
-    ? item.narrators.map(name => ({ name }))
-    : (meta?.narrators?.length ? meta.narrators.map(name => ({ name })) : null);
+  const enrichmentNarrators = resolveEnrichmentNarrators(item.narrators, meta?.narrators);
   return {
     meta,
     narratorName,

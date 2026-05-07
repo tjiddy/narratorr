@@ -7,9 +7,22 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { slugify } from '../../../shared/utils.js';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
-import type { DiscoveredBook } from '@/lib/api';
+import type { BookMetadata, DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
+
+function buildEditedFromBestMatch(bestMatch: BookMetadata, fallback: BookEditState): BookEditState {
+  return {
+    title: bestMatch.title,
+    author: bestMatch.authors?.[0]?.name ?? fallback.author,
+    series: bestMatch.series?.[0]?.name ?? fallback.series,
+    ...(bestMatch.narrators?.length && { narrators: bestMatch.narrators }),
+    ...(bestMatch.series?.[0]?.position !== undefined && { seriesPosition: bestMatch.series[0].position }),
+    ...(bestMatch.coverUrl !== undefined && { coverUrl: bestMatch.coverUrl }),
+    ...(bestMatch.asin !== undefined && { asin: bestMatch.asin }),
+    metadata: bestMatch,
+  };
+}
 
 export type Step = 'scanning' | 'review' | 'error';
 
@@ -69,16 +82,7 @@ export function useLibraryImport() {
           ...row,
           matchResult: match,
           selected,
-          edited: {
-            title: match.bestMatch.title,
-            author: match.bestMatch.authors?.[0]?.name ?? row.edited.author,
-            series: match.bestMatch.series?.[0]?.name ?? row.edited.series,
-            ...(match.bestMatch.narrators?.length && { narrators: match.bestMatch.narrators }),
-            ...(match.bestMatch.series?.[0]?.position !== undefined && { seriesPosition: match.bestMatch.series[0].position }),
-            ...(match.bestMatch.coverUrl !== undefined && { coverUrl: match.bestMatch.coverUrl }),
-            ...(match.bestMatch.asin !== undefined && { asin: match.bestMatch.asin }),
-            metadata: match.bestMatch,
-          },
+          edited: buildEditedFromBestMatch(match.bestMatch, row.edited),
         };
       }
       return { ...row, matchResult: match, selected };
