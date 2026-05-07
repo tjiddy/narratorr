@@ -820,6 +820,67 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.seriesPosition).toBe(4);
         expect(result.title).toBe('The Quickening');
       });
+
+      it('AC22 raw parity: multi-token Roman (XII) — Foundation XII / Foundation XII_Forward', () => {
+        const result = parseFolderStructureRaw(['Foundation XII', 'Foundation XII_Forward']);
+        expect(result.seriesPosition).toBe(12);
+        expect(result.title).toBe('Forward');
+        expect(result.series).toBe('Foundation XII');
+        expect(result.author).toBeNull();
+      });
+
+      it('AC22 raw parity: plain Arabic — Foundation / Foundation 2_Chapter Two', () => {
+        const result = parseFolderStructureRaw(['Foundation', 'Foundation 2_Chapter Two']);
+        expect(result.seriesPosition).toBe(2);
+        expect(result.title).toBe('Chapter Two');
+        expect(result.series).toBe('Foundation');
+        expect(result.author).toBeNull();
+      });
+
+      it('AC13 separator: en dash — Foundation / Foundation 3 – Chapter Three', () => {
+        const result = parseFolderStructure(['Foundation', 'Foundation 3 – Chapter Three']);
+        expect(result.seriesPosition).toBe(3);
+        expect(result.title).toBe('Chapter Three');
+        expect(result.series).toBe('Foundation');
+        expect(result.author).toBeNull();
+      });
+
+      it('AC13 separator: em dash — Foundation / Foundation 4 — Chapter Four', () => {
+        const result = parseFolderStructure(['Foundation', 'Foundation 4 — Chapter Four']);
+        expect(result.seriesPosition).toBe(4);
+        expect(result.title).toBe('Chapter Four');
+        expect(result.series).toBe('Foundation');
+        expect(result.author).toBeNull();
+      });
+
+      it('AC13 separator: colon — Foundation / Foundation 5: Chapter Five', () => {
+        const result = parseFolderStructure(['Foundation', 'Foundation 5: Chapter Five']);
+        expect(result.seriesPosition).toBe(5);
+        expect(result.title).toBe('Chapter Five');
+        expect(result.series).toBe('Foundation');
+        expect(result.author).toBeNull();
+      });
+
+      it('AC13 raw parity: en dash separator', () => {
+        const result = parseFolderStructureRaw(['Foundation', 'Foundation 3 – Chapter Three']);
+        expect(result.seriesPosition).toBe(3);
+        expect(result.title).toBe('Chapter Three');
+        expect(result.series).toBe('Foundation');
+      });
+
+      it('AC13 raw parity: em dash separator', () => {
+        const result = parseFolderStructureRaw(['Foundation', 'Foundation 4 — Chapter Four']);
+        expect(result.seriesPosition).toBe(4);
+        expect(result.title).toBe('Chapter Four');
+        expect(result.series).toBe('Foundation');
+      });
+
+      it('AC13 raw parity: colon separator', () => {
+        const result = parseFolderStructureRaw(['Foundation', 'Foundation 5: Chapter Five']);
+        expect(result.seriesPosition).toBe(5);
+        expect(result.title).toBe('Chapter Five');
+        expect(result.series).toBe('Foundation');
+      });
     });
   });
 
