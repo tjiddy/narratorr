@@ -131,10 +131,6 @@ export class MetadataService {
     }
   }
 
-  async searchAuthors(query: string): Promise<AuthorMetadata[]> {
-    return this.withThrottle('searchAuthors', (provider) => provider.searchAuthors(query), []);
-  }
-
   async searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]> {
     const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query, options), { books: [] }, { query });
     const books = result.books;

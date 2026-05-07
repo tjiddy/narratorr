@@ -454,35 +454,6 @@ describe('AudibleProvider', () => {
     });
   });
 
-  describe('searchAuthors', () => {
-    it('returns unique authors extracted from book results', async () => {
-      const authors = await provider.searchAuthors('Harry Potter');
-
-      expect(authors).toHaveLength(1);
-      expect(authors[0]!.name).toBe('J.K. Rowling');
-      expect(authors[0]!.asin).toBe('B000AP9A6K');
-    });
-
-    it('deduplicates authors appearing across multiple books', async () => {
-      // Default fixture has J.K. Rowling in both products — should only appear once
-      const authors = await provider.searchAuthors('Harry Potter');
-
-      const rowlingEntries = authors.filter((a) => a.name === 'J.K. Rowling');
-      expect(rowlingEntries).toHaveLength(1);
-    });
-
-    it('returns empty array when no books are returned', async () => {
-      server.use(
-        http.get('https://api.audible.com/1.0/catalog/products', () => {
-          return HttpResponse.json({ products: [] });
-        }),
-      );
-
-      const authors = await provider.searchAuthors('unknown');
-      expect(authors).toEqual([]);
-    });
-  });
-
   describe('searchSeries', () => {
     it('returns unique series extracted from book results', async () => {
       const series = await provider.searchSeries('Harry Potter');
@@ -972,12 +943,6 @@ describe('AudibleProvider', () => {
       // Default MSW handler returns 2 products that both pass validation
       const result = await provider.searchBooks('Harry Potter');
       expect(result.rawCount).toBe(result.books.length);
-    });
-
-    it('searchAuthors() correctly unwraps .books from internal searchBooks()', async () => {
-      const authors = await provider.searchAuthors('Harry Potter');
-      // Should not throw — searchAuthors destructures { books } internally
-      expect(Array.isArray(authors)).toBe(true);
     });
 
     it('searchSeries() correctly unwraps .books from internal searchBooks()', async () => {

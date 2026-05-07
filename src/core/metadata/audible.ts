@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { BookMetadataSchema } from './schemas.js';
-import { deriveAuthorsFromBooks, deriveSeriesFromBooks } from './derivation.js';
+import { deriveSeriesFromBooks } from './derivation.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
@@ -9,7 +9,6 @@ import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataSearchProvider,
   BookMetadata,
-  AuthorMetadata,
   SeriesMetadata,
   SearchBooksOptions,
   SearchBooksResult,
@@ -128,12 +127,6 @@ export class AudibleProvider implements MetadataSearchProvider {
     });
 
     return { books, rawCount };
-  }
-
-  async searchAuthors(query: string): Promise<AuthorMetadata[]> {
-    // Audible doesn't have a dedicated author search — extract from book results
-    const { books } = await this.searchBooks(query);
-    return deriveAuthorsFromBooks(books);
   }
 
   async searchSeries(query: string): Promise<SeriesMetadata[]> {
