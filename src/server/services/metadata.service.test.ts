@@ -602,6 +602,109 @@ describe('MetadataService', () => {
         const result = await serviceWithSettings.searchBooks('query');
         expect(result).toEqual(books);
       });
+
+      // ===== #1032 — pseudo-narrator markers filtered from rejectWords surface =====
+
+      it('does NOT reject a book whose narrators include "full cast" literal (Audible Original ensemble)', async () => {
+        setRejectWords('Full Cast');
+        const thirdEye = {
+          title: 'Third Eye',
+          authors: [{ name: 'Felicia Day' }],
+          narrators: ['Sean Astin', 'Felicia Day', 'Neil Gaiman', 'full cast'],
+        };
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [thirdEye] });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([thirdEye]);
+      });
+
+      it('DOES reject a book whose title contains "Full Cast" (GraphicAudio-style title match)', async () => {
+        setRejectWords('Full Cast');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'The Hobbit (Full Cast Adaptation)', authors: [{ name: 'J.R.R. Tolkien' }], narrators: ['Various Voice Actors'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([]);
+      });
+
+      it('DOES reject a book whose narrator is "GraphicAudio Full Cast" (real narrator, not pseudo)', async () => {
+        setRejectWords('Full Cast');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Some Adaptation', authors: [{ name: 'X' }], narrators: ['GraphicAudio Full Cast'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([]);
+      });
+
+      it('does NOT reject a book whose narrators include "Various" literal', async () => {
+        setRejectWords('Various');
+        const ensemble = {
+          title: 'Ensemble Production',
+          authors: [{ name: 'X' }],
+          narrators: ['Jane Doe', 'Various'],
+        };
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [ensemble] });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([ensemble]);
+      });
+
+      it('does NOT reject a book whose narrators include "unknown" literal', async () => {
+        setRejectWords('Unknown');
+        const ensemble = {
+          title: 'A Quiet Production',
+          authors: [{ name: 'Real Author' }],
+          narrators: ['Jane Doe', 'unknown'],
+        };
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [ensemble] });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([ensemble]);
+      });
+
+      it('rejectWord "Various Voices" DOES reject a real narrator "Various Voices Studio" (exact-set, not substring)', async () => {
+        setRejectWords('Various Voices');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Some Book', authors: [{ name: 'X' }], narrators: ['Various Voices Studio'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([]);
+      });
+
+      it('normalizes whitespace and case in pseudo-narrator detection ("  FULL   CAST  ")', async () => {
+        setRejectWords('Full Cast');
+        const ensemble = {
+          title: 'Quirky Payload Book',
+          authors: [{ name: 'X' }],
+          narrators: ['Real Narrator', '  FULL   CAST  '],
+        };
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [ensemble] });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toEqual([ensemble]);
+      });
+
+      it('does NOT mutate book.narrators — pseudo-narrators still present on returned book', async () => {
+        setRejectWords('Full Cast');
+        mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+          books: [
+            { title: 'Third Eye', authors: [{ name: 'Felicia Day' }], narrators: ['Sean Astin', 'full cast'] },
+          ],
+        });
+
+        const result = await serviceWithSettings.searchBooks('query');
+        expect(result).toHaveLength(1);
+        expect(result[0]!.narrators).toEqual(['Sean Astin', 'full cast']);
+      });
     });
 
     describe('language filtering (#1004)', () => {

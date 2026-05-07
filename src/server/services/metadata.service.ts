@@ -45,6 +45,13 @@ export interface MetadataServiceConfig {
 
 export class MetadataService {
   private static readonly KNOWN_PODCAST_TYPES = new Set(['PodcastParent', 'Periodical']);
+  private static readonly PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
+
+  private static isPseudoNarrator(name: string): boolean {
+    return MetadataService.PSEUDO_NARRATORS.has(
+      name.trim().toLowerCase().replace(/\s+/g, ' '),
+    );
+  }
 
   private providers: MetadataSearchProvider[] = [];
   private audnexus: MetadataEnrichmentProvider;
@@ -267,7 +274,9 @@ export class MetadataService {
 
     return books.filter((book) => {
       const authorNames = (book.authors ?? []).map((a) => a.name).join(' ');
-      const narrators = (book.narrators ?? []).join(' ');
+      const narrators = (book.narrators ?? [])
+        .filter((n) => !MetadataService.isPseudoNarrator(n))
+        .join(' ');
       const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators} ${book.formatType ?? ''}`.toLowerCase();
       return !rejectList.some((word) => matchesRejectWord(surface, word));
     });
