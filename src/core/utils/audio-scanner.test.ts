@@ -646,6 +646,56 @@ describe('scanAudioDirectory', () => {
       const result = await scanAudioDirectory('/audiobooks/test');
       expect(result!.tagAsin).toBeUndefined();
     });
+
+    it('F1 — does NOT extract ASIN from unrelated native title/artist fields containing ASIN-shaped tokens', async () => {
+      // A non-ASIN-bearing native tag (e.g. a title atom) that happens to
+      // contain a B[A-Z0-9]{9} substring must NOT produce a tagAsin. Letting
+      // that through would feed runTagSearch a false-positive kill-shot.
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Test', albumartist: 'Author', composer: undefined },
+        native: {
+          iTunes: [
+            { id: '©nam', value: 'A Book About B07FAKEXYZ Tokens' },
+            { id: '©ART', value: 'Some Author B0JUNKAAAA' },
+          ],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBeUndefined();
+    });
+
+    it('F1 — extracts ASIN from MP4 cnID atom', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('book.m4b', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Test', albumartist: 'Author', composer: undefined },
+        native: {
+          iTunes: [{ id: 'cnID', value: 'B07CNIDXYZ' }],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBe('B07CNIDXYZ');
+    });
+
+    it('F1 — extracts ASIN from ID3 COMM native frame', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('track.mp3', true)] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata({
+        common: { title: 'Test', albumartist: 'Author', composer: undefined },
+        native: {
+          'ID3v2.3': [
+            { id: 'COMM:Audible', value: { description: 'Audible', text: 'ASIN: B0COMMXXXX' } },
+          ],
+        },
+      }) as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+      expect(result!.tagAsin).toBe('B0COMMXXXX');
+    });
   });
 
   it('handles missing optional tags', async () => {

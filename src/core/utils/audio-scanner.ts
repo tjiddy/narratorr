@@ -330,23 +330,43 @@ function extractAsin(
   return undefined;
 }
 
+/**
+ * Native tag IDs that carry an ASIN (per AC3): MP4 iTunes:ASIN atom, MP4 cnID
+ * atom, and ID3v2 COMM (comment) frames. Other native fields (TIT2, TPE1, ©nam,
+ * etc.) MUST NOT be scanned — an unrelated string field that happens to contain
+ * a B[A-Z0-9]{9} substring would otherwise produce a false-positive ASIN that
+ * runTagSearch promotes to a high-confidence kill-shot.
+ *
+ * Match shapes (case-insensitive, anchored at end of id):
+ *   - iTunes:ASIN     →  `----:com.apple.iTunes:ASIN` or bare `ASIN`
+ *   - cnID            →  `cnID`
+ *   - ID3 comment     →  `COMM`, `COMM:description`
+ */
+const ASIN_TAG_ID_REGEX = /(?::|^)(?:asin|cnID)$|^COMM(?::|$)/i;
+
 function scanNativeForAsin(
   native: Record<string, Array<{ id: string; value: unknown }>> | undefined,
 ): string | undefined {
   if (!native) return undefined;
   for (const tags of Object.values(native)) {
     for (const tag of tags) {
-      if (typeof tag.value === 'string') {
-        const match = tag.value.toUpperCase().match(ASIN_REGEX);
-        if (match) return match[0];
-      } else if (tag.value && typeof tag.value === 'object') {
-        // ID3v2 COMM frames carry { description, text } objects
-        const text = (tag.value as { text?: unknown }).text;
-        if (typeof text === 'string') {
-          const match = text.toUpperCase().match(ASIN_REGEX);
-          if (match) return match[0];
-        }
-      }
+      if (!ASIN_TAG_ID_REGEX.test(tag.id)) continue;
+      const match = matchAsinFromTagValue(tag.value);
+      if (match) return match;
+    }
+  }
+  return undefined;
+}
+
+function matchAsinFromTagValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value.toUpperCase().match(ASIN_REGEX)?.[0];
+  }
+  if (value && typeof value === 'object') {
+    // ID3v2 COMM frames carry { description, text } objects
+    const text = (value as { text?: unknown }).text;
+    if (typeof text === 'string') {
+      return text.toUpperCase().match(ASIN_REGEX)?.[0];
     }
   }
   return undefined;
