@@ -16,6 +16,9 @@ const COMPLETE_BOOK_MIN_SIZE = 120 * BYTES_PER_MB;
 const SPLIT_MIN_FILE_COUNT = 2;
 const SPLIT_MAX_FILE_COUNT = 30;
 const LARGE_FILE_RATIO = 0.8;
+const LARGE_COUNT_FOR_PLURALITY = 3;
+const RATIO_FOR_PLURALITY = 0.5;
+const LARGE_COUNT_FLOOR = 10;
 const NUMERIC_ONLY_MIN_COUNT = 2;
 const MIN_TITLE_CHARS = 3;
 
@@ -39,6 +42,7 @@ export interface ClassifierFile {
 export interface ClassifierResult {
   decision: 'merge' | 'split';
   reason: string;
+  sizeEvidence?: { largeCount: number; largeRatio: number };
 }
 
 export function classifyLeafFolder(files: ClassifierFile[]): ClassifierResult {
@@ -55,11 +59,6 @@ export function classifyLeafFolder(files: ClassifierFile[]): ClassifierResult {
     return { decision: 'merge', reason: 'numeric-only-stems' };
   }
 
-  const largeFiles = files.filter(f => f.size >= COMPLETE_BOOK_MIN_SIZE).length;
-  if (largeFiles / count < LARGE_FILE_RATIO) {
-    return { decision: 'merge', reason: 'files-too-small-for-full-books' };
-  }
-
   const normalized = stems.map(normalizeStemForComparison);
   const distinct = new Set(normalized.map(s => s.toLowerCase().trim())).size;
   if (distinct < count) {
@@ -73,7 +72,30 @@ export function classifyLeafFolder(files: ClassifierFile[]): ClassifierResult {
     return { decision: 'merge', reason: 'normalized-stem-lacks-title-content' };
   }
 
-  return { decision: 'split', reason: 'distinct-large-files-no-marker' };
+  const largeCount = files.filter(f => f.size >= COMPLETE_BOOK_MIN_SIZE).length;
+  const largeRatio = count > 0 ? largeCount / count : 0;
+
+  // Three-condition layered evidence (issue #1035): a single ratio cutoff
+  // mis-merges series collections like Reacher (21 novels + 7 novellas →
+  // 0.75 ratio) where many obviously-complete books outweigh a handful of
+  // shorts. OR-combine a clean-pack ratio, a mixed-plurality count+ratio,
+  // and a big-collection floor. Source order encodes precedence for the
+  // matrix in the spec but is not surfaced — `sizeEvidence` reports the
+  // raw counts so callers can log without recomputation.
+  const sizeEvidenceForSplit =
+    largeRatio >= LARGE_FILE_RATIO
+    || (largeCount >= LARGE_COUNT_FOR_PLURALITY && largeRatio >= RATIO_FOR_PLURALITY)
+    || largeCount >= LARGE_COUNT_FLOOR;
+
+  if (!sizeEvidenceForSplit) {
+    return { decision: 'merge', reason: 'files-too-small-for-full-books' };
+  }
+
+  return {
+    decision: 'split',
+    reason: 'distinct-large-files-no-marker',
+    sizeEvidence: { largeCount, largeRatio },
+  };
 }
 
 function normalizeStemForComparison(stem: string): string {

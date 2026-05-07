@@ -1398,6 +1398,50 @@ describe('discoverBooks', () => {
       expect(result[0]!.audioFileCount).toBe(12);
     });
 
+    it('AC19: split classification logs largeCount and largeRatio from sizeEvidence', async () => {
+      // 3 large distinct novels — split path; sizeEvidence must surface in the
+      // "Leaf folder classified" debug log so #1035 metadata can be replayed
+      // from the search-trace without recomputing.
+      setupFs({
+        '/audiobooks': [{ name: 'Sanderson', isFile: false }],
+        '/audiobooks/Sanderson': [{ name: 'Mistborn Trilogy', isFile: false }],
+        '/audiobooks/Sanderson/Mistborn Trilogy': [
+          { name: 'Mistborn 01 - The Final Empire.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 02 - The Well of Ascension.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 03 - The Hero of Ages.mp3', isFile: true, size: LARGE_BOOK },
+        ],
+      });
+
+      const log: DiscoveryLogger = { debug: vi.fn() };
+      await discoverBooks('/audiobooks', { log });
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: 'split',
+          reason: 'distinct-large-files-no-marker',
+          largeCount: 3,
+          largeRatio: 1,
+        }),
+        'Leaf folder classified',
+      );
+    });
+
+    it('AC19: merge classification (single-file) does NOT log largeCount/largeRatio', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [{ name: 'a.mp3', isFile: true, size: 100 }],
+      });
+
+      const log: DiscoveryLogger = { debug: vi.fn() };
+      await discoverBooks('/audiobooks', { log });
+
+      const calls = (log.debug as ReturnType<typeof vi.fn>).mock.calls;
+      const leafCall = calls.find(c => c[1] === 'Leaf folder classified');
+      expect(leafCall).toBeDefined();
+      expect(leafCall![0]).not.toHaveProperty('largeCount');
+      expect(leafCall![0]).not.toHaveProperty('largeRatio');
+    });
+
     it('AC7: Mistborn Trilogy with bare Mistborn 0N files merges via duplicate-normalized-stems', async () => {
       setupFs({
         '/audiobooks': [{ name: 'Mistborn Trilogy', isFile: false }],
