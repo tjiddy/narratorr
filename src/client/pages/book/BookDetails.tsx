@@ -147,7 +147,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onRetryImportClick={canRetryImport ? () => retryImportMutation.mutate() : undefined}
         isRetryingImport={retryImportMutation.isPending}
       >
-        <AudioPreview bookId={libraryBook.id} status={libraryBook.status} path={libraryBook.path ?? null} />
+        <AudioPreview source={{ kind: 'book', bookId: libraryBook.id, enabled: libraryBook.status === 'imported' && !!libraryBook.path }} />
       </BookHero>
 
       {mergeProgress && (

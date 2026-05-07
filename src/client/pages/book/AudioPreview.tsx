@@ -3,17 +3,29 @@ import { toast } from 'sonner';
 import { resolveUrl } from '@/lib/url-utils';
 import { PlayIcon, PauseIcon } from '@/components/icons';
 
+export type AudioPreviewSource =
+  | { kind: 'book'; bookId: number; enabled: boolean }
+  | { kind: 'url'; previewUrl: string | undefined; enabled: boolean };
+
 interface AudioPreviewProps {
-  bookId: number;
-  status: string;
-  path: string | null;
+  source: AudioPreviewSource;
+  size?: 'default' | 'compact';
 }
 
-export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
+function resolveSourceUrl(source: AudioPreviewSource): { canPreview: boolean; url: string | undefined } {
+  if (source.kind === 'book') {
+    if (!source.enabled) return { canPreview: false, url: undefined };
+    return { canPreview: true, url: resolveUrl(`/api/books/${source.bookId}/preview`) };
+  }
+  if (!source.enabled || !source.previewUrl) return { canPreview: false, url: undefined };
+  return { canPreview: true, url: resolveUrl(source.previewUrl) };
+}
+
+export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  const canPreview = status === 'imported' && !!path;
+  const { canPreview, url } = resolveSourceUrl(source);
 
   const handleError = useCallback(() => {
     toast.error('Could not load audio preview');
@@ -43,9 +55,8 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
 
   if (!canPreview) return null;
 
-  const previewUrl = resolveUrl(`/api/books/${bookId}/preview`);
-
-  async function handlePlayPause() {
+  async function handlePlayPause(event: React.MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -58,6 +69,24 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
         // Browser may block autoplay; error event handles API failures
       }
     }
+  }
+
+  if (size === 'compact') {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={handlePlayPause}
+          aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
+          className="p-1.5 rounded-lg text-muted-foreground hover:text-primary transition-colors focus-ring"
+        >
+          {isPlaying
+            ? <PauseIcon className="w-3.5 h-3.5" />
+            : <PlayIcon className="w-3.5 h-3.5" />}
+        </button>
+        <audio ref={audioRef} src={url} preload="none" hidden />
+      </>
+    );
   }
 
   return (
@@ -75,7 +104,7 @@ export function AudioPreview({ bookId, status, path }: AudioPreviewProps) {
       <span className="text-xs text-muted-foreground/50 select-none">
         {isPlaying ? 'Playing...' : 'Preview'}
       </span>
-      <audio ref={audioRef} src={previewUrl} preload="none" hidden />
+      <audio ref={audioRef} src={url} preload="none" hidden />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   LoadingSpinner,
 } from '@/components/icons';
 import { Badge } from '@/components/Badge';
+import { AudioPreview } from '@/pages/book/AudioPreview';
 export type { ImportRow } from './types.js';
 
 interface ImportCardProps {
@@ -144,6 +145,14 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
           <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} />
         )}
       </div>
+
+      {/* Audio preview — always visible when previewUrl is present */}
+      {row.book.previewUrl && (
+        <AudioPreview
+          source={{ kind: 'url', previewUrl: row.book.previewUrl, enabled: true }}
+          size="compact"
+        />
+      )}
 
       {/* Edit button — hidden for path-locked duplicate rows */}
       {showEditButton && (

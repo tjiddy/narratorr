@@ -1134,8 +1134,8 @@ describe('books routes', () => {
     });
   });
 
-  // #320 — Audio preview streaming endpoint
-  describe('GET /api/books/:id/preview (#320)', () => {
+  // #320 / #1017 — Audio preview streaming endpoint (delegates to audio-preview-stream helper)
+  describe('GET /api/books/:id/preview (#320, #1017)', () => {
     const bookWithPath = { ...mockBook, path: '/library/book1', status: 'imported' };
     const fileSize = 10000;
     let logWarnSpy: ReturnType<typeof vi.spyOn>;
@@ -1144,10 +1144,14 @@ describe('books routes', () => {
       logWarnSpy = vi.spyOn(app.log, 'warn');
     });
 
+    function asFileEntry(name: string) {
+      return { name, isFile: () => true, isDirectory: () => false };
+    }
+
     function mockAudioDir(files: string[] = ['02-chapter.mp3', '10-chapter.mp3']) {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(files);
-      (stat as Mock).mockResolvedValue({ size: fileSize });
+      (readdir as Mock).mockResolvedValue(files.map(asFileEntry));
+      (stat as Mock).mockResolvedValue({ size: fileSize, isFile: () => false, isDirectory: () => true });
       (createReadStream as Mock).mockReturnValue(Readable.from(Buffer.alloc(0)));
     }
 
@@ -1161,6 +1165,7 @@ describe('books routes', () => {
       expect(res.headers['content-type']).toBe('audio/mpeg');
       expect(res.headers['accept-ranges']).toBe('bytes');
       expect(res.headers['content-length']).toBe(String(fileSize));
+      expect(res.headers['cache-control']).toBe('no-store');
     });
 
     it('returns 206 Partial Content with correct Content-Range and Content-Length for valid Range', async () => {
@@ -1176,6 +1181,7 @@ describe('books routes', () => {
       expect(res.headers['content-range']).toBe(`bytes 0-1023/${fileSize}`);
       expect(res.headers['content-length']).toBe('1024');
       expect(res.headers['accept-ranges']).toBe('bytes');
+      expect(res.headers['cache-control']).toBe('no-store');
     });
 
     it('selects alphabetically first audio file using numeric collation (02 before 10)', async () => {
@@ -1189,7 +1195,7 @@ describe('books routes', () => {
       );
     });
 
-    it('responds with correct MIME type per extension', async () => {
+    it('responds with correct MIME type per extension (.wav added in #1017)', async () => {
       const cases: [string, string][] = [
         ['track.mp3', 'audio/mpeg'],
         ['track.m4b', 'audio/mp4'],
@@ -1199,6 +1205,7 @@ describe('books routes', () => {
         ['track.opus', 'audio/ogg'],
         ['track.wma', 'audio/x-ms-wma'],
         ['track.aac', 'audio/aac'],
+        ['track.wav', 'audio/wav'],
       ];
 
       for (const [filename, expectedMime] of cases) {
@@ -1229,7 +1236,8 @@ describe('books routes', () => {
 
     it('returns 404 with "Audio file not found" when directory has no audio files', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['cover.jpg', 'metadata.nfo']);
+      (stat as Mock).mockResolvedValue({ size: 0, isFile: () => false, isDirectory: () => true });
+      (readdir as Mock).mockResolvedValue([asFileEntry('cover.jpg'), asFileEntry('metadata.nfo')]);
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
 
@@ -1239,6 +1247,7 @@ describe('books routes', () => {
 
     it('returns 404 with "Audio file not found" when readdir throws', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (stat as Mock).mockResolvedValue({ size: 0, isFile: () => false, isDirectory: () => true });
       (readdir as Mock).mockRejectedValue(new Error('ENOENT'));
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
@@ -1251,9 +1260,8 @@ describe('books routes', () => {
       );
     });
 
-    it('returns 404 with "Audio file not found" when stat throws (file disappeared)', async () => {
+    it('returns 404 with "Audio file not found" when stat throws (directory disappeared)', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['chapter.mp3']);
       (stat as Mock).mockRejectedValue(new Error('ENOENT'));
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
@@ -1261,7 +1269,7 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Audio file not found' });
       expect(logWarnSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 1, path: expect.stringContaining('chapter.mp3') }),
+        expect.objectContaining({ bookId: 1, path: '/library/book1' }),
         expect.any(String),
       );
     });
@@ -1349,7 +1357,8 @@ describe('books routes', () => {
 
     it('returns 404 for unrecognized audio extension', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['track.mid']);
+      (stat as Mock).mockResolvedValue({ size: 0, isFile: () => false, isDirectory: () => true });
+      (readdir as Mock).mockResolvedValue([asFileEntry('track.mid')]);
       // .mid is not in AUDIO_EXTENSIONS, so preview won't find it → 404
       const res = await app.inject({ method: 'GET', url: '/api/books/1/preview' });
       expect(res.statusCode).toBe(404);

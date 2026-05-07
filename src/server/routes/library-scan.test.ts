@@ -1,19 +1,24 @@
 import { describe, it, expect, type vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { Buffer } from 'node:buffer';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
+import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 
 describe('library-scan routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
 
   beforeAll(async () => {
+    _resetKey();
+    initializeKey(Buffer.alloc(32, 0xee));
     services = createMockServices();
     app = await createTestApp(services);
   });
 
   afterAll(async () => {
     await app.close();
+    _resetKey();
   });
 
   beforeEach(() => {

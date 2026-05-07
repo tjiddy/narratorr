@@ -476,4 +476,34 @@ describe('ImportCard — relativePath prop (#133)', () => {
       expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('audio preview button (#1017)', () => {
+    it('renders preview button when previewUrl is present', () => {
+      const row = makeRow({
+        book: makeBook({ previewUrl: '/api/import/preview/abc123' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+      expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+    });
+
+    it('omits preview button when previewUrl is undefined', () => {
+      const row = makeRow({ book: makeBook() });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+      expect(screen.queryByRole('button', { name: /play preview/i })).not.toBeInTheDocument();
+    });
+
+    it('clicking preview does NOT trigger onToggle or onEdit', async () => {
+      const onToggle = vi.fn();
+      const onEdit = vi.fn();
+      const row = makeRow({
+        book: makeBook({ previewUrl: '/api/import/preview/xyz' }),
+      });
+      render(<ImportCard row={row} onToggle={onToggle} onEdit={onEdit} />);
+
+      await userEvent.click(screen.getByRole('button', { name: /play preview/i }));
+
+      expect(onToggle).not.toHaveBeenCalled();
+      expect(onEdit).not.toHaveBeenCalled();
+    });
+  });
 });

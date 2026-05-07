@@ -25,6 +25,7 @@ export const discoveredBookSchema = z.object({
   existingBookId: z.number().optional(),
   duplicateReason: duplicateReasonSchema.optional(),
   duplicateFirstPath: z.string().optional(),
+  previewUrl: z.string().optional(),
 });
 
 export type DiscoveredBook = z.infer<typeof discoveredBookSchema>;

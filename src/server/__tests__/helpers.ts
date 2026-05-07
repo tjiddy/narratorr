@@ -39,6 +39,7 @@ export function inject<T>(mock: unknown): T { return mock as any; }
 export async function createTestApp(services: Services, db?: Db) {
   const app = Fastify({
     logger: false,
+    routerOptions: { maxParamLength: 2048 },
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
