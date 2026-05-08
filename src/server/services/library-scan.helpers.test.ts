@@ -79,6 +79,48 @@ describe('buildDiscoveredBook', () => {
     expect(result).not.toHaveProperty('reviewReason');
   });
 
+  describe('parsedSeriesPosition (#1042)', () => {
+    it('emits parsedSeriesPosition when parsed.seriesPosition is provided', () => {
+      const result = buildDiscoveredBook(
+        '/audiobooks/Author/Series/Book 3',
+        { title: 'Book', author: 'Author', series: 'Series', seriesPosition: 3 },
+        2,
+        200,
+      );
+      expect(result.parsedSeriesPosition).toBe(3);
+    });
+
+    it('omits parsedSeriesPosition when parsed.seriesPosition is undefined (no key on returned object)', () => {
+      const result = buildDiscoveredBook(
+        '/audiobooks/Author/Title',
+        { title: 'Title', author: 'Author', series: null },
+        1,
+        100,
+      );
+      expect(result).not.toHaveProperty('parsedSeriesPosition');
+    });
+
+    it('round-trips decimal positions like 2.5 (no parseInt truncation)', () => {
+      const result = buildDiscoveredBook(
+        '/audiobooks/Author/Series/Book 2.5',
+        { title: 'Novella', author: 'Author', series: 'Series', seriesPosition: 2.5 },
+        1,
+        100,
+      );
+      expect(result.parsedSeriesPosition).toBe(2.5);
+    });
+
+    it('preserves seriesPosition: 0 (regression guard against falsy drop)', () => {
+      const result = buildDiscoveredBook(
+        '/audiobooks/Author/Series/Book 0',
+        { title: 'Prequel', author: 'Author', series: 'Series', seriesPosition: 0 },
+        1,
+        100,
+      );
+      expect(result.parsedSeriesPosition).toBe(0);
+    });
+  });
+
   describe('options-object fields flow through independently (#1031)', () => {
     const baseArgs = [
       '/path',

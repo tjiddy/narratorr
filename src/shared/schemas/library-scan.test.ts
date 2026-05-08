@@ -171,6 +171,41 @@ describe('duplicateReasonSchema — within-scan variant (#342)', () => {
   });
 });
 
+describe('discoveredBookSchema — parsedSeriesPosition field (#1042)', () => {
+  const validDiscovery = {
+    path: '/audiobooks/Author/Series/Book',
+    parsedTitle: 'Book',
+    parsedAuthor: 'Author',
+    parsedSeries: 'Series',
+    fileCount: 3,
+    totalSize: 100,
+    isDuplicate: false,
+  };
+
+  it('accepts validDiscovery without parsedSeriesPosition (optional field)', () => {
+    const result = discoveredBookSchema.safeParse(validDiscovery);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.parsedSeriesPosition).toBeUndefined();
+  });
+
+  it('accepts decimal parsedSeriesPosition like 2.5', () => {
+    const result = discoveredBookSchema.safeParse({ ...validDiscovery, parsedSeriesPosition: 2.5 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.parsedSeriesPosition).toBe(2.5);
+  });
+
+  it('preserves parsedSeriesPosition: 0 (regression guard)', () => {
+    const result = discoveredBookSchema.safeParse({ ...validDiscovery, parsedSeriesPosition: 0 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.parsedSeriesPosition).toBe(0);
+  });
+
+  it('rejects explicit null parsedSeriesPosition (schema is optional, not nullable)', () => {
+    const result = discoveredBookSchema.safeParse({ ...validDiscovery, parsedSeriesPosition: null });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('discoveredBookSchema — duplicateFirstPath field (#342)', () => {
   const validDiscovery = {
     path: '/audiobooks/Author/Title',

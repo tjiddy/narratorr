@@ -336,6 +336,64 @@ describe('useLibraryImport hook (#133)', () => {
     expect(found?.seriesPosition).toBe(0);
   });
 
+  it('parser-seeded parsedSeriesPosition flows from scan to register payload (#1042)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/Author/Series/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: 'Series', parsedSeriesPosition: 2.5, fileCount: 1, totalSize: 1000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    });
+    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    expect(result.current.rows[0]!.edited.seriesPosition).toBe(2.5);
+
+    await act(async () => { result.current.handleRegister(); });
+
+    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
+    expect(items[0]!.seriesPosition).toBe(2.5);
+  });
+
+  it('parser-seeded parsedSeriesPosition survives a no-position best match merge (#1042)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/Author/Series/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: 'Series', parsedSeriesPosition: 3, fileCount: 1, totalSize: 1000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    });
+    // Best match arrives without a series position — fallback to parser-seeded value must hold.
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1',
+      status: 'completed',
+      total: 1,
+      matched: 1,
+      results: [
+        {
+          path: '/audiobooks/Author/Series/Book',
+          confidence: 'high',
+          bestMatch: { title: 'Book', authors: [{ name: 'Author' }], series: [{ name: 'Series' }] },
+          alternatives: [],
+        },
+      ],
+    });
+    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await waitFor(() => {
+      expect(result.current.rows[0]!.edited.metadata).toBeDefined();
+    }, { timeout: 5000 });
+
+    expect(result.current.rows[0]!.edited.seriesPosition).toBe(3);
+
+    await act(async () => { result.current.handleRegister(); });
+    const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
+    expect(items[0]!.seriesPosition).toBe(3);
+  });
+
   it('handleRegister does not forward narrators when empty array (#1028)', async () => {
     mockConfirmImport.mockResolvedValue({ accepted: 1 });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
