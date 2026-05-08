@@ -99,6 +99,7 @@ export function useLibraryImport() {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
           series: book.parsedSeries || '',
+          ...(book.parsedSeriesPosition !== undefined && { seriesPosition: book.parsedSeriesPosition }),
         },
       }));
 

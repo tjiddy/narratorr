@@ -204,6 +204,38 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.parsing.raw.author).toBeNull();
       expect(body.parsing.raw.title).toBe('JustATitle');
     });
+
+    describe('parsing.raw.seriesPosition (#1042)', () => {
+      it('returns numeric seriesPosition when parser produces one and skips cleaning trace for it', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/library/scan-debug',
+          payload: { folderName: 'Joe Abercrombie/First Law World – 02 – The Heroes' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.parsing.raw.seriesPosition).toBe(2);
+        // Cleaning trace must skip the numeric field — cleanNameWithTrace expects strings only
+        expect(body.cleaning.seriesPosition).toBeUndefined();
+        // String fields still appear (guard didn't over-filter)
+        expect(body.cleaning.title).toBeDefined();
+        expect(body.cleaning.series).toBeDefined();
+      });
+
+      it('returns null seriesPosition when parser cannot derive a position', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/library/scan-debug',
+          payload: { folderName: 'Author/Plain Title' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.parsing.raw.seriesPosition).toBeNull();
+        expect(body.cleaning.seriesPosition).toBeUndefined();
+      });
+    });
   });
 
   describe('cleaning step', () => {

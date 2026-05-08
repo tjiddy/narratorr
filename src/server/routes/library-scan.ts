@@ -221,13 +221,16 @@ function buildParsingTrace(folderName: string) {
     author: rawParsed.author,
     title: rawParsed.title,
     series: rawParsed.series,
+    seriesPosition: rawParsed.seriesPosition ?? null,
     asin: rawParsed.asin ?? null,
   };
 
-  // Trace cleaning from raw (pre-cleanName) values so each step shows real transformations
+  // Trace cleaning from raw (pre-cleanName) values so each step shows real transformations.
+  // typeof string guard inherently excludes null, numbers, and any future non-string raw fields,
+  // so cleanNameWithTrace (string-only) is never called with a numeric seriesPosition.
   const cleaning: Record<string, ReturnType<typeof cleanNameWithTrace>> = {};
-  for (const [key, value] of Object.entries(raw) as [string, string | null][]) {
-    if (value && key !== 'asin') cleaning[key] = cleanNameWithTrace(value);
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'string' && key !== 'asin') cleaning[key] = cleanNameWithTrace(value);
   }
 
   const cleanedTitle = cleaning.title?.result ?? parsed.title;

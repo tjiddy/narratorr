@@ -930,6 +930,45 @@ describe('LibraryScanService', () => {
         expect(result.discoveries[0]!.existingBookId).toBe(55);
       });
     });
+
+    describe('parsedSeriesPosition flows from parser to discovery (#1042)', () => {
+      it('emits parsedSeriesPosition for SERIES_NUMBER_TITLE pattern (Author/Series – NN – Title)', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          {
+            path: '/audiobooks/Joe Abercrombie/First Law World – 02 – The Heroes',
+            folderParts: ['Joe Abercrombie', 'First Law World – 02 – The Heroes'],
+            audioFileCount: 1,
+            totalSize: 100,
+          },
+        ]);
+        mockPreFetch([], []);
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries[0]).toMatchObject({
+          parsedTitle: 'The Heroes',
+          parsedAuthor: 'Joe Abercrombie',
+          parsedSeries: 'First Law World',
+          parsedSeriesPosition: 2,
+        });
+      });
+
+      it('omits parsedSeriesPosition when the parser cannot derive a position', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          {
+            path: '/audiobooks/Author/Plain Title',
+            folderParts: ['Author', 'Plain Title'],
+            audioFileCount: 1,
+            totalSize: 100,
+          },
+        ]);
+        mockPreFetch([], []);
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries[0]).not.toHaveProperty('parsedSeriesPosition');
+      });
+    });
   });
 
   // =========================================================================

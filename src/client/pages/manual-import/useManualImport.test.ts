@@ -644,6 +644,73 @@ describe('useManualImport', () => {
       expect(items[0]!.seriesPosition).toBe(27);
     });
 
+    it('parser-seeded parsedSeriesPosition flows from scan to import payload (#1042)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/Author/Series/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: 'Series', parsedSeriesPosition: 2.5, fileCount: 1, totalSize: 1000, isDuplicate: false },
+        ],
+        totalFolders: 1,
+      });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(1); });
+
+      expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(2.5);
+
+      await act(async () => { result.current.actions.handleImport(); });
+      await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+      expect(items[0]!.seriesPosition).toBe(2.5);
+    });
+
+    it('parser-seeded parsedSeriesPosition survives a no-position best match merge (#1042)', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue({
+          discoveries: [
+            { path: '/audiobooks/Author/Series/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: 'Series', parsedSeriesPosition: 3, fileCount: 1, totalSize: 1000, isDuplicate: false },
+          ],
+          totalFolders: 1,
+        });
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-1',
+          status: 'completed',
+          total: 1,
+          matched: 1,
+          results: [
+            {
+              path: '/audiobooks/Author/Series/Book',
+              confidence: 'high',
+              bestMatch: { title: 'Book', authors: [{ name: 'Author' }], series: [{ name: 'Series' }] },
+              alternatives: [],
+            },
+          ],
+        });
+        vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(1); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+        expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(3);
+
+        await act(async () => { result.current.actions.handleImport(); });
+        await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+        const [items] = vi.mocked(api.confirmImport).mock.calls[0]!;
+        expect(items[0]!.seriesPosition).toBe(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('handleImport forwards seriesPosition: 0 (regression guard against falsy drop) (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });

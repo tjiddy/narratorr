@@ -60,7 +60,7 @@ export interface BuildDiscoveredBookOptions {
 /** Build a DiscoveredBook from parsed folder data and optional duplicate / review info. */
 export function buildDiscoveredBook(
   path: string,
-  parsed: { title: string; author: string | null; series: string | null },
+  parsed: { title: string; author: string | null; series: string | null; seriesPosition?: number },
   fileCount: number,
   totalSize: number,
   options: BuildDiscoveredBookOptions = {},
@@ -71,6 +71,7 @@ export function buildDiscoveredBook(
     parsedTitle: parsed.title,
     parsedAuthor: parsed.author,
     parsedSeries: parsed.series,
+    ...(parsed.seriesPosition !== undefined && { parsedSeriesPosition: parsed.seriesPosition }),
     fileCount,
     totalSize,
     isDuplicate,
