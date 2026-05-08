@@ -96,6 +96,7 @@ describe('jobIdParamSchema — trim behavior', () => {
 import {
   duplicateReasonSchema,
   discoveredBookSchema,
+  scanDebugTraceSchema,
 } from './library-scan.js';
 
 describe('importConfirmItemSchema — narrators and seriesPosition (#1028)', () => {
@@ -231,5 +232,53 @@ describe('discoveredBookSchema — duplicateFirstPath field (#342)', () => {
     const result = discoveredBookSchema.safeParse(validDiscovery);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.duplicateFirstPath).toBeUndefined();
+  });
+});
+
+describe('scanDebugTraceSchema — parsing.raw.seriesPosition contract (#1042)', () => {
+  // Pins the scan-debug API contract directly at the schema layer.
+  // Route tests assert response shape, but Zod object parsing strips unknown
+  // keys by default — without these direct assertions, deleting the field
+  // from scanDebugTraceSchema would silently regress the typed contract.
+  const validTrace = {
+    input: 'Author/Title',
+    parts: ['Author', 'Title'],
+    parsing: {
+      pattern: '2-part',
+      raw: {
+        author: 'Author',
+        title: 'Title',
+        series: null,
+        seriesPosition: null,
+        asin: null,
+      },
+    },
+    cleaning: {},
+    search: null,
+    match: null,
+    duplicate: null,
+  };
+
+  it('preserves a numeric parsing.raw.seriesPosition', () => {
+    const result = scanDebugTraceSchema.safeParse({
+      ...validTrace,
+      parsing: { ...validTrace.parsing, raw: { ...validTrace.parsing.raw, seriesPosition: 2 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.parsing.raw.seriesPosition).toBe(2);
+  });
+
+  it('preserves a null parsing.raw.seriesPosition', () => {
+    const result = scanDebugTraceSchema.safeParse(validTrace);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.parsing.raw.seriesPosition).toBeNull();
+  });
+
+  it('rejects a non-number parsing.raw.seriesPosition (e.g. string)', () => {
+    const result = scanDebugTraceSchema.safeParse({
+      ...validTrace,
+      parsing: { ...validTrace.parsing, raw: { ...validTrace.parsing.raw, seriesPosition: '2' } },
+    });
+    expect(result.success).toBe(false);
   });
 });
