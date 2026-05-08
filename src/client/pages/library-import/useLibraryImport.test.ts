@@ -417,6 +417,31 @@ describe('useLibraryImport hook (#133)', () => {
     expect(mockStartMatchJob).toHaveBeenCalled();
   });
 
+  describe('review-flagged rows default-selection (#1031)', () => {
+    it('non-duplicate row carrying reviewReason starts selected (review flag is a warning, not a blocker)', async () => {
+      mockScanDirectory.mockResolvedValue({
+        discoveries: [{
+          path: '/audiobooks/Heir',
+          parsedTitle: 'Heir to the Empire',
+          parsedAuthor: 'Timothy Zahn',
+          parsedSeries: null,
+          fileCount: 29,
+          totalSize: 800_000_000,
+          isDuplicate: false,
+          reviewReason: 'Additional non-book content possibly merged',
+        }],
+        totalFolders: 1,
+      });
+
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => expect(result.current.step).toBe('review'));
+
+      const row = result.current.rows.find(r => !!r.book.reviewReason);
+      expect(row).toBeDefined();
+      expect(row!.selected).toBe(true);
+    });
+  });
 });
 
 describe('match merge — selection behavior (#185)', () => {

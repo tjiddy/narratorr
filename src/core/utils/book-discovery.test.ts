@@ -18,14 +18,29 @@ vi.mock('node:path', async () => {
     join: actual.posix.join,
     extname: actual.posix.extname,
     basename: actual.posix.basename,
+    relative: actual.posix.relative,
   };
 });
 
-import { discoverBooks, parseTitledDiscFolder, type DiscoveryLogger } from './book-discovery.js';
+// Bonus-content detection (mixed-content branch, #1031) reads album tags via
+// the audio-scanner helper. Mock at the module boundary so we don't drag
+// music-metadata + node:fs into book-discovery's test universe.
+vi.mock('./audio-scanner.js', () => ({
+  readAlbumTag: vi.fn(),
+}));
+
+import {
+  discoverBooks,
+  parseTitledDiscFolder,
+  normalizeAlbumForComparison,
+  type DiscoveryLogger,
+} from './book-discovery.js';
 import { readdir, stat } from 'node:fs/promises';
+import { readAlbumTag } from './audio-scanner.js';
 
 const mockReaddir = vi.mocked(readdir);
 const mockStat = vi.mocked(stat);
+const mockReadAlbumTag = vi.mocked(readAlbumTag);
 
 // --- Helpers ---
 
@@ -771,7 +786,11 @@ describe('discoverBooks', () => {
   // ---- Mixed-content folders (loose audio + audio subfolders) ----
 
   describe('mixed-content folders', () => {
-    it('root with loose audio files + audio subfolders emits loose files as single-file books AND discovers subfolders', async () => {
+    it('root with 2 loose audio files + audio subfolders, classifier returns merge → ONE parent-path entry absorbing all audio (#1031)', async () => {
+      // Two small loose top-level files (1KB, 2KB) — way below the 120MB
+      // threshold the classifier uses for split, so the three-condition
+      // size evidence fails and `classifyLeafFolder` returns merge. The
+      // child book is absorbed into the parent row.
       setupFs({
         '/audiobooks': [
           { name: 'loose1.m4b', isFile: true, size: 1000 },
@@ -783,11 +802,37 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      expect(result).toHaveLength(3);
-      const byPath = Object.fromEntries(result.map(r => [r.path, r]));
-      expect(byPath['/audiobooks/loose1.m4b']).toMatchObject({ audioFileCount: 1, totalSize: 1000, folderParts: ['loose1.m4b'] });
-      expect(byPath['/audiobooks/loose2.m4b']).toMatchObject({ audioFileCount: 1, totalSize: 2000, folderParts: ['loose2.m4b'] });
-      expect(byPath['/audiobooks/Author/Book1']).toMatchObject({ audioFileCount: 1, totalSize: 5000 });
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        path: '/audiobooks',
+        audioFileCount: 3,
+        totalSize: 8000,
+      });
+    });
+
+    it('root with 3 distinct large named loose files + audio subfolder, classifier returns split → 3 per-file rows + 1 child row from recursion', async () => {
+      // AC6: 3 distinct large files (340 MB each) with title-bearing stems
+      // → classifier returns 'split'. Loose audio is per-file emitted, AND
+      // the child folder is recursed into.
+      const LARGE_BOOK = 340 * 1024 * 1024;
+      setupFs({
+        '/audiobooks': [
+          { name: 'Mistborn 01 - The Final Empire.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 02 - The Well of Ascension.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Mistborn 03 - The Hero of Ages.mp3', isFile: true, size: LARGE_BOOK },
+          { name: 'Cover', isFile: false },
+        ],
+        '/audiobooks/Cover': [{ name: 'art.mp3', isFile: true, size: 5000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual([
+        '/audiobooks/Cover',
+        '/audiobooks/Mistborn 01 - The Final Empire.mp3',
+        '/audiobooks/Mistborn 02 - The Well of Ascension.mp3',
+        '/audiobooks/Mistborn 03 - The Hero of Ages.mp3',
+      ]);
     });
 
     it('nested folder with loose audio + book subfolders emits loose file as single-file book AND discovers folder books', async () => {
@@ -882,6 +927,212 @@ describe('discoverBooks', () => {
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks');
       expect(result[0]!.audioFileCount).toBe(1);
+    });
+
+    describe('mixed-content classifier merge + bonus-content review flag (#1031)', () => {
+      const SMALL_CHAPTER = 30 * 1024 * 1024;
+      const HEIR_PARENT = '/audiobooks/Heir to the Empire';
+
+      function heirFixture() {
+        const chapters = Array.from({ length: 28 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        return {
+          '/audiobooks': [{ name: 'Heir to the Empire', isFile: false }],
+          [HEIR_PARENT]: [
+            ...chapters,
+            { name: 'Excerpt- Behind the Scenes', isFile: false },
+          ],
+          [`${HEIR_PARENT}/Excerpt- Behind the Scenes`]: [
+            { name: 'track.mp3', isFile: true, size: 5_000_000 },
+          ],
+        };
+      }
+
+      beforeEach(() => {
+        mockReadAlbumTag.mockReset();
+        mockReadAlbumTag.mockResolvedValue(undefined);
+      });
+
+      it('AC5/AC9: Heir fixture (28 chapters + Excerpt subdir) emits ONE parent-path row with audioFileCount=29 and review reason set', async () => {
+        setupFs(heirFixture());
+        // Both signals would fire (subdir name AND album mismatch) — but
+        // subdir-name fires first, so we don't even need the tag mock for
+        // this AC. Configure it anyway for realism.
+        mockReadAlbumTag.mockImplementation(async (filePath: string) => {
+          if (filePath.includes('Excerpt')) return 'Behind the Scenes';
+          return 'Heir to the Empire';
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          path: HEIR_PARENT,
+          audioFileCount: 29,
+          totalSize: 28 * SMALL_CHAPTER + 5_000_000,
+          reviewReason: 'Additional non-book content possibly merged',
+        });
+      });
+
+      it('AC4: classifier-merge mixed-content does NOT recurse into audioChildren (no duplicate row for the absorbed subdir)', async () => {
+        setupFs(heirFixture());
+        const result = await discoverBooks('/audiobooks');
+        const excerptPaths = result
+          .map(r => r.path)
+          .filter(p => p.includes('Excerpt'));
+        expect(excerptPaths).toEqual([]);
+      });
+
+      it('AC10: clean chapter-encoded fixture (no subdirs) → no review reason', async () => {
+        const chapters = Array.from({ length: 12 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Plain Book', isFile: false }],
+          '/audiobooks/Plain Book': chapters,
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('AC11: non-bonus subdir name + matching album → no review reason', async () => {
+        // Subdir name "Author Notes" doesn't match the bonus regex; both
+        // top-level and absorbed audio share the same album → no signal.
+        const chapters = Array.from({ length: 6 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Book', isFile: false }],
+          '/audiobooks/Book': [
+            ...chapters,
+            { name: 'Author Notes', isFile: false },
+          ],
+          '/audiobooks/Book/Author Notes': [
+            { name: 'note.mp3', isFile: true, size: 1_000_000 },
+          ],
+        });
+        mockReadAlbumTag.mockResolvedValue('Same Book Album');
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('AC13: tag-probe failure during album comparison does not throw — falls back to subdir-name signal only', async () => {
+        // Subdir name "Author Notes" — no name signal. All tag reads return
+        // undefined (simulates parseFile rejection). Detection completes
+        // gracefully with no review reason set.
+        const chapters = Array.from({ length: 6 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Book', isFile: false }],
+          '/audiobooks/Book': [
+            ...chapters,
+            { name: 'Author Notes', isFile: false },
+          ],
+          '/audiobooks/Book/Author Notes': [
+            { name: 'note.mp3', isFile: true, size: 1_000_000 },
+          ],
+        });
+        mockReadAlbumTag.mockResolvedValue(undefined);
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('AC14: missing album on top-level audio → no album mismatch signal', async () => {
+        // Subdir name "Notes" doesn't match bonus regex; top-level album
+        // empty so we can't detect mismatch — no signal.
+        const chapters = Array.from({ length: 6 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Book', isFile: false }],
+          '/audiobooks/Book': [
+            ...chapters,
+            { name: 'Notes', isFile: false },
+          ],
+          '/audiobooks/Book/Notes': [
+            { name: 'note.mp3', isFile: true, size: 1_000_000 },
+          ],
+        });
+        mockReadAlbumTag.mockImplementation(async (filePath: string) => {
+          if (filePath.includes('Notes')) return 'Different Album';
+          return undefined;
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('AC14: missing album on absorbed-descendant audio → no album mismatch signal', async () => {
+        const chapters = Array.from({ length: 6 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Book', isFile: false }],
+          '/audiobooks/Book': [
+            ...chapters,
+            { name: 'Notes', isFile: false },
+          ],
+          '/audiobooks/Book/Notes': [
+            { name: 'note.mp3', isFile: true, size: 1_000_000 },
+          ],
+        });
+        mockReadAlbumTag.mockImplementation(async (filePath: string) => {
+          if (filePath.includes('Notes')) return undefined;
+          return 'Real Book Album';
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('album-mismatch signal alone (subdir name harmless) sets review reason', async () => {
+        // Subdir "Notes" — doesn't match bonus regex. Albums differ →
+        // signal fires via album mismatch.
+        const chapters = Array.from({ length: 6 }, (_, i) => ({
+          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Book', isFile: false }],
+          '/audiobooks/Book': [
+            ...chapters,
+            { name: 'Notes', isFile: false },
+          ],
+          '/audiobooks/Book/Notes': [
+            { name: 'note.mp3', isFile: true, size: 1_000_000 },
+          ],
+        });
+        mockReadAlbumTag.mockImplementation(async (filePath: string) => {
+          if (filePath.includes('Notes')) return 'Some Other Album';
+          return 'Heir to the Empire';
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]!.reviewReason).toBe('Additional non-book content possibly merged');
+      });
     });
 
     it('no audio files and no audio children returns empty', async () => {
@@ -1467,5 +1718,36 @@ describe('discoverBooks', () => {
         'Leaf folder classified',
       );
     });
+  });
+});
+
+// AC12: album normalization — collapses publisher suffixes that mark
+// "same album, different volume" so the bonus-detection heuristic doesn't
+// false-fire on legitimate multi-volume series.
+describe('normalizeAlbumForComparison (#1031)', () => {
+  it.each([
+    ['Stormlight (1 of 5)', 'Stormlight (3 of 5)'],
+    ['Book Part 01', 'Book Part 02'],
+    ['Album Disc 2', 'Album Disc 3'],
+    ['Album CD 03', 'Album CD 04'],
+    ['Album-Part-01', 'Album_Part_02'],
+    ['ALBUM (Disc 1)', 'album (disc 2)'],
+  ])('collapses %s and %s to same canonical form', (a, b) => {
+    expect(normalizeAlbumForComparison(a)).toBe(normalizeAlbumForComparison(b));
+  });
+
+  it('keeps genuinely distinct titles distinct', () => {
+    const a = normalizeAlbumForComparison("The Hitchhiker's Guide to the Galaxy");
+    const b = normalizeAlbumForComparison('The Restaurant at the End of the Universe');
+    expect(a).not.toBe(b);
+  });
+
+  it('case- and punctuation-insensitive', () => {
+    expect(normalizeAlbumForComparison('Foo  Bar!!')).toBe(normalizeAlbumForComparison('FOO_BAR'));
+  });
+
+  it('strips terminal "Pt 3" / "pt 03" variant', () => {
+    expect(normalizeAlbumForComparison('Saga Pt 3')).toBe(normalizeAlbumForComparison('Saga'));
+    expect(normalizeAlbumForComparison('Saga pt 03')).toBe(normalizeAlbumForComparison('Saga'));
   });
 });

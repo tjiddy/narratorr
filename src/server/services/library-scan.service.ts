@@ -188,13 +188,14 @@ export class LibraryScanService {
 
     for (const folder of folders) {
       const parsed = parseFolderStructure(folder.folderParts);
+      const reviewReason = folder.reviewReason;
 
       // Check for duplicates by path (in-memory Map lookup)
       if (existingPathMap.has(folder.path)) {
         this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
         discoveries.push(buildDiscoveredBook(
           folder.path, parsed, folder.audioFileCount, folder.totalSize,
-          true, existingPathMap.get(folder.path), 'path',
+          { isDuplicate: true, existingBookId: existingPathMap.get(folder.path), duplicateReason: 'path', reviewReason },
         ));
         continue;
       }
@@ -207,7 +208,7 @@ export class LibraryScanService {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
           discoveries.push(buildDiscoveredBook(
             folder.path, parsed, folder.audioFileCount, folder.totalSize,
-            true, existingTitleAuthorMap.get(key), 'slug',
+            { isDuplicate: true, existingBookId: existingTitleAuthorMap.get(key), duplicateReason: 'slug', reviewReason },
           ));
           continue;
         }
@@ -217,7 +218,7 @@ export class LibraryScanService {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (within-scan title+author match)');
           discoveries.push(buildDiscoveredBook(
             folder.path, parsed, folder.audioFileCount, folder.totalSize,
-            true, undefined, 'within-scan', withinScanSlugMap.get(key),
+            { isDuplicate: true, duplicateReason: 'within-scan', duplicateFirstPath: withinScanSlugMap.get(key), reviewReason },
           ));
           continue;
         }
@@ -235,7 +236,8 @@ export class LibraryScanService {
       );
 
       discoveries.push(buildDiscoveredBook(
-        folder.path, parsed, folder.audioFileCount, folder.totalSize, false,
+        folder.path, parsed, folder.audioFileCount, folder.totalSize,
+        { isDuplicate: false, reviewReason },
       ));
     }
 

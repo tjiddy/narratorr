@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { scanAudioDirectory, getFFprobeDuration } from './audio-scanner.js';
+import { scanAudioDirectory, getFFprobeDuration, readAlbumTag } from './audio-scanner.js';
 
 // Mock music-metadata
 vi.mock('music-metadata', () => ({
@@ -1012,5 +1012,37 @@ describe('scanAudioDirectory', () => {
         expect(result!.tagNarrator).toBe('Test Narrator');
       });
     });
+  });
+});
+
+describe('readAlbumTag (#1031)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns trimmed album from a parseable file', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: '  Heir to the Empire  ' } }) as never);
+    const result = await readAlbumTag('/path/to/file.mp3');
+    expect(result).toBe('Heir to the Empire');
+  });
+
+  it('returns undefined when album is empty string', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: '' } }) as never);
+    expect(await readAlbumTag('/x.mp3')).toBeUndefined();
+  });
+
+  it('returns undefined when album is whitespace only', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: '   ' } }) as never);
+    expect(await readAlbumTag('/x.mp3')).toBeUndefined();
+  });
+
+  it('returns undefined when album is missing from common tags', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: undefined } }) as never);
+    expect(await readAlbumTag('/x.mp3')).toBeUndefined();
+  });
+
+  it('returns undefined and does not throw when parseFile rejects', async () => {
+    mockParseFile.mockRejectedValue(new Error('corrupt header'));
+    expect(await readAlbumTag('/bad.mp3')).toBeUndefined();
   });
 });
