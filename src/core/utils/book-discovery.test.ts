@@ -1147,7 +1147,12 @@ describe('discoverBooks', () => {
   });
 
   describe('mixed-content + disc merge interaction', () => {
-    it('loose audio + disc subfolders (CD1, CD2) merges discs and excludes loose files', async () => {
+    beforeEach(() => {
+      mockReadAlbumTag.mockReset();
+      mockReadAlbumTag.mockResolvedValue(undefined);
+    });
+
+    it('loose audio + disc subfolders (CD1, CD2) merges discs and includes loose files in count', async () => {
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
         '/audiobooks/Book': [
@@ -1162,8 +1167,9 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Book');
-      expect(result[0]!.audioFileCount).toBe(2); // Only disc tracks, not loose
-      expect(result[0]!.totalSize).toBe(500); // 200 + 300, not 100
+      expect(result[0]!.audioFileCount).toBe(3); // loose + 2 disc tracks
+      expect(result[0]!.totalSize).toBe(600); // 100 + 200 + 300
+      expect(result[0]).not.toHaveProperty('reviewReason');
     });
 
     it('loose audio + disc subfolders + non-disc immediateAudioChild prevents disc merge, recurses all and emits loose file', async () => {
@@ -1210,17 +1216,18 @@ describe('discoverBooks', () => {
 
       const result = await discoverBooks('/audiobooks');
       // CD1 and CD2 are the only immediateAudioChildren → disc merge triggers
-      // Extra recurses independently, loose files skipped
+      // Extra recurses independently; loose files now counted in merged row
       expect(result).toHaveLength(2);
       const paths = result.map(r => r.path).sort();
       expect(paths).toEqual(['/audiobooks/Collection', '/audiobooks/Collection/Extra/Bonus Book']);
-      // Merged book should have 2 tracks from discs, not the loose file
+      // Merged row counts loose + 2 disc tracks; the deeper Extra/Bonus Book
+      // file stays in its own row, NOT counted here.
       const merged = result.find(r => r.path === '/audiobooks/Collection')!;
-      expect(merged.audioFileCount).toBe(2);
-      expect(merged.totalSize).toBe(200);
+      expect(merged.audioFileCount).toBe(3);
+      expect(merged.totalSize).toBe(250);
     });
 
-    it('loose audio + titled-disc subfolders merges discs and excludes loose files', async () => {
+    it('loose audio + titled-disc subfolders merges discs and includes loose files in count', async () => {
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
         '/audiobooks/Book': [
@@ -1235,8 +1242,152 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       expect(result).toHaveLength(1);
       expect(result[0]!.path).toBe('/audiobooks/Book');
-      expect(result[0]!.audioFileCount).toBe(2); // Only disc tracks, not loose
-      expect(result[0]!.totalSize).toBe(500); // 200 + 300, not 100
+      expect(result[0]!.audioFileCount).toBe(3); // loose + 2 disc tracks
+      expect(result[0]!.totalSize).toBe(600); // 100 + 200 + 300
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('AC2 negative — top-level bonus-named loose audio does NOT flag (matching albums)', async () => {
+      // Top-level filename matches BONUS_SUBDIR_RE, but detectBonusContent only
+      // tests segments[0] of relative paths under info.path — top-level paths
+      // are excluded from descendantFiles, so the name signal cannot fire.
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'bonus.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Book/CD1': [{ name: 'track.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/CD2': [{ name: 'track.mp3', isFile: true, size: 300 }],
+      });
+      mockReadAlbumTag.mockResolvedValue('Heir to the Empire');
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('AC2 positive — album mismatch (top-level vs disc tracks) fires the flag', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'intro.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Book/CD1': [{ name: 'track.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/CD2': [{ name: 'track.mp3', isFile: true, size: 300 }],
+      });
+      mockReadAlbumTag.mockImplementation(async (filePath: string) => {
+        if (filePath.endsWith('/intro.mp3')) return 'Behind the Scenes';
+        return 'Heir to the Empire';
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]!.reviewReason).toBe('Additional non-book content possibly merged');
+    });
+
+    it('AC5 negative — nested disc-internal bonus does NOT name-flag (matching albums)', async () => {
+      // CD1 has direct audio (track1.mp3) AND a nested Bonus/ subdir — both
+      // required for disc-merge eligibility. detectBonusContent only tests
+      // segments[0] of paths relative to info.path, which is "CD1" here, so
+      // BONUS_SUBDIR_RE never matches. With matching albums, no signal.
+      setupFs({
+        '/audiobooks': [{ name: 'Parent', isFile: false }],
+        '/audiobooks/Parent': [
+          { name: 'loose.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Parent/CD1': [
+          { name: 'track1.mp3', isFile: true, size: 200 },
+          { name: 'Bonus', isFile: false },
+        ],
+        '/audiobooks/Parent/CD1/Bonus': [{ name: 'track2.mp3', isFile: true, size: 50 }],
+        '/audiobooks/Parent/CD2': [{ name: 'track3.mp3', isFile: true, size: 300 }],
+      });
+      mockReadAlbumTag.mockResolvedValue('Real Book');
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Parent');
+      expect(result[0]!.audioFileCount).toBe(4);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('AC5 positive — nested disc-internal bonus + album mismatch on direct disc track DOES flag (album path only)', async () => {
+      // Same fixture as the AC5 negative, but mock album reads so top-level
+      // differs from EVERY disc-child file. readFirstAlbum returns the first
+      // truthy descendant album (CD1/track1.mp3 → "Bonus Disc"), and topAlbum
+      // is "Real Book" — album-mismatch fires. Mocking ONLY the nested
+      // CD1/Bonus/track2.mp3 to differ would NOT fire because readFirstAlbum
+      // short-circuits on CD1/track1.mp3's matching value.
+      setupFs({
+        '/audiobooks': [{ name: 'Parent', isFile: false }],
+        '/audiobooks/Parent': [
+          { name: 'loose.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Parent/CD1': [
+          { name: 'track1.mp3', isFile: true, size: 200 },
+          { name: 'Bonus', isFile: false },
+        ],
+        '/audiobooks/Parent/CD1/Bonus': [{ name: 'track2.mp3', isFile: true, size: 50 }],
+        '/audiobooks/Parent/CD2': [{ name: 'track3.mp3', isFile: true, size: 300 }],
+      });
+      mockReadAlbumTag.mockImplementation(async (filePath: string) => {
+        if (filePath.endsWith('/loose.mp3')) return 'Real Book';
+        return 'Bonus Disc';
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(4);
+      expect(result[0]!.reviewReason).toBe('Additional non-book content possibly merged');
+    });
+
+    it('AC3 — pure disc-merge with no loose audio: no reviewReason', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Book/CD1': [{ name: 'a.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/CD2': [{ name: 'b.mp3', isFile: true, size: 300 }],
+      });
+      mockReadAlbumTag.mockResolvedValue('Heir to the Empire');
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Book');
+      expect(result[0]!.audioFileCount).toBe(2);
+      expect(result[0]!.totalSize).toBe(500);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('AC6 — tag-probe failure during bonus detection does not throw', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'loose.mp3', isFile: true, size: 100 },
+          { name: 'CD1', isFile: false },
+          { name: 'CD2', isFile: false },
+        ],
+        '/audiobooks/Book/CD1': [{ name: 'a.mp3', isFile: true, size: 200 }],
+        '/audiobooks/Book/CD2': [{ name: 'b.mp3', isFile: true, size: 300 }],
+      });
+      mockReadAlbumTag.mockResolvedValue(undefined);
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]).not.toHaveProperty('reviewReason');
     });
   });
 

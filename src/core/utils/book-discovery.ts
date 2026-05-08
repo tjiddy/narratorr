@@ -179,7 +179,7 @@ async function collectBooks(
   }
 
   if (willDiscMerge) {
-    mergeDiscChildren(info, rootPath, results, discChildren, log);
+    await mergeDiscChildren(info, rootPath, results, discChildren, log);
     for (const child of info.children) {
       if (!discChildren.includes(child)) {
         await collectBooks(child, rootPath, results, log);
@@ -286,19 +286,23 @@ async function handleMixedContentLooseAudio(
   return { absorbedChildren: false };
 }
 
-function mergeDiscChildren(
+async function mergeDiscChildren(
   info: DirInfo,
   rootPath: string,
   results: DiscoveredFolder[],
   discChildren: DirInfo[],
   log?: DiscoveryLogger,
-): void {
-  const allAudioFiles = discChildren.flatMap(c => collectAllAudioFiles(c));
+): Promise<void> {
+  const mergedAudioFiles = [
+    ...info.audioFiles,
+    ...discChildren.flatMap(c => collectAllAudioFiles(c)),
+  ];
   log?.debug(
-    { path: info.path, discFolders: discChildren.map(c => c.path), mergedAudioFiles: allAudioFiles.length },
+    { path: info.path, discFolders: discChildren.map(c => c.path), mergedAudioFiles: mergedAudioFiles.length },
     'Disc folder merge',
   );
-  results.push(makeFolderEntry(info, rootPath, allAudioFiles));
+  const reviewReason = await detectBonusContent(info, mergedAudioFiles);
+  results.push(makeFolderEntry(info, rootPath, mergedAudioFiles, { reviewReason }));
 }
 
 function countAudioFilesDeep(info: DirInfo): number {
