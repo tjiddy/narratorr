@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { scanAudioDirectory, getFFprobeDuration } from './audio-scanner.js';
+import { scanAudioDirectory, getFFprobeDuration, readAlbumTag } from './audio-scanner.js';
 
 // Mock music-metadata
 vi.mock('music-metadata', () => ({
@@ -468,6 +468,27 @@ describe('scanAudioDirectory', () => {
 
       const result = await scanAudioDirectory('/audiobooks/test');
       expect(result!.tagTitle).toBeUndefined();
+    });
+
+    it('AC15 (#1031): mismatched-album multi-file scan still populates duration/codec/bitrate/author/narrator from per-file tags', async () => {
+      // Mixed-album absorption (e.g. Heir + Excerpt subdir absorbed into one
+      // import) causes resolveMultiFileAlbum to return undefined, but the
+      // technical metadata + author/narrator must still come through cleanly.
+      setupMultiFileScan([
+        { title: 'Ch 1', album: 'Heir to the Empire', albumartist: 'Timothy Zahn', composer: ['Marc Thompson'] },
+        { title: 'Ch 2', album: 'Heir to the Empire', albumartist: 'Timothy Zahn', composer: ['Marc Thompson'] },
+        { title: 'Excerpt', album: 'Behind the Scenes', albumartist: 'Timothy Zahn', composer: ['Marc Thompson'] },
+      ]);
+
+      const result = await scanAudioDirectory('/audiobooks/Heir');
+      expect(result).not.toBeNull();
+      expect(result!.tagTitle).toBeUndefined();
+      expect(result!.tagAlbum).toBeUndefined();
+      expect(result!.codec).toBe('MPEG 1 Layer 3');
+      expect(result!.bitrate).toBe(128000);
+      expect(result!.totalDuration).toBeGreaterThan(0);
+      expect(result!.tagAuthor).toBe('Timothy Zahn');
+      expect(result!.tagNarrator).toBe('Marc Thompson');
     });
 
     it('leaves tagTitle undefined when consistent album matches disc-pattern', async () => {
@@ -1012,5 +1033,37 @@ describe('scanAudioDirectory', () => {
         expect(result!.tagNarrator).toBe('Test Narrator');
       });
     });
+  });
+});
+
+describe('readAlbumTag (#1031)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns trimmed album from a parseable file', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: '  Heir to the Empire  ' } }) as never);
+    const result = await readAlbumTag('/path/to/file.mp3');
+    expect(result).toBe('Heir to the Empire');
+  });
+
+  it('returns undefined when album is empty string', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: '' } }) as never);
+    expect(await readAlbumTag('/x.mp3')).toBeUndefined();
+  });
+
+  it('returns undefined when album is whitespace only', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: '   ' } }) as never);
+    expect(await readAlbumTag('/x.mp3')).toBeUndefined();
+  });
+
+  it('returns undefined when album is missing from common tags', async () => {
+    mockParseFile.mockResolvedValue(makeMetadata({ common: { album: undefined } }) as never);
+    expect(await readAlbumTag('/x.mp3')).toBeUndefined();
+  });
+
+  it('returns undefined and does not throw when parseFile rejects', async () => {
+    mockParseFile.mockRejectedValue(new Error('corrupt header'));
+    expect(await readAlbumTag('/bad.mp3')).toBeUndefined();
   });
 });

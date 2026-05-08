@@ -26,6 +26,12 @@ export const discoveredBookSchema = z.object({
   duplicateReason: duplicateReasonSchema.optional(),
   duplicateFirstPath: z.string().optional(),
   previewUrl: z.string().optional(),
+  /**
+   * Surfaces a discovery-time heuristic warning to the import UI when content
+   * was absorbed but might warrant a second look (e.g. bonus subdirectory
+   * swept into a chapter book). Display-only — does not block import.
+   */
+  reviewReason: z.string().optional(),
 });
 
 export type DiscoveredBook = z.infer<typeof discoveredBookSchema>;

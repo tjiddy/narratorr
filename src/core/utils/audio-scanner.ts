@@ -66,6 +66,25 @@ export interface AudioScanOptions {
 }
 
 /**
+ * Read the trimmed album tag from a single audio file.
+ * Used by mixed-content bonus detection (book-discovery) to compare albums
+ * across the top-level vs. absorbed-descendant audio groups. Whole-directory
+ * helpers (`scanAudioDirectory` / `resolveMultiFileAlbum`) have consensus
+ * semantics that don't fit the per-file two-group comparison this requires.
+ * Any read failure returns `undefined` so callers can treat it as "no album
+ * signal" without try/catch on each call.
+ */
+export async function readAlbumTag(filePath: string): Promise<string | undefined> {
+  try {
+    const metadata = await parseFile(filePath);
+    const album = metadata.common.album?.trim();
+    return album && album.length > 0 ? album : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Get duration of a single audio file using ffprobe.
  * Returns the duration in seconds, or null if ffprobe fails or returns invalid data.
  */

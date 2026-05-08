@@ -49,17 +49,23 @@ export async function getAudioStats(path: string, log: FastifyBaseLogger): Promi
   return { fileCount, totalSize };
 }
 
-/** Build a DiscoveredBook from parsed folder data and optional duplicate info. */
+export interface BuildDiscoveredBookOptions {
+  isDuplicate?: boolean | undefined;
+  existingBookId?: number | undefined;
+  duplicateReason?: 'path' | 'slug' | 'within-scan' | undefined;
+  duplicateFirstPath?: string | undefined;
+  reviewReason?: string | undefined;
+}
+
+/** Build a DiscoveredBook from parsed folder data and optional duplicate / review info. */
 export function buildDiscoveredBook(
   path: string,
   parsed: { title: string; author: string | null; series: string | null },
   fileCount: number,
   totalSize: number,
-  isDuplicate: boolean,
-  existingBookId?: number,
-  duplicateReason?: 'path' | 'slug' | 'within-scan',
-  duplicateFirstPath?: string,
+  options: BuildDiscoveredBookOptions = {},
 ): DiscoveredBook {
+  const { isDuplicate = false, existingBookId, duplicateReason, duplicateFirstPath, reviewReason } = options;
   return {
     path,
     parsedTitle: parsed.title,
@@ -71,5 +77,6 @@ export function buildDiscoveredBook(
     ...(existingBookId !== undefined && { existingBookId }),
     ...(duplicateReason !== undefined && { duplicateReason }),
     ...(duplicateFirstPath !== undefined && { duplicateFirstPath }),
+    ...(reviewReason !== undefined && { reviewReason }),
   };
 }

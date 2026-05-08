@@ -30,7 +30,6 @@ describe('buildDiscoveredBook', () => {
       { title: 'Book Title', author: 'Author', series: null },
       10,
       500000,
-      false,
     );
 
     expect(result).toEqual({
@@ -50,10 +49,12 @@ describe('buildDiscoveredBook', () => {
       { title: 'Book', author: 'Author', series: 'Series' },
       5,
       250000,
-      true,
-      42,
-      'slug',
-      '/audiobooks/Author/Book Original',
+      {
+        isDuplicate: true,
+        existingBookId: 42,
+        duplicateReason: 'slug',
+        duplicateFirstPath: '/audiobooks/Author/Book Original',
+      },
     );
 
     expect(result).toMatchObject({
@@ -70,12 +71,53 @@ describe('buildDiscoveredBook', () => {
       { title: 'T', author: null, series: null },
       1,
       100,
-      false,
     );
 
     expect(result).not.toHaveProperty('existingBookId');
     expect(result).not.toHaveProperty('duplicateReason');
     expect(result).not.toHaveProperty('duplicateFirstPath');
+    expect(result).not.toHaveProperty('reviewReason');
+  });
+
+  describe('options-object fields flow through independently (#1031)', () => {
+    const baseArgs = [
+      '/path',
+      { title: 'T', author: 'A', series: null },
+      3,
+      300,
+    ] as const;
+
+    it('isDuplicate alone', () => {
+      const r = buildDiscoveredBook(...baseArgs, { isDuplicate: true });
+      expect(r.isDuplicate).toBe(true);
+      expect(r).not.toHaveProperty('existingBookId');
+      expect(r).not.toHaveProperty('duplicateReason');
+      expect(r).not.toHaveProperty('duplicateFirstPath');
+      expect(r).not.toHaveProperty('reviewReason');
+    });
+
+    it('existingBookId alone', () => {
+      const r = buildDiscoveredBook(...baseArgs, { existingBookId: 7 });
+      expect(r.existingBookId).toBe(7);
+      expect(r.isDuplicate).toBe(false);
+    });
+
+    it('duplicateReason alone', () => {
+      const r = buildDiscoveredBook(...baseArgs, { duplicateReason: 'path' });
+      expect(r.duplicateReason).toBe('path');
+    });
+
+    it('duplicateFirstPath alone', () => {
+      const r = buildDiscoveredBook(...baseArgs, { duplicateFirstPath: '/orig' });
+      expect(r.duplicateFirstPath).toBe('/orig');
+    });
+
+    it('reviewReason alone', () => {
+      const r = buildDiscoveredBook(...baseArgs, {
+        reviewReason: 'Additional non-book content possibly merged',
+      });
+      expect(r.reviewReason).toBe('Additional non-book content possibly merged');
+    });
   });
 });
 

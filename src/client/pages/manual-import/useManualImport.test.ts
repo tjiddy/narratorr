@@ -1056,6 +1056,35 @@ describe('useManualImport', () => {
       expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/audiobooks/sub');
     });
   });
+
+  describe('review-flagged rows default-selection (#1031)', () => {
+    it('non-duplicate row carrying reviewReason starts selected (review flag is a warning, not a blocker)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue({
+        discoveries: [{
+          path: '/audiobooks/Heir',
+          parsedTitle: 'Heir to the Empire',
+          parsedAuthor: 'Timothy Zahn',
+          parsedSeries: null,
+          fileCount: 29,
+          totalSize: 800_000_000,
+          isDuplicate: false,
+          reviewReason: 'Additional non-book content possibly merged',
+        }],
+        totalFolders: 1,
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+
+      await waitFor(() => expect(result.current.state.step).toBe('review'));
+
+      const row = result.current.state.rows.find(r => !!r.book.reviewReason);
+      expect(row).toBeDefined();
+      expect(row!.selected).toBe(true);
+    });
+  });
 });
 
 describe('handleScan guards (#185)', () => {

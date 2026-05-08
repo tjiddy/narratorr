@@ -146,6 +146,20 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         )}
       </div>
 
+      {/* Discovery review-flag indicator — independent of confidence so high-match
+          rows still surface absorbed-bonus warnings before import (#1031). */}
+      {row.book.reviewReason && (
+        <span
+          title={row.book.reviewReason}
+          tabIndex={0}
+          aria-label={row.book.reviewReason}
+          data-testid="review-reason-indicator"
+          className="shrink-0 text-amber-500/80 hover:text-amber-500 focus-ring rounded"
+        >
+          <AlertCircleIcon className="w-4 h-4" />
+        </span>
+      )}
+
       {/* Audio preview — always visible when previewUrl is present */}
       {row.book.previewUrl && (
         <AudioPreview

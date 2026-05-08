@@ -477,6 +477,48 @@ describe('ImportCard — relativePath prop (#133)', () => {
     });
   });
 
+  describe('reviewReason tooltip (#1031)', () => {
+    it('renders an indicator with the reviewReason as title attribute when set', () => {
+      const row = makeRow({
+        book: makeBook({ reviewReason: 'Additional non-book content possibly merged' }),
+        matchResult: makeMatchResult({ confidence: 'high' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+      const indicator = screen.getByTestId('review-reason-indicator');
+      expect(indicator).toHaveAttribute('title', 'Additional non-book content possibly merged');
+    });
+
+    it('omits the indicator when reviewReason is undefined', () => {
+      const row = makeRow({ book: makeBook(), matchResult: makeMatchResult({ confidence: 'high' }) });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+      expect(screen.queryByTestId('review-reason-indicator')).not.toBeInTheDocument();
+    });
+
+    it('renders even on high-confidence rows (independent of ConfidenceBadge medium-only reason)', () => {
+      const row = makeRow({
+        book: makeBook({ reviewReason: 'Additional non-book content possibly merged' }),
+        matchResult: makeMatchResult({ confidence: 'high' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+      // Confidence badge is "Matched" (no medium-only reason title), and a
+      // separate review indicator carries the reason.
+      expect(screen.getByText('Matched')).toBeInTheDocument();
+      expect(screen.getByTestId('review-reason-indicator')).toHaveAttribute(
+        'title',
+        'Additional non-book content possibly merged',
+      );
+    });
+
+    it('indicator is keyboard-focusable so the tooltip is reachable without a mouse', () => {
+      const row = makeRow({
+        book: makeBook({ reviewReason: 'Additional non-book content possibly merged' }),
+      });
+      render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+      const indicator = screen.getByTestId('review-reason-indicator');
+      expect(indicator).toHaveAttribute('tabindex', '0');
+    });
+  });
+
   describe('audio preview button (#1017)', () => {
     it('renders preview button when previewUrl is present', () => {
       const row = makeRow({

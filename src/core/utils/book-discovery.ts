@@ -2,6 +2,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { classifyLeafFolder } from './book-classifier.js';
+import { readAlbumTag } from './audio-scanner.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
 export interface DiscoveryLogger {
@@ -59,6 +60,13 @@ export interface DiscoveredFolder {
   audioFileCount: number;
   /** Total size of audio files in bytes */
   totalSize: number;
+  /**
+   * Set when discovery absorbed bonus-shaped content into a parent row (e.g.
+   * a top-level chapter book that swept up an `Excerpt-...` subdir). Surfaces
+   * to the import UI as a tooltip so the user is informed *before* import
+   * that a heuristic flagged the absorption as worth a second look.
+   */
+  reviewReason?: string;
 }
 
 /**
@@ -120,7 +128,7 @@ async function walkDirectory(
   log?: DiscoveryLogger,
 ): Promise<void> {
   const info = await scanDir(currentPath);
-  collectBooks(info, rootPath, results, log);
+  await collectBooks(info, rootPath, results, log);
 }
 
 /** Identify disc-pattern children and verify titled-disc folders share the same title. */
@@ -147,7 +155,12 @@ function findMergeableDiscChildren(audioChildren: DirInfo[]): { discChildren: Di
   return { discChildren, allSameTitle: titles.size <= 1 };
 }
 
-function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder[], log?: DiscoveryLogger): void {
+async function collectBooks(
+  info: DirInfo,
+  rootPath: string,
+  results: DiscoveredFolder[],
+  log?: DiscoveryLogger,
+): Promise<void> {
   const hasOwnAudio = info.audioFiles.length > 0;
   const audioChildren = info.children.filter(c => countAudioFilesDeep(c) > 0);
 
@@ -158,7 +171,8 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
   const willDiscMerge = isDiscMergeable(discChildren, immediateAudioChildren, allSameTitle);
 
   if (hasOwnAudio && audioChildren.length > 0) {
-    handleMixedContentLooseAudio(info, rootPath, results, willDiscMerge, log);
+    const result = await handleMixedContentLooseAudio(info, rootPath, results, willDiscMerge, log);
+    if (result.absorbedChildren) return;
   } else if (hasOwnAudio) {
     handleLeafFolder(info, rootPath, results, log);
     return;
@@ -168,18 +182,18 @@ function collectBooks(info: DirInfo, rootPath: string, results: DiscoveredFolder
     mergeDiscChildren(info, rootPath, results, discChildren, log);
     for (const child of info.children) {
       if (!discChildren.includes(child)) {
-        collectBooks(child, rootPath, results, log);
+        await collectBooks(child, rootPath, results, log);
       }
     }
     return;
   }
 
   for (const child of audioChildren) {
-    collectBooks(child, rootPath, results, log);
+    await collectBooks(child, rootPath, results, log);
   }
   for (const child of info.children) {
     if (!audioChildren.includes(child)) {
-      collectBooks(child, rootPath, results, log);
+      await collectBooks(child, rootPath, results, log);
     }
   }
 }
@@ -223,26 +237,53 @@ function handleLeafFolder(
   results.push(makeFolderEntry(info, rootPath, info.audioFiles));
 }
 
-function handleMixedContentLooseAudio(
+async function handleMixedContentLooseAudio(
   info: DirInfo,
   rootPath: string,
   results: DiscoveredFolder[],
   willDiscMerge: boolean,
   log?: DiscoveryLogger,
-): void {
+): Promise<{ absorbedChildren: boolean }> {
   if (willDiscMerge) {
     // Multi-disc book; loose files are bonus tracks. Skip and fall through to disc-merge.
     log?.debug(
       { path: info.path, skippedFiles: info.audioFiles.map(f => f.path) },
       'Skipping loose bonus audio in disc-merge folder',
     );
-    return;
+    return { absorbedChildren: false };
   }
+
+  // Run the leaf-folder classifier on the loose top-level audio. If it says
+  // "merge", the loose files are chapters of a chapter-encoded book and the
+  // bonus subdirectory should be absorbed into the parent row rather than
+  // emitted as N separate per-file rows the user can't recombine.
+  if (info.audioFiles.length >= 2) {
+    const classification = classifyLeafFolder(info.audioFiles);
+    log?.debug(
+      {
+        path: info.path,
+        decision: classification.decision,
+        reason: classification.reason,
+        stems: info.audioFiles.map(f => basename(f.path, extname(f.path))),
+        branch: 'mixed-content',
+      },
+      'Mixed-content loose audio classified',
+    );
+
+    if (classification.decision === 'merge') {
+      const absorbedAudioFiles = collectAllAudioFiles(info);
+      const reviewReason = await detectBonusContent(info, absorbedAudioFiles);
+      results.push(makeFolderEntry(info, rootPath, absorbedAudioFiles, { reviewReason }));
+      return { absorbedChildren: true };
+    }
+  }
+
   // Mixed library: each loose file is its own single-file book.
   for (const file of info.audioFiles) {
     const fileInfo: DirInfo = { path: file.path, audioFiles: [file], children: [] };
     results.push(makeFolderEntry(fileInfo, rootPath, [file]));
   }
+  return { absorbedChildren: false };
 }
 
 function mergeDiscChildren(
@@ -280,14 +321,86 @@ function makeFolderEntry(
   info: DirInfo,
   rootPath: string,
   audioFiles: { path: string; size: number }[],
+  options?: { reviewReason?: string | undefined },
 ): DiscoveredFolder {
   const relativePath = relative(rootPath, info.path);
   const folderParts = relativePath ? relativePath.split(/[\\/]/) : [basename(rootPath)];
 
-  return {
+  const entry: DiscoveredFolder = {
     path: info.path,
     folderParts,
     audioFileCount: audioFiles.length,
     totalSize: audioFiles.reduce((sum, f) => sum + f.size, 0),
   };
+  if (options?.reviewReason) entry.reviewReason = options.reviewReason;
+  return entry;
+}
+
+const BONUS_REVIEW_REASON = 'Additional non-book content possibly merged';
+const BONUS_SUBDIR_RE = /excerpt|bonus|behind[\s_-]*the[\s_-]*scenes|sample|preview|extra/i;
+
+/**
+ * Heuristic: was the absorbed subdirectory likely bonus / non-book content?
+ *
+ * Returns a review-reason string when ANY of these signals fires; undefined
+ * otherwise. Tag-read failures inside `readAlbumTag` already swallow errors
+ * and return undefined, so a missing-album signal never throws.
+ *
+ * 1. Subdirectory name matches a bonus/excerpt/sample/extra pattern.
+ * 2. Top-level audio's normalized album differs from any absorbed-descendant
+ *    audio's normalized album. Missing/empty album on either side is treated
+ *    as "no album signal" rather than mismatch (AC14).
+ */
+async function detectBonusContent(
+  info: DirInfo,
+  absorbedAudioFiles: { path: string; size: number }[],
+): Promise<string | undefined> {
+  const topLevelPaths = new Set(info.audioFiles.map(f => f.path));
+  const descendantFiles = absorbedAudioFiles.filter(f => !topLevelPaths.has(f.path));
+
+  for (const file of descendantFiles) {
+    const rel = relative(info.path, file.path);
+    const segments = rel.split(/[\\/]/);
+    if (segments.length >= 2 && BONUS_SUBDIR_RE.test(segments[0]!)) {
+      return BONUS_REVIEW_REASON;
+    }
+  }
+
+  const topAlbum = await readFirstAlbum(info.audioFiles);
+  if (!topAlbum) return undefined;
+
+  const descendantAlbum = await readFirstAlbum(descendantFiles);
+  if (!descendantAlbum) return undefined;
+
+  if (normalizeAlbumForComparison(topAlbum) !== normalizeAlbumForComparison(descendantAlbum)) {
+    return BONUS_REVIEW_REASON;
+  }
+  return undefined;
+}
+
+async function readFirstAlbum(files: { path: string }[]): Promise<string | undefined> {
+  for (const f of files) {
+    const album = await readAlbumTag(f.path);
+    if (album) return album;
+  }
+  return undefined;
+}
+
+/**
+ * Normalize an album value for cross-group comparison. Strips the publisher
+ * suffixes that normally indicate "same album, different volume/disc" so
+ * "Stormlight (1 of 5)" and "Stormlight (3 of 5)" collapse to one canonical
+ * form. Anything left that differs is a real distinct-album signal.
+ */
+export function normalizeAlbumForComparison(album: string): string {
+  let s = album.trim();
+  // "(N of M)" suffix
+  s = s.replace(/\s*\(\s*\d+\s+of\s+\d+\s*\)\s*$/i, '');
+  // Parenthesized disc/cd/part suffix: "(Disc 2)", "(CD 03)", "(Part 1)"
+  s = s.replace(/\s*\(\s*(?:disc|disk|cd|part|pt)[-_.\s]*\d+\s*\)\s*$/i, '');
+  // Trailing "Disc N" / "CD N" / "Part N" / "Pt N" with optional separators
+  // around BOTH the keyword (Album-Part) AND the digit run (Part-01).
+  s = s.replace(/\s*[-_,]?\s*(?:disc|disk|cd|part|pt)[-_.\s]*\d+\s*$/i, '');
+  // Collapse remaining punctuation/whitespace runs and lowercase
+  return s.replace(/[\s\W_]+/g, ' ').trim().toLowerCase();
 }

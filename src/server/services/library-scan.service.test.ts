@@ -1467,6 +1467,76 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     expect(result).toEqual({ discoveries: [], totalFolders: 0 });
   });
 
+  describe('reviewReason round-trips through all 4 buildDiscoveredBook branches (AC19, #1031)', () => {
+    const REVIEW_REASON = 'Additional non-book content possibly merged';
+    const folder = {
+      path: '/audiobooks/Author/Title',
+      folderParts: ['Author', 'Title'] as string[],
+      audioFileCount: 29,
+      totalSize: 1_000_000_000,
+      reviewReason: REVIEW_REASON,
+    };
+
+    it('non-duplicate branch preserves reviewReason', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([folder]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+    });
+
+    it('path-duplicate branch preserves reviewReason', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([folder]);
+      mockPreFetch([folder.path], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.duplicateReason).toBe('path');
+      expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
+    });
+
+    it('slug-duplicate branch preserves reviewReason', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([folder]);
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Title', slug: 'author' }]));
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+      expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
+    });
+
+    it('within-scan duplicate branch preserves reviewReason', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([
+        { ...folder, path: '/audiobooks/a/Author/Title' },
+        { ...folder, path: '/audiobooks/b/Author/Title' },
+      ]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[1]!.duplicateReason).toBe('within-scan');
+      expect(result.discoveries[1]!.reviewReason).toBe(REVIEW_REASON);
+    });
+
+    it('non-duplicate without reviewReason omits the field', async () => {
+      vi.mocked(discoverBooks).mockResolvedValue([{
+        path: folder.path,
+        folderParts: folder.folderParts,
+        audioFileCount: folder.audioFileCount,
+        totalSize: folder.totalSize,
+      }]);
+      mockPreFetch([], []);
+
+      const result = await service.scanDirectory('/audiobooks');
+
+      expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
+    });
+  });
+
   // ── #229 Observability — elapsed time ───────────────────────────────────
   describe('logging improvements (#229)', () => {
     it('library scan completion log includes elapsedMs field', async () => {
