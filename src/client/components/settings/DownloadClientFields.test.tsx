@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, render, waitFor } from '@testing-library/react';
+import { screen, render, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { DownloadClientFields } from './DownloadClientFields';
@@ -417,13 +417,16 @@ describe('DownloadClientFields', () => {
       // Swap type before the in-flight promise resolves — the qbittorrent hook unmounts.
       rerender(<FieldWrapper type="sabnzbd" />);
 
-      // Resolve the original fetch. setState on the unmounted hook is a no-op,
-      // so the stale category must not appear on the sabnzbd UI.
-      resolveFetch({ categories: ['stale-cat'] });
-
-      await waitFor(() => {
-        expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalled();
+      // Resolve the original fetch and let React flush the unmounted hook's
+      // continuation. `await deferred` inside act guarantees fetchCategories'
+      // `await` resumes — its setCategories/setShowDropdown dispatches against
+      // the dead Fiber are silent no-ops, so 'stale-cat' must not appear on
+      // the sabnzbd UI.
+      await act(async () => {
+        resolveFetch({ categories: ['stale-cat'] });
+        await deferred;
       });
+
       expect(screen.queryByText('stale-cat')).not.toBeInTheDocument();
     });
 

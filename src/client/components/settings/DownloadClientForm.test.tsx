@@ -17,6 +17,15 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
+vi.mock('@/lib/api/download-clients', () => ({
+  downloadClientsApi: {
+    getClientCategories: vi.fn(),
+    getClientCategoriesFromConfig: vi.fn(),
+  },
+}));
+
+import { downloadClientsApi } from '@/lib/api/download-clients';
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -124,6 +133,35 @@ describe('DownloadClientForm (#201)', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('localhost')).toHaveValue('saved-host');
       });
+    });
+  });
+
+  describe('keyed remount on type change (#1058)', () => {
+    it('changing the real Type select clears previously fetched categories without a refetch (production wiring)', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks', 'movies'],
+      });
+
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+
+      // Fetch categories on the default qbittorrent type
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('audiobooks')).toBeInTheDocument();
+        expect(screen.getByText('movies')).toBeInTheDocument();
+      });
+
+      // Switch type via the production type select. The `key={selectedType}`
+      // on `<DownloadClientFields>` must remount the hook so prior categories
+      // are dropped without any new fetch. Removing the production key would
+      // leave the dropdown items rendered and fail this assertion.
+      await user.selectOptions(screen.getByLabelText('Type'), 'sabnzbd');
+
+      expect(screen.queryByText('audiobooks')).not.toBeInTheDocument();
+      expect(screen.queryByText('movies')).not.toBeInTheDocument();
     });
   });
 
