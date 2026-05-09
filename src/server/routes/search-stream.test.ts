@@ -11,6 +11,7 @@ import type { AuthService } from '../services/auth.service.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import * as searchPipeline from '../services/search-pipeline.js';
+import { fetchSseEvents } from '../__tests__/sse-helpers.js';
 
 const EMPTY_POST_PROCESS_RESULT = {
   results: [],
@@ -441,7 +442,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
 
   it('successful GET with valid apikey and zero indexers returns SSE stream with empty results', async () => {
     // app.inject() hangs on hijacked SSE responses (per fastify-sse-hijack-testing learning),
-    // so use app.listen(0) + real HTTP fetch to test the full Fastify stack.
+    // so use fetchSseEvents() to test the full Fastify stack over real HTTP.
     const authService = createMockAuthService(true);
     const zeroIndexerSearchService = {
       ...createMockIndexerSearchService(),
@@ -464,32 +465,25 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       new SearchSessionManager(),
     );
 
-    const address = await app.listen({ port: 0, host: '127.0.0.1' });
-
     try {
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
+      const { status, headers, events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
 
       // Auth accepted — 200 with SSE headers
-      expect(res.status).toBe(200);
-      expect(res.headers.get('content-type')).toBe('text/event-stream');
-      expect(res.headers.get('cache-control')).toBe('no-cache');
-
-      // Read the full SSE body
-      const body = await res.text();
+      expect(status).toBe(200);
+      expect(headers.get('content-type')).toBe('text/event-stream');
+      expect(headers.get('cache-control')).toBe('no-cache');
 
       // Should contain search-start with empty indexer list
-      expect(body).toContain('event: search-start');
-      const searchStartMatch = body.match(/event: search-start\ndata: (.+)\n/);
-      expect(searchStartMatch).not.toBeNull();
-      const startData = JSON.parse(searchStartMatch![1]!);
+      const startEvent = events.find(e => e.event === 'search-start');
+      expect(startEvent).toBeDefined();
+      const startData = startEvent!.data as { sessionId: string; indexers: unknown[] };
       expect(startData.sessionId).toBeDefined();
       expect(startData.indexers).toEqual([]);
 
       // Should contain search-complete with empty SearchResponse
-      expect(body).toContain('event: search-complete');
-      const searchCompleteMatch = body.match(/event: search-complete\ndata: (.+)\n/);
-      expect(searchCompleteMatch).not.toBeNull();
-      const completeData = JSON.parse(searchCompleteMatch![1]!);
+      const completeEvent = events.find(e => e.event === 'search-complete');
+      expect(completeEvent).toBeDefined();
+      const completeData = completeEvent!.data as Record<string, unknown>;
       expect(completeData.results).toEqual([]);
       expect(completeData).toHaveProperty('durationUnknown');
       expect(completeData).toHaveProperty('unsupportedResults');

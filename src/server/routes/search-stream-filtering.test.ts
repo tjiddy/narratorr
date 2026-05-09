@@ -5,7 +5,7 @@
  * this file does NOT mock the search pipeline — the real postProcessSearchResults runs,
  * proving that reject word filtering works end-to-end through the SSE path.
  *
- * Uses app.listen(0) + real HTTP fetch because app.inject() hangs on SSE hijacked responses.
+ * Uses fetchSseEvents() (real HTTP via app.listen(0)) because app.inject() hangs on SSE hijacked responses.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
@@ -20,6 +20,19 @@ import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import { searchStreamRoutes } from './search-stream.js';
 import type { SearchResult } from '../../core/index.js';
+import { fetchSseEvents } from '../__tests__/sse-helpers.js';
+
+type SearchCompleteData = {
+  results: SearchResult[];
+  durationUnknown: boolean;
+  unsupportedResults: { count: number; titles: string[] };
+};
+
+function getSearchComplete(events: Array<{ event: string; data: unknown }>): SearchCompleteData {
+  const event = events.find(e => e.event === 'search-complete');
+  expect(event).toBeDefined();
+  return event!.data as SearchCompleteData;
+}
 
 vi.mock('../config.js', () => ({
   config: { authBypass: false, isDev: true },
@@ -76,12 +89,6 @@ function createMockSettingsService(qualityOverrides: Record<string, unknown> = {
   } as unknown as SettingsService;
 }
 
-function parseSearchComplete(body: string): { results: SearchResult[]; durationUnknown: boolean; unsupportedResults: { count: number; titles: string[] } } {
-  const match = body.match(/event: search-complete\ndata: (.+)\n/);
-  expect(match).not.toBeNull();
-  return JSON.parse(match![1]!);
-}
-
 async function createApp(rawResults: SearchResult[], qualityOverrides: Record<string, unknown> = {}) {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
@@ -97,8 +104,7 @@ async function createApp(rawResults: SearchResult[], qualityOverrides: Record<st
     new SearchSessionManager(),
   );
 
-  const address = await app.listen({ port: 0, host: '127.0.0.1' });
-  return { app, address };
+  return { app };
 }
 
 describe('searchStreamRoutes — reject word filtering (real postProcessSearchResults)', () => {
@@ -117,12 +123,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'GraphicAudio Edition' },
         { ...baseResult, title: 'English Edition' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: 'graphicaudio' });
+      const { app } = await createApp(results, { rejectWords: 'graphicaudio' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
       expect(data.results[0]!.title).toBe('English Edition');
@@ -133,12 +138,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'GraphicAudio Edition' },
         { ...baseResult, title: 'Clean Edition' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: 'GRAPHICAUDIO' });
+      const { app } = await createApp(results, { rejectWords: 'GRAPHICAUDIO' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
       expect(data.results[0]!.title).toBe('Clean Edition');
@@ -149,12 +153,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'Clean Title', rawTitle: 'Rejected.Version.GraphicAudio' },
         { ...baseResult, title: 'Another Clean' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: 'graphicaudio' });
+      const { app } = await createApp(results, { rejectWords: 'graphicaudio' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
       expect(data.results[0]!.title).toBe('Another Clean');
@@ -166,12 +169,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'GraphicAudio Version' },
         { ...baseResult, title: 'English Edition' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: 'german, graphicaudio' });
+      const { app } = await createApp(results, { rejectWords: 'german, graphicaudio' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
       expect(data.results[0]!.title).toBe('English Edition');
@@ -182,12 +184,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'German Unabridged' },
         { ...baseResult, title: 'English Edition' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: 'german' });
+      const { app } = await createApp(results, { rejectWords: 'german' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
       expect(data.results[0]!.title).toBe('English Edition');
@@ -198,12 +199,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'Book One' },
         { ...baseResult, title: 'Book Two' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: '' });
+      const { app } = await createApp(results, { rejectWords: '' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(2);
     });
@@ -213,12 +213,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'German Edition' },
         { ...baseResult, title: 'German Audiobook' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: 'german' });
+      const { app } = await createApp(results, { rejectWords: 'german' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(0);
     });
@@ -230,12 +229,11 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         { ...baseResult, title: 'German Edition' },
         { ...baseResult, title: 'English Edition' },
       ];
-      const { app, address } = await createApp(results, { rejectWords: '  , , german' });
+      const { app } = await createApp(results, { rejectWords: '  , , german' });
       appInstance = app;
 
-      const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-      const body = await res.text();
-      const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
       expect(data.results[0]!.title).toBe('English Edition');
@@ -263,19 +261,13 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
         new SearchSessionManager(),
       );
 
-      const address = await app.listen({ port: 0, host: '127.0.0.1' });
       appInstance = app;
 
-      try {
-        const res = await fetch(`${address}/api/search/stream?q=test&apikey=valid-key`);
-        const body = await res.text();
-        const data = parseSearchComplete(body);
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const data = getSearchComplete(events);
 
-        expect(data.results).toEqual([]);
-        expect(data.durationUnknown).toBe(true);
-      } finally {
-        // appInstance cleanup in afterEach
-      }
+      expect(data.results).toEqual([]);
+      expect(data.durationUnknown).toBe(true);
     });
   });
 });
