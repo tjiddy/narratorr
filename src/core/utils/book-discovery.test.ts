@@ -936,20 +936,35 @@ describe('discoverBooks', () => {
       expect(result[0]!.audioFileCount).toBe(1);
     });
 
-    describe('mixed-content classifier merge + bonus-content review flag (#1031)', () => {
+    describe('mixed-content classifier merge + bonus-content review flag (#1031, #1051)', () => {
+      // The Heir fixture (`heirChapters()` below) uses real-world torrent
+      // filenames `NN Heir to the Empire.mp3`, not synthetic `Chapter NN.mp3`.
+      // The original #1031 fixture used the synthetic shape, which silently
+      // matched MERGE_MARKER_RE and passed via the marker-set rule — masking
+      // the fact that real-world torrents overwhelmingly use
+      // `<digits><space><title>` (no "Chapter" keyword), which neither the
+      // marker rule nor the normalizer's `[-_.]`-only separator strip catch.
+      // When a NEW fixture is meant to REPLICATE the Heir bug shape (i.e.
+      // exercise `hasStrongChapterSetEvidence` through the mixed-content
+      // branch), it MUST mirror real-world filename conventions; synthetic
+      // marker-keyword fixtures are only appropriate when the test
+      // specifically targets the leaf-classifier marker path.
       const SMALL_CHAPTER = 30 * 1024 * 1024;
       const HEIR_PARENT = '/audiobooks/Heir to the Empire';
 
-      function heirFixture() {
-        const chapters = Array.from({ length: 28 }, (_, i) => ({
-          name: `Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
-          isFile: true,
+      function heirChapters() {
+        return Array.from({ length: 28 }, (_, i) => ({
+          name: `${String(i + 1).padStart(2, '0')} Heir to the Empire.mp3`,
+          isFile: true as const,
           size: SMALL_CHAPTER,
         }));
+      }
+
+      function heirFixture() {
         return {
           '/audiobooks': [{ name: 'Heir to the Empire', isFile: false }],
           [HEIR_PARENT]: [
-            ...chapters,
+            ...heirChapters(),
             { name: 'Excerpt- Behind the Scenes', isFile: false },
           ],
           [`${HEIR_PARENT}/Excerpt- Behind the Scenes`]: [
@@ -1111,6 +1126,67 @@ describe('discoverBooks', () => {
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
         expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('AC8 (#1051): real-world Heir without bonus subdir → ONE row, no review reason', async () => {
+        // Clean 28-chapter set with no subdir. Exercises the new
+        // leading-numeric-prefix rule end-to-end through discovery.
+        setupFs({
+          '/audiobooks': [{ name: 'Heir to the Empire', isFile: false }],
+          [HEIR_PARENT]: heirChapters(),
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          path: HEIR_PARENT,
+          audioFileCount: 28,
+        });
+        expect(result[0]).not.toHaveProperty('reviewReason');
+      });
+
+      it('AC9 (#1051): trailing-digits "Heir to the Empire NN" → ONE merged row via existing distinct===1 rule', async () => {
+        const chapters = Array.from({ length: 12 }, (_, i) => ({
+          name: `Heir to the Empire ${String(i + 1).padStart(2, '0')}.mp3`,
+          isFile: true as const,
+          size: SMALL_CHAPTER,
+        }));
+        setupFs({
+          '/audiobooks': [{ name: 'Heir to the Empire', isFile: false }],
+          [HEIR_PARENT]: chapters,
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          path: HEIR_PARENT,
+          audioFileCount: 12,
+        });
+      });
+
+      it('AC10 (#1051) adversarial: "01 Book A"/"01 Book B"/"01 Book C" loose at root → 3 split rows, NOT one merged', async () => {
+        // Each is "track 1" of a different book. Distinct title portions after
+        // prefix strip → no merge. Discovery must emit per-file rows even
+        // though every stem has the leading-numeric prefix.
+        setupFs({
+          '/audiobooks': [
+            { name: '01 Book A.mp3', isFile: true, size: 200 * 1024 * 1024 },
+            { name: '01 Book B.mp3', isFile: true, size: 200 * 1024 * 1024 },
+            { name: '01 Book C.mp3', isFile: true, size: 200 * 1024 * 1024 },
+            { name: 'Author A', isFile: false },
+          ],
+          '/audiobooks/Author A': [{ name: 'ch.mp3', isFile: true, size: 5_000_000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        // 3 distinct loose books at root + 1 child book in subdir.
+        expect(result).toHaveLength(4);
+        const looseRows = result.filter(r => r.path.endsWith('.mp3') && r.path.startsWith('/audiobooks/0'));
+        expect(looseRows).toHaveLength(3);
+        for (const row of looseRows) {
+          expect(row.audioFileCount).toBe(1);
+        }
+        expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
       });
 
       it('album-mismatch signal alone (subdir name harmless) sets review reason', async () => {
