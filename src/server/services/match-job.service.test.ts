@@ -2854,6 +2854,124 @@ describe('MatchJobService', () => {
         expect(result!.confidence).toBe('medium');
       });
 
+      // ── #1052 Cap-driven downgrade supplies a user-facing reason ─────
+      describe('#1052 capped-attempt review reason', () => {
+        const CAPPED_REASON = 'Low confidence match. Please verify.';
+
+        it('AC1 — single-result with medium-cap attempt: confidence=medium AND reason set', async () => {
+          // Strip-trailing-part attempt has maxConfidence=medium → cap forces medium
+          // and the result must carry the user-facing review reason so the badge
+          // tooltip explains why review is needed.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi'),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({
+                title: 'Imagine Me',
+                authors: [{ name: 'Tahereh Mafi' }],
+                providerId: 'p1',
+              }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toBe(CAPPED_REASON);
+        });
+
+        it('AC2 — single-result via ASIN kill-shot (high-cap): confidence=high AND no reason', async () => {
+          // ASIN kill-shot emits maxConfidence='high' so no cap-driven downgrade.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Anything', 'Anyone', { tagAsin: 'B07KILLSHT' }),
+          );
+          vi.mocked(metadataService.getBook).mockResolvedValue(
+            makeBookMetadata({ title: 'Real Book Title', providerId: 'p1', asin: 'B07KILLSHT' }),
+          );
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
+        });
+
+        it('AC3 — multi-result, duration would lift to high but cap downgrades to medium: reason set', async () => {
+          // Stripped attempt wins, multiple results, duration matches top.duration.
+          // Without cap, confidence would resolve to 'high' (no reason). Cap forces
+          // medium — the cap fallback supplies the reason since duration didn't.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36000 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600 }),
+              makeBookMetadata({ title: 'Imagine Me Too', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p2', duration: 800 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toBe(CAPPED_REASON);
+        });
+
+        it('AC4 — multi-result with duration mismatch under capped attempt: duration-specific reason wins', async () => {
+          // Top-result duration is 22% off scanned → resolveConfidenceFromDuration
+          // returns medium with a duration-mismatch reason. The cap fallback must
+          // NOT replace the more-specific duration reason.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 730 }),
+              makeBookMetadata({ title: 'Imagine Me Too', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p2', duration: 900 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toContain('Duration mismatch');
+          expect(result!.reason).not.toBe(CAPPED_REASON);
+        });
+
+        it('AC4 — multi-result with no duration data under capped attempt: duration-derived reason wins', async () => {
+          // No duration → resolveConfidenceFromDuration returns medium with the
+          // "no duration data to disambiguate" reason. Cap fallback must not replace it.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 0 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1' }),
+              makeBookMetadata({ title: 'Imagine Me Too', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p2' }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toContain('no duration data');
+          expect(result!.reason).not.toBe(CAPPED_REASON);
+        });
+      });
+
       it('AC17 — capConfidence semantics: caps high to medium, leaves medium/none/high alone', () => {
         expect(capConfidence('high', 'medium')).toBe('medium');
         expect(capConfidence('medium', 'medium')).toBe('medium');

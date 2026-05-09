@@ -370,6 +370,44 @@ describe('ImportCard', () => {
       expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
     });
 
+    // ── #1052 Capped-attempt review reason renders in tooltip ─────────
+    it('AC5 — medium + "Low confidence match. Please verify." reason → Review badge with that tooltip', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({
+          confidence: 'medium',
+          reason: 'Low confidence match. Please verify.',
+        }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review').closest('[title]');
+      expect(badge).toBeTruthy();
+      expect(badge!.getAttribute('title')).toBe('Low confidence match. Please verify.');
+    });
+
+    it('AC6 — pre-existing duration-mismatch tooltip behavior unchanged', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({
+          confidence: 'medium',
+          reason: 'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+        }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review').closest('[title]');
+      expect(badge!.getAttribute('title')).toBe(
+        'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
+      );
+    });
+
+    it('AC7 — empty-string reason is treated as no reason (no tooltip on Review badge)', () => {
+      const row = makeRow({
+        matchResult: makeMatchResult({ confidence: 'medium', reason: '' }),
+      });
+      render(<ImportCard {...defaultProps} row={row} />);
+      const badge = screen.getByText('Review');
+      const titleEl = badge.closest('[title]');
+      expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
+    });
+
     it('medium confidence with reason → badge is keyboard-focusable and exposes reason on focus', () => {
       const row = makeRow({
         matchResult: makeMatchResult({
