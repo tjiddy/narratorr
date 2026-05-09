@@ -87,7 +87,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
         </SelectWithChevron>
         {selectedType === 'blackhole'
           ? <BlackholeFields register={register} errors={errors} isEdit={isEdit} />
-          : <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} inModal={inModal} />
+          : <DownloadClientFields key={selectedType} selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} inModal={inModal} />
         }
       </div>
       {!isImplemented && <p className="text-sm text-amber-500">Adapter not yet implemented. Config will be saved for when the adapter is available.</p>}

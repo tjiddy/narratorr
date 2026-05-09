@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useFetchCategories } from './useFetchCategories';
-import type { DownloadClientType } from '../../../shared/download-client-registry.js';
 
 vi.mock('@/lib/api/download-clients', () => ({
   downloadClientsApi: {
@@ -20,9 +19,8 @@ const mockGetValues = vi.fn().mockReturnValue({
   settings: { host: 'localhost', port: 8080 },
 });
 
-function makeOptions(overrides: { selectedType?: DownloadClientType; clientId?: number; isDirty?: boolean } = {}) {
+function makeOptions(overrides: { clientId?: number; isDirty?: boolean } = {}) {
   return {
-    selectedType: overrides.selectedType ?? 'qbittorrent',
     ...(overrides.clientId !== undefined && { clientId: overrides.clientId }),
     ...(overrides.isDirty !== undefined && { isDirty: overrides.isDirty }),
     getValues: mockGetValues as never,
@@ -34,152 +32,110 @@ describe('useFetchCategories', () => {
     vi.clearAllMocks();
   });
 
-  describe('selectedType reset effect', () => {
-    it('clears categories array when selectedType changes', async () => {
-      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-        categories: ['audiobooks', 'movies'],
-      });
-
-      const { result, rerender } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions() },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      expect(result.current.categories).toEqual(['audiobooks', 'movies']);
-
-      rerender(makeOptions({ selectedType: 'sabnzbd' }));
-
-      expect(result.current.categories).toEqual([]);
+  it('successful fetch in create-mode (no clientId) routes to getClientCategoriesFromConfig and exposes categories + showDropdown', async () => {
+    (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      categories: ['audiobooks', 'movies'],
     });
 
-    it('clears error to null when selectedType changes', async () => {
-      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-        categories: [],
-        error: 'Connection failed',
-      });
+    const { result } = renderHook((props) => useFetchCategories(props), { initialProps: makeOptions() });
 
-      const { result, rerender } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions() },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      expect(result.current.error).toBe('Connection failed');
-
-      rerender(makeOptions({ selectedType: 'sabnzbd' }));
-
-      expect(result.current.error).toBeNull();
+    await act(async () => {
+      await result.current.fetchCategories();
     });
 
-    it('hides dropdown when selectedType changes', async () => {
-      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-        categories: ['audiobooks'],
-      });
+    expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalledTimes(1);
+    expect(downloadClientsApi.getClientCategories).not.toHaveBeenCalled();
+    expect(result.current.categories).toEqual(['audiobooks', 'movies']);
+    expect(result.current.showDropdown).toBe(true);
+    expect(result.current.error).toBeNull();
+  });
 
-      const { result, rerender } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions() },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      expect(result.current.showDropdown).toBe(true);
-
-      rerender(makeOptions({ selectedType: 'sabnzbd' }));
-
-      expect(result.current.showDropdown).toBe(false);
+  it('successful fetch in clean edit-mode (clientId set, isDirty=false) routes to getClientCategories(clientId)', async () => {
+    (downloadClientsApi.getClientCategories as ReturnType<typeof vi.fn>).mockResolvedValue({
+      categories: ['tv', 'movies'],
     });
 
-    it('sets error, clears categories, and hides dropdown when fetch rejects', async () => {
-      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('Network error'),
-      );
+    const { result } = renderHook(
+      (props) => useFetchCategories(props),
+      { initialProps: makeOptions({ clientId: 5, isDirty: false }) },
+    );
 
-      const { result } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions() },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      expect(result.current.error).toBe('Network error');
-      expect(result.current.categories).toEqual([]);
-      expect(result.current.showDropdown).toBe(false);
-      expect(result.current.fetching).toBe(false);
+    await act(async () => {
+      await result.current.fetchCategories();
     });
 
-    // #844 — id forwarding for sentinel resolution
-    it('forwards clientId as id when editing an existing client (isDirty=true)', async () => {
-      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-        categories: ['audiobooks'],
-      });
+    expect(downloadClientsApi.getClientCategories).toHaveBeenCalledWith(5);
+    expect(downloadClientsApi.getClientCategoriesFromConfig).not.toHaveBeenCalled();
+    expect(result.current.categories).toEqual(['tv', 'movies']);
+    expect(result.current.showDropdown).toBe(true);
+  });
 
-      const { result } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions({ clientId: 7, isDirty: true }) },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 7 }),
-      );
+  // #844 — id forwarding for sentinel resolution
+  it('forwards clientId as id when editing a dirty client (isDirty=true)', async () => {
+    (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      categories: ['audiobooks'],
     });
 
-    it('omits id on the create-mode path (no clientId)', async () => {
-      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
-        categories: ['audiobooks'],
-      });
+    const { result } = renderHook(
+      (props) => useFetchCategories(props),
+      { initialProps: makeOptions({ clientId: 7, isDirty: true }) },
+    );
 
-      const { result } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions() },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      const call = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-      expect(call).not.toHaveProperty('id');
+    await act(async () => {
+      await result.current.fetchCategories();
     });
 
-    it('clears previously fetched categories when selectedType changes', async () => {
-      (downloadClientsApi.getClientCategories as ReturnType<typeof vi.fn>).mockResolvedValue({
-        categories: ['tv', 'movies', 'audiobooks'],
-      });
+    expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+    );
+  });
 
-      const { result, rerender } = renderHook(
-        (props) => useFetchCategories(props),
-        { initialProps: makeOptions({ clientId: 5, isDirty: false }) },
-      );
-
-      await act(async () => {
-        await result.current.fetchCategories();
-      });
-
-      expect(result.current.categories).toEqual(['tv', 'movies', 'audiobooks']);
-      expect(result.current.showDropdown).toBe(true);
-      expect(result.current.error).toBeNull();
-
-      rerender(makeOptions({ selectedType: 'transmission', clientId: 5, isDirty: false }));
-
-      expect(result.current.categories).toEqual([]);
-      expect(result.current.showDropdown).toBe(false);
-      expect(result.current.error).toBeNull();
+  it('omits id on the create-mode path (no clientId)', async () => {
+    (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      categories: ['audiobooks'],
     });
+
+    const { result } = renderHook((props) => useFetchCategories(props), { initialProps: makeOptions() });
+
+    await act(async () => {
+      await result.current.fetchCategories();
+    });
+
+    const call = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(call).not.toHaveProperty('id');
+  });
+
+  it('sets error, clears categories, and hides dropdown when fetch returns an error', async () => {
+    (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+      categories: [],
+      error: 'Connection failed',
+    });
+
+    const { result } = renderHook((props) => useFetchCategories(props), { initialProps: makeOptions() });
+
+    await act(async () => {
+      await result.current.fetchCategories();
+    });
+
+    expect(result.current.error).toBe('Connection failed');
+    expect(result.current.categories).toEqual([]);
+    expect(result.current.showDropdown).toBe(false);
+  });
+
+  it('sets error, clears categories, and hides dropdown when fetch rejects (getErrorMessage path)', async () => {
+    (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Network error'),
+    );
+
+    const { result } = renderHook((props) => useFetchCategories(props), { initialProps: makeOptions() });
+
+    await act(async () => {
+      await result.current.fetchCategories();
+    });
+
+    expect(result.current.error).toBe('Network error');
+    expect(result.current.categories).toEqual([]);
+    expect(result.current.showDropdown).toBe(false);
+    expect(result.current.fetching).toBe(false);
   });
 });

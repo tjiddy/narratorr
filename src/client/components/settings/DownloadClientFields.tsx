@@ -26,7 +26,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
   const supportsCategories = meta.supportsCategories;
   const categoryInputRef = useRef<HTMLDivElement>(null);
   const { fetching, categories, error: categoryError, showDropdown, setShowDropdown, fetchCategories } =
-    useFetchCategories({ selectedType, clientId, isDirty, getValues });
+    useFetchCategories({ clientId, isDirty, getValues });
 
   function handleSelectCategory(category: string) {
     setValue('settings.category', category, { shouldDirty: true });

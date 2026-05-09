@@ -1,33 +1,20 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import type { UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
-import type { DownloadClientType } from '../../../shared/download-client-registry.js';
 import { downloadClientsApi, type CategoriesResult } from '@/lib/api/download-clients';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 interface UseFetchCategoriesOptions {
-  selectedType: DownloadClientType;
   clientId?: number | undefined;
   isDirty?: boolean | undefined;
   getValues: UseFormGetValues<CreateDownloadClientFormData>;
 }
 
-export function useFetchCategories({ selectedType, clientId, isDirty, getValues }: UseFetchCategoriesOptions) {
+export function useFetchCategories({ clientId, isDirty, getValues }: UseFetchCategoriesOptions) {
   const [fetching, setFetching] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
-
-  // Clear state when type changes. The React 19 idiom would be a render-time
-  // reset or key-based remount on the consumer; tracking that as follow-up
-  // debt rather than refactoring inside the ESLint 10 bump PR.
-  useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setCategories([]);
-    setError(null);
-    setShowDropdown(false);
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [selectedType]);
 
   const fetchCategories = useCallback(async () => {
     setFetching(true);
