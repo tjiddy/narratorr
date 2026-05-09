@@ -34,6 +34,12 @@ const MERGE_MARKER_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part
 const MERGE_MARKER_GLOBAL_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*\d+/gi;
 const NUMERIC_ONLY_RE = /^\d+$/;
 const ALPHA_COUNT_RE = /[A-Za-z]/g;
+/**
+ * Leading-numeric-prefix with mandatory separator boundary (#1051). The
+ * `[-_.\s]+` requirement after the digits prevents bare digit-prefixed titles
+ * like "1Q84" or "01Heir" from being treated as chapters of "Q84"/"Heir".
+ */
+const NUMERIC_PREFIX_RE = /^\d+[-_.\s]+/;
 
 export interface ClassifierFile {
   path: string;
@@ -160,6 +166,21 @@ export function hasStrongChapterSetEvidence(files: ClassifierFile[]): boolean {
   const lowered = stems.map(s => normalizeStemForComparison(s).toLowerCase().trim());
   const distinct = new Set(lowered).size;
   if (distinct === 1 && lowered[0]!.length > 0) return true;
+
+  // Leading-numeric-prefix shared title (#1051): catches real-world torrent
+  // naming like "01 Heir to the Empire.mp3" that the normalizer's `[-_.]`-only
+  // separator strip misses. The mandatory separator boundary after the digits
+  // (whitespace OR `-_.`) prevents bare digit-prefixed titles like "1Q84" /
+  // "01Heir" from being collapsed where leading digits are part of the title.
+  if (stems.every(s => NUMERIC_PREFIX_RE.test(s))) {
+    const titlePortions = stems.map(
+      s => s.replace(NUMERIC_PREFIX_RE, '').toLowerCase().trim(),
+    );
+    const distinctTitles = new Set(titlePortions).size;
+    if (distinctTitles === 1 && titlePortions[0]!.length > 0) {
+      return true;
+    }
+  }
 
   return false;
 }

@@ -585,4 +585,98 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
       { path: '/lib/Book/single.mp3', size: LARGE },
     ])).toBe(false);
   });
+
+  // The original #1031 test fixture used synthetic `Chapter NN.mp3` filenames
+  // which match MERGE_MARKER_RE and pass via the marker-set rule — masking the
+  // fact that real-world torrent naming overwhelmingly uses
+  // `<digits><space><title>` (no "Chapter" keyword), which the marker rule and
+  // the normalizer's `[-_.]`-only separator strip both miss. The rule below
+  // pins the realistic shape so this regression class doesn't slip through
+  // again. NEW chapter-encoded fixtures MUST use real-world torrent naming
+  // patterns, not synthetic marker-keyword filenames.
+  describe('leading-numeric-prefix shared-title rule (#1051)', () => {
+    it('AC1: real-world Heir filenames "01 Heir to the Empire" through "28 Heir to the Empire" → true', () => {
+      const stems = Array.from({ length: 28 }, (_, i) => ({
+        path: `/lib/Book/${String(i + 1).padStart(2, '0')} Heir to the Empire.mp3`,
+        size: SHORT_STORY,
+      }));
+      expect(hasStrongChapterSetEvidence(stems)).toBe(true);
+    });
+
+    it('AC2: dash separator "01 - Heir to the Empire" → true', () => {
+      const stems = Array.from({ length: 5 }, (_, i) => ({
+        path: `/lib/Book/${String(i + 1).padStart(2, '0')} - Heir to the Empire.mp3`,
+        size: SHORT_STORY,
+      }));
+      expect(hasStrongChapterSetEvidence(stems)).toBe(true);
+    });
+
+    it('AC3: dot separator "01.Heir to the Empire" → true', () => {
+      const stems = Array.from({ length: 5 }, (_, i) => ({
+        path: `/lib/Book/${String(i + 1).padStart(2, '0')}.Heir to the Empire.mp3`,
+        size: SHORT_STORY,
+      }));
+      expect(hasStrongChapterSetEvidence(stems)).toBe(true);
+    });
+
+    it('AC4: distinct title portions reject merge', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/01 Heir to the Empire.mp3', size: LARGE },
+        { path: '/lib/Book/01 The Restaurant At The End Of The Universe.mp3', size: LARGE },
+      ])).toBe(false);
+    });
+
+    it('AC5: mixed prefix participation rejects (one stem lacks the leading-numeric prefix)', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/01 Heir to the Empire.mp3', size: SHORT_STORY },
+        { path: '/lib/Book/Heir to the Empire Bonus.mp3', size: SHORT_STORY },
+        { path: '/lib/Book/02 Heir to the Empire.mp3', size: SHORT_STORY },
+      ])).toBe(false);
+    });
+
+    it('AC6: numeric-only stems remain mergeable via the existing numeric-only rule', () => {
+      // Empty post-prefix titles (e.g. "01", "02") are rejected by the new
+      // rule's non-empty-title guard, so this case continues to merge through
+      // the existing NUMERIC_ONLY_RE path regardless of rule evaluation order.
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/01.mp3', size: SHORT_STORY },
+        { path: '/lib/Book/02.mp3', size: SHORT_STORY },
+        { path: '/lib/Book/03.mp3', size: SHORT_STORY },
+      ])).toBe(true);
+    });
+
+    it('AC13: bare digit-prefixed titles without separator boundary reject ("1Q84"/"2Q84")', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/1Q84.mp3', size: LARGE },
+        { path: '/lib/Book/2Q84.mp3', size: LARGE },
+      ])).toBe(false);
+    });
+
+    it('AC13: bare digit-prefixed titles without separator boundary reject ("01Heir"/"02Heir")', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/01Heir.mp3', size: LARGE },
+        { path: '/lib/Book/02Heir.mp3', size: LARGE },
+      ])).toBe(false);
+    });
+
+    it('AC10 (adversarial counter-test): "01 Book A"/"01 Book B"/"01 Book C" → false', () => {
+      // Each is "track 1" of a different book, not chapters of one book.
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Pack/01 Book A.mp3', size: LARGE },
+        { path: '/lib/Pack/01 Book B.mp3', size: LARGE },
+        { path: '/lib/Pack/01 Book C.mp3', size: LARGE },
+      ])).toBe(false);
+    });
+
+    it('AC9: trailing-digits "Heir to the Empire NN" → true (existing distinct===1 rule)', () => {
+      // The existing normalizeStemForComparison strips trailing `\s+\d+\s*$`,
+      // so all stems collapse to "Heir to the Empire" and merge through the
+      // distinct === 1 rule. Pin the behavior so it doesn't regress.
+      const stems = Array.from({ length: 5 }, (_, i) => ({
+        path: `/lib/Book/Heir to the Empire ${String(i + 1).padStart(2, '0')}.mp3`,
+        size: SHORT_STORY,
+      }));
+      expect(hasStrongChapterSetEvidence(stems)).toBe(true);
+    });
+  });
 });
