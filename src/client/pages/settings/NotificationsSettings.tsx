@@ -18,6 +18,7 @@ export function NotificationsSettings() {
         testById: api.testNotifier,
         testByConfig: api.testNotifierConfig,
         entityName: 'Notifier',
+        injectEditingId: true,
       }}
       icon={<BellIcon className="w-5 h-5 text-primary" />}
       title="Notifications"

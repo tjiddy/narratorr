@@ -13,6 +13,14 @@ export interface CrudSettingsConfig<TItem extends { id: number; name: string }, 
   testById: (id: number) => Promise<TestResult>;
   testByConfig: (data: TFormData) => Promise<TestResult>;
   entityName: string;
+  /**
+   * Opt-in: when true, the editing entity id is merged into the testByConfig
+   * payload during edit-mode connection tests so the server can resolve sentinel
+   * placeholders for masked secret fields. Leave unset for adapters whose test
+   * endpoint does not accept an id (e.g. import lists, which test by saved id
+   * via a separate route).
+   */
+  injectEditingId?: boolean;
 }
 
 export function useCrudSettings<TItem extends { id: number; name: string }, TFormData>({
@@ -24,6 +32,7 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
   testById,
   testByConfig,
   entityName,
+  injectEditingId,
 }: CrudSettingsConfig<TItem, TFormData>) {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
@@ -34,6 +43,7 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
     testById,
     testByConfig,
     invalidateOnSuccess: queryKey as string[],
+    entityId: injectEditingId && editingId !== null ? editingId : undefined,
   });
 
   const { data: items = [], isLoading } = useQuery({ queryKey, queryFn });

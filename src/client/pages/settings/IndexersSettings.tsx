@@ -18,6 +18,7 @@ export function IndexersSettings() {
         testById: api.testIndexer,
         testByConfig: api.testIndexerConfig,
         entityName: 'Indexer',
+        injectEditingId: true,
       }}
       icon={<SearchIcon className="w-5 h-5 text-primary" />}
       title="Indexers"

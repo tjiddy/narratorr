@@ -18,6 +18,7 @@ export function DownloadClientsSettings() {
         testById: api.testClient,
         testByConfig: api.testClientConfig,
         entityName: 'Download client',
+        injectEditingId: true,
       }}
       icon={<ServerIcon className="w-5 h-5 text-primary" />}
       title="Download Clients"

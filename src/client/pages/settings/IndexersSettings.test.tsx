@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
@@ -243,6 +243,55 @@ describe('IndexersSettings', () => {
 
     await waitFor(() => {
       expect(api.testIndexer).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('#1057 — end-to-end testByConfig payload (centralized id injection)', () => {
+    function modalContainer(): HTMLElement {
+      const backdrop = screen.getByTestId('modal-backdrop');
+      return backdrop.closest('.fixed.inset-0') as HTMLElement;
+    }
+
+    it('edit-mode Test routes through useCrudSettings → useConnectionTest and posts id to testIndexerConfig', async () => {
+      const user = userEvent.setup();
+      (api.testIndexerConfig as Mock).mockResolvedValue({ success: true, message: 'OK' });
+      renderWithProviders(<IndexersSettings />);
+      await waitForListLoad('My ABB');
+
+      // Open edit modal for indexer id 1
+      await user.click(screen.getByLabelText('Edit My ABB'));
+      await waitFor(() => {
+        expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+      });
+
+      // Click the form-test button inside the modal (not the in-list view-mode test)
+      await user.click(within(modalContainer()).getByRole('button', { name: /^test$/i }));
+
+      await waitFor(() => {
+        expect(api.testIndexerConfig).toHaveBeenCalled();
+      });
+      const payload = (api.testIndexerConfig as Mock).mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload).toMatchObject({ id: 1 });
+    });
+
+    it('create-mode Test posts no id key to testIndexerConfig (centralization preserves opt-out for create)', async () => {
+      const user = userEvent.setup();
+      (api.testIndexerConfig as Mock).mockResolvedValue({ success: true, message: 'OK' });
+      renderWithProviders(<IndexersSettings />);
+      await waitForListLoad('My ABB');
+
+      await user.click(screen.getByRole('button', { name: 'Add Indexer' }));
+      await user.type(screen.getByPlaceholderText('Newznab'), 'Brand New');
+      await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'https://x.example.com/api');
+      await user.type(screen.getByLabelText('API Key'), 'k');
+
+      await user.click(within(modalContainer()).getByRole('button', { name: /^test$/i }));
+
+      await waitFor(() => {
+        expect(api.testIndexerConfig).toHaveBeenCalled();
+      });
+      const payload = (api.testIndexerConfig as Mock).mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload).not.toHaveProperty('id');
     });
   });
 

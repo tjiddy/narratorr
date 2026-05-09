@@ -356,6 +356,70 @@ describe('useConnectionTest', () => {
     });
   });
 
+  describe('#1057 — entityId injection in handleFormTest', () => {
+    it('merges entityId into payload as { id } when option is provided', async () => {
+      testByConfig.mockResolvedValue({ success: true });
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({ testById, testByConfig, entityId: 42 }),
+      { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'cfg' });
+      });
+
+      expect(testByConfig).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }));
+      expect(testByConfig.mock.calls[0]![0]).toMatchObject({ name: 'cfg', id: 42 });
+    });
+
+    it('omits the id key entirely when entityId is not provided (no id: undefined)', async () => {
+      testByConfig.mockResolvedValue({ success: true });
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({ testById, testByConfig }),
+      { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'cfg' });
+      });
+
+      // Asserting via mock.calls + not.toHaveProperty — `expect.not.objectContaining({ id: expect.anything() })`
+      // matches `{ id: undefined }` because `expect.anything()` excludes undefined.
+      expect(testByConfig.mock.calls[0]![0]).not.toHaveProperty('id');
+    });
+
+    it('preserves toast and formTestResult plumbing when entityId is set (success path)', async () => {
+      testByConfig.mockResolvedValue({ success: true, warning: 'soft warn' });
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({ testById, testByConfig, entityId: 7 }),
+      { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'cfg' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: true, warning: 'soft warn' });
+      expect(toast.success).toHaveBeenCalledWith('Connection successful');
+      expect((toast as unknown as Record<string, ReturnType<typeof vi.fn>>).warning).toHaveBeenCalledWith('soft warn');
+    });
+
+    it('preserves toast and formTestResult plumbing when entityId is set (failure path)', async () => {
+      testByConfig.mockResolvedValue({ success: false, message: 'auth' });
+
+      const { result } = renderHook(() =>
+        useConnectionTest<{ name: string }>({ testById, testByConfig, entityId: 7 }),
+      { wrapper: createWrapper() });
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'cfg' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'auth' });
+      expect(toast.error).toHaveBeenCalledWith('auth');
+    });
+  });
+
   describe('#372 — warning toast on success-with-warning', () => {
     it('shows success toast AND warning toast when result has success: true + warning', async () => {
       testById.mockResolvedValue({ success: true, warning: 'Account is ratio-locked' });

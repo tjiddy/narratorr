@@ -417,6 +417,141 @@ describe('grouped return shape (REACT-1 refactor)', () => {
   });
 });
 
+describe('#1057 — injectEditingId threading to useConnectionTest', () => {
+  const queryFn = vi.fn<() => Promise<TestItem[]>>();
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient = createQueryClient();
+    queryFn.mockResolvedValue([]);
+    vi.mocked(useConnectionTest).mockReturnValue({
+      testingId: null, testResult: null, testingForm: false, formTestResult: null,
+      handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
+    });
+  });
+
+  function renderWithOption(injectEditingId: boolean | undefined) {
+    return renderHook(
+      () => useCrudSettings<TestItem, TestFormData>({
+        queryKey: ['test-entities'], queryFn,
+        createFn: vi.fn(), updateFn: vi.fn(), deleteFn: vi.fn(),
+        testById: vi.fn(), testByConfig: vi.fn(), entityName: 'Widget',
+        ...(injectEditingId !== undefined && { injectEditingId }),
+      }),
+      { wrapper: createWrapper(queryClient) },
+    );
+  }
+
+  it('passes entityId to useConnectionTest when injectEditingId is true and editingId is set', () => {
+    const { result } = renderWithOption(true);
+    act(() => { result.current.actions.handleEdit(99); });
+
+    const lastCall = vi.mocked(useConnectionTest).mock.calls.at(-1)!;
+    expect(lastCall[0]).toMatchObject({ entityId: 99 });
+  });
+
+  it('passes entityId: undefined to useConnectionTest when injectEditingId is true but no edit is active', () => {
+    renderWithOption(true);
+    const lastCall = vi.mocked(useConnectionTest).mock.calls.at(-1)!;
+    expect(lastCall[0]).toMatchObject({ entityId: undefined });
+  });
+
+  it('passes entityId: undefined when injectEditingId is omitted, even while editing', () => {
+    const { result } = renderWithOption(undefined);
+    act(() => { result.current.actions.handleEdit(5); });
+
+    const lastCall = vi.mocked(useConnectionTest).mock.calls.at(-1)!;
+    expect(lastCall[0]).toMatchObject({ entityId: undefined });
+  });
+
+  it('passes entityId: undefined when injectEditingId is false, even while editing', () => {
+    const { result } = renderWithOption(false);
+    act(() => { result.current.actions.handleEdit(5); });
+
+    const lastCall = vi.mocked(useConnectionTest).mock.calls.at(-1)!;
+    expect(lastCall[0]).toMatchObject({ entityId: undefined });
+  });
+});
+
+describe('#1057 — testByConfig payload integration through real useConnectionTest', () => {
+  let queryClient: QueryClient;
+  let realUseConnectionTest: typeof useConnectionTest;
+  const testByConfig = vi.fn<(data: TestFormData) => Promise<TestResult>>();
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    queryClient = createQueryClient();
+    const actual = await vi.importActual('@/hooks/useConnectionTest') as { useConnectionTest: typeof useConnectionTest };
+    realUseConnectionTest = actual.useConnectionTest;
+    vi.mocked(useConnectionTest).mockImplementation(realUseConnectionTest);
+    testByConfig.mockResolvedValue({ success: true });
+  });
+
+  afterEach(() => {
+    vi.mocked(useConnectionTest).mockReturnValue({
+      testingId: null, testResult: null, testingForm: false, formTestResult: null,
+      handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
+    });
+  });
+
+  function renderWithOption(injectEditingId: boolean | undefined) {
+    return renderHook(
+      () => useCrudSettings<TestItem, TestFormData>({
+        queryKey: ['test-entities'],
+        queryFn: vi.fn<() => Promise<TestItem[]>>().mockResolvedValue([]),
+        createFn: vi.fn(), updateFn: vi.fn(), deleteFn: vi.fn(),
+        testById: vi.fn(), testByConfig, entityName: 'Widget',
+        ...(injectEditingId !== undefined && { injectEditingId }),
+      }),
+      { wrapper: createWrapper(queryClient) },
+    );
+  }
+
+  it('edit-mode test merges editingId into testByConfig payload when injectEditingId is true', async () => {
+    const hook = renderWithOption(true);
+    act(() => { hook.result.current.actions.handleEdit(123); });
+
+    await act(async () => {
+      await hook.result.current.tests.handleFormTest({ name: 'n', url: 'u' });
+    });
+
+    expect(testByConfig).toHaveBeenCalledWith(expect.objectContaining({ id: 123 }));
+    expect(testByConfig.mock.calls[0]![0]).toMatchObject({ name: 'n', url: 'u', id: 123 });
+  });
+
+  it('create-mode test omits id key entirely when injectEditingId is true (no edit active)', async () => {
+    const hook = renderWithOption(true);
+
+    await act(async () => {
+      await hook.result.current.tests.handleFormTest({ name: 'n', url: 'u' });
+    });
+
+    expect(testByConfig.mock.calls[0]![0]).not.toHaveProperty('id');
+  });
+
+  it('omits id key entirely when injectEditingId is omitted (import-list opt-out path) — even in edit', async () => {
+    const hook = renderWithOption(undefined);
+    act(() => { hook.result.current.actions.handleEdit(7); });
+
+    await act(async () => {
+      await hook.result.current.tests.handleFormTest({ name: 'n', url: 'u' });
+    });
+
+    expect(testByConfig.mock.calls[0]![0]).not.toHaveProperty('id');
+  });
+
+  it('omits id key entirely when injectEditingId is omitted in create mode', async () => {
+    const hook = renderWithOption(undefined);
+
+    await act(async () => {
+      await hook.result.current.tests.handleFormTest({ name: 'n', url: 'u' });
+    });
+
+    expect(testByConfig.mock.calls[0]![0]).not.toHaveProperty('id');
+  });
+});
+
 describe('formTestResult real state transitions (#610 regression)', () => {
   let queryClient: QueryClient;
   const testByConfig = vi.fn<(data: TestFormData) => Promise<TestResult>>();

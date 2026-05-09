@@ -226,14 +226,7 @@ export function IndexerCard(props: IndexerCardProps) {
         isEdit={isEdit}
         isPending={isPending}
         testingForm={testingForm}
-        onFormTest={handleSubmit((data) => {
-          // In edit mode, include the indexer id for sentinel resolution
-          if (indexer?.id) {
-            onFormTest({ ...data, id: indexer.id } as CreateIndexerFormData);
-          } else {
-            onFormTest(data);
-          }
-        })}
+        onFormTest={handleSubmit((data) => onFormTest(data))}
         onCancel={onCancel}
         entityLabel="Indexer"
         testDisabled={!isImplemented}

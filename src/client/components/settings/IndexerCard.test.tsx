@@ -881,7 +881,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
 
-    it('#339 edit-mode Test button includes indexer id in onFormTest payload', async () => {
+    it('#1057 edit-mode Test button calls onFormTest with raw form data (no id) — hook injects id downstream', async () => {
       const onFormTest = vi.fn();
       const user = userEvent.setup();
       const mamIndexer: Indexer = createMockIndexer({
@@ -905,7 +905,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       await waitFor(() => {
         expect(onFormTest).toHaveBeenCalled();
       });
-      expect(onFormTest.mock.calls[0]![0]).toHaveProperty('id', 21);
+      expect(onFormTest.mock.calls[0]![0]).not.toHaveProperty('id');
     });
 
     it('renders language hint for MAM indexer with empty searchLanguages', () => {
