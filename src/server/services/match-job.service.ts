@@ -43,6 +43,7 @@ const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
 const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
+const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
 
 /**
  * Cap a computed Confidence at the planner-attempt's `maxConfidence`. Stripped
@@ -322,18 +323,23 @@ class MatchJob {
     const top = scored[0]!;
 
     if (scored.length === 1) {
+      const capped = capConfidence('high', attempt.maxConfidence);
       return {
         path: book.path,
-        confidence: capConfidence('high', attempt.maxConfidence),
+        confidence: capped,
         bestMatch: top.meta,
         alternatives: [],
+        ...(capped === 'medium' && { reason: CAPPED_ATTEMPT_REASON }),
       };
     }
 
-    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+    const { confidence: rawConfidence, reason: durationReason } = resolveConfidenceFromDuration(scored, duration);
+    const capped = capConfidence(rawConfidence, attempt.maxConfidence);
+    // Duration-derived reason wins (more specific than the cap fallback).
+    const reason = durationReason ?? (capped === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
     return {
       path: book.path,
-      confidence: capConfidence(confidence, attempt.maxConfidence),
+      confidence: capped,
       bestMatch: top.meta,
       alternatives: scored.slice(1).map(s => s.meta),
       ...(reason !== undefined && { reason }),
