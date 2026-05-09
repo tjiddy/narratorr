@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { parseSseFrames, fetchSseEvents } from './sse-helpers.js';
 
 describe('parseSseFrames', () => {
@@ -91,7 +91,7 @@ describe('fetchSseEvents', () => {
     }
   });
 
-  function buildSseApp(write: (reply: import('fastify').FastifyReply) => void): FastifyInstance {
+  function buildSseApp(write: (reply: FastifyReply) => void): FastifyInstance {
     const instance = Fastify({ logger: false });
     instance.get('/sse', async (_req, reply) => {
       reply.raw.writeHead(200, { 'Content-Type': 'text/event-stream' });
