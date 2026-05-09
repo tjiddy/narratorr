@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useId } from 'react';
 import { toast } from 'sonner';
 import { resolveUrl } from '@/lib/url-utils';
 import { PlayIcon, PauseIcon } from '@/components/icons';
@@ -10,6 +10,14 @@ export type AudioPreviewSource =
 interface AudioPreviewProps {
   source: AudioPreviewSource;
   size?: 'default' | 'compact';
+}
+
+const activePreviews = new Map<string, () => void>();
+
+function pauseOtherPreviews(activeId: string) {
+  for (const [id, pause] of activePreviews) {
+    if (id !== activeId) pause();
+  }
 }
 
 function resolveSourceUrl(source: AudioPreviewSource): { canPreview: boolean; url: string | undefined } {
@@ -24,6 +32,7 @@ function resolveSourceUrl(source: AudioPreviewSource): { canPreview: boolean; ur
 export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const previewId = useId();
 
   const { canPreview, url } = resolveSourceUrl(source);
 
@@ -36,7 +45,10 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
     setIsPlaying(false);
   }, [errorMessage]);
 
-  const handlePlay = useCallback(() => setIsPlaying(true), []);
+  const handlePlay = useCallback(() => {
+    pauseOtherPreviews(previewId);
+    setIsPlaying(true);
+  }, [previewId]);
   const handlePause = useCallback(() => setIsPlaying(false), []);
 
   useEffect(() => {
@@ -47,7 +59,9 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
     audio.addEventListener('ended', handlePause);
+    activePreviews.set(previewId, () => audio.pause());
     return () => {
+      activePreviews.delete(previewId);
       audio.removeEventListener('error', handleError);
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
@@ -55,7 +69,7 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
       audio.pause();
       audio.src = '';
     };
-  }, [handleError, handlePlay, handlePause]);
+  }, [previewId, handleError, handlePlay, handlePause]);
 
   if (!canPreview) return null;
 

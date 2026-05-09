@@ -154,6 +154,136 @@ describe('AudioPreview — book source (#320)', () => {
   });
 });
 
+describe('AudioPreview — single-active coordination (#1059)', () => {
+  it('starting a second preview pauses the currently playing preview', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />
+        <AudioPreview source={{ kind: 'book', bookId: 2, enabled: true }} />
+      </>,
+    );
+
+    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
+    expect(playButtons).toHaveLength(2);
+
+    await user.click(playButtons[0]);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+
+    const remainingPlay = screen.getByRole('button', { name: /play preview/i });
+    const pauseCallsBefore = mockPause.mock.calls.length;
+    await user.click(remainingPlay);
+
+    expect(mockPause.mock.calls.length).toBeGreaterThan(pauseCallsBefore);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+  });
+
+  it('clicking the same instance pause→play does not get re-paused by self-broadcast', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /pause preview/i }));
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+  });
+
+  it('a disabled (renders null) sibling does not break coordination', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />
+        <AudioPreview source={{ kind: 'book', bookId: 2, enabled: true }} />
+        <AudioPreview source={{ kind: 'url', previewUrl: undefined, enabled: false }} />
+      </>,
+    );
+
+    expect(document.querySelectorAll('audio')).toHaveLength(2);
+
+    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(playButtons[0]);
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+  });
+
+  it('error on the playing instance does not block another instance from playing', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />
+        <AudioPreview source={{ kind: 'book', bookId: 2, enabled: true }} />
+      </>,
+    );
+
+    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(playButtons[0]);
+
+    const audios = document.querySelectorAll('audio');
+    const playingAudio = Array.from(audios).find((el) => !el.paused)!;
+    expect(playingAudio).toBeDefined();
+    act(() => {
+      playingAudio.dispatchEvent(new Event('error'));
+    });
+
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(2);
+
+    const remainingPlay = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(remainingPlay[1]);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+  });
+
+  it('compact-size siblings coordinate the same way as default-size', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/a', enabled: true }} size="compact" />
+        <AudioPreview source={{ kind: 'url', previewUrl: '/api/import/preview/b', enabled: true }} size="compact" />
+      </>,
+    );
+
+    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(playButtons[0]);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+  });
+
+  it('unmounting the playing instance clears registry — a later-mounted instance can play normally', async () => {
+    const user = userEvent.setup();
+
+    function Fixture({ showFirst, showSecond }: { showFirst: boolean; showSecond: boolean }) {
+      return (
+        <>
+          {showFirst ? <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} /> : null}
+          {showSecond ? <AudioPreview source={{ kind: 'book', bookId: 2, enabled: true }} /> : null}
+        </>
+      );
+    }
+
+    const { rerender } = renderWithProviders(<Fixture showFirst showSecond={false} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+
+    const firstAudio = document.querySelector('audio');
+    rerender(<Fixture showFirst={false} showSecond />);
+
+    expect(firstAudio?.src ?? '').not.toContain('/api/books/1/preview');
+    expect(screen.queryByRole('button', { name: /pause preview/i })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+  });
+});
+
 describe('AudioPreview — url source (#1017)', () => {
   it('renders when previewUrl is set and enabled', () => {
     renderWithProviders(
