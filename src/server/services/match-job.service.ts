@@ -56,6 +56,14 @@ export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence
   return c;
 }
 
+// Cap-driven downgrades from a planner attempt need a user-facing tooltip
+// reason; without one the amber Review pill renders with no explanation (#1052).
+function applyAttemptCap(raw: Confidence, cap: 'high' | 'medium', durationReason: string | undefined): { confidence: Confidence; reason?: string } {
+  const confidence = capConfidence(raw, cap);
+  const reason = durationReason ?? (confidence === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
+  return reason !== undefined ? { confidence, reason } : { confidence };
+}
+
 export class MatchJobService {
   private jobs = new Map<string, MatchJob>();
 
@@ -323,27 +331,11 @@ class MatchJob {
     const top = scored[0]!;
 
     if (scored.length === 1) {
-      const capped = capConfidence('high', attempt.maxConfidence);
-      return {
-        path: book.path,
-        confidence: capped,
-        bestMatch: top.meta,
-        alternatives: [],
-        ...(capped === 'medium' && { reason: CAPPED_ATTEMPT_REASON }),
-      };
+      return { path: book.path, ...applyAttemptCap('high', attempt.maxConfidence, undefined), bestMatch: top.meta, alternatives: [] };
     }
 
-    const { confidence: rawConfidence, reason: durationReason } = resolveConfidenceFromDuration(scored, duration);
-    const capped = capConfidence(rawConfidence, attempt.maxConfidence);
-    // Duration-derived reason wins (more specific than the cap fallback).
-    const reason = durationReason ?? (capped === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
-    return {
-      path: book.path,
-      confidence: capped,
-      bestMatch: top.meta,
-      alternatives: scored.slice(1).map(s => s.meta),
-      ...(reason !== undefined && { reason }),
-    };
+    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+    return { path: book.path, ...applyAttemptCap(confidence, attempt.maxConfidence, reason), bestMatch: top.meta, alternatives: scored.slice(1).map(s => s.meta) };
   }
 
   /**
