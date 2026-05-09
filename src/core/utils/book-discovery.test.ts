@@ -937,16 +937,18 @@ describe('discoverBooks', () => {
     });
 
     describe('mixed-content classifier merge + bonus-content review flag (#1031, #1051)', () => {
-      // CHAPTER-ENCODED FIXTURES MUST USE REAL-WORLD TORRENT NAMING PATTERNS,
-      // NOT SYNTHETIC MARKER-KEYWORD FILENAMES (#1051).
-      //
-      // The original #1031 fixture used `Chapter NN.mp3`, which matches
-      // MERGE_MARKER_RE and silently passed via the marker-set rule — masking
+      // The Heir fixture (`heirChapters()` below) uses real-world torrent
+      // filenames `NN Heir to the Empire.mp3`, not synthetic `Chapter NN.mp3`.
+      // The original #1031 fixture used the synthetic shape, which silently
+      // matched MERGE_MARKER_RE and passed via the marker-set rule — masking
       // the fact that real-world torrents overwhelmingly use
-      // `<digits><space><title>` filenames (no "Chapter" keyword) that the
-      // marker rule and the normalizer's `[-_.]`-only separator strip both
-      // miss. New fixtures for chapter-encoded books MUST mirror real-world
-      // torrent filename conventions (e.g. `01 Heir to the Empire.mp3`).
+      // `<digits><space><title>` (no "Chapter" keyword), which neither the
+      // marker rule nor the normalizer's `[-_.]`-only separator strip catch.
+      // When a NEW fixture is meant to REPLICATE the Heir bug shape (i.e.
+      // exercise `hasStrongChapterSetEvidence` through the mixed-content
+      // branch), it MUST mirror real-world filename conventions; synthetic
+      // marker-keyword fixtures are only appropriate when the test
+      // specifically targets the leaf-classifier marker path.
       const SMALL_CHAPTER = 30 * 1024 * 1024;
       const HEIR_PARENT = '/audiobooks/Heir to the Empire';
 
