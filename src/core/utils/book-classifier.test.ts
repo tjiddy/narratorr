@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyLeafFolder, type ClassifierFile } from './book-classifier.js';
+import { classifyLeafFolder, hasStrongChapterSetEvidence, type ClassifierFile } from './book-classifier.js';
 import { BYTES_PER_MB } from '../../shared/constants.js';
 
 const LARGE = 300 * BYTES_PER_MB;
@@ -366,6 +366,56 @@ describe('classifyLeafFolder', () => {
     });
   });
 
+  describe('AC2: marker rule tightening (#1048)', () => {
+    // Pre-#1048 the marker check used `.some()`: a single stray "Part 1" /
+    // "Disc N" / "CD N" / "Chapter N" in any one stem caused the entire batch
+    // to merge. Real titles routinely contain these substrings ("Sixth Realm
+    // Part 1", "Resident Evil CD 2 Edition"). Post-#1048: ALL stems must
+    // match MERGE_MARKER_RE AND share a markerless prefix.
+
+    it('does NOT merge when only some stems carry markers', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Pack/Sixth Realm Part 1.mp3',
+        '/lib/Pack/Other Standalone Title.mp3',
+      ]));
+      expect(result.reason).not.toBe('chapter-disc-part-marker');
+    });
+
+    it('does NOT merge when all stems have markers but markerless prefixes differ', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Pack/Book A Part 1.mp3',
+        '/lib/Pack/Book B Part 2.mp3',
+      ]));
+      expect(result.reason).not.toBe('chapter-disc-part-marker');
+    });
+
+    it('merges when all stems share a non-empty markerless prefix (true multi-disc)', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Heir Disc 1.mp3',
+        '/lib/Book/Heir Disc 2.mp3',
+        '/lib/Book/Heir Disc 3.mp3',
+      ]));
+      expect(result.reason).toBe('chapter-disc-part-marker');
+    });
+
+    it('merges legitimate two-part book (audiobook Part 1, audiobook Part 2)', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/audiobook Part 1.mp3',
+        '/lib/Book/audiobook Part 2.mp3',
+      ]));
+      expect(result.reason).toBe('chapter-disc-part-marker');
+    });
+
+    it('merges when all stems are bare Chapter NN (markerless prefix is empty → "shared")', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Chapter 01.mp3',
+        '/lib/Book/Chapter 02.mp3',
+        '/lib/Book/Chapter 03.mp3',
+      ]));
+      expect(result.reason).toBe('chapter-disc-part-marker');
+    });
+  });
+
   describe('check-order regression', () => {
     it('duplicate-stem fires BEFORE title-content when both would match', () => {
       // Three files all normalizing to "Bk" — both guards (duplicate + title-content) would fire.
@@ -378,15 +428,17 @@ describe('classifyLeafFolder', () => {
       expect(result).toEqual({ decision: 'merge', reason: 'duplicate-normalized-stems' });
     });
 
-    it('marker guard fires BEFORE size guard when a chapter file is among small files', () => {
-      // 3 small (50 MB) files; one has a chapter marker. The size guard would
-      // also fire, but marker takes precedence per the documented order.
+    it('marker guard does NOT fire when only one stem has a marker (#1048 AC2)', () => {
+      // Pre-#1048: a single stray "Chapter NN" stem in a batch of distinct
+      // titles caused whole-batch merge via `.some()`. Post-#1048: marker rule
+      // requires ALL stems to match AND share a markerless prefix, so this
+      // batch falls through to the size guard.
       const result = classifyLeafFolder([
         { path: '/lib/Book/Chapter 01.mp3', size: SHORT_STORY },
         { path: '/lib/Book/Other Two.mp3', size: SHORT_STORY },
         { path: '/lib/Book/Other Three.mp3', size: SHORT_STORY },
       ]);
-      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+      expect(result).toEqual({ decision: 'merge', reason: 'files-too-small-for-full-books' });
     });
 
     it('count-cap fires before any other check', () => {
@@ -395,5 +447,142 @@ describe('classifyLeafFolder', () => {
       const result = classifyLeafFolder(paths.map(p => ({ path: p, size: SMALL })));
       expect(result).toEqual({ decision: 'merge', reason: 'count-exceeds-cap' });
     });
+  });
+});
+
+// `hasStrongChapterSetEvidence` is the predicate the mixed-content branch in
+// book-discovery uses INSTEAD of `classifyLeafFolder` (#1048). It must NOT
+// consult count caps, size heuristics, or any subset-duplicate signals — those
+// safety nets are merge-biased on purpose for leaf folders, but catastrophic
+// when applied to recursive subtree absorption.
+describe('hasStrongChapterSetEvidence (#1048)', () => {
+  describe('marker-set rule', () => {
+    it('returns true for bare Chapter NN files (markerless prefix empty → "shared")', () => {
+      const stems = Array.from({ length: 28 }, (_, i) => ({
+        path: `/lib/Book/Chapter ${String(i + 1).padStart(2, '0')}.mp3`,
+        size: SHORT_STORY,
+      }));
+      expect(hasStrongChapterSetEvidence(stems)).toBe(true);
+    });
+
+    it('returns true for shared-prefix multi-disc set', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/Mistborn Disc 1.mp3', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Book/Mistborn Disc 2.mp3', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Book/Mistborn Disc 3.mp3', size: 200 * BYTES_PER_MB },
+      ])).toBe(true);
+    });
+
+    it('returns false when only some stems carry markers', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Pack/Sixth Realm Part 1.mp3', size: SHORT_STORY },
+        { path: '/lib/Pack/Other Title.mp3', size: SHORT_STORY },
+      ])).toBe(false);
+    });
+
+    it('returns false when all stems have markers but prefixes differ', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Pack/Book A Part 1.mp3', size: SHORT_STORY },
+        { path: '/lib/Pack/Book B Part 2.mp3', size: SHORT_STORY },
+      ])).toBe(false);
+    });
+  });
+
+  describe('numeric-only rule', () => {
+    it('returns true for digits-only stems', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/01.mp3', size: SHORT_STORY },
+        { path: '/lib/Book/02.mp3', size: SHORT_STORY },
+        { path: '/lib/Book/03.mp3', size: SHORT_STORY },
+      ])).toBe(true);
+    });
+  });
+
+  describe('strict all-same-stem rule (vs. classifier subset duplicate)', () => {
+    it('returns true when EVERY normalized stem is identical and non-empty', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/Mistborn 01.mp3', size: LARGE },
+        { path: '/lib/Book/Mistborn 02.mp3', size: LARGE },
+        { path: '/lib/Book/Mistborn 03.mp3', size: LARGE },
+      ])).toBe(true);
+    });
+
+    it('returns false on subset duplicates (Book A Part 1/2 + 20 unrelated)', () => {
+      // Critical AC13 contrast: classifyLeafFolder's `distinct < count` would
+      // mis-fire here (the two "Book A Part" stems normalize identically, so
+      // distinct=21 < count=22). hasStrongChapterSetEvidence requires
+      // distinct === 1 — every stem must collapse to the same value.
+      const subsetDup: ClassifierFile[] = [
+        { path: '/lib/Pack/Book A Part 1.m4b', size: 200 * BYTES_PER_MB },
+        { path: '/lib/Pack/Book A Part 2.m4b', size: 200 * BYTES_PER_MB },
+      ];
+      const unrelated: ClassifierFile[] = Array.from({ length: 20 }, (_, i) => ({
+        path: `/lib/Pack/Standalone Title ${i}.m4b`,
+        size: 200 * BYTES_PER_MB,
+      }));
+      expect(hasStrongChapterSetEvidence([...subsetDup, ...unrelated])).toBe(false);
+    });
+
+    it('returns false on empty normalized stem (whitespace-only)', () => {
+      // `Bk1`/`Bk2`/`Bk3` would normalize to `Bk` each — distinct, so no merge.
+      // True empty-string collapse only happens in degenerate cases; pin that
+      // an empty-stem all-same scenario does NOT fire (the lower-bound guard).
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/Bk1.mp3', size: LARGE },
+        { path: '/lib/Book/Bk2.mp3', size: LARGE },
+        { path: '/lib/Book/Bk3.mp3', size: LARGE },
+      ])).toBe(false);
+    });
+  });
+
+  describe('safety-net checks NOT consulted', () => {
+    it('returns false on 37 distinct large no-marker stems (count cap NOT consulted)', () => {
+      // The pre-#1048 leaf-classifier path returned merge with reason
+      // count-exceeds-cap on count > 30. hasStrongChapterSetEvidence ignores
+      // the cap entirely — distinct titles with no markers stay false.
+      // Use genuinely distinct titles, not "Title NN" — `normalizeStemForComparison`
+      // strips trailing ` \d+` and would collapse the latter to one stem.
+      const titles = [
+        'Killing Floor', 'Die Trying', 'Tripwire', 'Running Blind', 'Echo Burning',
+        'Without Fail', 'Persuader', 'The Enemy', 'One Shot', 'The Hard Way',
+        'Bad Luck and Trouble', 'Nothing to Lose', 'Gone Tomorrow', 'Worth Dying For',
+        'The Affair', 'A Wanted Man', 'Never Go Back', 'Personal', 'Make Me',
+        'Night School', 'No Middle Name', 'The Midnight Line', 'Past Tense',
+        'Blue Moon', 'The Sentinel', 'Better Off Dead', 'No Plan B', 'The Secret',
+        'In Too Deep', 'Second Son', 'Deep Down', 'High Heat', 'Not a Drill',
+        'Small Wars', 'James Penney', 'Everyone Talks', 'The Christmas Scorpion',
+      ];
+      const stems = titles.map(t => ({ path: `/lib/Pack/${t}.m4b`, size: 200 * BYTES_PER_MB }));
+      expect(stems).toHaveLength(37);
+      expect(hasStrongChapterSetEvidence(stems)).toBe(false);
+    });
+
+    it('returns false on 5 small stories (size guard NOT consulted)', () => {
+      // The leaf classifier would merge these (files-too-small-for-full-books).
+      // The strict helper returns false because no positive evidence rule fires.
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Stories/Story One.mp3', size: SHORT_STORY },
+        { path: '/lib/Stories/Story Two.mp3', size: SHORT_STORY },
+        { path: '/lib/Stories/Story Three.mp3', size: SHORT_STORY },
+        { path: '/lib/Stories/Story Four.mp3', size: SHORT_STORY },
+        { path: '/lib/Stories/Story Five.mp3', size: SHORT_STORY },
+      ])).toBe(false);
+    });
+
+    it('returns false on Bk1/Bk2/Bk3 (title-content guard NOT consulted)', () => {
+      // The leaf classifier would merge these via normalized-stem-lacks-title-content.
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Book/Bk1.mp3', size: LARGE },
+        { path: '/lib/Book/Bk2.mp3', size: LARGE },
+        { path: '/lib/Book/Bk3.mp3', size: LARGE },
+      ])).toBe(false);
+    });
+  });
+
+  it('returns false for fewer than 2 files', () => {
+    expect(hasStrongChapterSetEvidence([])).toBe(false);
+    expect(hasStrongChapterSetEvidence([
+      { path: '/lib/Book/single.mp3', size: LARGE },
+    ])).toBe(false);
   });
 });

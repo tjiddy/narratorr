@@ -31,6 +31,7 @@ const MIN_TITLE_CHARS = 3;
  * Excluded: book|volume|vol — too ambiguous (real titles like "Mistborn Book 1").
  */
 const MERGE_MARKER_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*\d+/i;
+const MERGE_MARKER_GLOBAL_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*\d+/gi;
 const NUMERIC_ONLY_RE = /^\d+$/;
 const ALPHA_COUNT_RE = /[A-Za-z]/g;
 
@@ -52,7 +53,16 @@ export function classifyLeafFolder(files: ClassifierFile[]): ClassifierResult {
 
   const stems = files.map(f => basename(f.path, extname(f.path)));
 
-  if (stems.some(s => MERGE_MARKER_RE.test(s))) {
+  // Marker rule (#1048): require ALL stems to match MERGE_MARKER_RE AND share a
+  // markerless prefix. The pre-#1048 `.some()` rule false-fired on a single stray
+  // "Part 1" in a batch of distinct titles, which mattered catastrophically when
+  // the same classifier drove mixed-content absorption.
+  const markerStems = stems.filter(s => MERGE_MARKER_RE.test(s));
+  if (
+    markerStems.length >= 2
+    && markerStems.length === stems.length
+    && sameMarkerlessPrefix(markerStems)
+  ) {
     return { decision: 'merge', reason: 'chapter-disc-part-marker' };
   }
   if (count >= NUMERIC_ONLY_MIN_COUNT && stems.every(s => NUMERIC_ONLY_RE.test(s))) {
@@ -105,4 +115,51 @@ function normalizeStemForComparison(stem: string): string {
     .replace(/\s+\d+\s*$/, '')
     .replace(/\s*\([^)]*\)\s*$/, '')
     .trim();
+}
+
+/**
+ * Strip the rightmost MERGE_MARKER_RE occurrence from each stem and compare the
+ * leading prefixes. Empty markerless prefix (e.g., bare `Chapter NN` stems where
+ * the entire stem IS the marker) collapses to `""` — treated as "shared" so a
+ * folder of pure chapter stems still merges.
+ */
+function sameMarkerlessPrefix(stems: string[]): boolean {
+  const prefixes = new Set<string>();
+  for (const stem of stems) {
+    const matches = [...stem.matchAll(MERGE_MARKER_GLOBAL_RE)];
+    const last = matches[matches.length - 1];
+    const stripped = last ? stem.substring(0, last.index) : stem;
+    const normalized = stripped.replace(/[\s\W_]+/g, ' ').trim().toLowerCase();
+    prefixes.add(normalized);
+  }
+  return prefixes.size === 1;
+}
+
+/**
+ * Strict-evidence predicate (#1048) for the mixed-content branch in
+ * book-discovery. Returns true ONLY when the loose top-level audio set is
+ * UNAMBIGUOUSLY a chapter-encoded book — never on count caps, size heuristics,
+ * or subset-duplicate signals that are safe at leaf scope but catastrophic
+ * when they drive recursive subtree absorption.
+ *
+ * Differs from `classifyLeafFolder` in three ways: (1) skips the count cap and
+ * size guards entirely; (2) requires `distinct === 1` for the all-same-stem
+ * rule (vs. classifier's `distinct < count`, which fires on any subset
+ * duplicate); (3) consults no merge-biased default reasons.
+ */
+export function hasStrongChapterSetEvidence(files: ClassifierFile[]): boolean {
+  if (files.length < 2) return false;
+  const stems = files.map(f => basename(f.path, extname(f.path)));
+
+  if (stems.every(s => MERGE_MARKER_RE.test(s)) && sameMarkerlessPrefix(stems)) {
+    return true;
+  }
+
+  if (stems.every(s => NUMERIC_ONLY_RE.test(s))) return true;
+
+  const lowered = stems.map(s => normalizeStemForComparison(s).toLowerCase().trim());
+  const distinct = new Set(lowered).size;
+  if (distinct === 1 && lowered[0]!.length > 0) return true;
+
+  return false;
 }

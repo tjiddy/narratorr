@@ -786,11 +786,17 @@ describe('discoverBooks', () => {
   // ---- Mixed-content folders (loose audio + audio subfolders) ----
 
   describe('mixed-content folders', () => {
-    it('root with 2 loose audio files + audio subfolders, classifier returns merge → ONE parent-path entry absorbing all audio (#1031)', async () => {
-      // Two small loose top-level files (1KB, 2KB) — way below the 120MB
-      // threshold the classifier uses for split, so the three-condition
-      // size evidence fails and `classifyLeafFolder` returns merge. The
-      // child book is absorbed into the parent row.
+    it('root with 2 loose audio files + audio subfolders → 3 rows (no weak-evidence absorption per #1048)', async () => {
+      // Pre-#1048 the leaf classifier's size-guard merge bias drove mixed-content
+      // absorption: 2 distinct-titled loose files (1KB, 2KB) below the 120MB
+      // size threshold returned merge with reason `files-too-small-for-full-books`,
+      // and the entire subtree was absorbed into one parent row.
+      //
+      // Post-#1048 the mixed-content branch requires `hasStrongChapterSetEvidence`
+      // (strict marker-set / numeric-only / all-same-stem rules). Distinct stems
+      // `loose1`/`loose2` carry no markers and don't normalize to a single
+      // value, so absorption is rejected — loose files split per-file and the
+      // child folder is recursed.
       setupFs({
         '/audiobooks': [
           { name: 'loose1.m4b', isFile: true, size: 1000 },
@@ -802,12 +808,13 @@ describe('discoverBooks', () => {
       });
 
       const result = await discoverBooks('/audiobooks');
-      expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({
-        path: '/audiobooks',
-        audioFileCount: 3,
-        totalSize: 8000,
-      });
+      expect(result).toHaveLength(3);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual([
+        '/audiobooks/Author/Book1',
+        '/audiobooks/loose1.m4b',
+        '/audiobooks/loose2.m4b',
+      ]);
     });
 
     it('root with 3 distinct large named loose files + audio subfolder, classifier returns split → 3 per-file rows + 1 child row from recursion', async () => {
@@ -1131,6 +1138,162 @@ describe('discoverBooks', () => {
 
         const result = await discoverBooks('/audiobooks');
         expect(result).toHaveLength(1);
+        expect(result[0]!.reviewReason).toBe('Additional non-book content possibly merged');
+      });
+    });
+
+    // ----- Adversarial import-root fixtures (#1048) -----
+    //
+    // AC14: tests in this block model "user points Manual Import at a messy
+    // real download directory," not just intended book layouts. The shipped
+    // #1031 implementation passed end-to-end review without anyone flagging
+    // that the leaf classifier's merge bias would cause recursive subtree
+    // absorption when the same classifier drove the mixed-content branch.
+    // Future discovery changes MUST include at least one fixture of this
+    // shape — distinct loose top-level audio + many audio-bearing subdirs —
+    // and verify that absorption requires strict structural evidence, not
+    // count caps or size heuristics.
+    //
+    // The invariant: adding a chapter/disc/part token to one loose top-level
+    // file must not cause unrelated sibling files or child directories to be
+    // absorbed into a single discovery row.
+    describe('adversarial mixed-content import roots (#1048)', () => {
+      const LARGE_BOOK = 200 * 1024 * 1024;
+
+      // Pool of genuinely distinct title stems — chosen to NOT collapse under
+      // `normalizeStemForComparison` (which strips trailing ` \d+`). Trailing
+      // digits would defeat AC10's "distinct stems" premise.
+      const DISTINCT_TITLES = [
+        'Killing Floor', 'Die Trying', 'Tripwire', 'Running Blind', 'Echo Burning',
+        'Without Fail', 'Persuader', 'The Enemy', 'One Shot', 'The Hard Way',
+        'Bad Luck and Trouble', 'Nothing to Lose', 'Gone Tomorrow', 'Worth Dying For',
+        'The Affair', 'A Wanted Man', 'Never Go Back', 'Personal', 'Make Me',
+        'Night School', 'No Middle Name', 'The Midnight Line', 'Past Tense',
+        'Blue Moon', 'The Sentinel', 'Better Off Dead', 'No Plan B', 'The Secret',
+        'In Too Deep', 'Second Son', 'Deep Down', 'High Heat', 'Not a Drill',
+        'Small Wars', 'James Penney', 'Everyone Talks', 'The Christmas Scorpion',
+      ];
+
+      function distinctTitleStems(count: number, withMarkerOnFirst = false): { name: string; isFile: true; size: number }[] {
+        if (count > DISTINCT_TITLES.length) {
+          throw new Error(`distinctTitleStems: requested ${count} but pool has ${DISTINCT_TITLES.length}`);
+        }
+        return Array.from({ length: count }, (_, i) => {
+          if (i === 0 && withMarkerOnFirst) {
+            return { name: `Sixth Realm Part 1.m4b` as const, isFile: true, size: LARGE_BOOK };
+          }
+          return { name: `${DISTINCT_TITLES[i]!}.m4b`, isFile: true as const, size: LARGE_BOOK };
+        });
+      }
+
+      it('AC10: 37 distinct large loose .m4b files + many audio subdirs → 37 split rows + per-subdir rows', async () => {
+        const looseFiles = distinctTitleStems(37);
+        setupFs({
+          '/audiobooks': [
+            ...looseFiles,
+            { name: 'Author A', isFile: false },
+            { name: 'Author B', isFile: false },
+          ],
+          '/audiobooks/Author A': [{ name: 'BookA', isFile: false }],
+          '/audiobooks/Author A/BookA': [{ name: 'ch.mp3', isFile: true, size: 5_000_000 }],
+          '/audiobooks/Author B': [{ name: 'BookB', isFile: false }],
+          '/audiobooks/Author B/BookB': [{ name: 'ch.mp3', isFile: true, size: 5_000_000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(39); // 37 loose + 2 child books
+        const looseRows = result.filter(r => r.path.endsWith('.m4b'));
+        expect(looseRows).toHaveLength(37);
+        for (const row of looseRows) {
+          expect(row.audioFileCount).toBe(1);
+          expect(row.path.startsWith('/audiobooks/')).toBe(true);
+        }
+        // No row at the parent path absorbing the entire subtree.
+        expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
+      });
+
+      it('AC11: 37 distinct large loose .m4b files (NO markers) + audio subdirs → splits (count cap NOT consulted)', async () => {
+        // Pins the count-cap-driven absorption regression specifically: the
+        // leaf classifier returns merge with reason `count-exceeds-cap` for
+        // 37 files, but mixed-content must NOT consult that.
+        const looseFiles = distinctTitleStems(37, /* withMarkerOnFirst */ false);
+        setupFs({
+          '/audiobooks': [
+            ...looseFiles,
+            { name: 'BookFolder', isFile: false },
+          ],
+          '/audiobooks/BookFolder': [{ name: 'ch.mp3', isFile: true, size: 5_000_000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        // 37 split loose + 1 child = 38 rows. No parent absorption.
+        expect(result).toHaveLength(38);
+        expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
+      });
+
+      it('AC12: 25 loose files where exactly one stem contains " Part 1" → splits (`.some()` regression)', async () => {
+        // Pins the `.some()` regression: pre-#1048 a single stray Part-marker
+        // stem caused whole-batch merge. With ALL-stems-must-match plus
+        // shared-prefix, this must split.
+        const looseFiles = distinctTitleStems(25, /* withMarkerOnFirst */ true);
+        setupFs({
+          '/audiobooks': [
+            ...looseFiles,
+            { name: 'BookFolder', isFile: false },
+          ],
+          '/audiobooks/BookFolder': [{ name: 'ch.mp3', isFile: true, size: 5_000_000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(26); // 25 loose + 1 child
+        expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
+      });
+
+      it('AC13: Book A Part 1/Part 2 + 20 unrelated full books → splits (subset-duplicate guard)', async () => {
+        // Pins both the prefix-subset false-positive AND the duplicate-
+        // normalized-subset false-positive: the strict `distinct === 1`
+        // rule in hasStrongChapterSetEvidence requires every normalized stem
+        // to match — not the leaf classifier's subset-tolerant `distinct < count`.
+        const subsetDup = [
+          { name: 'Book A Part 1.m4b', isFile: true as const, size: LARGE_BOOK },
+          { name: 'Book A Part 2.m4b', isFile: true as const, size: LARGE_BOOK },
+        ];
+        const unrelated = Array.from({ length: 20 }, (_, i) => ({
+          name: `Standalone Title ${String(i).padStart(2, '0')}.m4b`,
+          isFile: true as const,
+          size: LARGE_BOOK,
+        }));
+        setupFs({
+          '/audiobooks': [...subsetDup, ...unrelated, { name: 'BookFolder', isFile: false }],
+          '/audiobooks/BookFolder': [{ name: 'ch.mp3', isFile: true, size: 5_000_000 }],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(23); // 22 loose + 1 child
+        expect(result.find(r => r.path === '/audiobooks')).toBeUndefined();
+      });
+
+      it('AC9: shared-prefix multi-disc loose audio + bonus subdir → ONE absorbed parent row', async () => {
+        // Strong-evidence path via marker-set rule (all stems match,
+        // markerless prefix "mistborn" non-empty and shared).
+        const SMALL = 30 * 1024 * 1024;
+        setupFs({
+          '/audiobooks': [{ name: 'Mistborn', isFile: false }],
+          '/audiobooks/Mistborn': [
+            { name: 'Mistborn Disc 1.mp3', isFile: true, size: SMALL },
+            { name: 'Mistborn Disc 2.mp3', isFile: true, size: SMALL },
+            { name: 'Mistborn Disc 3.mp3', isFile: true, size: SMALL },
+            { name: 'Bonus Material', isFile: false },
+          ],
+          '/audiobooks/Mistborn/Bonus Material': [
+            { name: 'extra.mp3', isFile: true, size: 5_000_000 },
+          ],
+        });
+
+        const result = await discoverBooks('/audiobooks');
+        expect(result).toHaveLength(1);
+        expect(result[0]!.path).toBe('/audiobooks/Mistborn');
+        expect(result[0]!.audioFileCount).toBe(4);
         expect(result[0]!.reviewReason).toBe('Additional non-book content possibly merged');
       });
     });

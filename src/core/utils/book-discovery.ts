@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
-import { classifyLeafFolder } from './book-classifier.js';
+import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
@@ -253,24 +253,24 @@ async function handleMixedContentLooseAudio(
     return { absorbedChildren: false };
   }
 
-  // Run the leaf-folder classifier on the loose top-level audio. If it says
-  // "merge", the loose files are chapters of a chapter-encoded book and the
-  // bonus subdirectory should be absorbed into the parent row rather than
-  // emitted as N separate per-file rows the user can't recombine.
+  // Mixed-content absorption requires STRONG evidence the loose files are a
+  // single chapter-encoded book. The leaf classifier's merge bias (count caps,
+  // size heuristics, subset-duplicate signals) is correct for leaf folders
+  // where false-merges produce 1 row to fix, but catastrophic here where a
+  // false-merge triggers recursive absorption of the entire subtree (#1048).
   if (info.audioFiles.length >= 2) {
-    const classification = classifyLeafFolder(info.audioFiles);
+    const strongEvidence = hasStrongChapterSetEvidence(info.audioFiles);
     log?.debug(
       {
         path: info.path,
-        decision: classification.decision,
-        reason: classification.reason,
+        strongEvidence,
         stems: info.audioFiles.map(f => basename(f.path, extname(f.path))),
         branch: 'mixed-content',
       },
       'Mixed-content loose audio classified',
     );
 
-    if (classification.decision === 'merge') {
+    if (strongEvidence) {
       const absorbedAudioFiles = collectAllAudioFiles(info);
       const reviewReason = await detectBonusContent(info, absorbedAudioFiles);
       results.push(makeFolderEntry(info, rootPath, absorbedAudioFiles, { reviewReason }));
