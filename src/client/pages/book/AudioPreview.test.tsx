@@ -164,10 +164,10 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
       </>,
     );
 
-    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
-    expect(playButtons).toHaveLength(2);
+    const [firstPlay, secondPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    expect(secondPlay).toBeDefined();
 
-    await user.click(playButtons[0]);
+    await user.click(firstPlay!);
     expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
 
@@ -203,8 +203,8 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
 
     expect(document.querySelectorAll('audio')).toHaveLength(2);
 
-    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
-    await user.click(playButtons[0]);
+    const [firstPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(firstPlay!);
     await user.click(screen.getByRole('button', { name: /play preview/i }));
 
     expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
@@ -220,20 +220,20 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
       </>,
     );
 
-    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
-    await user.click(playButtons[0]);
+    const [firstPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(firstPlay!);
 
     const audios = document.querySelectorAll('audio');
-    const playingAudio = Array.from(audios).find((el) => !el.paused)!;
+    const playingAudio = Array.from(audios).find((el) => !el.paused);
     expect(playingAudio).toBeDefined();
     act(() => {
-      playingAudio.dispatchEvent(new Event('error'));
+      playingAudio!.dispatchEvent(new Event('error'));
     });
 
     expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(2);
 
-    const remainingPlay = screen.getAllByRole('button', { name: /play preview/i });
-    await user.click(remainingPlay[1]);
+    const [, secondPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(secondPlay!);
     expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
   });
@@ -247,8 +247,8 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
       </>,
     );
 
-    const playButtons = screen.getAllByRole('button', { name: /play preview/i });
-    await user.click(playButtons[0]);
+    const [firstPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(firstPlay!);
     expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
 
     await user.click(screen.getByRole('button', { name: /play preview/i }));
