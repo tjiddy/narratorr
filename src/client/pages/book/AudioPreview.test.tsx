@@ -180,6 +180,37 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
     expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
   });
 
+  it('a programmatic/native play event (no click) on a sibling pauses the currently playing preview', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />
+        <AudioPreview source={{ kind: 'book', bookId: 2, enabled: true }} />
+      </>,
+    );
+
+    const [firstPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    await user.click(firstPlay!);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+
+    const audios = document.querySelectorAll('audio');
+    const firstAudio = Array.from(audios).find((el) => !el.paused)!;
+    const secondAudio = Array.from(audios).find((el) => el.paused)!;
+    expect(firstAudio).toBeDefined();
+    expect(secondAudio).toBeDefined();
+
+    const pauseCallsBefore = mockPause.mock.calls.length;
+    act(() => {
+      Object.defineProperty(secondAudio, 'paused', { value: false, configurable: true });
+      secondAudio.dispatchEvent(new Event('play'));
+    });
+
+    expect(mockPause.mock.calls.length).toBeGreaterThan(pauseCallsBefore);
+    expect(firstAudio.paused).toBe(true);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+  });
+
   it('clicking the same instance pause→play does not get re-paused by self-broadcast', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
