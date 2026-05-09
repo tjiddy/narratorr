@@ -32,10 +32,28 @@ export function detectLanguageFromNewsgroup(group: string | undefined): string |
   return undefined;
 }
 
-// TODO: Add numeric character reference decoding (&#123; / &#xAB;) — older NZB generators may use these
-/** Decode common XML/HTML entities. */
+/**
+ * Decode common XML/HTML entities, including numeric character references.
+ *
+ * Numeric refs are decoded BEFORE named refs so a pre-encoded `&amp;#246;`
+ * stays as the literal `&#246;` (not `ö`) — the producer already escaped the
+ * `&`, so it is not meant to introduce a fresh entity.
+ */
 function decodeEntities(text: string): string {
   return text
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (match, ref: string) => {
+      const codePoint =
+        ref[0] === 'x' || ref[0] === 'X'
+          ? parseInt(ref.slice(1), 16)
+          : parseInt(ref, 10);
+      if (!Number.isFinite(codePoint) || codePoint < 0 || codePoint > 0x10ffff) return match;
+      if (codePoint >= 0xd800 && codePoint <= 0xdfff) return match;
+      try {
+        return String.fromCodePoint(codePoint);
+      } catch {
+        return match;
+      }
+    })
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')

@@ -200,6 +200,61 @@ describe('parseNzbName', () => {
     const xml = `<nzb><head><meta type="name">   </meta></head></nzb>`;
     expect(parseNzbName(xml)).toBeUndefined();
   });
+
+  it('decodes decimal numeric character references', () => {
+    const xml = `<nzb><head><meta type="name">H&#246;rbuch</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Hörbuch');
+  });
+
+  it('decodes hex numeric character references (lowercase x)', () => {
+    const xml = `<nzb><head><meta type="name">H&#xF6;rbuch</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Hörbuch');
+  });
+
+  it('decodes hex numeric character references (uppercase X)', () => {
+    const xml = `<nzb><head><meta type="name">H&#XF6;rbuch</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Hörbuch');
+  });
+
+  it('decodes mixed numeric and named entities in same string', () => {
+    const xml = `<nzb><head><meta type="name">H&#246;rbuch &amp; Friends</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Hörbuch & Friends');
+  });
+
+  it('decodes decimal numeric refs with leading zeros', () => {
+    const xml = `<nzb><head><meta type="name">H&#0246;rbuch</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Hörbuch');
+  });
+
+  it('preserves invalid hex numeric refs (e.g. &#xZZ;) unchanged', () => {
+    const xml = `<nzb><head><meta type="name">Bad &#xZZ; value</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Bad &#xZZ; value');
+  });
+
+  it('preserves out-of-range decimal code points (> U+10FFFF) unchanged', () => {
+    const xml = `<nzb><head><meta type="name">Bad &#99999999; value</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Bad &#99999999; value');
+  });
+
+  it('preserves out-of-range hex code points (> U+10FFFF) unchanged', () => {
+    const xml = `<nzb><head><meta type="name">Bad &#x110000; value</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Bad &#x110000; value');
+  });
+
+  it('preserves lone high-surrogate code points (U+D800) unchanged', () => {
+    const xml = `<nzb><head><meta type="name">Bad &#xD800; value</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Bad &#xD800; value');
+  });
+
+  it('preserves lone low-surrogate code points (U+DFFF) unchanged', () => {
+    const xml = `<nzb><head><meta type="name">Bad &#xDFFF; value</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('Bad &#xDFFF; value');
+  });
+
+  it('does NOT cascade numeric decoding through pre-encoded &amp; (&amp;#246; → &#246;, not ö)', () => {
+    const xml = `<nzb><head><meta type="name">&amp;#246;</meta></head></nzb>`;
+    expect(parseNzbName(xml)).toBe('&#246;');
+  });
 });
 
 describe('parseNzbFileSubject', () => {
@@ -221,6 +276,16 @@ describe('parseNzbFileSubject', () => {
   it('handles HTML entities in subject attribute value', () => {
     const xml = `<nzb><file poster="test" date="123" subject="Book &amp; Series"><segments></segments></file></nzb>`;
     expect(parseNzbFileSubject(xml)).toBe('Book & Series');
+  });
+
+  it('decodes decimal numeric character references in subject attribute', () => {
+    const xml = `<nzb><file poster="test" date="123" subject="Ungek&#252;rzt"><segments></segments></file></nzb>`;
+    expect(parseNzbFileSubject(xml)).toBe('Ungekürzt');
+  });
+
+  it('decodes hex numeric character references in subject attribute', () => {
+    const xml = `<nzb><file poster="test" date="123" subject="Ungek&#xFC;rzt"><segments></segments></file></nzb>`;
+    expect(parseNzbFileSubject(xml)).toBe('Ungekürzt');
   });
 
   it('returns undefined for malformed XML', () => {
