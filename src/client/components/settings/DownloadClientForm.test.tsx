@@ -181,8 +181,8 @@ describe('DownloadClientForm (#201)', () => {
       });
     });
 
-    // #827 — edit mode injects client.id so the server can resolve sentinel secret fields
-    it('edit-mode test button injects client.id into onFormTest payload', async () => {
+    // #1057 — edit-mode form passes raw data to onFormTest (no id); the shared hook seam injects id downstream
+    it('edit-mode test button calls onFormTest with raw form data (no id)', async () => {
       const onFormTest = vi.fn();
       const user = userEvent.setup();
       const client = createMockDownloadClient({
@@ -204,10 +204,9 @@ describe('DownloadClientForm (#201)', () => {
       await user.click(screen.getByRole('button', { name: /test/i }));
 
       await waitFor(() => {
-        expect(onFormTest).toHaveBeenCalledWith(
-          expect.objectContaining({ id: 42 }),
-        );
+        expect(onFormTest).toHaveBeenCalled();
       });
+      expect(onFormTest.mock.calls[0]![0]).not.toHaveProperty('id');
     });
 
     // #827 — create mode does NOT include id (no saved row to resolve against)

@@ -369,6 +369,29 @@ describe('ImportListCard', () => {
       expect(onTest).toHaveBeenCalledWith(1);
     });
 
+    // #1057 — non-regression: import-list edit-mode test must use the saved-id flow
+    // (onTest(initial.id) / /import-lists/:id/test) and MUST NOT route through the
+    // generic test-by-config payload path. The centralization in #1057 explicitly
+    // opts out of import lists.
+    it('#1057 edit-mode Test fires onTest(initial.id) and does NOT call onFormTest', async () => {
+      const user = userEvent.setup();
+      const onTest = vi.fn();
+      const onFormTest = vi.fn();
+      renderWithProviders(
+        <ImportListCard
+          list={mockList}
+          mode="edit"
+          onSubmit={noop}
+          onTest={onTest}
+          onFormTest={onFormTest}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+      expect(onTest).toHaveBeenCalledWith(1);
+      expect(onFormTest).not.toHaveBeenCalled();
+    });
+
     it('shows test result from testResult prop when testResult.id matches', () => {
       renderWithProviders(
         <ImportListCard

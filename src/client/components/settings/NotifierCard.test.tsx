@@ -394,7 +394,7 @@ describe('NotifierCard — edit mode', () => {
     expect(failureCb).not.toBeChecked();
   });
 
-  it('#731 in edit mode, clicking Test posts the editing notifier id alongside form data', async () => {
+  it('#1057 in edit mode, clicking Test posts raw form data (no id) — shared hook injects id downstream', async () => {
     const onFormTest = vi.fn();
     const user = userEvent.setup();
 
@@ -409,9 +409,9 @@ describe('NotifierCard — edit mode', () => {
 
     await user.click(screen.getByText('Test').closest('button')!);
 
-    expect(onFormTest).toHaveBeenCalledWith(
-      expect.objectContaining({ id: mockNotifier.id, type: mockNotifier.type }),
-    );
+    expect(onFormTest).toHaveBeenCalled();
+    expect(onFormTest.mock.calls[0]![0]).toMatchObject({ type: mockNotifier.type });
+    expect(onFormTest.mock.calls[0]![0]).not.toHaveProperty('id');
   });
 
   it('#731 in create mode, clicking Test posts no id', async () => {

@@ -19,7 +19,7 @@ interface NotifierCardProps {
   onCancel?: () => void;
   onDelete?: () => void;
   onSubmit: (data: CreateNotifierFormData) => void;
-  onFormTest: (data: CreateNotifierFormData & { id?: number }) => void;
+  onFormTest: (data: CreateNotifierFormData) => void;
   onTest?: (id: number) => void;
   isPending?: boolean;
   testingId?: number | null;
@@ -130,16 +130,6 @@ export function NotifierCard(props: NotifierCardProps) {
     );
   }
 
-  // In edit mode, include the notifier id so the server can resolve masked
-  // sentinel values against saved decrypted settings before running the test.
-  const handleFormTest = (data: CreateNotifierFormData) => {
-    if (notifier?.id) {
-      onFormTest({ ...data, id: notifier.id });
-    } else {
-      onFormTest(data);
-    }
-  };
-
   return (
     <NotifierCardForm
       form={form}
@@ -147,7 +137,7 @@ export function NotifierCard(props: NotifierCardProps) {
       selectedType={selectedType}
       watchedEvents={watchedEvents}
       onSubmit={onSubmit}
-      onFormTest={handleFormTest}
+      onFormTest={onFormTest}
       onCancel={onCancel}
       isPending={isPending}
       testingForm={testingForm}

@@ -94,13 +94,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
       <div className="min-h-5">
         {formTestResult && <TestResultMessage success={formTestResult.success} message={formTestResult.message} />}
       </div>
-      <SettingsFormActions isEdit={isEdit} isPending={isPending} testingForm={testingForm} onFormTest={handleSubmit((data) => {
-        if (isEdit && client?.id) {
-          onFormTest({ ...data, id: client.id } as CreateDownloadClientFormData);
-        } else {
-          onFormTest(data);
-        }
-      })} onCancel={onCancel} entityLabel="Client" testDisabled={!isImplemented} testDisabledTitle={!isImplemented ? 'Testing available for implemented adapter types' : undefined} />
+      <SettingsFormActions isEdit={isEdit} isPending={isPending} testingForm={testingForm} onFormTest={handleSubmit((data) => onFormTest(data))} onCancel={onCancel} entityLabel="Client" testDisabled={!isImplemented} testDisabledTitle={!isImplemented ? 'Testing available for implemented adapter types' : undefined} />
       {isEdit && client && <RemotePathMappingsSubsection clientId={client.id} />}
       {!isEdit && <PathMappingEditor mappings={pathMappings} onChange={setPathMappings} />}
     </form>

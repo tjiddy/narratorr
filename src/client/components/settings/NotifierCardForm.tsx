@@ -19,7 +19,7 @@ interface NotifierCardFormProps {
   selectedType: NotifierType;
   watchedEvents: NotificationEvent[];
   onSubmit: (data: CreateNotifierFormData) => void;
-  onFormTest: (data: CreateNotifierFormData & { id?: number }) => void;
+  onFormTest: (data: CreateNotifierFormData) => void;
   onCancel?: (() => void) | undefined;
   isPending?: boolean | undefined;
   testingForm?: boolean | undefined;
@@ -98,7 +98,7 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
         isEdit={isEdit}
         isPending={isPending}
         testingForm={testingForm}
-        onFormTest={handleSubmit(onFormTest)}
+        onFormTest={handleSubmit((data) => onFormTest(data))}
         onCancel={onCancel}
         entityLabel="Notifier"
       />

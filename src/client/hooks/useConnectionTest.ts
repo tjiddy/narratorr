@@ -8,6 +8,13 @@ interface UseConnectionTestOptions<TFormData> {
   testByConfig: (data: TFormData) => Promise<TestResult>;
   /** Query key to invalidate after a successful test-by-ID (e.g., ['indexers']) */
   invalidateOnSuccess?: string[];
+  /**
+   * When set, handleFormTest merges `{ id: entityId }` into the payload before
+   * calling testByConfig so the server can resolve sentinel placeholders for
+   * masked secret fields against the persisted row. Omit for create flows or
+   * for adapters whose test endpoint does not accept an id (e.g. import lists).
+   */
+  entityId?: number | undefined;
 }
 
 export interface IdTestResult extends TestResult {
@@ -18,6 +25,7 @@ export function useConnectionTest<TFormData>({
   testById,
   testByConfig,
   invalidateOnSuccess,
+  entityId,
 }: UseConnectionTestOptions<TFormData>) {
   const queryClient = useQueryClient();
   const [testingId, setTestingId] = useState<number | null>(null);
@@ -51,7 +59,8 @@ export function useConnectionTest<TFormData>({
   const handleFormTest = useCallback(async (data: TFormData) => {
     setTestingForm(true);
     try {
-      const result = await testByConfig(data);
+      const payload = entityId !== undefined ? ({ ...data, id: entityId } as TFormData) : data;
+      const result = await testByConfig(payload);
       setFormTestResult(result);
       if (result.success) {
         toast.success('Connection successful');
@@ -66,7 +75,7 @@ export function useConnectionTest<TFormData>({
       toast.error('Connection test failed');
     }
     setTestingForm(false);
-  }, [testByConfig]);
+  }, [testByConfig, entityId]);
 
   const clearFormTestResult = useCallback(() => {
     setFormTestResult(null);
