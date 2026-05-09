@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, render, waitFor } from '@testing-library/react';
+import { screen, render, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { DownloadClientFields } from './DownloadClientFields';
@@ -20,7 +20,10 @@ function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: Downlo
     defaultValues: { name: 'Test', type: 'qbittorrent', enabled: true, priority: 50, settings: { host: '', port: 8080 } },
   });
   return (
+    // key={type} mirrors DownloadClientForm so a type change unmounts/remounts
+    // the hook instance — the production source of fresh category state.
     <DownloadClientFields
+      key={type}
       selectedType={type}
       register={register}
       errors={errors}
@@ -375,6 +378,77 @@ describe('DownloadClientFields', () => {
         expect(screen.getByText('string-rejection')).toBeInTheDocument();
       });
       expect(screen.queryByText('No categories found')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('type switching (#1058 — keyed remount)', () => {
+    it('switching selectedType clears previously fetched categories without a new fetch', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks', 'movies'],
+      });
+
+      const { rerender } = render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('audiobooks')).toBeInTheDocument();
+        expect(screen.getByText('movies')).toBeInTheDocument();
+      });
+
+      rerender(<FieldWrapper type="sabnzbd" />);
+
+      // Prior type's categories must be gone immediately — no flash of stale items.
+      expect(screen.queryByText('audiobooks')).not.toBeInTheDocument();
+      expect(screen.queryByText('movies')).not.toBeInTheDocument();
+    });
+
+    it('switching selectedType while a fetch is in-flight does not show stale categories on the new type', async () => {
+      const user = userEvent.setup();
+      let resolveFetch!: (value: { categories: string[] }) => void;
+      const deferred = new Promise<{ categories: string[] }>((r) => { resolveFetch = r; });
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockReturnValue(deferred);
+
+      const { rerender } = render(<FieldWrapper type="qbittorrent" />);
+
+      // Start a fetch on the qbittorrent hook instance, but do NOT resolve it yet.
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      // Swap type before the in-flight promise resolves — the qbittorrent hook unmounts.
+      rerender(<FieldWrapper type="sabnzbd" />);
+
+      // Resolve the original fetch and let React flush the unmounted hook's
+      // continuation. `await deferred` inside act guarantees fetchCategories'
+      // `await` resumes — its setCategories/setShowDropdown dispatches against
+      // the dead Fiber are silent no-ops, so 'stale-cat' must not appear on
+      // the sabnzbd UI.
+      await act(async () => {
+        resolveFetch({ categories: ['stale-cat'] });
+        await deferred;
+      });
+
+      expect(screen.queryByText('stale-cat')).not.toBeInTheDocument();
+    });
+
+    it('error state from a failed fetch persists across re-renders that do not change selectedType', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: [],
+        error: 'Connection refused',
+      });
+
+      const { rerender } = render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('Connection refused')).toBeInTheDocument();
+      });
+
+      // Re-render with same selectedType but a different unrelated prop. The hook
+      // does not remount (key unchanged), so the error survives.
+      rerender(<FieldWrapper type="qbittorrent" inModal />);
+
+      expect(screen.getByText('Connection refused')).toBeInTheDocument();
     });
   });
 
