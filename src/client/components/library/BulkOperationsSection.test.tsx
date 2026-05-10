@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '../../__tests__/helpers.js';
 import { BulkOperationsSection } from './BulkOperationsSection.js';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import type { BulkOpType } from '@/lib/api';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { toast } from 'sonner';
 
 vi.mock('sonner', () => ({
@@ -27,10 +29,32 @@ vi.mock('@/lib/api', () => ({
   api: {
     getBulkRenameCount: vi.fn(),
     getBulkRetagCount: vi.fn(),
+    getBookStats: vi.fn(),
+    rescanLibrary: vi.fn(),
+    deleteMissingBooks: vi.fn(),
   },
 }));
 
-function setup(overrides?: { isRunning?: boolean; jobType?: BulkOpType | null; completed?: number; total?: number; failures?: number }) {
+interface SetupOpts {
+  isRunning?: boolean;
+  jobType?: BulkOpType | null;
+  completed?: number;
+  total?: number;
+  failures?: number;
+  missingCount?: number;
+  queryClient?: QueryClient;
+}
+
+function makeStats(missing = 0) {
+  return {
+    counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing },
+    authors: [],
+    series: [],
+    narrators: [],
+  };
+}
+
+function setup(overrides?: SetupOpts) {
   vi.mocked(useBulkOperation).mockReturnValue({
     isRunning: overrides?.isRunning ?? false,
     jobType: overrides?.jobType ?? null,
@@ -43,7 +67,11 @@ function setup(overrides?: { isRunning?: boolean; jobType?: BulkOpType | null; c
   });
   (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockResolvedValue({ mismatched: 5, alreadyMatching: 10 });
   (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 15 });
-  return renderWithProviders(<BulkOperationsSection />);
+  (api.getBookStats as ReturnType<typeof vi.fn>).mockResolvedValue(makeStats(overrides?.missingCount ?? 0));
+  (api.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 0, missing: 0, restored: 0 });
+  (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 0 });
+  const queryClient = overrides?.queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return { queryClient, ...renderWithProviders(<BulkOperationsSection />, { queryClient }) };
 }
 
 describe('BulkOperationsSection', () => {
@@ -146,7 +174,6 @@ describe('BulkOperationsSection', () => {
   // Navigation persistence
   it('on mount with active job, polling resumes and progress is displayed', () => {
     setup({ isRunning: true, jobType: 'rename', completed: 5, total: 20 });
-    // The rename button should show progress (hook resumes on mount)
     const renameBtn = screen.getByRole('button', { name: /renaming/i });
     expect(renameBtn).toBeDisabled();
     expect(renameBtn.textContent).toMatch(/5/);
@@ -160,23 +187,19 @@ describe('BulkOperationsSection', () => {
 
   // Error recovery
   it('when poll returns 404 (server restart), button resets to normal state without crashing', () => {
-    // Hook resets to idle on 404 — simulate by having hook return idle state
     setup({ isRunning: false, jobType: null });
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 
   // Completion
   it('when job completes, button returns to normal state', () => {
-    // Hook marks isRunning=false on completion
     setup({ isRunning: false, jobType: null });
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 
   it('when job completes with failures, failure count is displayed after completion', () => {
-    // After completion with failures, the failure banner should remain visible
     setup({ isRunning: false, jobType: null, failures: 3, completed: 10, total: 10 });
     expect(screen.getByText(/3 failure/i)).toBeInTheDocument();
-    // Buttons should also be back in idle state
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 
@@ -194,9 +217,7 @@ describe('BulkOperationsSection', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Network error');
     });
-    // Modal should NOT open
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    // Button should be re-enabled (loading cleared)
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 
@@ -244,18 +265,233 @@ describe('BulkOperationsSection', () => {
       expect(screen.queryByText('Bulk Operations')).not.toBeInTheDocument();
     });
 
-    it('Scan Library link appears before Rename All Books button', () => {
+    it('Import Existing Library link appears before Rename All Books button', () => {
       setup();
-      const scanLink = screen.getByRole('link', { name: /scan library/i });
+      const importLink = screen.getByRole('link', { name: /import existing library/i });
       const renameBtn = screen.getByRole('button', { name: /rename all books/i });
-      // Scan Library should come before Rename in DOM order
-      expect(scanLink.compareDocumentPosition(renameBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(importLink.compareDocumentPosition(renameBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it('Scan Library link has href="/library-import"', () => {
+    it('Import Existing Library link has href="/library-import"', () => {
       setup();
-      const scanLink = screen.getByRole('link', { name: /scan library/i });
-      expect(scanLink).toHaveAttribute('href', '/library-import');
+      const importLink = screen.getByRole('link', { name: /import existing library/i });
+      expect(importLink).toHaveAttribute('href', '/library-import');
+    });
+  });
+
+  // #1066 — Refresh Library / Remove Missing Books split
+  describe('library import / reconciliation split (#1066)', () => {
+    it('renders "Import Existing Library" link, not "Scan Library"', () => {
+      setup();
+      expect(screen.getByRole('link', { name: /import existing library/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /^scan library$/i })).not.toBeInTheDocument();
+    });
+
+    it('renders Refresh Library button', () => {
+      setup();
+      expect(screen.getByRole('button', { name: /^refresh library$/i })).toBeInTheDocument();
+    });
+
+    it('clicking Refresh Library calls api.rescanLibrary and toasts success summary', async () => {
+      const user = userEvent.setup({});
+      setup();
+      (api.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 12, missing: 2, restored: 1 });
+      await user.click(screen.getByRole('button', { name: /^refresh library$/i }));
+      await waitFor(() => {
+        expect(api.rescanLibrary).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Scanned: 12 books. Missing: 2 books. Restored: 1 books.');
+      });
+    });
+
+    it('Refresh Library button shows loading state and is disabled while in flight', async () => {
+      const user = userEvent.setup({});
+      setup();
+      let resolveRescan!: (v: { scanned: number; missing: number; restored: number }) => void;
+      (api.rescanLibrary as ReturnType<typeof vi.fn>).mockReturnValue(
+        new Promise<{ scanned: number; missing: number; restored: number }>((resolve) => { resolveRescan = resolve; }),
+      );
+      const btn = screen.getByRole('button', { name: /^refresh library$/i });
+      await user.click(btn);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /refreshing/i })).toBeDisabled();
+      });
+      resolveRescan({ scanned: 0, missing: 0, restored: 0 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^refresh library$/i })).not.toBeDisabled();
+      });
+    });
+
+    // F1 — Refresh Library mutation effects (#1068 review)
+    it('Refresh Library success invalidates queryKeys.books() so bookStats and book lists refetch', async () => {
+      const user = userEvent.setup({});
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      setup({ queryClient });
+      (api.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 1, missing: 0, restored: 0 });
+      await user.click(screen.getByRole('button', { name: /^refresh library$/i }));
+      await waitFor(() => {
+        expect(api.rescanLibrary).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+    });
+
+    it('Refresh Library error surfaces api error message via toast.error', async () => {
+      const user = userEvent.setup({});
+      setup();
+      (api.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Library path is not accessible: /audiobooks'));
+      await user.click(screen.getByRole('button', { name: /^refresh library$/i }));
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Library path is not accessible: /audiobooks');
+      });
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it('Remove Missing Books button is absent when missing count is 0', () => {
+      setup({ missingCount: 0 });
+      expect(screen.queryByRole('button', { name: /remove missing books/i })).not.toBeInTheDocument();
+    });
+
+    it('Remove Missing Books button is present when missing count > 0', async () => {
+      setup({ missingCount: 3 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+    });
+
+    it('clicking Remove Missing Books opens ConfirmModal with count and "Files will not be deleted" clarification', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 12 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText(/Remove 12 missing books from Narratorr\? Files will not be deleted\./i)).toBeInTheDocument();
+    });
+
+    it('confirming Remove Missing Books calls api.deleteMissingBooks and toasts success', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 4 });
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 4 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(api.deleteMissingBooks).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Removed 4 missing books');
+      });
+    });
+
+    // F2 — Remove Missing Books pending/invalidation/error (#1068 review)
+    it('Remove Missing Books shows loading state and is disabled while delete is in flight', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 4 });
+      let resolveDelete!: (v: { deleted: number }) => void;
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockReturnValue(
+        new Promise<{ deleted: number }>((resolve) => { resolveDelete = resolve; }),
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /removing/i })).toBeDisabled();
+      });
+      resolveDelete({ deleted: 4 });
+      await waitFor(() => {
+        // Restored to idle label after settle (still rendered because missingCount=4 in cache)
+        expect(screen.getByRole('button', { name: /remove missing books/i })).not.toBeDisabled();
+      });
+    });
+
+    it('Remove Missing Books success invalidates queryKeys.books() so bookStats and book lists refetch', async () => {
+      const user = userEvent.setup({});
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      setup({ missingCount: 6, queryClient });
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 6 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(api.deleteMissingBooks).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+    });
+
+    it('Remove Missing Books error surfaces api error message via toast.error', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 3 });
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Database write failed'));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Database write failed');
+      });
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it('cancelling Remove Missing Books modal does not call api.deleteMissingBooks', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 2 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }));
+      expect(api.deleteMissingBooks).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('Remove Missing Books appears after stats cache transitions from 0 to >0 (e.g., post-refresh)', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      setup({ missingCount: 0, queryClient });
+      // Wait for initial query to settle
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^refresh library$/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /remove missing books/i })).not.toBeInTheDocument();
+
+      // Simulate refresh resolving and bookStats now reflecting 5 missing
+      queryClient.setQueryData(queryKeys.bookStats(), makeStats(5));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+    });
+
+    it('Remove Missing Books disappears after stats cache transitions from >0 to 0 (e.g., post-delete)', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      setup({ missingCount: 7, queryClient });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      queryClient.setQueryData(queryKeys.bookStats(), makeStats(0));
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /remove missing books/i })).not.toBeInTheDocument();
+      });
     });
   });
 });

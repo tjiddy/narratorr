@@ -33,12 +33,14 @@ describe('EmptyLibraryState — library path branching (#133)', () => {
   it('shows Go to Settings CTA when no library path configured', () => {
     renderWithProviders(<EmptyLibraryState hasLibraryPath={false} />);
     expect(screen.getByText('Go to Settings')).toBeInTheDocument();
+    expect(screen.queryByText('Import Existing Library')).not.toBeInTheDocument();
     expect(screen.queryByText('Scan Library')).not.toBeInTheDocument();
   });
 
-  it('shows Scan Library CTA when library path is configured', () => {
+  it('shows Import Existing Library CTA when library path is configured', () => {
     renderWithProviders(<EmptyLibraryState hasLibraryPath />);
-    expect(screen.getByText('Scan Library')).toBeInTheDocument();
+    expect(screen.getByText('Import Existing Library')).toBeInTheDocument();
+    expect(screen.queryByText('Scan Library')).not.toBeInTheDocument();
     expect(screen.queryByText('Go to Settings')).not.toBeInTheDocument();
   });
 
@@ -48,9 +50,9 @@ describe('EmptyLibraryState — library path branching (#133)', () => {
     expect(link).toHaveAttribute('href', '/search');
   });
 
-  it('Scan Library link points to /library-import', () => {
+  it('Import Existing Library link points to /library-import', () => {
     renderWithProviders(<EmptyLibraryState hasLibraryPath />);
-    const link = screen.getByText('Scan Library').closest('a');
+    const link = screen.getByText('Import Existing Library').closest('a');
     expect(link).toHaveAttribute('href', '/library-import');
   });
 });

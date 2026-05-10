@@ -76,6 +76,7 @@ describe('startJobs', () => {
     expect(names).toContain('version-check');
     expect(names).toContain('import-list-sync');
     expect(names).toContain('discovery');
+    expect(names).toContain('library-rescan');
     expect(names).not.toContain('import');
   });
 
@@ -726,6 +727,109 @@ describe('startJobs', () => {
       // Jobs should still be registered despite recovery failure
       const tasks = services.taskRegistry.getAll();
       expect(tasks.length).toBeGreaterThan(0);
+    });
+  });
+
+  // #1066 — scheduled library reconciliation
+  describe('library-rescan job (#1066)', () => {
+    it('registers library-rescan as a cron job on a 6-hour schedule', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const tasks = services.taskRegistry.getAll();
+      const entry = tasks.find((t) => t.name === 'library-rescan');
+      expect(entry).toBeDefined();
+      expect(entry!.type).toBe('cron');
+
+      const cronCalls = vi.mocked(cron.schedule).mock.calls;
+      const expressions = cronCalls.map(([expr]) => expr);
+      expect(expressions).toContain('0 */6 * * *');
+    });
+
+    it('callback invokes services.libraryScan.rescanLibrary()', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 0, missing: 0, restored: 0 });
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await services.taskRegistry.executeTracked('library-rescan');
+
+      expect(services.libraryScan.rescanLibrary).toHaveBeenCalled();
+    });
+
+    it('logs at warn (not error) when rescanLibrary rejects with LibraryPathError', async () => {
+      const { LibraryPathError } = await import('../services/library-scan.service.js');
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new LibraryPathError('Library path is not configured'),
+      );
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const cronCalls = vi.mocked(cron.schedule).mock.calls;
+      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
+      expect(rescanCall).toBeDefined();
+      const cronCallback = rescanCall![1] as () => Promise<void>;
+      await cronCallback();
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'Library path is not configured', type: 'LibraryPathError' }) }),
+        'Scheduled library rescan skipped',
+      );
+      // Critically: scheduleCron's own error handler must NOT log (the job swallowed it)
+      expect(log.error).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'library-rescan job error',
+      );
+    });
+
+    it('logs at warn (not error) when rescanLibrary rejects with ScanInProgressError', async () => {
+      const { ScanInProgressError } = await import('../services/library-scan.service.js');
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new ScanInProgressError(),
+      );
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const cronCalls = vi.mocked(cron.schedule).mock.calls;
+      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
+      const cronCallback = rescanCall![1] as () => Promise<void>;
+      await cronCallback();
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ type: 'ScanInProgressError' }) }),
+        'Scheduled library rescan skipped',
+      );
+      expect(log.error).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'library-rescan job error',
+      );
+    });
+
+    it('lets unexpected errors fall through to scheduleCron error handler', async () => {
+      const unexpected = new Error('unexpected db failure');
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(unexpected);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const cronCalls = vi.mocked(cron.schedule).mock.calls;
+      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
+      const cronCallback = rescanCall![1] as () => Promise<void>;
+      await cronCallback();
+
+      // The job didn't swallow it — scheduleCron caught it via its own try/catch
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: unexpected.message, type: 'Error' }) }),
+        'library-rescan job error',
+      );
+      // And critically: it wasn't downgraded to a warn
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Scheduled library rescan skipped',
+      );
     });
   });
 });

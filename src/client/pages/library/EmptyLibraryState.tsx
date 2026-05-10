@@ -25,7 +25,7 @@ export function EmptyLibraryState({ hasLibraryPath }: EmptyLibraryStateProps) {
           className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
         >
           <FolderIcon className="w-4 h-4" />
-          Scan Library
+          Import Existing Library
           <ArrowRightIcon className="w-4 h-4" />
         </Link>
       ) : (
