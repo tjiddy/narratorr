@@ -14,10 +14,17 @@ import { serializeError } from '../utils/serialize-error.js';
 
 export type HealthState = 'healthy' | 'warning' | 'error';
 
+export type HealthCheckTarget =
+  | { kind: 'indexer'; id: number }
+  | { kind: 'download-client'; id: number }
+  | { kind: 'settings'; path: string }
+  | { kind: 'route'; path: string };
+
 export interface HealthCheckResult {
   checkName: string;
   state: HealthState;
   message?: string | undefined;
+  target?: HealthCheckTarget | undefined;
 }
 
 export interface SystemDeps {
@@ -131,6 +138,7 @@ export class HealthCheckService {
 
     for (const indexer of indexers) {
       if (!indexer.enabled) continue;
+      const target: HealthCheckTarget = { kind: 'indexer', id: indexer.id };
       try {
         const result = await this.indexerService.test(indexer.id);
         const state = result.success
@@ -140,12 +148,14 @@ export class HealthCheckService {
           checkName: `indexer:${indexer.name}`,
           state,
           message: result.success ? result.warning : result.message,
+          target,
         });
       } catch (error: unknown) {
         results.push({
           checkName: `indexer:${indexer.name}`,
           state: 'error',
           message: getErrorMessage(error),
+          target,
         });
       }
     }
@@ -159,18 +169,21 @@ export class HealthCheckService {
 
     for (const client of clients) {
       if (!client.enabled) continue;
+      const target: HealthCheckTarget = { kind: 'download-client', id: client.id };
       try {
         const result = await this.downloadClientService.test(client.id);
         results.push({
           checkName: `download-client:${client.name}`,
           state: result.success ? 'healthy' : 'error',
           message: result.success ? undefined : result.message,
+          target,
         });
       } catch (error: unknown) {
         results.push({
           checkName: `download-client:${client.name}`,
           state: 'error',
           message: getErrorMessage(error),
+          target,
         });
       }
     }
@@ -179,33 +192,35 @@ export class HealthCheckService {
   }
 
   private async checkLibraryRoot(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'route', path: '/settings' };
     const librarySettings = await this.settingsService.get('library');
     const libraryPath = librarySettings?.path;
     if (!libraryPath) {
-      return [{ checkName: 'library-root', state: 'error', message: 'Library path not configured' }];
+      return [{ checkName: 'library-root', state: 'error', message: 'Library path not configured', target }];
     }
 
     try {
       // Check both read and write access (R_OK=4, W_OK=2)
       await this.deps.fsAccess(libraryPath, 4 | 2);
-      return [{ checkName: 'library-root', state: 'healthy' }];
+      return [{ checkName: 'library-root', state: 'healthy', target }];
     } catch (error: unknown) {
       const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
       const message = code === 'ENOENT'
         ? `Library path does not exist: ${libraryPath}`
         : `Library path not writable: ${libraryPath}`;
-      return [{ checkName: 'library-root', state: 'error', message }];
+      return [{ checkName: 'library-root', state: 'error', message, target }];
     }
   }
 
   private async checkDiskSpace(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'route', path: '/settings' };
     const librarySettings = await this.settingsService.get('library');
     const importSettings = await this.settingsService.get('import');
     const libraryPath = librarySettings?.path;
     const thresholdGB = importSettings?.minFreeSpaceGB ?? 5;
 
     if (!libraryPath) {
-      return [{ checkName: 'disk-space', state: 'warning', message: 'Library path not configured' }];
+      return [{ checkName: 'disk-space', state: 'warning', message: 'Library path not configured', target }];
     }
 
     try {
@@ -214,22 +229,24 @@ export class HealthCheckService {
       const freeGB = freeBytes / (1024 * 1024 * 1024);
 
       if (freeBytes === 0) {
-        return [{ checkName: 'disk-space', state: 'error', message: 'No free disk space' }];
+        return [{ checkName: 'disk-space', state: 'error', message: 'No free disk space', target }];
       }
       if (freeGB < thresholdGB) {
         return [{
           checkName: 'disk-space',
           state: 'warning',
           message: `Low disk space: ${freeGB.toFixed(1)} GB free (threshold: ${thresholdGB} GB)`,
+          target,
         }];
       }
-      return [{ checkName: 'disk-space', state: 'healthy' }];
+      return [{ checkName: 'disk-space', state: 'healthy', target }];
     } catch (error: unknown) {
-      return [{ checkName: 'disk-space', state: 'error', message: `Failed to check disk space: ${getErrorMessage(error)}` }];
+      return [{ checkName: 'disk-space', state: 'error', message: `Failed to check disk space: ${getErrorMessage(error)}`, target }];
     }
   }
 
   private async checkFfmpeg(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'settings', path: 'post-processing' };
     const processingSettings = await this.settingsService.get('processing');
     const ffmpegPath = processingSettings?.ffmpegPath;
 
@@ -239,13 +256,14 @@ export class HealthCheckService {
 
     try {
       await this.deps.probeFfmpeg(ffmpegPath);
-      return [{ checkName: 'ffmpeg', state: 'healthy' }];
+      return [{ checkName: 'ffmpeg', state: 'healthy', target }];
     } catch {
-      return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not found at: ${ffmpegPath}` }];
+      return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not found at: ${ffmpegPath}`, target }];
     }
   }
 
   private async checkStuckDownloads(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'route', path: '/activity' };
     try {
       const inProgressStatuses = getInProgressStatuses();
       const activeDownloads = await this.db
@@ -269,12 +287,13 @@ export class HealthCheckService {
           checkName: 'stuck-downloads',
           state: 'warning',
           message: `${stuck.length} stuck download(s): ${names}`,
+          target,
         }];
       }
 
-      return [{ checkName: 'stuck-downloads', state: 'healthy' }];
+      return [{ checkName: 'stuck-downloads', state: 'healthy', target }];
     } catch (error: unknown) {
-      return [{ checkName: 'stuck-downloads', state: 'error', message: `Failed to check downloads: ${getErrorMessage(error)}` }];
+      return [{ checkName: 'stuck-downloads', state: 'error', message: `Failed to check downloads: ${getErrorMessage(error)}`, target }];
     }
   }
 }

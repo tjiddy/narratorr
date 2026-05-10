@@ -14,7 +14,7 @@ export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
-export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
+export type { HealthState, HealthCheckResult, HealthCheckTarget, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
