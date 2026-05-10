@@ -56,6 +56,24 @@ describe('QBittorrentClient', () => {
       expect(result.success).toBe(true);
     });
 
+    it('accepts qBittorrent 5.x port-scoped session cookie names', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/auth/login`, () => {
+          return new HttpResponse(null, {
+            status: 204,
+            headers: { 'Set-Cookie': 'QBT_SID_8080=test-session-id; HttpOnly; SameSite=Strict; path=/' },
+          });
+        }),
+        http.get(`${BASE_URL}/api/v2/app/version`, ({ request }) => {
+          expect(request.headers.get('Cookie')).toContain('QBT_SID_8080=test-session-id');
+          return new HttpResponse('v5.2.0');
+        }),
+      );
+
+      const result = await client.test();
+      expect(result).toEqual({ success: true, message: 'qBittorrent v5.2.0' });
+    });
+
     it('throws on bad credentials (Fails. response)', async () => {
       server.use(
         http.post(`${BASE_URL}/api/v2/auth/login`, () => {

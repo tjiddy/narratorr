@@ -84,12 +84,13 @@ export class QBittorrentClient implements DownloadClientAdapter {
       throw new DownloadClientAuthError(this.name, 'Login failed: Invalid credentials');
     }
 
-    // Extract SID cookie from response headers
+    // qBittorrent 5.x may include the WebUI port in the cookie name
+    // (e.g. QBT_SID_8080), so keep the cookie name returned by the server.
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) {
-      const sidMatch = setCookie.match(/SID=([^;]+)/);
+      const sidMatch = setCookie.match(/(?:^|,\s*)([A-Za-z0-9_-]*SID[A-Za-z0-9_-]*)=([^;]+)/);
       if (sidMatch) {
-        this.cookie = `SID=${sidMatch[1]}`;
+        this.cookie = `${sidMatch[1]}=${sidMatch[2]}`;
       }
     }
 
