@@ -82,4 +82,75 @@ describe('mergeBookData', () => {
       expect(result.metaDots.some((d: string) => /\d+[hm]/.test(d))).toBe(false);
     });
   });
+
+  describe('metaDots publish year', () => {
+    it('extracts year from a full ISO publishedDate', () => {
+      const book = createMockBook({ publishedDate: '2010-08-31' });
+      const result = mergeBookData(book);
+      expect(result.metaDots).toContain('2010');
+    });
+
+    it('uses a bare 4-digit publishedDate as-is', () => {
+      const book = createMockBook({ publishedDate: '2010' });
+      const result = mergeBookData(book);
+      expect(result.metaDots).toContain('2010');
+    });
+
+    it('omits year when publishedDate is null', () => {
+      const book = createMockBook({ publishedDate: null });
+      const result = mergeBookData(book);
+      expect(result.metaDots).not.toContain('2010');
+      expect(result.metaDots.some((d) => /^\d{4}$/.test(d))).toBe(false);
+    });
+
+    it('omits year when publishedDate is empty string', () => {
+      const book = createMockBook({ publishedDate: '' });
+      const result = mergeBookData(book);
+      expect(result.metaDots.some((d) => /^\d{4}$/.test(d))).toBe(false);
+    });
+
+    it('omits year and renders no placeholder for unparseable values', () => {
+      for (const value of ['invalid', '99', 'abc-de']) {
+        const book = createMockBook({ publishedDate: value });
+        const result = mergeBookData(book);
+        expect(result.metaDots.some((d) => /^\d{4}$/.test(d))).toBe(false);
+        const joined = result.metaDots.join(' · ');
+        expect(joined).not.toMatch(/Unknown|NaN|Invalid Date/);
+      }
+    });
+
+    it('falls back to metadataBook.publishedDate when library record is null', () => {
+      const book = createMockBook({ publishedDate: null });
+      const result = mergeBookData(book, { publishedDate: '2007-01-01' });
+      expect(result.metaDots).toContain('2007');
+    });
+
+    it('falls back to metadataBook.publishedDate when library record is empty string', () => {
+      const book = createMockBook({ publishedDate: '' });
+      const result = mergeBookData(book, { publishedDate: '2007-01-01' });
+      expect(result.metaDots).toContain('2007');
+    });
+
+    it('orders metaDots as series · duration · year · publisher when all are present', () => {
+      const book = createMockBook({
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 1,
+        duration: 872,
+        publishedDate: '2010-08-31',
+      });
+      const result = mergeBookData(book, { publisher: 'Tor Books' });
+      expect(result.metaDots).toEqual(['The Stormlight Archive #1', '14h 32m', '2010', 'Tor Books']);
+    });
+
+    it('orders metaDots as duration · year · publisher when no series is present', () => {
+      const book = createMockBook({
+        seriesName: null,
+        seriesPosition: null,
+        duration: 1708,
+        publishedDate: '2007-06-12',
+      });
+      const result = mergeBookData(book, { publisher: 'Little, Brown & Company' });
+      expect(result.metaDots).toEqual(['28h 28m', '2007', 'Little, Brown & Company']);
+    });
+  });
 });

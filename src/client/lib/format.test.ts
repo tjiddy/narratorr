@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatDate, formatRelativeDate, formatDurationMinutes, formatDurationSeconds, formatChannels } from './format';
+import { formatDate, formatRelativeDate, formatDurationMinutes, formatDurationSeconds, formatChannels, formatYear } from './format';
 
 describe('formatDate', () => {
   it('returns locale-formatted absolute date string for valid ISO input', () => {
@@ -198,6 +198,48 @@ describe('formatChannels', () => {
 
   it('returns custom fallback string for null', () => {
     expect(formatChannels(null, '—')).toBe('—');
+  });
+});
+
+describe('formatYear', () => {
+  it('extracts the year from a full ISO date', () => {
+    expect(formatYear('2010-08-31')).toBe('2010');
+  });
+
+  it('returns a bare 4-digit year unchanged', () => {
+    expect(formatYear('2010')).toBe('2010');
+  });
+
+  it('returns null for null', () => {
+    expect(formatYear(null)).toBeNull();
+  });
+
+  it('returns null for undefined', () => {
+    expect(formatYear(undefined)).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(formatYear('')).toBeNull();
+  });
+
+  it('returns null for non-numeric input', () => {
+    expect(formatYear('invalid')).toBeNull();
+  });
+
+  it('returns null for a 2-digit year', () => {
+    expect(formatYear('99')).toBeNull();
+  });
+
+  it('returns null for malformed mixed input', () => {
+    expect(formatYear('abc-de')).toBeNull();
+  });
+
+  it('returns null when the leading 4 chars are non-numeric', () => {
+    expect(formatYear('20a0-08-31')).toBeNull();
+  });
+
+  it('returns null when 4-digit prefix is followed by garbage instead of a separator', () => {
+    expect(formatYear('2010abc')).toBeNull();
   });
 });
 

@@ -1,4 +1,4 @@
-import { formatDurationMinutes } from '@/lib/format';
+import { formatDurationMinutes, formatYear } from '@/lib/format';
 import { bookStatusConfig } from '@/lib/status';
 import type { BookWithAuthor } from '@/lib/api';
 import { requireDefined } from '../../../shared/utils/assert.js';
@@ -11,6 +11,7 @@ export interface MetadataBook {
   genres?: string[] | undefined;
   narrators?: string[] | undefined;
   publisher?: string | undefined;
+  publishedDate?: string | undefined;
   series?: { name: string; position?: number | undefined }[] | undefined;
 }
 
@@ -23,6 +24,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const seriesPosition = libraryBook.seriesPosition ?? metadataBook?.series?.[0]?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
   const publisher = metadataBook?.publisher;
+  const year = formatYear(libraryBook.publishedDate || metadataBook?.publishedDate);
   const status = requireDefined(
     bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted,
     `mergeBookData: bookStatusConfig missing both "${libraryBook.status}" and fallback "wanted"`,
@@ -34,6 +36,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     metaDots.push(`${seriesName}${seriesPosition != null ? ` #${seriesPosition}` : ''}`);
   }
   if (duration) metaDots.push(duration);
+  if (year) metaDots.push(year);
   if (publisher) metaDots.push(publisher);
 
   return {

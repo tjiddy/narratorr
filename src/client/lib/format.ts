@@ -43,6 +43,14 @@ export function formatDurationSeconds(
   return `${h}h ${m}m`;
 }
 
+export function formatYear(input?: string | null): string | null {
+  if (!input) return null;
+  const leading = input.slice(0, 4);
+  if (!/^\d{4}$/.test(leading)) return null;
+  if (input.length > 4 && input[4] !== '-') return null;
+  return leading;
+}
+
 export function formatChannels(channels: number | null, fallback?: string): string {
   if (channels === null) return fallback ?? '';
   if (channels === 1) return 'Mono';
