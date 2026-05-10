@@ -56,30 +56,6 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
 
   const { data: items = [], isLoading } = useQuery({ queryKey, queryFn });
 
-  // URL → state: sync editingId from ?edit=<id> when items have loaded.
-  // Gated on items having loaded so we don't (a) clear editingId during the brief
-  // window between handleEdit's setEditingId call and the URL update, and
-  // (b) optimistically open with a stale id before items load.
-  // setState inside the effect is intentional here: URL is an external state
-  // source (browser back/forward + deep-link), and React state must mirror it.
-  const editParam = parseEditParam(searchParams.get('edit'));
-  useEffect(() => {
-    if (items.length === 0) return;
-
-    if (editParam === null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- mirroring external URL state on browser back/forward
-      if (editingId !== null) setEditingId(null);
-      return;
-    }
-
-    if (editingId === editParam) return;
-
-    if (items.some((item) => item.id === editParam)) {
-      setShowForm(false);
-      setEditingId(editParam);
-    }
-  }, [editParam, items, editingId]);
-
   const stripEditParam = useCallback(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -112,6 +88,35 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
       toast.error(`Failed to update ${entityName.toLowerCase()}`);
     },
   });
+
+  // URL → state: sync editingId from ?edit=<id> when items have loaded.
+  // Gated on items having loaded so we don't (a) clear editingId during the brief
+  // window between handleEdit's setEditingId call and the URL update, and
+  // (b) optimistically open with a stale id before items load.
+  // Also gated on save mutations being idle: during a save, browser Back / any URL
+  // change to the bare path must NOT close the modal — mirrors the existing
+  // isMutationPending guard at CrudSettingsPage.tsx:79 for Escape/cancel.
+  // setState inside the effect is intentional here: URL is an external state
+  // source (browser back/forward + deep-link), and React state must mirror it.
+  const editParam = parseEditParam(searchParams.get('edit'));
+  const isSavePending = createMutation.isPending || updateMutation.isPending;
+  useEffect(() => {
+    if (items.length === 0) return;
+    if (isSavePending) return;
+
+    if (editParam === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- mirroring external URL state on browser back/forward
+      if (editingId !== null) setEditingId(null);
+      return;
+    }
+
+    if (editingId === editParam) return;
+
+    if (items.some((item) => item.id === editParam)) {
+      setShowForm(false);
+      setEditingId(editParam);
+    }
+  }, [editParam, items, editingId, isSavePending]);
 
   const deleteMutation = useMutation({
     mutationFn: deleteFn,
