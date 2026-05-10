@@ -323,6 +323,33 @@ describe('BulkOperationsSection', () => {
       });
     });
 
+    // F1 — Refresh Library mutation effects (#1068 review)
+    it('Refresh Library success invalidates queryKeys.books() so bookStats and book lists refetch', async () => {
+      const user = userEvent.setup({});
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      setup({ queryClient });
+      (api.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 1, missing: 0, restored: 0 });
+      await user.click(screen.getByRole('button', { name: /^refresh library$/i }));
+      await waitFor(() => {
+        expect(api.rescanLibrary).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+    });
+
+    it('Refresh Library error surfaces api error message via toast.error', async () => {
+      const user = userEvent.setup({});
+      setup();
+      (api.rescanLibrary as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Library path is not accessible: /audiobooks'));
+      await user.click(screen.getByRole('button', { name: /^refresh library$/i }));
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Library path is not accessible: /audiobooks');
+      });
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
     it('Remove Missing Books button is absent when missing count is 0', () => {
       setup({ missingCount: 0 });
       expect(screen.queryByRole('button', { name: /remove missing books/i })).not.toBeInTheDocument();
@@ -362,6 +389,66 @@ describe('BulkOperationsSection', () => {
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Removed 4 missing books');
       });
+    });
+
+    // F2 — Remove Missing Books pending/invalidation/error (#1068 review)
+    it('Remove Missing Books shows loading state and is disabled while delete is in flight', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 4 });
+      let resolveDelete!: (v: { deleted: number }) => void;
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockReturnValue(
+        new Promise<{ deleted: number }>((resolve) => { resolveDelete = resolve; }),
+      );
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /removing/i })).toBeDisabled();
+      });
+      resolveDelete({ deleted: 4 });
+      await waitFor(() => {
+        // Restored to idle label after settle (still rendered because missingCount=4 in cache)
+        expect(screen.getByRole('button', { name: /remove missing books/i })).not.toBeDisabled();
+      });
+    });
+
+    it('Remove Missing Books success invalidates queryKeys.books() so bookStats and book lists refetch', async () => {
+      const user = userEvent.setup({});
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      setup({ missingCount: 6, queryClient });
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 6 });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(api.deleteMissingBooks).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+    });
+
+    it('Remove Missing Books error surfaces api error message via toast.error', async () => {
+      const user = userEvent.setup({});
+      setup({ missingCount: 3 });
+      (api.deleteMissingBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Database write failed'));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /remove missing books/i })).toBeInTheDocument();
+      });
+      await user.click(screen.getByRole('button', { name: /remove missing books/i }));
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /^remove$/i }));
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Database write failed');
+      });
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it('cancelling Remove Missing Books modal does not call api.deleteMissingBooks', async () => {
