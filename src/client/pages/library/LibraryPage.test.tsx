@@ -1581,7 +1581,7 @@ describe('LibraryPage', () => {
 });
 
 describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
-  it('empty library with library path configured: shows Scan Library CTA linking to /library-import', async () => {
+  it('empty library with library path configured: shows Import Existing Library CTA linking to /library-import', async () => {
     mockLibraryData([]);
     vi.mocked(api.getSettings).mockResolvedValue(
       createMockSettings({ library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' } }),
@@ -1593,12 +1593,12 @@ describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
       expect(screen.getByText('Your library is empty')).toBeInTheDocument();
     });
     await waitFor(() => {
-      const scanLink = screen.getByRole('link', { name: /scan library/i });
-      expect(scanLink).toHaveAttribute('href', '/library-import');
+      const importLink = screen.getByRole('link', { name: /import existing library/i });
+      expect(importLink).toHaveAttribute('href', '/library-import');
     });
   });
 
-  it('empty library with no library path: shows Go to Settings CTA, no Scan Library link', async () => {
+  it('empty library with no library path: shows Go to Settings CTA, no Import Existing Library link', async () => {
     mockLibraryData([]);
     vi.mocked(api.getSettings).mockResolvedValue(
       createMockSettings({ library: { path: '', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' } }),
@@ -1611,6 +1611,7 @@ describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
     });
     await waitFor(() => {
       expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /import existing library/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
     });
   });

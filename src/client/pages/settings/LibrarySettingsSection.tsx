@@ -102,9 +102,9 @@ export function LibrarySettingsSection() {
       <BulkOperationsSection />
       <ConfirmModal
         isOpen={showRescanPrompt}
-        title="Scan Library?"
-        message="Would you like to scan the library at the new path?"
-        confirmLabel="Scan"
+        title="Refresh Library?"
+        message="Would you like to refresh the library at the new path?"
+        confirmLabel="Refresh"
         cancelLabel="Skip"
         onConfirm={() => {
           setShowRescanPrompt(false);

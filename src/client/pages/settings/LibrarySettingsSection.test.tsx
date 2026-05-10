@@ -145,8 +145,28 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
       await waitFor(() => {
-        expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+        expect(screen.getByText('Refresh Library?')).toBeInTheDocument();
       });
+    });
+
+    it('uses Refresh Library vocabulary in path-change prompt (#1066)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+      fireEvent.blur(pathInput);
+      await waitFor(() => {
+        expect(screen.getByText('Refresh Library?')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Would you like to refresh the library at the new path?')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^refresh$/i })).toBeInTheDocument();
+      // Old wording must not be present
+      expect(screen.queryByText('Scan Library?')).not.toBeInTheDocument();
+      expect(screen.queryByText(/scan the library/i)).not.toBeInTheDocument();
     });
 
     it('does NOT show rescan prompt when updateSettings fails on blur', async () => {
@@ -163,7 +183,7 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalledWith('fail');
       });
-      expect(screen.queryByText('Scan Library?')).not.toBeInTheDocument();
+      expect(screen.queryByText('Refresh Library?')).not.toBeInTheDocument();
     });
 
     it('does NOT call updateSettings when blurred with empty path', async () => {
@@ -180,7 +200,7 @@ describe('LibrarySettingsSection', () => {
       });
     });
 
-    it('calls rescanLibrary when user clicks Scan in the prompt', async () => {
+    it('calls rescanLibrary when user clicks Refresh in the prompt', async () => {
       mockApi.rescanLibrary.mockResolvedValue({ scanned: 5, missing: 0, restored: 0 });
       const user = userEvent.setup();
       renderWithProviders(<LibrarySettingsSection />);
@@ -192,9 +212,9 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
       await waitFor(() => {
-        expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+        expect(screen.getByText('Refresh Library?')).toBeInTheDocument();
       });
-      await user.click(screen.getByRole('button', { name: /scan/i }));
+      await user.click(screen.getByRole('button', { name: /^refresh$/i }));
       await waitFor(() => {
         expect(mockApi.rescanLibrary).toHaveBeenCalled();
       });
@@ -212,9 +232,9 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
       await waitFor(() => {
-        expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+        expect(screen.getByText('Refresh Library?')).toBeInTheDocument();
       });
-      await user.click(screen.getByRole('button', { name: /scan/i }));
+      await user.click(screen.getByRole('button', { name: /^refresh$/i }));
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalledWith('Scan failed');
       });
@@ -231,12 +251,12 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
       await waitFor(() => {
-        expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+        expect(screen.getByText('Refresh Library?')).toBeInTheDocument();
       });
       await user.click(screen.getByRole('button', { name: /skip/i }));
       expect(mockApi.rescanLibrary).not.toHaveBeenCalled();
       await waitFor(() => {
-        expect(screen.queryByText('Scan Library?')).not.toBeInTheDocument();
+        expect(screen.queryByText('Refresh Library?')).not.toBeInTheDocument();
       });
     });
   });
