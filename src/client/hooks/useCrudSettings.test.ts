@@ -977,4 +977,55 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
       await pendingUpdate;
     });
   });
+
+  it('failed save with browser Back during pending: modal stays open AND ?edit is restored (failure-path recovery)', async () => {
+    // Hold the update promise pending until the test rejects it manually.
+    let rejectUpdate!: (reason: Error) => void;
+    const pendingUpdate = new Promise<TestItem>((_resolve, reject) => { rejectUpdate = reject; });
+    updateFn.mockReturnValue(pendingUpdate);
+
+    const { result } = renderHook(() => useCrudWithNavigate(), {
+      wrapper: createWrapper(queryClient, ['/settings/indexers']),
+    });
+
+    await waitFor(() => {
+      expect(result.current.crud.state.isLoading).toBe(false);
+    });
+
+    // Open editor for id 7.
+    act(() => { result.current.crud.actions.handleEdit(7); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('?edit=7');
+    });
+
+    // Trigger save (held pending).
+    act(() => {
+      result.current.crud.mutations.updateMutation.mutate({ id: 7, data: { name: 'x', url: 'y' } });
+    });
+    await waitFor(() => {
+      expect(result.current.crud.mutations.updateMutation.isPending).toBe(true);
+    });
+
+    // User clicks browser Back during the save — URL becomes bare.
+    act(() => { result.current.navigate(-1); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('');
+    });
+    expect(result.current.crud.state.editingId).toBe(7);
+
+    // Save fails. onError should restore ?edit=7 so the URL→state effect (which
+    // runs once isSavePending flips to false) does NOT close the modal.
+    await act(async () => {
+      rejectUpdate(new Error('Server error'));
+      await pendingUpdate.catch(() => {});
+    });
+
+    // After the rejection settles, the modal must still be open AND the URL
+    // restored — the user is supposed to recover and retry.
+    await waitFor(() => {
+      expect(result.current.crud.mutations.updateMutation.isPending).toBe(false);
+    });
+    expect(result.current.crud.state.editingId).toBe(7);
+    expect(result.current.location.search).toBe('?edit=7');
+  });
 });

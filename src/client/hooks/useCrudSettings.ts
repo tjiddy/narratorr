@@ -84,7 +84,15 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
       stripEditParam();
       toast.success(`${entityName} updated`);
     },
-    onError: () => {
+    onError: (_error, variables) => {
+      // If the URL was stripped while the save was pending (e.g. browser Back),
+      // restore ?edit=<id> so the URL→state effect doesn't close the modal once
+      // isSavePending flips to false. The user is supposed to recover and retry.
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('edit', String(variables.id));
+        return next;
+      }, { replace: true });
       toast.error(`Failed to update ${entityName.toLowerCase()}`);
     },
   });
