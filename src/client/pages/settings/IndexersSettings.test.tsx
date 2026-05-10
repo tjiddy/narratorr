@@ -295,6 +295,32 @@ describe('IndexersSettings', () => {
     });
   });
 
+  describe('#1065 — deep link via ?edit=<id>', () => {
+    it('opens edit modal automatically when route has ?edit=<existing-id>', async () => {
+      renderWithProviders(<IndexersSettings />, { route: '/settings/indexers?edit=1' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+      });
+      expect(screen.getByPlaceholderText('AudioBookBay')).toHaveValue('My ABB');
+    });
+
+    it('does not open modal when ?edit references a missing id', async () => {
+      renderWithProviders(<IndexersSettings />, { route: '/settings/indexers?edit=999' });
+
+      await waitForListLoad('My ABB');
+      expect(screen.queryByText('Edit Indexer')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('modal-backdrop')).toBeNull();
+    });
+
+    it('ignores malformed ?edit value (non-numeric) without crashing', async () => {
+      renderWithProviders(<IndexersSettings />, { route: '/settings/indexers?edit=abc' });
+
+      await waitForListLoad('My ABB');
+      expect(screen.queryByText('Edit Indexer')).not.toBeInTheDocument();
+    });
+  });
+
   describe('modal mode', () => {
     it('clicking Add Indexer opens the create form inside a modal', async () => {
       const user = userEvent.setup();

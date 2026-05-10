@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
-import type { HealthCheckResult } from '@/lib/api';
+import type { HealthCheckResult, HealthCheckTarget } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { LoadingSpinner, RefreshIcon, CheckCircleIcon, AlertCircleIcon, AlertTriangleIcon, ActivityIcon } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
@@ -26,12 +27,36 @@ const stateStyles = {
   },
 } as const;
 
+function targetToHref(target: HealthCheckTarget): string {
+  switch (target.kind) {
+    case 'indexer':
+      return `/settings/indexers?edit=${target.id}`;
+    case 'download-client':
+      return `/settings/download-clients?edit=${target.id}`;
+    case 'settings':
+      return `/settings/${target.path}`;
+    case 'route':
+      return target.path;
+  }
+}
+
+function cardKey(check: HealthCheckResult): string {
+  const target = check.target;
+  if (!target) return check.checkName;
+  if (target.kind === 'indexer' || target.kind === 'download-client') {
+    return `${target.kind}:${target.id}`;
+  }
+  return `${target.kind}:${target.path}`;
+}
+
 function HealthCard({ check }: { check: HealthCheckResult }) {
+  const navigate = useNavigate();
   const style = stateStyles[check.state] ?? stateStyles.healthy;
   const Icon = style.icon;
+  const href = check.target ? targetToHref(check.target) : null;
 
-  return (
-    <div className={`flex items-start gap-3 p-3.5 rounded-xl border transition-colors ${style.bg}`}>
+  const content = (
+    <>
       <div className="shrink-0 mt-0.5">
         <Icon className={`w-4.5 h-4.5 ${style.text}`} />
       </div>
@@ -46,7 +71,25 @@ function HealthCard({ check }: { check: HealthCheckResult }) {
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{check.message}</p>
         )}
       </div>
-    </div>
+    </>
+  );
+
+  if (href === null) {
+    return (
+      <div className={`flex items-start gap-3 p-3.5 rounded-xl border transition-colors ${style.bg}`}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(href)}
+      className={`flex items-start gap-3 p-3.5 rounded-xl border transition-colors text-left w-full cursor-pointer hover:brightness-110 focus-ring ${style.bg}`}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -103,7 +146,7 @@ export function HealthDashboard() {
       {checks && checks.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
           {checks.map((check) => (
-            <HealthCard key={check.checkName} check={check} />
+            <HealthCard key={cardKey(check)} check={check} />
           ))}
         </div>
       )}

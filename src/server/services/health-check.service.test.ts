@@ -113,6 +113,32 @@ describe('HealthCheckService', () => {
       const indexerChecks = results.filter((r) => r.checkName.startsWith('indexer:'));
       expect(indexerChecks).toHaveLength(0);
     });
+
+    it('populates target with indexer kind and id from the indexer row (success path)', async () => {
+      const { service } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([{ id: 42, name: 'NZB', enabled: true }]),
+          test: vi.fn().mockResolvedValue({ success: true }),
+        },
+      });
+
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'indexer:NZB');
+      expect(check?.target).toEqual({ kind: 'indexer', id: 42 });
+    });
+
+    it('populates target with indexer kind and id even when test throws', async () => {
+      const { service } = createService({
+        indexer: {
+          getAll: vi.fn().mockResolvedValue([{ id: 17, name: 'NZB', enabled: true }]),
+          test: vi.fn().mockRejectedValue(new Error('boom')),
+        },
+      });
+
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'indexer:NZB');
+      expect(check?.target).toEqual({ kind: 'indexer', id: 17 });
+    });
   });
 
   describe('checkDownloadClients', () => {
@@ -162,6 +188,30 @@ describe('HealthCheckService', () => {
       const clientChecks = results.filter((r) => r.checkName.startsWith('download-client:'));
       expect(clientChecks).toHaveLength(0);
     });
+
+    it('populates target with download-client kind and id from the client row', async () => {
+      const { service } = createService({
+        downloadClient: {
+          getAll: vi.fn().mockResolvedValue([{ id: 5, name: 'qBit', enabled: true }]),
+          test: vi.fn().mockResolvedValue({ success: false, message: 'Auth failed' }),
+        },
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'download-client:qBit');
+      expect(check?.target).toEqual({ kind: 'download-client', id: 5 });
+    });
+
+    it('populates target with download-client kind and id even when test throws', async () => {
+      const { service } = createService({
+        downloadClient: {
+          getAll: vi.fn().mockResolvedValue([{ id: 9, name: 'qBit', enabled: true }]),
+          test: vi.fn().mockRejectedValue(new Error('Timeout')),
+        },
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'download-client:qBit');
+      expect(check?.target).toEqual({ kind: 'download-client', id: 9 });
+    });
   });
 
   describe('checkLibraryRoot', () => {
@@ -195,6 +245,19 @@ describe('HealthCheckService', () => {
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'library-root');
       expect(check).toMatchObject({ state: 'error', message: 'Library path not writable: /audiobooks' });
+    });
+
+    it('populates target route to /settings (General settings index) on healthy and error paths', async () => {
+      const { service } = createService();
+      const healthyResults = await service.runAllChecks();
+      const healthyCheck = healthyResults.find((r) => r.checkName === 'library-root');
+      expect(healthyCheck?.target).toEqual({ kind: 'route', path: '/settings' });
+
+      const err = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      const { service: errorService } = createService({ fsAccess: vi.fn().mockRejectedValue(err) });
+      const errorResults = await errorService.runAllChecks();
+      const errorCheck = errorResults.find((r) => r.checkName === 'library-root');
+      expect(errorCheck?.target).toEqual({ kind: 'route', path: '/settings' });
     });
   });
 
@@ -273,6 +336,25 @@ describe('HealthCheckService', () => {
       const check = results.find((r) => r.checkName === 'disk-space');
       expect(check).toMatchObject({ state: 'error', message: 'Failed to check disk space: string-rejection' });
     });
+
+    it('populates target route to /settings (General settings index) across all branches', async () => {
+      const { service: healthy } = createService();
+      const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'disk-space');
+      expect(healthyCheck?.target).toEqual({ kind: 'route', path: '/settings' });
+
+      const twoGB = 2 * 1024 * 1024 * 1024;
+      const { service: warning } = createService({
+        fsStatfs: vi.fn().mockResolvedValue({ bavail: twoGB / 4096, bsize: 4096 }),
+      });
+      const warningCheck = (await warning.runAllChecks()).find((r) => r.checkName === 'disk-space');
+      expect(warningCheck?.target).toEqual({ kind: 'route', path: '/settings' });
+
+      const { service: error } = createService({
+        fsStatfs: vi.fn().mockResolvedValue({ bavail: 0, bsize: 4096 }),
+      });
+      const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'disk-space');
+      expect(errorCheck?.target).toEqual({ kind: 'route', path: '/settings' });
+    });
   });
 
   describe('checkFfmpeg', () => {
@@ -300,6 +382,18 @@ describe('HealthCheckService', () => {
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'ffmpeg');
       expect(check).toBeUndefined();
+    });
+
+    it('populates target settings:post-processing on healthy and error paths', async () => {
+      const { service: healthy } = createService();
+      const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
+      expect(healthyCheck?.target).toEqual({ kind: 'settings', path: 'post-processing' });
+
+      const { service: error } = createService({
+        probeFfmpeg: vi.fn().mockRejectedValue(new Error('spawn ENOENT')),
+      });
+      const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
+      expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'post-processing' });
     });
   });
 
@@ -397,6 +491,39 @@ describe('HealthCheckService', () => {
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'stuck-downloads');
       expect(check).toMatchObject({ state: 'error', message: 'Failed to check downloads: string-rejection' });
+    });
+
+    it('populates target route:/activity on healthy, warning, and error paths', async () => {
+      const { service: healthy } = createService();
+      const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'stuck-downloads');
+      expect(healthyCheck?.target).toEqual({ kind: 'route', path: '/activity' });
+
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const { service: warning } = createService({
+        db: {
+          select: vi.fn().mockReturnValue({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([
+                { id: 1, title: 'Stuck', progressUpdatedAt: twoHoursAgo, progress: 0.5 },
+              ]),
+            }),
+          }),
+        },
+      });
+      const warningCheck = (await warning.runAllChecks()).find((r) => r.checkName === 'stuck-downloads');
+      expect(warningCheck?.target).toEqual({ kind: 'route', path: '/activity' });
+
+      const { service: error } = createService({
+        db: {
+          select: vi.fn().mockReturnValue({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockRejectedValue(new Error('DB gone')),
+            }),
+          }),
+        },
+      });
+      const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'stuck-downloads');
+      expect(errorCheck?.target).toEqual({ kind: 'route', path: '/activity' });
     });
   });
 

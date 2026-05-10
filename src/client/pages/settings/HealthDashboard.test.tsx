@@ -18,12 +18,22 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+const navigateMock = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
+
 import { api } from '@/lib/api';
 import type { Mock } from 'vitest';
 
 describe('HealthDashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    navigateMock.mockReset();
   });
 
   it('renders health cards with correct state indicators', async () => {
@@ -105,6 +115,162 @@ describe('HealthDashboard', () => {
 
     await waitFor(() => {
       expect(api.runHealthCheck).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('#1065 — clickable cards via target', () => {
+    it('renders an indexer card as a button and navigates to /settings/indexers?edit=<id> on click', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'indexer:MAM',
+          state: 'error',
+          message: 'Authentication failed',
+          target: { kind: 'indexer', id: 42 },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('button', { name: /indexer:MAM/i });
+      await user.click(card);
+
+      expect(navigateMock).toHaveBeenCalledWith('/settings/indexers?edit=42');
+    });
+
+    it('navigates to /settings/download-clients?edit=<id> for download-client target', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'download-client:qBit',
+          state: 'error',
+          target: { kind: 'download-client', id: 7 },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('button', { name: /download-client:qBit/i });
+      await user.click(card);
+
+      expect(navigateMock).toHaveBeenCalledWith('/settings/download-clients?edit=7');
+    });
+
+    it('navigates to /settings/post-processing for ffmpeg settings target', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'ffmpeg',
+          state: 'error',
+          target: { kind: 'settings', path: 'post-processing' },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('button', { name: /ffmpeg/i });
+      await user.click(card);
+
+      expect(navigateMock).toHaveBeenCalledWith('/settings/post-processing');
+    });
+
+    it('navigates to /settings (index) for library-root route target — not /settings/general', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'library-root',
+          state: 'error',
+          target: { kind: 'route', path: '/settings' },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('button', { name: /library-root/i });
+      await user.click(card);
+
+      expect(navigateMock).toHaveBeenCalledWith('/settings');
+    });
+
+    it('navigates to /activity for stuck-downloads route target', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'stuck-downloads',
+          state: 'warning',
+          target: { kind: 'route', path: '/activity' },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('button', { name: /stuck-downloads/i });
+      await user.click(card);
+
+      expect(navigateMock).toHaveBeenCalledWith('/activity');
+    });
+
+    it('cards without target render as non-button elements with no navigation', async () => {
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'untargeted-check', state: 'healthy' },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      await waitFor(() => {
+        expect(screen.getByText('untargeted-check')).toBeInTheDocument();
+      });
+
+      // No button with that name exists
+      expect(screen.queryByRole('button', { name: /untargeted-check/i })).toBeNull();
+    });
+
+    it('keyboard activation (Enter) on actionable card triggers navigation', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'indexer:NZB',
+          state: 'error',
+          target: { kind: 'indexer', id: 1 },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('button', { name: /indexer:NZB/i });
+      card.focus();
+      await user.keyboard('{Enter}');
+
+      expect(navigateMock).toHaveBeenCalledWith('/settings/indexers?edit=1');
+    });
+
+    it('two indexer cards with the same checkName but different ids both render and navigate independently', async () => {
+      const user = userEvent.setup();
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'indexer:NZB', state: 'error', target: { kind: 'indexer', id: 1 } },
+        { checkName: 'indexer:NZB', state: 'warning', target: { kind: 'indexer', id: 2 } },
+      ]);
+
+      // Suppress noise; assert no duplicate-key warning surfaces.
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      renderWithProviders(<HealthDashboard />);
+
+      const buttons = await screen.findAllByRole('button', { name: /indexer:NZB/i });
+      expect(buttons).toHaveLength(2);
+
+      await user.click(buttons[0]!);
+      expect(navigateMock).toHaveBeenLastCalledWith('/settings/indexers?edit=1');
+
+      await user.click(buttons[1]!);
+      expect(navigateMock).toHaveBeenLastCalledWith('/settings/indexers?edit=2');
+
+      const duplicateKeyWarning = errorSpy.mock.calls.some((call) =>
+        call.some((arg) => typeof arg === 'string' && arg.includes('Encountered two children with the same key')),
+      );
+      expect(duplicateKeyWarning).toBe(false);
+
+      errorSpy.mockRestore();
     });
   });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import React from 'react';
 import { useCrudSettings } from './useCrudSettings';
 import type { TestResult } from '@/lib/api';
@@ -43,9 +44,13 @@ function createQueryClient() {
   });
 }
 
-function createWrapper(queryClient: QueryClient) {
+function createWrapper(queryClient: QueryClient, initialEntries: string[] = ['/']) {
   return ({ children }: { children: React.ReactNode }) =>
-    React.createElement(QueryClientProvider, { client: queryClient }, children);
+    React.createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      React.createElement(MemoryRouter, { initialEntries }, children),
+    );
 }
 
 describe('useCrudSettings', () => {
@@ -645,5 +650,382 @@ describe('formTestResult real state transitions (#610 regression)', () => {
 
     expect(hook.result.current.state.editingId).toBe(2);
     expect(hook.result.current.tests.formTestResult).toBeNull();
+  });
+});
+
+describe('#1065 — URL ?edit=<id> sync', () => {
+  const queryFn = vi.fn<() => Promise<TestItem[]>>();
+  const updateFn = vi.fn<(id: number, data: TestFormData) => Promise<TestItem>>();
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient = createQueryClient();
+    queryFn.mockResolvedValue([]);
+    vi.mocked(useConnectionTest).mockReturnValue({
+      testingId: null, testResult: null, testingForm: false, formTestResult: null,
+      handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
+    });
+  });
+
+  function renderHookAt(route: string) {
+    return renderHook(
+      () => useCrudSettings<TestItem, TestFormData>({
+        queryKey: ['test-entities'], queryFn,
+        createFn: vi.fn(), updateFn, deleteFn: vi.fn(),
+        testById: vi.fn(), testByConfig: vi.fn(), entityName: 'Indexer',
+      }),
+      { wrapper: createWrapper(queryClient, [route]) },
+    );
+  }
+
+  it('opens modal for ?edit=<id> once items load and the id is present', async () => {
+    queryFn.mockResolvedValue([{ id: 5, name: 'NZB' }, { id: 6, name: 'TPB' }]);
+    const { result } = renderHookAt('/settings/indexers?edit=5');
+
+    await waitFor(() => {
+      expect(result.current.state.editingId).toBe(5);
+    });
+  });
+
+  it('does NOT open modal when ?edit=<id> references a missing id', async () => {
+    queryFn.mockResolvedValue([{ id: 1, name: 'NZB' }]);
+    const { result } = renderHookAt('/settings/indexers?edit=999');
+
+    await waitFor(() => {
+      expect(result.current.state.isLoading).toBe(false);
+    });
+    expect(result.current.state.editingId).toBeNull();
+  });
+
+  it('ignores non-numeric ?edit value', async () => {
+    queryFn.mockResolvedValue([{ id: 1, name: 'NZB' }]);
+    const { result } = renderHookAt('/settings/indexers?edit=abc');
+
+    await waitFor(() => {
+      expect(result.current.state.isLoading).toBe(false);
+    });
+    expect(result.current.state.editingId).toBeNull();
+  });
+
+  it('handleEdit reflects the new id in the URL (push semantics validated indirectly via deep-link integration tests)', async () => {
+    queryFn.mockResolvedValue([{ id: 7, name: 'NZB' }]);
+    const { result } = renderHookAt('/settings/indexers');
+
+    await waitFor(() => {
+      expect(result.current.state.isLoading).toBe(false);
+    });
+
+    act(() => {
+      result.current.actions.handleEdit(7);
+    });
+
+    // editingId tracks immediately; URL effect is gated on items so it doesn't clobber.
+    expect(result.current.state.editingId).toBe(7);
+  });
+
+  it('handleCancelEdit clears editingId when ?edit was present', async () => {
+    queryFn.mockResolvedValue([{ id: 3, name: 'NZB' }]);
+    const { result } = renderHookAt('/settings/indexers?edit=3');
+
+    await waitFor(() => {
+      expect(result.current.state.editingId).toBe(3);
+    });
+
+    act(() => {
+      result.current.actions.handleCancelEdit();
+    });
+
+    expect(result.current.state.editingId).toBeNull();
+  });
+
+  it('handleCancelEdit strips ?edit and clears editingId', async () => {
+    queryFn.mockResolvedValue([{ id: 3, name: 'NZB' }]);
+    const { result } = renderHookAt('/settings/indexers?edit=3');
+
+    await waitFor(() => {
+      expect(result.current.state.editingId).toBe(3);
+    });
+
+    act(() => {
+      result.current.actions.handleCancelEdit();
+    });
+
+    expect(result.current.state.editingId).toBeNull();
+  });
+
+  it('updateMutation onSuccess clears editingId and strips ?edit', async () => {
+    queryFn.mockResolvedValue([{ id: 4, name: 'NZB' }]);
+    updateFn.mockResolvedValue({ id: 4, name: 'NZB-updated' });
+    const { result } = renderHookAt('/settings/indexers?edit=4');
+
+    await waitFor(() => {
+      expect(result.current.state.editingId).toBe(4);
+    });
+
+    await act(async () => {
+      result.current.mutations.updateMutation.mutate({ id: 4, data: { name: 'NZB-updated', url: 'https://example.com' } });
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.editingId).toBeNull();
+    });
+  });
+});
+
+describe('#1067 F2 — URL history semantics (push/replace/back/forward)', () => {
+  const queryFn = vi.fn<() => Promise<TestItem[]>>();
+  const updateFn = vi.fn<(id: number, data: TestFormData) => Promise<TestItem>>();
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient = createQueryClient();
+    queryFn.mockResolvedValue([{ id: 7, name: 'NZB' }, { id: 8, name: 'TPB' }]);
+    vi.mocked(useConnectionTest).mockReturnValue({
+      testingId: null, testResult: null, testingForm: false, formTestResult: null,
+      handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
+    });
+  });
+
+  // Combined hook: exposes the CRUD hook plus router state observers so tests
+  // can assert URL search string AND navigation type (PUSH vs REPLACE vs POP).
+  // Using one renderHook keeps state observation in lockstep with the hook under test.
+  function useCrudWithRouterProbes() {
+    const crud = useCrudSettings<TestItem, TestFormData>({
+      queryKey: ['test-entities'], queryFn,
+      createFn: vi.fn(), updateFn, deleteFn: vi.fn(),
+      testById: vi.fn(), testByConfig: vi.fn(), entityName: 'Indexer',
+    });
+    const location = useLocation();
+    const navigationType = useNavigationType();
+    const navigate = useNavigate();
+    return { crud, location, navigationType, navigate };
+  }
+
+  function renderProbeAt(route: string) {
+    return renderHook(() => useCrudWithRouterProbes(), {
+      wrapper: createWrapper(queryClient, [route]),
+    });
+  }
+
+  it('handleEdit pushes (navigationType=PUSH) and writes ?edit=<id> into the URL', async () => {
+    const { result } = renderProbeAt('/settings/indexers');
+
+    await waitFor(() => {
+      expect(result.current.crud.state.isLoading).toBe(false);
+    });
+    expect(result.current.location.search).toBe('');
+
+    act(() => { result.current.crud.actions.handleEdit(7); });
+
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('?edit=7');
+    });
+    expect(result.current.navigationType).toBe('PUSH');
+  });
+
+  it('handleCancelEdit replaces (navigationType=REPLACE) and strips ?edit', async () => {
+    const { result } = renderProbeAt('/settings/indexers?edit=7');
+
+    await waitFor(() => {
+      expect(result.current.crud.state.editingId).toBe(7);
+    });
+
+    act(() => { result.current.crud.actions.handleCancelEdit(); });
+
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('');
+    });
+    expect(result.current.navigationType).toBe('REPLACE');
+  });
+
+  it('successful updateMutation replaces (navigationType=REPLACE) and strips ?edit', async () => {
+    updateFn.mockResolvedValue({ id: 7, name: 'NZB-updated' });
+    const { result } = renderProbeAt('/settings/indexers?edit=7');
+
+    await waitFor(() => {
+      expect(result.current.crud.state.editingId).toBe(7);
+    });
+
+    await act(async () => {
+      result.current.crud.mutations.updateMutation.mutate({ id: 7, data: { name: 'x', url: 'y' } });
+    });
+
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('');
+    });
+    expect(result.current.navigationType).toBe('REPLACE');
+  });
+
+  it('browser Back from ?edit=<id> closes the modal (URL becomes bare, editingId null)', async () => {
+    // Start at bare path so we have an entry to go back TO.
+    const { result } = renderProbeAt('/settings/indexers');
+
+    await waitFor(() => {
+      expect(result.current.crud.state.isLoading).toBe(false);
+    });
+
+    // Push ?edit=7 onto history.
+    act(() => { result.current.crud.actions.handleEdit(7); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('?edit=7');
+      expect(result.current.crud.state.editingId).toBe(7);
+    });
+
+    // Simulate browser Back.
+    act(() => { result.current.navigate(-1); });
+
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('');
+      expect(result.current.crud.state.editingId).toBeNull();
+    });
+  });
+
+  it('browser Forward to ?edit=<id> reopens the modal (editingId becomes the id)', async () => {
+    const { result } = renderProbeAt('/settings/indexers');
+
+    await waitFor(() => {
+      expect(result.current.crud.state.isLoading).toBe(false);
+    });
+
+    // Push ?edit=7
+    act(() => { result.current.crud.actions.handleEdit(7); });
+    await waitFor(() => {
+      expect(result.current.crud.state.editingId).toBe(7);
+    });
+
+    // Back to bare path.
+    act(() => { result.current.navigate(-1); });
+    await waitFor(() => {
+      expect(result.current.crud.state.editingId).toBeNull();
+    });
+
+    // Forward to ?edit=7.
+    act(() => { result.current.navigate(1); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('?edit=7');
+      expect(result.current.crud.state.editingId).toBe(7);
+    });
+  });
+});
+
+describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => {
+  const queryFn = vi.fn<() => Promise<TestItem[]>>();
+  const updateFn = vi.fn<(id: number, data: TestFormData) => Promise<TestItem>>();
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryClient = createQueryClient();
+    queryFn.mockResolvedValue([{ id: 7, name: 'NZB' }]);
+    vi.mocked(useConnectionTest).mockReturnValue({
+      testingId: null, testResult: null, testingForm: false, formTestResult: null,
+      handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
+    });
+  });
+
+  function useCrudWithNavigate() {
+    const crud = useCrudSettings<TestItem, TestFormData>({
+      queryKey: ['test-entities'], queryFn,
+      createFn: vi.fn(), updateFn, deleteFn: vi.fn(),
+      testById: vi.fn(), testByConfig: vi.fn(), entityName: 'Indexer',
+    });
+    return { crud, location: useLocation(), navigate: useNavigate() };
+  }
+
+  it('browser Back DURING save mutation does NOT clear editingId (URL-driven close blocked while isPending)', async () => {
+    // Hold the update promise pending until the test resolves it manually.
+    let resolveUpdate!: (value: TestItem) => void;
+    const pendingUpdate = new Promise<TestItem>((resolve) => { resolveUpdate = resolve; });
+    updateFn.mockReturnValue(pendingUpdate);
+
+    const { result } = renderHook(() => useCrudWithNavigate(), {
+      wrapper: createWrapper(queryClient, ['/settings/indexers']),
+    });
+
+    await waitFor(() => {
+      expect(result.current.crud.state.isLoading).toBe(false);
+    });
+
+    // Open editor for id 7.
+    act(() => { result.current.crud.actions.handleEdit(7); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('?edit=7');
+    });
+
+    // Trigger save (mutation goes pending and stays pending).
+    act(() => {
+      result.current.crud.mutations.updateMutation.mutate({ id: 7, data: { name: 'x', url: 'y' } });
+    });
+    await waitFor(() => {
+      expect(result.current.crud.mutations.updateMutation.isPending).toBe(true);
+    });
+
+    // Simulate browser Back while save is in flight — URL changes to bare path.
+    act(() => { result.current.navigate(-1); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('');
+    });
+
+    // Modal must STAY OPEN — editingId preserved despite URL going bare.
+    expect(result.current.crud.state.editingId).toBe(7);
+
+    // Resolve the save to let the test finish cleanly.
+    await act(async () => {
+      resolveUpdate({ id: 7, name: 'NZB-updated' });
+      await pendingUpdate;
+    });
+  });
+
+  it('failed save with browser Back during pending: modal stays open AND ?edit is restored (failure-path recovery)', async () => {
+    // Hold the update promise pending until the test rejects it manually.
+    let rejectUpdate!: (reason: Error) => void;
+    const pendingUpdate = new Promise<TestItem>((_resolve, reject) => { rejectUpdate = reject; });
+    updateFn.mockReturnValue(pendingUpdate);
+
+    const { result } = renderHook(() => useCrudWithNavigate(), {
+      wrapper: createWrapper(queryClient, ['/settings/indexers']),
+    });
+
+    await waitFor(() => {
+      expect(result.current.crud.state.isLoading).toBe(false);
+    });
+
+    // Open editor for id 7.
+    act(() => { result.current.crud.actions.handleEdit(7); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('?edit=7');
+    });
+
+    // Trigger save (held pending).
+    act(() => {
+      result.current.crud.mutations.updateMutation.mutate({ id: 7, data: { name: 'x', url: 'y' } });
+    });
+    await waitFor(() => {
+      expect(result.current.crud.mutations.updateMutation.isPending).toBe(true);
+    });
+
+    // User clicks browser Back during the save — URL becomes bare.
+    act(() => { result.current.navigate(-1); });
+    await waitFor(() => {
+      expect(result.current.location.search).toBe('');
+    });
+    expect(result.current.crud.state.editingId).toBe(7);
+
+    // Save fails. onError should restore ?edit=7 so the URL→state effect (which
+    // runs once isSavePending flips to false) does NOT close the modal.
+    await act(async () => {
+      rejectUpdate(new Error('Server error'));
+      await pendingUpdate.catch(() => {});
+    });
+
+    // After the rejection settles, the modal must still be open AND the URL
+    // restored — the user is supposed to recover and retry.
+    await waitFor(() => {
+      expect(result.current.crud.mutations.updateMutation.isPending).toBe(false);
+    });
+    expect(result.current.crud.state.editingId).toBe(7);
+    expect(result.current.location.search).toBe('?edit=7');
   });
 });

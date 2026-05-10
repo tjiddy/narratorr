@@ -2,10 +2,17 @@ import { fetchApi } from './client.js';
 
 export type HealthState = 'healthy' | 'warning' | 'error';
 
+export type HealthCheckTarget =
+  | { kind: 'indexer'; id: number }
+  | { kind: 'download-client'; id: number }
+  | { kind: 'settings'; path: string }
+  | { kind: 'route'; path: string };
+
 export interface HealthCheckResult {
   checkName: string;
   state: HealthState;
   message?: string;
+  target?: HealthCheckTarget;
 }
 
 export interface HealthSummary {
