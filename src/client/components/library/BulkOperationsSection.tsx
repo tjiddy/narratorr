@@ -100,17 +100,49 @@ function BulkButton({
   );
 }
 
-export function BulkOperationsSection() {
+function ImportExistingLibraryLink() {
+  return (
+    <Link
+      to="/library-import"
+      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
+    >
+      <FolderIcon className="w-3.5 h-3.5" />
+      Import Existing Library
+    </Link>
+  );
+}
+
+function RefreshLibraryButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border/30 disabled:hover:text-foreground"
+    >
+      {busy && <Spinner />}
+      {busy ? 'Refreshing...' : 'Refresh Library'}
+    </button>
+  );
+}
+
+function RemoveMissingBooksButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-destructive/30 hover:text-destructive transition-all focus-ring disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border/30 disabled:hover:text-foreground"
+    >
+      {busy && <Spinner />}
+      {busy ? 'Removing...' : 'Remove Missing Books'}
+    </button>
+  );
+}
+
+function useRefreshLibraryMutation() {
   const queryClient = useQueryClient();
-  const { isRunning, jobType, progress, startJob } = useBulkOperation();
-  const [pendingOp, setPendingOp] = useState<PendingOp>(null);
-  const [modalCount, setModalCount] = useState<ModalCount | null>(null);
-  const [isLoadingCount, setIsLoadingCount] = useState(false);
-
-  const { data: stats } = useBookStats();
-  const missingCount = stats?.counts.missing ?? 0;
-
-  const refreshMutation = useMutation({
+  return useMutation({
     mutationFn: () => api.rescanLibrary(),
     onSuccess: (data) => {
       toast.success(`Scanned: ${data.scanned} books. Missing: ${data.missing} books. Restored: ${data.restored} books.`);
@@ -120,8 +152,11 @@ export function BulkOperationsSection() {
       toast.error(getErrorMessage(error));
     },
   });
+}
 
-  const removeMissingMutation = useMutation({
+function useRemoveMissingMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
     mutationFn: () => api.deleteMissingBooks(),
     onSuccess: (data) => {
       toast.success(`Removed ${data.deleted} missing book${data.deleted !== 1 ? 's' : ''}`);
@@ -131,10 +166,21 @@ export function BulkOperationsSection() {
       toast.error(getErrorMessage(error));
     },
   });
+}
+
+export function BulkOperationsSection() {
+  const { isRunning, jobType, progress, startJob } = useBulkOperation();
+  const [pendingOp, setPendingOp] = useState<PendingOp>(null);
+  const [modalCount, setModalCount] = useState<ModalCount | null>(null);
+  const [isLoadingCount, setIsLoadingCount] = useState(false);
+
+  const { data: stats } = useBookStats();
+  const missingCount = stats?.counts.missing ?? 0;
+
+  const refreshMutation = useRefreshLibraryMutation();
+  const removeMissingMutation = useRemoveMissingMutation();
 
   const anyBulkBusy = isRunning || isLoadingCount;
-  const refreshBusy = refreshMutation.isPending;
-  const removeMissingBusy = removeMissingMutation.isPending;
 
   async function handleOperationClick(op: 'rename' | 'retag') {
     setIsLoadingCount(true);
@@ -169,28 +215,12 @@ export function BulkOperationsSection() {
 
   const bulkModal = pendingOp === 'rename' || pendingOp === 'retag' ? MODAL_LABELS[pendingOp] : null;
 
-  const removeMissingMessage = `Remove ${missingCount} missing book${missingCount !== 1 ? 's' : ''} from Narratorr? Files will not be deleted.`;
-
   return (
     <div className="mt-4 pt-4 border-t border-border/30 space-y-3">
       <p className="text-sm font-medium text-foreground">Library Actions</p>
       <div className="flex flex-wrap gap-2">
-        <Link
-          to="/library-import"
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
-        >
-          <FolderIcon className="w-3.5 h-3.5" />
-          Import Existing Library
-        </Link>
-        <button
-          type="button"
-          disabled={refreshBusy}
-          onClick={() => refreshMutation.mutate()}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border/30 disabled:hover:text-foreground"
-        >
-          {refreshBusy && <Spinner />}
-          {refreshBusy ? 'Refreshing...' : 'Refresh Library'}
-        </button>
+        <ImportExistingLibraryLink />
+        <RefreshLibraryButton busy={refreshMutation.isPending} onClick={() => refreshMutation.mutate()} />
         <BulkButton
           label="Rename All Books"
           runningLabel="Renaming..."
@@ -208,15 +238,10 @@ export function BulkOperationsSection() {
           onClick={() => handleOperationClick('retag')}
         />
         {missingCount > 0 && (
-          <button
-            type="button"
-            disabled={removeMissingBusy}
+          <RemoveMissingBooksButton
+            busy={removeMissingMutation.isPending}
             onClick={() => setPendingOp('removeMissing')}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-destructive/30 hover:text-destructive transition-all focus-ring disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border/30 disabled:hover:text-foreground"
-          >
-            {removeMissingBusy && <Spinner />}
-            {removeMissingBusy ? 'Removing...' : 'Remove Missing Books'}
-          </button>
+          />
         )}
       </div>
       {progress.failures > 0 && (
@@ -224,7 +249,7 @@ export function BulkOperationsSection() {
       )}
       {bulkModal && (
         <ConfirmModal
-          isOpen={pendingOp === 'rename' || pendingOp === 'retag'}
+          isOpen
           title={bulkModal.title}
           message={bulkModal.message(modalCount ?? 0)}
           confirmLabel={bulkModal.confirmLabel}
@@ -237,7 +262,7 @@ export function BulkOperationsSection() {
         <ConfirmModal
           isOpen
           title="Remove Missing Books?"
-          message={removeMissingMessage}
+          message={`Remove ${missingCount} missing book${missingCount !== 1 ? 's' : ''} from Narratorr? Files will not be deleted.`}
           confirmLabel="Remove"
           cancelLabel="Cancel"
           onConfirm={handleConfirm}
