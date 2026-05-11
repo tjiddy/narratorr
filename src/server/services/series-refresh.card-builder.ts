@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import { series, seriesMembers } from '../../db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
@@ -9,6 +9,19 @@ import {
   type BookSeriesCardData,
   type SeriesMemberCard,
 } from './series-refresh.helpers.js';
+
+function isMemberCurrent(
+  member: { id?: unknown; bookId: number | null; providerBookId: string | null; alternateAsins: string[] },
+  currentBook: { id: number; asin: string | null } | undefined,
+): boolean {
+  if (!currentBook) return false;
+  if (member.bookId === currentBook.id) return true;
+  if (!currentBook.asin) return false;
+  if (member.providerBookId === currentBook.asin) return true;
+  // The canonical pick may be biased away from the current book's ASIN; checking
+  // alternate_asins keeps isCurrent correct across alternate-edition collapse. (F12)
+  return member.alternateAsins.includes(currentBook.asin);
+}
 
 export async function buildCardFromRow(
   db: Db,
@@ -26,9 +39,7 @@ export async function buildCardFromRow(
     title: m.title,
     positionRaw: m.positionRaw,
     position: m.position,
-    isCurrent: currentBook
-      ? (m.bookId === currentBook.id || (!!m.providerBookId && !!currentBook.asin && m.providerBookId === currentBook.asin))
-      : false,
+    isCurrent: isMemberCurrent(m, currentBook),
     libraryBookId: m.bookId,
     coverUrl: m.coverUrl,
   }));
@@ -43,7 +54,7 @@ export async function buildCardFromRow(
   };
 }
 
-function buildLocalOnlyCard(book: { id: number; asin: string | null; seriesName: string; seriesPosition: number | null }): BookSeriesCardData {
+function buildLocalOnlyCard(book: { id: number; title: string; asin: string | null; seriesName: string; seriesPosition: number | null }): BookSeriesCardData {
   return {
     id: -1,
     name: book.seriesName,
@@ -54,7 +65,7 @@ function buildLocalOnlyCard(book: { id: number; asin: string | null; seriesName:
     members: [{
       id: -1,
       providerBookId: book.asin,
-      title: '',
+      title: book.title,
       positionRaw: book.seriesPosition != null ? String(book.seriesPosition) : null,
       position: book.seriesPosition,
       isCurrent: true,
@@ -66,15 +77,21 @@ function buildLocalOnlyCard(book: { id: number; asin: string | null; seriesName:
 
 export async function buildCardData(
   db: Db,
-  book: { id: number; asin: string | null; seriesName: string | null; seriesPosition: number | null },
+  book: { id: number; title: string; asin: string | null; seriesName: string | null; seriesPosition: number | null },
 ): Promise<BookSeriesCardData | null> {
   let seriesRow: SeriesRow | null = null;
   if (book.asin) {
+    // Widened to also resolve via alternate_asins so a book whose ASIN was
+    // collapsed under a different canonical providerBookId still reaches its
+    // series card, even without a cached book.seriesName. (F12)
     const rows = await db
       .select({ s: series })
       .from(seriesMembers)
       .innerJoin(series, eq(seriesMembers.seriesId, series.id))
-      .where(eq(seriesMembers.providerBookId, book.asin))
+      .where(or(
+        eq(seriesMembers.providerBookId, book.asin),
+        sql`EXISTS (SELECT 1 FROM json_each(${seriesMembers.alternateAsins}) WHERE value = ${book.asin})`,
+      ))
       .limit(1);
     if (rows.length > 0) seriesRow = rows[0]!.s as SeriesRow;
   }

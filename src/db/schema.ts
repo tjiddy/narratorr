@@ -144,6 +144,8 @@ export const seriesMembers = sqliteTable('series_members', {
   seriesId: integer('series_id').notNull().references(() => series.id, { onDelete: 'cascade' }),
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
   providerBookId: text('provider_book_id'),
+  // Non-canonical ASINs collapsed into this row by logical-identity dedupe (#1073).
+  alternateAsins: text('alternate_asins', { mode: 'json' }).$type<string[]>().notNull().default(sql`'[]'`),
   title: text('title').notNull(),
   normalizedTitle: text('normalized_title').notNull(),
   authorName: text('author_name'),
@@ -154,21 +156,18 @@ export const seriesMembers = sqliteTable('series_members', {
   duration: integer('duration'),
   publisher: text('publisher'),
   source: text('source', { enum: ['provider', 'local'] }).notNull().default('provider'),
-  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [
   uniqueIndex('idx_series_members_provider_book_unique')
     .on(table.seriesId, table.providerBookId)
     .where(sql`provider_book_id IS NOT NULL`),
+  // authorName included so same-title/same-position rows with different authors
+  // can coexist; the both-null-author NULL≠NULL slip is handled by app-layer
+  // grouping in series-refresh.helpers.ts (#1073).
   uniqueIndex('idx_series_members_local_unique')
-    .on(table.seriesId, table.normalizedTitle, table.positionRaw)
+    .on(table.seriesId, table.normalizedTitle, table.positionRaw, table.authorName)
     .where(sql`provider_book_id IS NULL`),
   index('idx_series_members_series_id').on(table.seriesId),
   index('idx_series_members_book_id').on(table.bookId),
