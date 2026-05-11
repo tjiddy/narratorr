@@ -198,6 +198,8 @@ function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, se
         manual: true,
         bookId: book.id,
         seriesName: book.seriesName ?? null,
+        bookTitle: book.title,
+        seriesPosition: book.seriesPosition ?? null,
       });
       return response;
     },

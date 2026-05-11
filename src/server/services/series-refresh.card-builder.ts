@@ -23,6 +23,39 @@ function isMemberCurrent(
   return member.alternateAsins.includes(currentBook.asin);
 }
 
+/**
+ * Read-time remediation for historical zero-member rows. When the card built
+ * from `row` has no members but the current book's series metadata identifies
+ * it as a member of `row`, inject the current book as the sole member so the
+ * UI doesn't render "No members known yet". Used by both the GET card path
+ * (`buildCardData`) and every refresh-response path in `SeriesRefreshService`
+ * — without this, a manual refresh whose provider response is empty re-caches
+ * the empty card on the client even though the GET path would synthesize one.
+ *
+ * Mutates `card` in place; no-op when card already has members, when book has
+ * no `seriesName`, or when the normalized series name doesn't match the row.
+ */
+export function synthesizeCurrentMemberIfEmpty(
+  card: BookSeriesCardData,
+  row: Pick<SeriesRow, 'normalizedName'>,
+  book: { id: number; title: string; asin: string | null; seriesName: string | null; seriesPosition: number | null } | undefined,
+): void {
+  if (!book) return;
+  if (card.members.length > 0) return;
+  if (!book.seriesName) return;
+  if (normalizeSeriesName(book.seriesName) !== row.normalizedName) return;
+  card.members = [{
+    id: -1,
+    providerBookId: book.asin,
+    title: book.title,
+    positionRaw: book.seriesPosition != null ? String(book.seriesPosition) : null,
+    position: book.seriesPosition,
+    isCurrent: true,
+    libraryBookId: book.id,
+    coverUrl: null,
+  }];
+}
+
 export async function buildCardFromRow(
   db: Db,
   row: SeriesRow,
@@ -104,7 +137,9 @@ export async function buildCardData(
     if (rows.length > 0) seriesRow = rows[0] as SeriesRow;
   }
   if (seriesRow) {
-    return buildCardFromRow(db, seriesRow, book);
+    const card = await buildCardFromRow(db, seriesRow, book);
+    synthesizeCurrentMemberIfEmpty(card, seriesRow, book);
+    return card;
   }
   if (book.seriesName) {
     return buildLocalOnlyCard({ ...book, seriesName: book.seriesName });

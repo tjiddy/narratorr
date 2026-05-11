@@ -545,6 +545,7 @@ describe('BookService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([mockAuthor]))    // author found
         .mockReturnValueOnce(mockDbChain([]))              // narrator not found
+        .mockReturnValueOnce(mockDbChain([]))              // upsertSeriesLink: series by normalized name (none)
         .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));

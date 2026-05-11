@@ -137,6 +137,42 @@ export async function applySuccessOutcome(
     return existing;
   }
 
+  // Empty provider response: do NOT mark the row 'success' with zero members.
+  // A successful zero-member outcome masks Add Book's locally-inserted member
+  // row at read time and creates the deployed `No members known yet` bug. If a
+  // row doesn't exist yet, skip upsert entirely so the local card path renders.
+  // If a row exists, advance the freshness window. When the existing row has
+  // zero members (the historical bug shape — `lastFetchStatus: 'success'` plus
+  // empty `series_members`), also demote any lingering status so the persisted
+  // row no longer carries the `success` claim the AC forbids. Populated rows
+  // keep their existing status because their members are still good — a
+  // transient empty response shouldn't demote a healthy populated row.
+  if (products.length === 0) {
+    log.debug({ seedAsin, seriesName: finalName }, 'Same-series response was empty — preserving local state, no success flip');
+    if (!existing) return null;
+    const existingMembers = await db
+      .select({ id: seriesMembers.id })
+      .from(seriesMembers)
+      .where(eq(seriesMembers.seriesId, existing.id))
+      .limit(1);
+    const hasMembers = existingMembers.length > 0;
+    const updates: Partial<typeof series.$inferInsert> = {
+      lastFetchedAt: new Date(),
+      updatedAt: new Date(),
+    };
+    if (!hasMembers) {
+      updates.lastFetchStatus = null;
+      updates.lastFetchError = null;
+      updates.nextFetchAfter = null;
+    }
+    const rows = await db
+      .update(series)
+      .set(updates)
+      .where(eq(series.id, existing.id))
+      .returning();
+    return (rows[0] as SeriesRow) ?? existing;
+  }
+
   // Atomic reconcile: series upsert + members + local-book linking + status flip
   // run in a single transaction so a midway failure can't leave half-written
   // members or a status row out of sync with cache contents. (F5, DB-2)

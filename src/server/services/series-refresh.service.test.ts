@@ -25,6 +25,7 @@ vi.mock('./series-refresh.card-builder.js', () => ({
   buildCardData: vi.fn(),
   buildCardFromRow: vi.fn(),
   readSeriesRow: vi.fn(),
+  synthesizeCurrentMemberIfEmpty: vi.fn(),
 }));
 
 import {

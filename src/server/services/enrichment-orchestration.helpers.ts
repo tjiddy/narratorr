@@ -244,6 +244,7 @@ export function buildBookCreatePayload(
     // When `meta` is null (no provider match accepted), fall back to item-derived values.
     seriesName: meta?.series?.[0]?.name ?? item.seriesName ?? undefined,
     seriesPosition: meta?.series?.[0]?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
+    seriesAsin: meta?.series?.[0]?.asin ?? undefined,
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,

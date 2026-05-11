@@ -300,4 +300,44 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.narrators).toBeUndefined();
     expect(payload.seriesPosition).toBeUndefined();
   });
+
+  it('extracts meta.series[0].asin onto seriesAsin (#1074)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1, asin: 'B09168SRZK' }] },
+      'importing',
+    );
+    expect(payload.seriesAsin).toBe('B09168SRZK');
+  });
+
+  it('seriesAsin is undefined when meta is null (#1074)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      null,
+      'importing',
+    );
+    expect(payload.seriesAsin).toBeUndefined();
+  });
+
+  it('seriesAsin is undefined when meta.series is empty (#1074)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], series: [] },
+      'importing',
+    );
+    expect(payload.seriesAsin).toBeUndefined();
+  });
+
+  it('seriesAsin is undefined when meta.series[0].asin is missing (#1074)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }] },
+      'importing',
+    );
+    expect(payload.seriesAsin).toBeUndefined();
+  });
 });
