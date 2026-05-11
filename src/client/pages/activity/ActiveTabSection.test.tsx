@@ -99,7 +99,7 @@ describe('ActiveTabSection', () => {
       expect(screen.getByText('Nothing currently active')).toBeInTheDocument();
     });
 
-    it('does not show empty header subtitle while import jobs are present', () => {
+    it('does not show empty header subtitle while processing import jobs are present', () => {
       const importJobs: ImportJobWithBook[] = [{
         id: 1, bookId: 42, type: 'manual', status: 'processing', phase: 'copying',
         phaseHistory: [{ phase: 'copying', startedAt: 1000 }],
@@ -109,6 +109,19 @@ describe('ActiveTabSection', () => {
       }];
       renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
       expect(screen.queryByText('Nothing currently active')).not.toBeInTheDocument();
+    });
+
+    it('ignores completed import jobs that are no longer visible activity', () => {
+      const importJobs: ImportJobWithBook[] = [{
+        id: 1, bookId: 42, type: 'manual', status: 'completed', phase: 'done',
+        phaseHistory: [],
+        createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:01:00Z',
+        startedAt: '2025-01-01T00:00:00Z', completedAt: '2025-01-01T00:01:00Z',
+        book: { title: 'Finished Import', coverUrl: null, primaryAuthorName: 'Author' },
+      }];
+      renderWithProviders(<ActiveTabSection {...defaultProps({ importJobs })} />);
+      expect(screen.getByText('Nothing currently active')).toBeInTheDocument();
+      expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
     it('shows empty state when no downloads, merges, or searches active', () => {

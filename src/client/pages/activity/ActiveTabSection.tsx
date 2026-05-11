@@ -31,6 +31,20 @@ export interface ActiveTabSectionProps {
   cancelMergeMutation: UseMutationResult<unknown, Error, number>;
 }
 
+function hasVisibleActivity(
+  queue: Download[],
+  searchCards: ReturnType<typeof useSearchProgress>,
+  mergeCards: ReturnType<typeof useMergeActivityCards>,
+  activeImportJobs: ImportJobWithBook[],
+  queuedImportJobs: ImportJobWithBook[],
+): boolean {
+  return queue.length > 0 ||
+    searchCards.length > 0 ||
+    mergeCards.length > 0 ||
+    activeImportJobs.length > 0 ||
+    queuedImportJobs.length > 0;
+}
+
 export function ActiveTabSection(props: ActiveTabSectionProps) {
   const { queue, queueTotal, queuePagination, mergeCards, searchCards, importJobs = [], cancelMutation, retryMutation, approveMutation, rejectMutation, cancellingMergeBookId, cancelMergeMutation } = props;
 
@@ -46,7 +60,7 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [importJobs],
   );
-  const hasAnyActivity = queue.length > 0 || searchCards.length > 0 || mergeCards.length > 0 || importJobs.length > 0;
+  const hasAnyActivity = hasVisibleActivity(queue, searchCards, mergeCards, activeImportJobs, queuedImportJobs);
 
   // Refresh "now" every 10s for batch banner cooldown without impure Date.now() in render
   const [bannerNow, setBannerNow] = useState(() => Date.now());
