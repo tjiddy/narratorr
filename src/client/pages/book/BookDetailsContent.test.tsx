@@ -17,6 +17,18 @@ vi.mock('@/hooks/useLibrary', async (importOriginal) => {
   };
 });
 
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    api: {
+      ...(actual.api as Record<string, unknown>),
+      getBookSeries: vi.fn().mockResolvedValue({ series: null }),
+      refreshBookSeries: vi.fn(),
+    },
+  };
+});
+
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
   return createMockBook({ audioCodec: 'AAC', ...overrides });
 }
@@ -70,5 +82,22 @@ describe('BookDetailsContent — Location section wiring', () => {
     expect(
       locationHeading.compareDocumentPosition(filesButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+});
+
+describe('BookDetailsContent — series sidebar gate (#1071)', () => {
+  it('renders sidebar with Series card when only seriesName is set (no audio/genres/path)', async () => {
+    // Use a clean book without audioCodec — only series metadata
+    const seriesOnlyBook = createMockBook({ status: 'wanted', audioCodec: null, path: null, seriesName: 'The Band', seriesPosition: 1 });
+    renderWithProviders(
+      <BookDetailsContent
+        libraryBook={seriesOnlyBook}
+        merged={{}}
+      />,
+    );
+
+    // Without the series-aware gate, the whole component returns null and Series header never renders.
+    // With the fix, the sidebar renders and the SeriesCard's heading appears once the query settles.
+    expect(await screen.findByRole('heading', { name: /^series$/i })).toBeInTheDocument();
   });
 });

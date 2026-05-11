@@ -5,8 +5,9 @@ import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { eq, and, sql, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists, series, seriesMembers } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
+import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -184,6 +185,8 @@ export class BookService {
     isbn?: string | undefined;
     seriesName?: string | undefined;
     seriesPosition?: number | undefined;
+    seriesAsin?: string | undefined;
+    seriesProvider?: string | undefined;
     duration?: number | undefined;
     publishedDate?: string | undefined;
     genres?: string[] | undefined;
@@ -229,6 +232,20 @@ export class BookService {
       await this.syncAuthors(tx, id, data.authors);
       if (data.narrators && data.narrators.length > 0) {
         await this.syncNarrators(tx, id, data.narrators);
+      }
+
+      // Provider-known series identity → upsert series + member row at create
+      // time so the Series card can render without a separate provider call.
+      if (data.seriesName && (data.seriesAsin || data.seriesProvider)) {
+        await this.upsertSeriesLink(tx, id, {
+          name: data.seriesName,
+          position: data.seriesPosition ?? null,
+          asin: enrichedAsin ?? null,
+          seriesAsin: data.seriesAsin ?? null,
+          provider: data.seriesProvider ?? 'audible',
+          title: data.title,
+          authorName: data.authors[0]?.name ?? null,
+        });
       }
 
       return id;
@@ -350,6 +367,96 @@ export class BookService {
       .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
 
     return batchLoadAuthorsNarrators(this.db, rows);
+  }
+
+  /**
+   * Upsert the (series + series_member) cache rows for a freshly-created book
+   * when the create payload carries provider-known series identity.
+   * Best-effort: failures are caught + logged so book create stays the success path.
+   */
+  private async upsertSeriesLink(
+    tx: DbOrTx,
+    bookId: number,
+    args: {
+      name: string;
+      position: number | null;
+      asin: string | null;
+      seriesAsin: string | null;
+      provider: string;
+      title: string;
+      authorName: string | null;
+    },
+  ): Promise<void> {
+    try {
+      const normalized = normalizeSeriesName(args.name);
+      // Find an existing series row (provider+providerSeriesId, then provider+normalizedName)
+      let seriesId: number | null = null;
+      if (args.seriesAsin) {
+        const found = await tx
+          .select({ id: series.id })
+          .from(series)
+          .where(and(eq(series.provider, args.provider), eq(series.providerSeriesId, args.seriesAsin)))
+          .limit(1);
+        if (found.length > 0) seriesId = found[0]!.id;
+      }
+      if (seriesId === null) {
+        const found = await tx
+          .select({ id: series.id })
+          .from(series)
+          .where(and(eq(series.provider, args.provider), eq(series.normalizedName, normalized)))
+          .limit(1);
+        if (found.length > 0) seriesId = found[0]!.id;
+      }
+      if (seriesId === null) {
+        const inserted = await tx
+          .insert(series)
+          .values({
+            provider: args.provider,
+            providerSeriesId: args.seriesAsin,
+            name: args.name,
+            normalizedName: normalized,
+          })
+          .returning({ id: series.id });
+        seriesId = inserted[0]!.id;
+      } else if (args.seriesAsin) {
+        // Backfill providerSeriesId if it was missing
+        await tx
+          .update(series)
+          .set({ providerSeriesId: args.seriesAsin, updatedAt: new Date() })
+          .where(and(eq(series.id, seriesId), sql`provider_series_id IS NULL`));
+      }
+
+      // Link a series_members row to this book — find by providerBookId+seriesId first
+      if (args.asin) {
+        const existing = await tx
+          .select({ id: seriesMembers.id })
+          .from(seriesMembers)
+          .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.providerBookId, args.asin)))
+          .limit(1);
+        if (existing.length > 0) {
+          await tx
+            .update(seriesMembers)
+            .set({ bookId, updatedAt: new Date() })
+            .where(eq(seriesMembers.id, existing[0]!.id));
+          return;
+        }
+      }
+
+      const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
+      await tx.insert(seriesMembers).values({
+        seriesId,
+        bookId,
+        providerBookId: args.asin,
+        title: args.title,
+        normalizedTitle: normalizeSeriesName(args.title),
+        authorName: args.authorName,
+        positionRaw,
+        position: args.position,
+        source: 'provider',
+      });
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error), bookId, seriesName: args.name }, 'Series link upsert failed during book create');
+    }
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */

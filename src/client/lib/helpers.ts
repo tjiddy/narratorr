@@ -13,6 +13,8 @@ export function mapBookMetadataToPayload(
     asin: book.asin,
     seriesName: book.series?.[0]?.name,
     seriesPosition: book.series?.[0]?.position,
+    seriesAsin: book.series?.[0]?.asin,
+    ...(book.series?.[0]?.asin !== undefined && { seriesProvider: 'audible' }),
     duration: book.duration,
     genres: book.genres,
     providerId: book.providerId,

@@ -65,6 +65,8 @@ export interface CreateBookPayload {
   isbn?: string | undefined;
   seriesName?: string | undefined;
   seriesPosition?: number | undefined;
+  seriesAsin?: string | undefined;
+  seriesProvider?: string | undefined;
   duration?: number | undefined;
   publishedDate?: string | undefined;
   genres?: string[] | undefined;
@@ -229,4 +231,36 @@ export const booksApi = {
     formData.append('file', file);
     return fetchMultipart<BookWithAuthor>(`/books/${id}/cover`, formData);
   },
+  getBookSeries: (id: number) =>
+    fetchApi<{ series: BookSeriesCardData | null }>(`/books/${id}/series`),
+  refreshBookSeries: (id: number) =>
+    fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/refresh`, { method: 'POST' }),
 };
+
+export interface BookSeriesMemberCard {
+  id: number;
+  providerBookId: string | null;
+  title: string;
+  positionRaw: string | null;
+  position: number | null;
+  isCurrent: boolean;
+  libraryBookId: number | null;
+  coverUrl: string | null;
+}
+
+export interface BookSeriesCardData {
+  id: number;
+  name: string;
+  providerSeriesId: string | null;
+  lastFetchedAt: string | null;
+  lastFetchStatus: 'success' | 'failed' | 'rate_limited' | null;
+  nextFetchAfter: string | null;
+  members: BookSeriesMemberCard[];
+}
+
+export interface RefreshBookSeriesResponse {
+  status: 'refreshed' | 'queued' | 'rate_limited' | 'failed';
+  series: BookSeriesCardData | null;
+  nextFetchAfter?: string;
+  error?: string;
+}

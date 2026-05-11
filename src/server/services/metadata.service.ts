@@ -322,6 +322,36 @@ export class MetadataService {
     return null;
   }
 
+  /**
+   * Fetch same-series similars from the active Audible provider.
+   * Re-throws RateLimitError so the caller can record backoff state.
+   * Returns [] when the provider can't service the request (no Audible
+   * configured, rate-limited cache, transient failure).
+   */
+  async getSameSeriesBooks(bookAsin: string): Promise<BookMetadata[]> {
+    const provider = this.providers[0];
+    if (!provider) return [];
+    // AudibleProvider exposes getSameSeriesBooks; other providers may not.
+    const audible = provider as Partial<{ getSameSeriesBooks: (asin: string) => Promise<BookMetadata[]> }>;
+    if (typeof audible.getSameSeriesBooks !== 'function') return [];
+
+    if (this.isRateLimited(provider.name)) {
+      this.log.warn({ asin: bookAsin, provider: provider.name }, 'Same-series lookup skipped — provider rate limited');
+      return [];
+    }
+
+    try {
+      await this.throttle.acquire();
+      return await audible.getSameSeriesBooks(bookAsin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) {
+        this.setRateLimited(error.provider, error.retryAfterMs);
+        throw error;
+      }
+      throw error;
+    }
+  }
+
   async enrichBook(asin: string): Promise<BookMetadata | null> {
     if (this.isRateLimited('Audnexus')) {
       this.log.warn({ asin }, 'Enrichment skipped — Audnexus rate limited');

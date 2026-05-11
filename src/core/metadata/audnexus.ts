@@ -143,7 +143,8 @@ function mapSeriesRefs(
   const out: Array<{ name: string; position?: number; asin?: string }> = [];
   for (const ref of [d.seriesPrimary, d.seriesSecondary]) {
     if (ref?.name) {
-      const position = ref.position != null ? parseFloat(ref.position) || undefined : undefined;
+      const parsed = ref.position != null ? parseFloat(ref.position) : NaN;
+      const position = Number.isFinite(parsed) ? parsed : undefined;
       out.push({
         name: ref.name,
         ...(position !== undefined && { position }),

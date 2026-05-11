@@ -321,12 +321,13 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     };
   }
 
-  it('item.seriesPosition wins over meta.series[0].position', async () => {
+  it('meta.series[0] wins over item series fields (#1071 provider-truth precedence)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    const targetPath = '/library/Author/Discworld #5/Title';
+    // Item tags say `Mistborn #5`; provider match says `Wax and Wayne #1` — provider wins.
+    const targetPath = '/library/Author/Wax and Wayne #1/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Discworld', seriesPosition: 5 },
-      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Discworld', position: 99 }] },
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Mistborn', seriesPosition: 5 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
       'copy',
       deps,
     );
@@ -345,12 +346,13 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     expect(path).toBe(targetPath);
   });
 
-  it('item.seriesPosition: 0 wins over meta (regression guard for falsy)', async () => {
+  it('meta.series[0].position: 0 wins over item (#1071 falsy regression guard)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    // Provider says position 0 (prequel); item tags say 5; provider wins, position 0 preserved.
     const targetPath = '/library/Author/Prequels #0/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Prequels', seriesPosition: 0 },
-      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 99 }] },
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Prequels', seriesPosition: 5 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 0 }] },
       'copy',
       deps,
     );

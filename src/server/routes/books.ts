@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService } from '../services/index.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -24,6 +24,7 @@ export interface BookRouteDeps {
   bookRejectionService?: BookRejectionService;
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
+  seriesRefreshService?: SeriesRefreshService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { type z } from 'zod';
@@ -118,6 +119,43 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     request.log.info({ id, deleteFiles }, 'Book deleted');
     return { success: true };
 });
+}
+
+function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, seriesRefreshService: SeriesRefreshService) {
+  app.get<{ Params: IdParam }>(
+    '/api/books/:id/series',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const book = await bookService.getById(id);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+      const card = await seriesRefreshService.getSeriesForBook(id);
+      return { series: card };
+    },
+  );
+
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/series/refresh',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const book = await bookService.getById(id);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+      if (!book.asin) {
+        return reply.status(400).send({ error: 'Book has no ASIN — cannot refresh series from provider' });
+      }
+      const response = await seriesRefreshService.reconcileFromBookAsin(book.asin, {
+        manual: true,
+        bookId: book.id,
+        seriesName: book.seriesName ?? null,
+      });
+      return response;
+    },
+  );
 }
 
 async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService'>) {
@@ -297,6 +335,10 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       return result;
     },
   );
+
+  if (deps.seriesRefreshService) {
+    registerSeriesRoutes(app, deps.bookService, deps.seriesRefreshService);
+  }
 
   // POST /api/books/:id/merge-to-m4b
   app.post<{ Params: IdParam }>(

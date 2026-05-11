@@ -19,6 +19,31 @@ const validBook = {
   authors: [{ name: 'Author Name' }],
 };
 
+describe('createBookBodySchema — series ASIN (#1071)', () => {
+  it('accepts seriesAsin alongside scalar seriesName/seriesPosition', () => {
+    const result = createBookBodySchema.safeParse({
+      ...validBook,
+      seriesName: 'The Band',
+      seriesPosition: 1,
+      seriesAsin: 'B07DHQY7DX',
+      seriesProvider: 'audible',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seriesAsin).toBe('B07DHQY7DX');
+      expect(result.data.seriesProvider).toBe('audible');
+    }
+  });
+
+  it('treats seriesAsin/seriesProvider as optional (back-compat)', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, seriesName: 'The Band', seriesPosition: 1 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seriesAsin).toBeUndefined();
+    }
+  });
+});
+
 describe('createBookBodySchema — authors default (#246)', () => {
   it('accepts payload with title only, no authors field — defaults to []', () => {
     const result = createBookBodySchema.safeParse({ title: 'Shogun' });

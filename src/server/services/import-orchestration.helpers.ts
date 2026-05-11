@@ -47,13 +47,15 @@ export async function copyToLibrary(
 
   const librarySettings = await settingsService.get('library');
   const namingOptions = toNamingOptions(librarySettings);
+  // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
+  // When `meta` is null (no provider match accepted), fall back to item-derived values.
   const targetPath = buildTargetPath(
     librarySettings.path,
     librarySettings.folderFormat,
     {
       title: item.title,
-      seriesName: item.seriesName || meta?.series?.[0]?.name,
-      seriesPosition: item.seriesPosition !== undefined ? item.seriesPosition : meta?.series?.[0]?.position,
+      seriesName: meta?.series?.[0]?.name ?? item.seriesName ?? undefined,
+      seriesPosition: meta?.series?.[0]?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
       narrators: item.narrators?.length
         ? item.narrators.map(name => ({ name }))
         : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),

@@ -30,4 +30,14 @@ export { type RetrySearchDeps, retrySearch } from './retry-search.js';
 export { DiscoveryService, type LibrarySignals } from './discovery.service.js';
 export { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
 export { refreshScanBook, RefreshScanError, type RefreshScanResult } from './refresh-scan.service.js';
+export {
+  SeriesRefreshService,
+  computeQueueIdentity,
+  normalizeSeriesName,
+  type BookSeriesCardData,
+  type SeriesMemberCard,
+  type RefreshResponse,
+  type RefreshStatus,
+  type TriggerInput,
+} from './series-refresh.service.js';
 export type { SuggestionReason } from '../../shared/schemas/discovery.js';

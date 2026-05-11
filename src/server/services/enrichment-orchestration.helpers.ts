@@ -240,8 +240,10 @@ export function buildBookCreatePayload(
       ? meta.authors
       : (item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : [])),
     narrators: item.narrators?.length ? item.narrators : meta?.narrators,
-    seriesName: item.seriesName || meta?.series?.[0]?.name,
-    seriesPosition: item.seriesPosition !== undefined ? item.seriesPosition : meta?.series?.[0]?.position,
+    // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
+    // When `meta` is null (no provider match accepted), fall back to item-derived values.
+    seriesName: meta?.series?.[0]?.name ?? item.seriesName ?? undefined,
+    seriesPosition: meta?.series?.[0]?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,

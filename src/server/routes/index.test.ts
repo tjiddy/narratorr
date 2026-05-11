@@ -34,6 +34,7 @@ vi.mock('../services', () => ({
   QualityGateService: vi.fn(),
   RetryBudget: vi.fn(),
   DiscoveryService: vi.fn(),
+  SeriesRefreshService: vi.fn(),
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
 vi.mock('../services/import-orchestrator.js', () => ({

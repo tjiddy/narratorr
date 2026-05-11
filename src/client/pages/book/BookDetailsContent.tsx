@@ -1,4 +1,5 @@
 import { AudioInfo } from '@/components/AudioInfo';
+import { SeriesCard } from '@/components/SeriesCard';
 import { type BookWithAuthor } from '@/lib/api';
 import { BookDescription } from './BookDescription.js';
 import { BookLocationSection } from './BookLocationSection.js';
@@ -16,7 +17,8 @@ export function BookDetailsContent({ libraryBook, merged }: {
   const hasDescription = !!merged.description;
   const hasGenres = merged.genres && merged.genres.length > 0;
   const hasPath = !!libraryBook.path;
-  const hasSidebar = libraryBook.audioCodec || hasGenres || hasPath;
+  const hasSeries = !!libraryBook.seriesName;
+  const hasSidebar = libraryBook.audioCodec || hasGenres || hasPath || hasSeries;
 
   if (!hasDescription && !hasSidebar) return null;
 
@@ -30,6 +32,14 @@ export function BookDetailsContent({ libraryBook, merged }: {
 
       {hasSidebar && (
         <div className={`space-y-6 ${hasDescription ? '' : 'lg:col-span-3 lg:max-w-sm'}`}>
+          {hasSeries && (
+            <SeriesCard
+              bookId={libraryBook.id}
+              fallbackSeriesName={libraryBook.seriesName}
+              fallbackSeriesPosition={libraryBook.seriesPosition}
+            />
+          )}
+
           <AudioInfo book={libraryBook} compact />
 
           {hasGenres && (

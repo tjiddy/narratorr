@@ -2670,3 +2670,87 @@ describe('#514 books route — missing blacklistService guard', () => {
     expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
   });
 });
+
+describe('#1071 series routes', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  it('GET /api/books/:id/series returns { series: null } when no cache/local data', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: null });
+    (services.seriesRefresh.getSeriesForBook as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ series: null });
+  });
+
+  it('GET /api/books/:id/series returns 404 for missing book', async () => {
+    (services.book.getById as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/999/series' });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('POST /api/books/:id/series/refresh returns the documented envelope on success', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51' });
+    (services.seriesRefresh.reconcileFromBookAsin as Mock).mockResolvedValue({
+      status: 'refreshed',
+      series: {
+        id: 1,
+        name: 'The Band',
+        providerSeriesId: 'B07DHQY7DX',
+        lastFetchedAt: '2026-05-11T00:00:00.000Z',
+        lastFetchStatus: 'success',
+        nextFetchAfter: null,
+        members: [],
+      },
+    });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('refreshed');
+    expect(res.json().series.name).toBe('The Band');
+    expect(services.seriesRefresh.reconcileFromBookAsin).toHaveBeenCalledWith(
+      'B01NA0JA51',
+      expect.objectContaining({ manual: true, bookId: 1 }),
+    );
+  });
+
+  it('POST /api/books/:id/series/refresh returns 400 when book has no ASIN', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: null });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /api/books/:id/series/refresh forwards rate_limited envelope verbatim', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51' });
+    (services.seriesRefresh.reconcileFromBookAsin as Mock).mockResolvedValue({
+      status: 'rate_limited',
+      series: null,
+      nextFetchAfter: '2026-05-11T01:00:00.000Z',
+    });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'rate_limited', series: null, nextFetchAfter: '2026-05-11T01:00:00.000Z' });
+  });
+});
