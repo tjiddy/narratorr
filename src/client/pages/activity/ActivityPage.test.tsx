@@ -420,7 +420,7 @@ describe('ActivityPage', () => {
     expect(screen.getAllByText('Downloading').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('45%')).toBeInTheDocument();
     expect(screen.getByText('12 seeders')).toBeInTheDocument();
-    expect(screen.getByText('1 in queue')).toBeInTheDocument();
+    expect(screen.getByText('1 download queued')).toBeInTheDocument();
   });
 
   it('shows failed item with error message and retry button', async () => {

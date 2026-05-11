@@ -5,7 +5,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { Buffer } from 'node:buffer';
@@ -20,6 +20,14 @@ vi.mock('node:path', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('node:path')>();
   return { ...actual, relative: vi.fn(actual.relative) };
+});
+
+// Mock only realpath so the symlink-containment regression can simulate a
+// symlink escape without requiring Windows symlink privileges in local tests.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, realpath: vi.fn(actual.realpath) };
 });
 
 const TEST_KEY = Buffer.alloc(32, 0xcd);
@@ -55,6 +63,8 @@ describe('GET /api/import/preview/:token', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(relative).mockClear();
+    vi.mocked(realpath).mockClear();
     await rm(workDir, { recursive: true, force: true });
   });
 
@@ -148,7 +158,13 @@ describe('GET /api/import/preview/:token', () => {
       const realFile = join(outside, 'leak.mp3');
       await writeFile(realFile, Buffer.alloc(64));
       const linkPath = join(workDir, 'link.mp3');
-      await symlink(realFile, linkPath);
+      await writeFile(linkPath, Buffer.alloc(64));
+
+      const realRoot = await realpath(workDir);
+      const escapedRealFile = await realpath(realFile);
+      vi.mocked(realpath)
+        .mockResolvedValueOnce(realRoot)
+        .mockResolvedValueOnce(escapedRealFile);
 
       const token = mintPreviewToken(linkPath, workDir);
       const res = await app.inject({ method: 'GET', url: `/api/import/preview/${token}` });

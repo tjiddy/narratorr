@@ -79,14 +79,19 @@ describe('ActiveTabSection', () => {
   });
 
   describe('queue count and empty state', () => {
-    it('renders queue count in header', () => {
+    it('renders plural download queue count in header', () => {
       renderWithProviders(<ActiveTabSection {...defaultProps({ queueTotal: 3 })} />);
-      expect(screen.getByText('3 in queue')).toBeInTheDocument();
+      expect(screen.getByText('3 downloads queued')).toBeInTheDocument();
     });
 
-    it('shows queue count for 1 item', () => {
+    it('renders singular download queue count for 1 item', () => {
       renderWithProviders(<ActiveTabSection {...defaultProps({ queueTotal: 1 })} />);
-      expect(screen.getByText('1 in queue')).toBeInTheDocument();
+      expect(screen.getByText('1 download queued')).toBeInTheDocument();
+    });
+
+    it('hides download queue count when there are no queued downloads', () => {
+      renderWithProviders(<ActiveTabSection {...defaultProps({ queueTotal: 0 })} />);
+      expect(screen.queryByText(/downloads? queued/)).not.toBeInTheDocument();
     });
 
     it('shows empty state when no downloads, merges, or searches active', () => {
