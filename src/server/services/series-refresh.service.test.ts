@@ -342,6 +342,32 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
     );
   });
 
+  it('queued response with manual bookId forwards currentBook to readSeriesRow so the cached snapshot keeps member.isCurrent (F11)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    let resolveFirst!: (v: unknown[]) => void;
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((r) => { resolveFirst = r as (v: unknown[]) => void; }));
+    vi.mocked(readSeriesRow).mockResolvedValue(CARD_FIXTURE);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    // First caller occupies the in-flight slot with a non-bookId opts shape.
+    const inFlight = service.reconcileFromBookAsin('B01NA0JA51', { providerSeriesId: 'B07DHQY7DX' });
+    // Second caller is a manual refresh that supplies bookId — its queued
+    // snapshot must carry the current-book identity into the cached response.
+    const queued = await service.reconcileFromBookAsin('B01NA0JA51', { providerSeriesId: 'B07DHQY7DX', bookId: 42, manual: true });
+
+    expect(queued.status).toBe('queued');
+    expect(readSeriesRow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ seedAsin: 'B01NA0JA51' }),
+      { id: 42, asin: 'B01NA0JA51' }, // F11: currentBook tuple from opts.bookId + bookAsin
+    );
+
+    resolveFirst([]);
+    await inFlight;
+  });
+
   it('collapses two callers hitting the SAME persisted series row onto a single in-flight fetch (F6: series.id is the first identity)', async () => {
     const { service, metadata } = makeService();
     // Persisted row already exists — both callers should resolve onto series:7 as the queue key
