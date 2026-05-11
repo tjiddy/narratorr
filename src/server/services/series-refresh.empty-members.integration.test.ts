@@ -164,6 +164,82 @@ describe('issue #1074 — empty-members reconciliation', () => {
       expect(members[0]!.bookId).toBe(created.id);
     });
 
+    it('demotes lastFetchStatus from success to null when empty refresh hits a historical zero-member success row (F2)', async () => {
+      // Pre-seed exactly the deployed bug state: a real series row marked
+      // 'success' with zero series_members rows. AC requires the empty refresh
+      // to NOT leave behind that combination.
+      const [seriesRow] = await db
+        .insert(series)
+        .values({
+          provider: 'audible',
+          providerSeriesId: PROVIDER_SERIES_ID,
+          name: SERIES_NAME,
+          normalizedName: 'a thursday murder club mystery',
+          lastFetchStatus: 'success',
+          lastFetchedAt: new Date(Date.now() - 60_000),
+        })
+        .returning();
+
+      const result = await applySuccessOutcome(
+        db,
+        log,
+        seriesRow!,
+        [],
+        'B0BWLC19B7',
+        { seriesName: SERIES_NAME, providerSeriesId: PROVIDER_SERIES_ID },
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.lastFetchStatus).toBeNull();
+      expect(result!.lastFetchError).toBeNull();
+      expect(result!.nextFetchAfter).toBeNull();
+
+      // Verify the database side too — the in-memory return must match what's
+      // actually persisted so subsequent reads don't see the stale 'success'.
+      const persisted = await db.select().from(series).where(eq(series.id, seriesRow!.id));
+      expect(persisted[0]!.lastFetchStatus).toBeNull();
+
+      // No write-through to members — presentation-layer remediation only.
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id))).toHaveLength(0);
+    });
+
+    it('does not demote lastFetchStatus on populated rows when an empty response arrives (transient empty guard)', async () => {
+      // A row with real members must not have its status demoted by a single
+      // transient empty response — the populated members are still valid.
+      const [seriesRow] = await db
+        .insert(series)
+        .values({
+          provider: 'audible',
+          providerSeriesId: PROVIDER_SERIES_ID,
+          name: SERIES_NAME,
+          normalizedName: 'a thursday murder club mystery',
+          lastFetchStatus: 'success',
+          lastFetchedAt: new Date(Date.now() - 60_000),
+        })
+        .returning();
+      await db.insert(seriesMembers).values({
+        seriesId: seriesRow!.id,
+        providerBookId: '0593289501',
+        title: 'The Thursday Murder Club',
+        normalizedTitle: 'the thursday murder club',
+        authorName: 'Richard Osman',
+        positionRaw: '1',
+        position: 1,
+      });
+
+      const result = await applySuccessOutcome(
+        db,
+        log,
+        seriesRow!,
+        [],
+        'B0BWLC19B7',
+        { seriesName: SERIES_NAME, providerSeriesId: PROVIDER_SERIES_ID },
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.lastFetchStatus).toBe('success');
+    });
+
     it('continues to upsert and mark success when products are populated (regression guard)', async () => {
       const result = await applySuccessOutcome(
         db,
@@ -363,6 +439,11 @@ describe('issue #1074 — empty-members reconciliation', () => {
       // written) — guards against accidental write-through.
       const persistedMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id));
       expect(persistedMembers).toHaveLength(0);
+
+      // And the persisted lastFetchStatus is demoted away from 'success' so
+      // subsequent reads no longer see the historical bad combination (F2).
+      const persistedRow = await db.select().from(series).where(eq(series.id, seriesRow!.id));
+      expect(persistedRow[0]!.lastFetchStatus).toBeNull();
     });
 
     it('manual refresh on historical zero-member row + populated provider response writes real members (regression guard)', async () => {
