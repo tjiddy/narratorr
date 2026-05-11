@@ -98,6 +98,7 @@ export async function buildCardData(
 export async function readSeriesRow(
   db: Db,
   opts: { providerSeriesId?: string | null; seriesName?: string | null; seedAsin?: string | null },
+  currentBook?: { id: number; asin: string | null },
 ): Promise<BookSeriesCardData | null> {
   const existing = await findExistingSeriesRow(db, {
     providerSeriesId: opts.providerSeriesId ?? null,
@@ -105,5 +106,5 @@ export async function readSeriesRow(
     seedAsin: opts.seedAsin ?? null,
   });
   if (!existing) return null;
-  return buildCardFromRow(db, existing);
+  return buildCardFromRow(db, existing, currentBook);
 }

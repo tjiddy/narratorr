@@ -251,10 +251,95 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
 
     expect(queued.status).toBe('queued');
     expect(queued.series).toBe(CARD_FIXTURE);
-    expect(readSeriesRow).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ seedAsin: 'B01NA0JA51' }));
+    expect(readSeriesRow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ seedAsin: 'B01NA0JA51' }),
+      undefined, // F10: no bookId in opts → undefined currentBook context
+    );
 
     resolveFirst([]);
     await inFlight;
+  });
+
+  it('passes currentBook to buildCardFromRow on success so member.isCurrent survives into the response (F10)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.reconcileFromBookAsin('B01NA0JA51', { bookId: 99, seriesName: 'The Band' });
+
+    expect(buildCardFromRow).toHaveBeenCalledWith(
+      expect.anything(),
+      PROVIDER_BACKED_ROW,
+      { id: 99, asin: 'B01NA0JA51' },
+    );
+  });
+
+  it('passes currentBook to buildCardFromRow on backoff lock (F10)', async () => {
+    const { service } = makeService();
+    const lockedRow = { ...PROVIDER_BACKED_ROW, nextFetchAfter: new Date(Date.now() + 30 * 60 * 1000), lastFetchStatus: 'rate_limited' as const };
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(lockedRow);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.reconcileFromBookAsin('B01NA0JA51', { bookId: 99, seriesName: 'The Band' });
+
+    expect(buildCardFromRow).toHaveBeenCalledWith(
+      expect.anything(),
+      lockedRow,
+      { id: 99, asin: 'B01NA0JA51' },
+    );
+  });
+
+  it('passes currentBook to buildCardFromRow on rate-limit fetch error (F10)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new RateLimitError(60_000, 'Audible.com'));
+    const updatedRow = { ...PROVIDER_BACKED_ROW, lastFetchStatus: 'rate_limited' as const, nextFetchAfter: new Date('2026-05-11T01:00:00Z') };
+    vi.mocked(applyRateLimitOutcome).mockResolvedValue(updatedRow);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.reconcileFromBookAsin('B01NA0JA51', { bookId: 99, seriesName: 'The Band' });
+
+    expect(buildCardFromRow).toHaveBeenCalledWith(
+      expect.anything(),
+      updatedRow,
+      { id: 99, asin: 'B01NA0JA51' },
+    );
+  });
+
+  it('passes currentBook to buildCardFromRow on non-rate-limit fetch error (F10)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500 internal'));
+    const updatedRow = { ...PROVIDER_BACKED_ROW, lastFetchStatus: 'failed' as const, nextFetchAfter: new Date('2026-05-11T01:00:00Z') };
+    vi.mocked(applyFailureOutcome).mockResolvedValue(updatedRow);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.reconcileFromBookAsin('B01NA0JA51', { bookId: 99, seriesName: 'The Band' });
+
+    expect(buildCardFromRow).toHaveBeenCalledWith(
+      expect.anything(),
+      updatedRow,
+      { id: 99, asin: 'B01NA0JA51' },
+    );
+  });
+
+  it('omits currentBook context when no bookId is supplied (background scheduled job)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.reconcileFromBookAsin('B01NA0JA51', { seriesName: 'The Band' }); // no bookId
+
+    expect(buildCardFromRow).toHaveBeenCalledWith(
+      expect.anything(),
+      PROVIDER_BACKED_ROW,
+      undefined,
+    );
   });
 
   it('collapses two callers hitting the SAME persisted series row onto a single in-flight fetch (F6: series.id is the first identity)', async () => {

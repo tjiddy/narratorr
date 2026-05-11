@@ -95,7 +95,9 @@ export class SeriesRefreshService {
 
     const inFlight = this.inFlight.get(key);
     if (inFlight) {
-      const current = await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
+      // Pass current-book identity so the snapshot's member.isCurrent flags
+      // are preserved when the client caches this response. (F10)
+      const current = await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBookCtx(opts, bookAsin));
       return { status: 'queued', series: current };
     }
 
@@ -174,9 +176,11 @@ export class SeriesRefreshService {
   // ─── Internals ───────────────────────────────────────────────────────
 
   private async doReconcile(bookAsin: string, opts: ReconcileOpts, existing: SeriesRow | null): Promise<RefreshResponse> {
+    const currentBook = currentBookCtx(opts, bookAsin);
+
     // Honor backoff lock from nextFetchAfter
     if (existing?.nextFetchAfter && existing.nextFetchAfter.getTime() > Date.now()) {
-      const card = await buildCardFromRow(this.db, existing);
+      const card = await buildCardFromRow(this.db, existing, currentBook);
       return {
         status: 'rate_limited',
         series: card,
@@ -192,14 +196,21 @@ export class SeriesRefreshService {
     }
 
     const upserted = await applySuccessOutcome(this.db, this.log, existing, products, bookAsin, opts);
-    const card = upserted ? await buildCardFromRow(this.db, upserted) : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
+    // F10: pass currentBook so member.isCurrent survives into the response that
+    // the client caches via setQueryData on `refreshed`.
+    const card = upserted
+      ? await buildCardFromRow(this.db, upserted, currentBook)
+      : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBook);
     return { status: 'refreshed', series: card };
   }
 
   private async handleFetchError(error: unknown, existing: SeriesRow | null, opts: ReconcileOpts, bookAsin: string): Promise<RefreshResponse> {
+    const currentBook = currentBookCtx(opts, bookAsin);
     if (error instanceof RateLimitError) {
       const updated = await applyRateLimitOutcome(this.db, existing, error.retryAfterMs, error.message, opts);
-      const card = updated ? await buildCardFromRow(this.db, updated) : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
+      const card = updated
+        ? await buildCardFromRow(this.db, updated, currentBook)
+        : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBook);
       return {
         status: 'rate_limited',
         series: card,
@@ -207,7 +218,9 @@ export class SeriesRefreshService {
       };
     }
     const updated = await applyFailureOutcome(this.db, existing, error, opts);
-    const card = updated ? await buildCardFromRow(this.db, updated) : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
+    const card = updated
+      ? await buildCardFromRow(this.db, updated, currentBook)
+      : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBook);
     return {
       status: 'failed',
       series: card,
@@ -215,6 +228,16 @@ export class SeriesRefreshService {
       error: errorMessage(error),
     };
   }
+}
+
+/**
+ * Build the current-book identity used to mark member.isCurrent in the card
+ * data returned from refresh responses. Returns undefined when we have neither
+ * a bookId nor an ASIN — buildCardFromRow treats undefined as "no current".
+ */
+function currentBookCtx(opts: ReconcileOpts, bookAsin: string): { id: number; asin: string | null } | undefined {
+  if (opts.bookId != null) return { id: opts.bookId, asin: bookAsin };
+  return undefined;
 }
 
 async function sleepWithJitter(minMs: number, maxMs: number): Promise<void> {

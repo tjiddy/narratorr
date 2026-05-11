@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { BookDetailsContent } from './BookDetailsContent';
@@ -17,16 +17,24 @@ vi.mock('@/hooks/useLibrary', async (importOriginal) => {
   };
 });
 
+// vi.hoisted() so the mock fn exists before vi.mock's factory runs at the top of the module.
+const { getBookSeriesMock } = vi.hoisted(() => ({ getBookSeriesMock: vi.fn() }));
+
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
     ...actual,
     api: {
       ...(actual.api as Record<string, unknown>),
-      getBookSeries: vi.fn().mockResolvedValue({ series: null }),
+      getBookSeries: getBookSeriesMock,
       refreshBookSeries: vi.fn(),
     },
   };
+});
+
+beforeEach(() => {
+  getBookSeriesMock.mockReset();
+  getBookSeriesMock.mockResolvedValue({ series: null });
 });
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
@@ -99,5 +107,46 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
     // Without the series-aware gate, the whole component returns null and Series header never renders.
     // With the fix, the sidebar renders and the SeriesCard's heading appears once the query settles.
     expect(await screen.findByRole('heading', { name: /^series$/i })).toBeInTheDocument();
+  });
+
+  it('renders sidebar with Series card when ONLY a DB-cache link exists (no scalar seriesName) — F9', async () => {
+    // Book has no scalar seriesName but the backend has cached a series row
+    // for it via member ASIN. The page should still surface the Series card.
+    getBookSeriesMock.mockResolvedValueOnce({
+      series: {
+        id: 7,
+        name: 'The Band',
+        providerSeriesId: 'B07DHQY7DX',
+        lastFetchedAt: '2026-05-11T00:00:00.000Z',
+        lastFetchStatus: 'success',
+        nextFetchAfter: null,
+        members: [
+          { id: 1, providerBookId: 'B01NA0JA51', title: 'Kings of the Wyld', positionRaw: '1', position: 1, isCurrent: true, libraryBookId: 1, coverUrl: null },
+        ],
+      },
+    });
+    // No scalar series fields — only the cache link should surface the card
+    const cacheOnlyBook = createMockBook({ status: 'wanted', audioCodec: null, path: null, seriesName: null, seriesPosition: null, asin: 'B01NA0JA51' });
+    renderWithProviders(
+      <BookDetailsContent
+        libraryBook={cacheOnlyBook}
+        merged={{}}
+      />,
+    );
+
+    // F9: the sidebar gate must trigger on the cached series result.
+    // The card's internal name/member rendering is covered by SeriesCard.test.tsx.
+    expect(await screen.findByRole('heading', { name: /^series$/i })).toBeInTheDocument();
+  });
+
+  it('renders nothing when there is no scalar series AND no DB-cache series AND nothing else for the sidebar', async () => {
+    getBookSeriesMock.mockResolvedValueOnce({ series: null });
+    const bareBook = createMockBook({ status: 'wanted', audioCodec: null, path: null, seriesName: null, seriesPosition: null });
+    const { container } = renderWithProviders(
+      <BookDetailsContent libraryBook={bareBook} merged={{}} />,
+    );
+    // Wait a tick so the resolved query updates state
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('h2')).toBeNull();
   });
 });
