@@ -235,9 +235,10 @@ export class BookService {
         await this.syncNarrators(tx, id, data.narrators);
       }
 
-      // Provider-known series identity → upsert series + member row at create
-      // time so the Series card can render without a separate provider call.
-      if (data.seriesName && (data.seriesAsin || data.seriesProvider)) {
+      // Upsert series + member row at create time so the Series card can render
+      // immediately. `seriesAsin` is optional — upsertSeriesLink falls back to a
+      // normalized-name lookup when provider series identity isn't known yet.
+      if (data.seriesName) {
         await this.upsertSeriesLink(tx, id, {
           name: data.seriesName,
           position: data.seriesPosition ?? null,
