@@ -107,13 +107,13 @@ describe('DownloadClientsSettings', () => {
     await user.click(screen.getByText('Add Client').closest('button')!);
 
     // Fill required fields
-    await user.type(screen.getByPlaceholderText('qBittorrent'), 'Remote Client');
-    await user.type(screen.getByPlaceholderText('localhost'), '192.168.1.100');
+    fireEvent.change(screen.getByPlaceholderText('qBittorrent'), { target: { value: 'Remote Client' } });
+    fireEvent.change(screen.getByPlaceholderText('localhost'), { target: { value: '192.168.1.100' } });
 
     // Add a path mapping via PathMappingEditor
     await user.click(screen.getByRole('button', { name: /add mapping/i }));
-    await user.type(screen.getByLabelText(/remote path/i), '/mnt/downloads');
-    await user.type(screen.getByLabelText(/local path/i), '/local/downloads');
+    fireEvent.change(screen.getByLabelText(/remote path/i), { target: { value: '/mnt/downloads' } });
+    fireEvent.change(screen.getByLabelText(/local path/i), { target: { value: '/local/downloads' } });
     await user.click(screen.getByRole('button', { name: /^add$/i }));
 
     // Verify mapping row appears

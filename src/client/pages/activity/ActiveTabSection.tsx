@@ -68,11 +68,13 @@ export function ActiveTabSection(props: ActiveTabSectionProps) {
         </div>
         <div>
           <h2 className="font-display text-xl font-semibold">Active</h2>
-          {queueTotal > 0 && (
+          {queueTotal > 0 ? (
             <p className="text-sm text-muted-foreground">
               {queueTotal} download{queueTotal === 1 ? '' : 's'} queued
             </p>
-          )}
+          ) : !hasAnyActivity ? (
+            <p className="text-sm text-muted-foreground">Nothing currently active</p>
+          ) : null}
         </div>
       </div>
 
