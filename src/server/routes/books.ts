@@ -272,6 +272,18 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         triggerImmediateSearch(book, { indexerSearchService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
       }
 
+      // Fire-and-forget: enqueue series refresh when the new book has the
+      // identity needed to seed the cache (book ASIN + series metadata). The
+      // synchronous series-row upsert happened in bookService.create — this
+      // pulls same-series members asynchronously so the card populates. (F2)
+      if (deps.seriesRefreshService && book.asin && book.seriesName) {
+        deps.seriesRefreshService.enqueueRefresh(book.asin, {
+          bookId: book.id,
+          seriesName: book.seriesName,
+          ...(body.seriesAsin !== undefined && { providerSeriesId: body.seriesAsin }),
+        });
+      }
+
       return reply.status(201).send(book);
     },
   );
