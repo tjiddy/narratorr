@@ -104,7 +104,27 @@ export async function buildCardData(
     if (rows.length > 0) seriesRow = rows[0] as SeriesRow;
   }
   if (seriesRow) {
-    return buildCardFromRow(db, seriesRow, book);
+    const card = await buildCardFromRow(db, seriesRow, book);
+    // Read-time remediation for historical zero-member rows produced by the
+    // pre-fix empty-provider-response bug. If the row exists but has no
+    // members and the current book matches by normalized series name,
+    // synthesize the current book as the sole member so the card doesn't
+    // render "No members known yet". The next successful provider refresh
+    // populates the row and this fallback stops firing.
+    if (card.members.length === 0 && book.seriesName
+        && normalizeSeriesName(book.seriesName) === seriesRow.normalizedName) {
+      card.members = [{
+        id: -1,
+        providerBookId: book.asin,
+        title: book.title,
+        positionRaw: book.seriesPosition != null ? String(book.seriesPosition) : null,
+        position: book.seriesPosition,
+        isCurrent: true,
+        libraryBookId: book.id,
+        coverUrl: null,
+      }];
+    }
+    return card;
   }
   if (book.seriesName) {
     return buildLocalOnlyCard({ ...book, seriesName: book.seriesName });
