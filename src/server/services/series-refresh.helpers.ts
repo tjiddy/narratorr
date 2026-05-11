@@ -1,10 +1,17 @@
-import { eq, and, isNull, lte, or, isNotNull } from 'drizzle-orm';
+import { eq, and, isNull, lte, or, isNotNull, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import { books, series, seriesMembers } from '../../db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { SeriesRow } from './types.js';
+import {
+  linkLocalBooksByAsin,
+  reconcileCandidates,
+} from './series-refresh.dedupe.js';
+
+// Re-exported for callers that need them (BookService.upsertSeriesLink, tests).
+export { findMemberByLogicalIdentity, normalizePrimaryAuthor } from './series-refresh.dedupe.js';
 
 /** Default backoff (ms) when a non-rate-limit refresh fails. */
 export const DEFAULT_FAILURE_BACKOFF_MS = 60 * 60 * 1000; // 1h
@@ -36,10 +43,6 @@ export interface BookSeriesCardData {
   members: SeriesMemberCard[];
 }
 
-function normalizeMemberTitle(title: string): string {
-  return normalizeSeriesName(title);
-}
-
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -53,11 +56,18 @@ export async function findExistingSeriesRow(
   // to its parent series. Catches provider-backed rows created by Add Book
   // even when the caller only knows the book ASIN. (F1)
   if (opts.seedAsin) {
+    // Widened to also match when the seed ASIN is one of a canonical row's
+    // alternate_asins — the seed-biased canonical pick can otherwise orphan
+    // alternate-ASIN reachability when the local book's ASIN differs from the
+    // chosen providerBookId. (F12)
     const rows = await db
       .select({ s: series })
       .from(seriesMembers)
       .innerJoin(series, eq(seriesMembers.seriesId, series.id))
-      .where(eq(seriesMembers.providerBookId, opts.seedAsin))
+      .where(or(
+        eq(seriesMembers.providerBookId, opts.seedAsin),
+        sql`EXISTS (SELECT 1 FROM json_each(${seriesMembers.alternateAsins}) WHERE value = ${opts.seedAsin})`,
+      ))
       .limit(1);
     if (rows.length > 0) return rows[0]!.s as SeriesRow;
   }
@@ -108,87 +118,6 @@ async function upsertSeriesRow(
   return rows[0] as SeriesRow;
 }
 
-function buildMemberValues(
-  seriesId: number,
-  product: BookMetadata,
-  seriesName: string,
-): typeof seriesMembers.$inferInsert {
-  const seriesRef = product.series?.find((s) => s.name === seriesName) ?? product.series?.[0];
-  const validPosition = seriesRef?.position != null && Number.isFinite(seriesRef.position) ? seriesRef.position : null;
-  return {
-    seriesId,
-    providerBookId: product.asin ?? null,
-    title: product.title,
-    normalizedTitle: normalizeMemberTitle(product.title),
-    authorName: product.authors[0]?.name ?? null,
-    positionRaw: validPosition !== null ? String(validPosition) : null,
-    position: validPosition,
-    publishedDate: product.publishedDate ?? null,
-    coverUrl: product.coverUrl ?? null,
-    duration: product.duration ?? null,
-    publisher: product.publisher ?? null,
-    source: 'provider',
-    lastSeenAt: new Date(),
-    updatedAt: new Date(),
-  };
-}
-
-async function findExistingMemberId(
-  db: DbOrTx,
-  seriesId: number,
-  providerBookId: string | null,
-  normalizedTitle: string,
-  positionRaw: string | null,
-): Promise<number | null> {
-  if (providerBookId) {
-    const rows = await db
-      .select({ id: seriesMembers.id })
-      .from(seriesMembers)
-      .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.providerBookId, providerBookId)))
-      .limit(1);
-    return rows[0]?.id ?? null;
-  }
-  const positionFilter = positionRaw !== null
-    ? eq(seriesMembers.positionRaw, positionRaw)
-    : isNull(seriesMembers.positionRaw);
-  const rows = await db
-    .select({ id: seriesMembers.id })
-    .from(seriesMembers)
-    .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.normalizedTitle, normalizedTitle), positionFilter))
-    .limit(1);
-  return rows[0]?.id ?? null;
-}
-
-async function upsertMember(db: DbOrTx, seriesId: number, product: BookMetadata, seriesName: string): Promise<void> {
-  const values = buildMemberValues(seriesId, product, seriesName);
-  const existingId = await findExistingMemberId(db, seriesId, product.asin ?? null, values.normalizedTitle, values.positionRaw ?? null);
-  if (existingId !== null) {
-    await db.update(seriesMembers).set({ ...values, seriesId }).where(eq(seriesMembers.id, existingId));
-    return;
-  }
-  await db.insert(seriesMembers).values(values);
-}
-
-async function linkLocalBooksByAsin(db: DbOrTx, seriesId: number): Promise<void> {
-  const unlinked = await db
-    .select({ id: seriesMembers.id, providerBookId: seriesMembers.providerBookId })
-    .from(seriesMembers)
-    .where(and(eq(seriesMembers.seriesId, seriesId), isNull(seriesMembers.bookId), isNotNull(seriesMembers.providerBookId)));
-  for (const member of unlinked) {
-    if (!member.providerBookId) continue;
-    const bookRows = await db
-      .select({ id: books.id })
-      .from(books)
-      .where(eq(books.asin, member.providerBookId))
-      .limit(1);
-    if (bookRows.length > 0) {
-      await db
-        .update(seriesMembers)
-        .set({ bookId: bookRows[0]!.id, updatedAt: new Date() })
-        .where(eq(seriesMembers.id, member.id));
-    }
-  }
-}
 
 // eslint-disable-next-line complexity -- success path coalesces multiple optional inputs
 export async function applySuccessOutcome(
@@ -214,19 +143,7 @@ export async function applySuccessOutcome(
   return db.transaction(async (tx) => {
     const row = await upsertSeriesRow(tx, existing, finalName, inferredSeriesAsin ?? null);
 
-    // Dedupe products by ASIN (Audible returns alternate editions)
-    const dedupedByAsin = new Map<string, BookMetadata>();
-    const noAsin: BookMetadata[] = [];
-    for (const product of products) {
-      if (product.asin) {
-        if (!dedupedByAsin.has(product.asin)) dedupedByAsin.set(product.asin, product);
-      } else {
-        noAsin.push(product);
-      }
-    }
-    for (const product of [...dedupedByAsin.values(), ...noAsin]) {
-      await upsertMember(tx, row.id, product, finalName);
-    }
+    await reconcileCandidates(tx, row.id, products, finalName, seedAsin);
     await linkLocalBooksByAsin(tx, row.id);
 
     const updated = await tx

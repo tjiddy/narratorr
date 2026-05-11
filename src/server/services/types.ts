@@ -86,6 +86,7 @@ export type SeriesRow = Omit<typeof series.$inferSelect, 'lastFetchStatus'> & {
   lastFetchStatus: SeriesFetchStatus | null;
 };
 
-export type SeriesMemberRow = Omit<typeof seriesMembers.$inferSelect, 'source'> & {
+export type SeriesMemberRow = Omit<typeof seriesMembers.$inferSelect, 'source' | 'alternateAsins'> & {
   source: 'provider' | 'local';
+  alternateAsins: string[];
 };

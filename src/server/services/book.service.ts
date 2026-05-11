@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists, series, seriesMembers } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { findMemberByLogicalIdentity, normalizePrimaryAuthor } from './series-refresh.helpers.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -426,29 +427,35 @@ export class BookService {
           .where(and(eq(series.id, seriesId), sql`provider_series_id IS NULL`));
       }
 
-      // Link a series_members row to this book — find by providerBookId+seriesId first
-      if (args.asin) {
-        const existing = await tx
-          .select({ id: seriesMembers.id })
-          .from(seriesMembers)
-          .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.providerBookId, args.asin)))
-          .limit(1);
-        if (existing.length > 0) {
-          await tx
-            .update(seriesMembers)
-            .set({ bookId, updatedAt: new Date() })
-            .where(eq(seriesMembers.id, existing[0]!.id));
-          return;
-        }
-      }
-
+      // Link a series_members row to this book. Use the shared logical-identity
+      // lookup so we also match canonical rows where this book's ASIN was
+      // collapsed into alternate_asins, AND fall back to (title + position +
+      // normalized author) when no ASIN match exists. Keeps add-book in lockstep
+      // with refresh-time dedupe. (F12)
       const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
+      const normalizedTitle = normalizeSeriesName(args.title);
+      const normalizedAuthor = normalizePrimaryAuthor(args.authorName);
+      const existingId = await findMemberByLogicalIdentity(
+        tx,
+        seriesId,
+        normalizedTitle,
+        positionRaw,
+        normalizedAuthor,
+        args.asin,
+      );
+      if (existingId !== null) {
+        await tx
+          .update(seriesMembers)
+          .set({ bookId, updatedAt: new Date() })
+          .where(eq(seriesMembers.id, existingId));
+        return;
+      }
       await tx.insert(seriesMembers).values({
         seriesId,
         bookId,
         providerBookId: args.asin,
         title: args.title,
-        normalizedTitle: normalizeSeriesName(args.title),
+        normalizedTitle,
         authorName: args.authorName,
         positionRaw,
         position: args.position,
