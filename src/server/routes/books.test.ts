@@ -2753,4 +2753,80 @@ describe('#1071 series routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: 'rate_limited', series: null, nextFetchAfter: '2026-05-11T01:00:00.000Z' });
   });
+
+  it('POST /api/books enqueues async series refresh when the created book has ASIN + seriesName (F7)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: 'The Band', seriesPosition: 1, status: 'wanted' };
+    (services.book.create as Mock).mockResolvedValueOnce(created);
+    const enqueueRefresh = vi.fn();
+    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Kings of the Wyld',
+        authors: [{ name: 'Nicholas Eames' }],
+        asin: 'B01NA0JA51',
+        seriesName: 'The Band',
+        seriesPosition: 1,
+        seriesAsin: 'B07DHQY7DX',
+        seriesProvider: 'audible',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    // Wait for fire-and-forget enqueue to settle
+    await new Promise((r) => setTimeout(r, 10));
+    expect(enqueueRefresh).toHaveBeenCalledTimes(1);
+    expect(enqueueRefresh).toHaveBeenCalledWith('B01NA0JA51', expect.objectContaining({
+      bookId: 42,
+      seriesName: 'The Band',
+      providerSeriesId: 'B07DHQY7DX',
+    }));
+  });
+
+  it('POST /api/books does NOT enqueue refresh when the created book lacks an ASIN (F7 guard)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    const created = { ...mockBook, id: 42, asin: null, seriesName: 'The Band', status: 'wanted' };
+    (services.book.create as Mock).mockResolvedValueOnce(created);
+    const enqueueRefresh = vi.fn();
+    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Title',
+        authors: [{ name: 'Author' }],
+        seriesName: 'The Band',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(enqueueRefresh).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/books does NOT enqueue refresh when the created book has no series (F7 guard)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: null, status: 'wanted' };
+    (services.book.create as Mock).mockResolvedValueOnce(created);
+    const enqueueRefresh = vi.fn();
+    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Standalone',
+        authors: [{ name: 'Author' }],
+        asin: 'B01NA0JA51',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(enqueueRefresh).not.toHaveBeenCalled();
+  });
 });

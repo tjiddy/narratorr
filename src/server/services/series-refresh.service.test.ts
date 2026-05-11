@@ -256,6 +256,34 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
     resolveFirst([]);
     await inFlight;
   });
+
+  it('collapses two callers hitting the SAME persisted series row onto a single in-flight fetch (F6: series.id is the first identity)', async () => {
+    const { service, metadata } = makeService();
+    // Persisted row already exists — both callers should resolve onto series:7 as the queue key
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
+    let resolveFirst!: (v: unknown[]) => void;
+    let fetchCount = 0;
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      fetchCount++;
+      return new Promise((r) => { resolveFirst = r as (v: unknown[]) => void; });
+    });
+    vi.mocked(readSeriesRow).mockResolvedValue(CARD_FIXTURE);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    // Caller A: Add Book enqueue with providerSeriesId (no seriesName)
+    const callA = service.reconcileFromBookAsin('B01NA0JA51', { providerSeriesId: 'B07DHQY7DX' });
+    // Caller B: manual refresh with seriesName only (different opts shape, same persisted row)
+    const callB = await service.reconcileFromBookAsin('B01NA0JA51', { seriesName: 'The Band' });
+
+    // Only one provider fetch was issued — second caller saw the in-flight under series:id and returned queued
+    expect(fetchCount).toBe(1);
+    expect(callB.status).toBe('queued');
+    expect(callB.series).toBe(CARD_FIXTURE);
+
+    resolveFirst([]);
+    await callA;
+  });
 });
 
 describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {

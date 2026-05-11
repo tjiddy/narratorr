@@ -82,25 +82,47 @@ export class SeriesRefreshService {
    * - Honors `nextFetchAfter`; bypasses 7-day freshness when called manually.
    */
   async reconcileFromBookAsin(bookAsin: string, opts: ReconcileOpts = {}): Promise<RefreshResponse> {
-    const identityHint: TriggerInput = {
+    // Look up the existing series row BEFORE computing the queue key so any
+    // caller hitting the same persisted series collapses to one in-flight
+    // fetch — Add Book (providerSeriesId) + manual refresh (seriesName +
+    // seedAsin) would otherwise hash to different keys. (F6)
+    const existingRow = await findExistingSeriesRow(this.db, {
+      providerSeriesId: opts.providerSeriesId ?? null,
+      seriesName: opts.seriesName ?? null,
+      seedAsin: bookAsin,
+    });
+    const key = this.queueKeyFor(existingRow, opts, bookAsin);
+
+    const inFlight = this.inFlight.get(key);
+    if (inFlight) {
+      const current = await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
+      return { status: 'queued', series: current };
+    }
+
+    const promise = this.doReconcile(bookAsin, opts, existingRow).finally(() => {
+      this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, promise);
+    return promise;
+  }
+
+  /**
+   * Pick the in-flight dedupe key per the spec's identity precedence:
+   * 1. series.id when a row already exists in scope
+   * 2. provider:providerSeriesId when known
+   * 3. provider:normalizedName:seedAsin as last resort
+   * Invalid triggers fall back to a seed-anchored key so the in-flight map
+   * still dedupes by seed ASIN rather than collapsing globally.
+   */
+  private queueKeyFor(existingRow: SeriesRow | null, opts: ReconcileOpts, bookAsin: string): string {
+    if (existingRow) return `series:${existingRow.id}`;
+    const hint: TriggerInput = {
       provider: AUDIBLE_PROVIDER,
       ...(opts.providerSeriesId !== undefined && opts.providerSeriesId !== null ? { providerSeriesId: opts.providerSeriesId } : {}),
       ...(opts.seriesName ? { normalizedName: normalizeSeriesName(opts.seriesName) } : {}),
       seedAsin: bookAsin,
     };
-    const key = computeQueueIdentity(identityHint) ?? `${AUDIBLE_PROVIDER}:seed:${bookAsin}`;
-
-    const existing = this.inFlight.get(key);
-    if (existing) {
-      const current = await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
-      return { status: 'queued', series: current };
-    }
-
-    const promise = this.doReconcile(bookAsin, opts).finally(() => {
-      this.inFlight.delete(key);
-    });
-    this.inFlight.set(key, promise);
-    return promise;
+    return computeQueueIdentity(hint) ?? `${AUDIBLE_PROVIDER}:seed:${bookAsin}`;
   }
 
   /** Enqueue an async refresh — used by import/add-book hot paths. */
@@ -151,16 +173,7 @@ export class SeriesRefreshService {
 
   // ─── Internals ───────────────────────────────────────────────────────
 
-  private async doReconcile(bookAsin: string, opts: ReconcileOpts): Promise<RefreshResponse> {
-    // Seed ASIN gives the strongest identity — find the existing series row by
-    // walking the member edge first so provider-backed Add Book rows are found
-    // even when the caller only knows the book ASIN. (F1)
-    const existing = await findExistingSeriesRow(this.db, {
-      providerSeriesId: opts.providerSeriesId ?? null,
-      seriesName: opts.seriesName ?? null,
-      seedAsin: bookAsin,
-    });
-
+  private async doReconcile(bookAsin: string, opts: ReconcileOpts, existing: SeriesRow | null): Promise<RefreshResponse> {
     // Honor backoff lock from nextFetchAfter
     if (existing?.nextFetchAfter && existing.nextFetchAfter.getTime() > Date.now()) {
       const card = await buildCardFromRow(this.db, existing);
