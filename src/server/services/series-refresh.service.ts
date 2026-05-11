@@ -12,14 +12,16 @@ import {
   applyFailureOutcome,
   applyRateLimitOutcome,
   applySuccessOutcome,
-  buildCardData,
-  buildCardFromRow,
   errorMessage,
   findExistingSeriesRow,
-  readSeriesRow,
   selectScheduledCandidates,
   type BookSeriesCardData,
 } from './series-refresh.helpers.js';
+import {
+  buildCardData,
+  buildCardFromRow,
+  readSeriesRow,
+} from './series-refresh.card-builder.js';
 
 export type { BookSeriesCardData, SeriesMemberCard } from './series-refresh.helpers.js';
 

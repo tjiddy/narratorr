@@ -1,0 +1,109 @@
+import { eq, and } from 'drizzle-orm';
+import type { Db } from '../../db/index.js';
+import { series, seriesMembers } from '../../db/schema.js';
+import { normalizeSeriesName } from '../utils/series-normalize.js';
+import type { SeriesRow, SeriesMemberRow } from './types.js';
+import {
+  AUDIBLE_PROVIDER,
+  findExistingSeriesRow,
+  type BookSeriesCardData,
+  type SeriesMemberCard,
+} from './series-refresh.helpers.js';
+
+export async function buildCardFromRow(
+  db: Db,
+  row: SeriesRow,
+  currentBook?: { id: number; asin: string | null },
+): Promise<BookSeriesCardData> {
+  const memberRows = await db
+    .select()
+    .from(seriesMembers)
+    .where(eq(seriesMembers.seriesId, row.id))
+    .orderBy(seriesMembers.position, seriesMembers.id);
+  const members: SeriesMemberCard[] = (memberRows as SeriesMemberRow[]).map((m) => ({
+    id: m.id,
+    providerBookId: m.providerBookId,
+    title: m.title,
+    positionRaw: m.positionRaw,
+    position: m.position,
+    isCurrent: currentBook
+      ? (m.bookId === currentBook.id || (!!m.providerBookId && !!currentBook.asin && m.providerBookId === currentBook.asin))
+      : false,
+    libraryBookId: m.bookId,
+    coverUrl: m.coverUrl,
+  }));
+  return {
+    id: row.id,
+    name: row.name,
+    providerSeriesId: row.providerSeriesId,
+    lastFetchedAt: row.lastFetchedAt?.toISOString() ?? null,
+    lastFetchStatus: row.lastFetchStatus,
+    nextFetchAfter: row.nextFetchAfter?.toISOString() ?? null,
+    members,
+  };
+}
+
+function buildLocalOnlyCard(book: { id: number; asin: string | null; seriesName: string; seriesPosition: number | null }): BookSeriesCardData {
+  return {
+    id: -1,
+    name: book.seriesName,
+    providerSeriesId: null,
+    lastFetchedAt: null,
+    lastFetchStatus: null,
+    nextFetchAfter: null,
+    members: [{
+      id: -1,
+      providerBookId: book.asin,
+      title: '',
+      positionRaw: book.seriesPosition != null ? String(book.seriesPosition) : null,
+      position: book.seriesPosition,
+      isCurrent: true,
+      libraryBookId: book.id,
+      coverUrl: null,
+    }],
+  };
+}
+
+export async function buildCardData(
+  db: Db,
+  book: { id: number; asin: string | null; seriesName: string | null; seriesPosition: number | null },
+): Promise<BookSeriesCardData | null> {
+  let seriesRow: SeriesRow | null = null;
+  if (book.asin) {
+    const rows = await db
+      .select({ s: series })
+      .from(seriesMembers)
+      .innerJoin(series, eq(seriesMembers.seriesId, series.id))
+      .where(eq(seriesMembers.providerBookId, book.asin))
+      .limit(1);
+    if (rows.length > 0) seriesRow = rows[0]!.s as SeriesRow;
+  }
+  if (!seriesRow && book.seriesName) {
+    const rows = await db
+      .select()
+      .from(series)
+      .where(and(eq(series.provider, AUDIBLE_PROVIDER), eq(series.normalizedName, normalizeSeriesName(book.seriesName))))
+      .limit(1);
+    if (rows.length > 0) seriesRow = rows[0] as SeriesRow;
+  }
+  if (seriesRow) {
+    return buildCardFromRow(db, seriesRow, book);
+  }
+  if (book.seriesName) {
+    return buildLocalOnlyCard({ ...book, seriesName: book.seriesName });
+  }
+  return null;
+}
+
+export async function readSeriesRow(
+  db: Db,
+  opts: { providerSeriesId?: string | null; seriesName?: string | null; seedAsin?: string | null },
+): Promise<BookSeriesCardData | null> {
+  const existing = await findExistingSeriesRow(db, {
+    providerSeriesId: opts.providerSeriesId ?? null,
+    seriesName: opts.seriesName ?? null,
+    seedAsin: opts.seedAsin ?? null,
+  });
+  if (!existing) return null;
+  return buildCardFromRow(db, existing);
+}

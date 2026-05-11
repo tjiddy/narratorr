@@ -186,7 +186,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
-  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster);
+  const seriesRefresh = new SeriesRefreshService(db, log, metadata, book);
+  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster, seriesRefresh);
   const matchJob = new MatchJobService(metadata, log, settings);
 
   const qualityGateService = new QualityGateService(db, log);
@@ -230,8 +231,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     { indexerSearch, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
     log,
   );
-
-  const seriesRefresh = new SeriesRefreshService(db, log, metadata, book);
 
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
   const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster);

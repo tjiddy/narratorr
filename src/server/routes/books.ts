@@ -121,6 +121,52 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
 });
 }
 
+async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
+  app.post<{ Body: CreateBookBody }>(
+    '/api/books',
+    { schema: { body: createBookBodySchema } },
+    async (request, reply) => {
+      const body = request.body;
+      const existing = await deps.bookService.findDuplicate(body.title, body.authors, body.asin);
+      if (existing) {
+        request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
+        return reply.status(409).send(existing);
+      }
+
+      const book = await deps.bookService.create(body);
+
+      if (deps.eventHistory) {
+        deps.eventHistory.create({
+          bookId: book.id,
+          ...snapshotBookForEvent(book),
+          eventType: 'book_added',
+          source: 'manual',
+        }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+      }
+
+      request.log.info({ title: body.title }, 'Book added');
+
+      if (body.searchImmediately && book.status === 'wanted' && deps.indexerSearchService && deps.blacklistService) {
+        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService } = deps;
+        triggerImmediateSearch(book, { indexerSearchService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
+      }
+
+      // Fire-and-forget: enqueue async series refresh so the card populates
+      // without slowing the create response. Sync upsert already happened in
+      // bookService.create. (F2)
+      if (deps.seriesRefreshService && book.asin && book.seriesName) {
+        deps.seriesRefreshService.enqueueRefresh(book.asin, {
+          bookId: book.id,
+          seriesName: book.seriesName,
+          ...(body.seriesAsin !== undefined && { providerSeriesId: body.seriesAsin }),
+        });
+      }
+
+      return reply.status(201).send(book);
+    },
+  );
+}
+
 function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, seriesRefreshService: SeriesRefreshService) {
   app.get<{ Params: IdParam }>(
     '/api/books/:id/series',
@@ -238,55 +284,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  // POST /api/books
-  app.post<{ Body: CreateBookBody }>(
-    '/api/books',
-    { schema: { body: createBookBodySchema } },
-    async (request, reply) => {
-      const body = request.body;
-
-      // Check for duplicates
-      const existing = await bookService.findDuplicate(body.title, body.authors, body.asin);
-      if (existing) {
-        request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
-        return reply.status(409).send(existing);
-      }
-
-      const book = await bookService.create(body);
-
-      // Record book_added event (fire-and-forget)
-      if (deps.eventHistory) {
-        deps.eventHistory.create({
-          bookId: book.id,
-          ...snapshotBookForEvent(book),
-          eventType: 'book_added',
-          source: 'manual',
-        }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
-      }
-
-      request.log.info({ title: body.title }, 'Book added');
-
-      // Fire-and-forget: trigger search if searchImmediately is set
-      if (body.searchImmediately && book.status === 'wanted' && indexerSearchService && deps.blacklistService) {
-        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster } = deps;
-        triggerImmediateSearch(book, { indexerSearchService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
-      }
-
-      // Fire-and-forget: enqueue series refresh when the new book has the
-      // identity needed to seed the cache (book ASIN + series metadata). The
-      // synchronous series-row upsert happened in bookService.create — this
-      // pulls same-series members asynchronously so the card populates. (F2)
-      if (deps.seriesRefreshService && book.asin && book.seriesName) {
-        deps.seriesRefreshService.enqueueRefresh(book.asin, {
-          bookId: book.id,
-          seriesName: book.seriesName,
-          ...(body.seriesAsin !== undefined && { providerSeriesId: body.seriesAsin }),
-        });
-      }
-
-      return reply.status(201).send(book);
-    },
-  );
+  await registerAddBookRoute(app, deps);
 
   // PUT /api/books/:id
   app.put<{ Params: IdParam; Body: UpdateBookBody }>(

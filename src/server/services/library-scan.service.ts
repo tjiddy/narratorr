@@ -16,6 +16,7 @@ import { confirmImport as confirmImportHelper, type ImportPipelineDeps } from '.
 import { buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { SeriesRefreshService } from './series-refresh.service.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 import { WireOnce } from './wire-helpers.js';
@@ -67,6 +68,7 @@ export class LibraryScanService {
     private log: FastifyBaseLogger,
     private eventHistory: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
+    private seriesRefreshService?: SeriesRefreshService,
   ) {}
 
   /** Wire cyclic / late-bound deps after construction. Call once during composition. */
@@ -79,7 +81,7 @@ export class LibraryScanService {
   }
 
   get importDeps(): ImportPipelineDeps {
-    return { db: this.db, log: this.log, bookService: this.bookService, bookImportService: this.bookImportService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster };
+    return { db: this.db, log: this.log, bookService: this.bookService, bookImportService: this.bookImportService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster, seriesRefreshService: this.seriesRefreshService };
   }
 
   /**
