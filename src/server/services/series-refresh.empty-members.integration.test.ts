@@ -9,6 +9,9 @@ import { books, series, seriesMembers } from '../../db/schema.js';
 import { applySuccessOutcome, findExistingSeriesRow } from './series-refresh.helpers.js';
 import { buildCardData } from './series-refresh.card-builder.js';
 import { BookService } from './book.service.js';
+import { SeriesRefreshService } from './series-refresh.service.js';
+import type { MetadataService } from './metadata.service.js';
+import type { BookMetadata } from '../../core/metadata/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 // Issue #1074: a deployed Series card can render "No members known yet" even
@@ -303,6 +306,109 @@ describe('issue #1074 — empty-members reconciliation', () => {
       expect(card!.id).toBe(-1);
       expect(card!.members).toHaveLength(1);
       expect(card!.members[0]!.title).toBe('The Last Devil to Die');
+    });
+  });
+
+  describe('SeriesRefreshService.reconcileFromBookAsin — manual refresh response synthesis', () => {
+    function makeService(products: BookMetadata[]) {
+      const metadataService = inject<MetadataService>({
+        getSameSeriesBooks: async (_asin: string) => products,
+      });
+      const bookService = new BookService(db, log);
+      return new SeriesRefreshService(db, log, metadataService, bookService);
+    }
+
+    it('manual refresh on historical zero-member row + empty provider response returns the synthesized current book (F1)', async () => {
+      // Historical state: a real series row marked 'success' with zero members
+      // — exactly the deployed bug shape #1074 fixed at create time but left
+      // in the wild in DBs that were affected before the fix shipped.
+      const [seriesRow] = await db
+        .insert(series)
+        .values({
+          provider: 'audible',
+          providerSeriesId: PROVIDER_SERIES_ID,
+          name: SERIES_NAME,
+          normalizedName: 'a thursday murder club mystery',
+          lastFetchStatus: 'success',
+          lastFetchedAt: new Date(),
+        })
+        .returning();
+      const [book] = await db
+        .insert(books)
+        .values({ title: 'The Last Devil to Die', asin: 'B0BWLC19B7', seriesName: SERIES_NAME, seriesPosition: 4 })
+        .returning();
+
+      const service = makeService([]); // empty same-series provider response
+      const response = await service.reconcileFromBookAsin('B0BWLC19B7', {
+        manual: true,
+        bookId: book!.id,
+        seriesName: SERIES_NAME,
+        providerSeriesId: PROVIDER_SERIES_ID,
+        bookTitle: book!.title,
+        seriesPosition: book!.seriesPosition,
+      });
+
+      expect(response.status).toBe('refreshed');
+      expect(response.series).not.toBeNull();
+      expect(response.series!.id).toBe(seriesRow!.id);
+      expect(response.series!.members).toHaveLength(1);
+      const member = response.series!.members[0]!;
+      expect(member.title).toBe('The Last Devil to Die');
+      expect(member.providerBookId).toBe('B0BWLC19B7');
+      expect(member.position).toBe(4);
+      expect(member.isCurrent).toBe(true);
+      expect(member.libraryBookId).toBe(book!.id);
+
+      // The DB row is still empty (presentation-layer only — no member is
+      // written) — guards against accidental write-through.
+      const persistedMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id));
+      expect(persistedMembers).toHaveLength(0);
+    });
+
+    it('manual refresh on historical zero-member row + populated provider response writes real members (regression guard)', async () => {
+      const [seriesRow] = await db
+        .insert(series)
+        .values({
+          provider: 'audible',
+          providerSeriesId: PROVIDER_SERIES_ID,
+          name: SERIES_NAME,
+          normalizedName: 'a thursday murder club mystery',
+          lastFetchStatus: 'success',
+        })
+        .returning();
+      const [book] = await db
+        .insert(books)
+        .values({ title: 'The Last Devil to Die', asin: 'B0BWLC19B7', seriesName: SERIES_NAME, seriesPosition: 4 })
+        .returning();
+
+      const service = makeService([
+        {
+          asin: '0593289501',
+          title: 'The Thursday Murder Club',
+          authors: [{ name: 'Richard Osman' }],
+          series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }],
+        },
+        {
+          asin: 'B0BWLC19B7',
+          title: 'The Last Devil to Die',
+          authors: [{ name: 'Richard Osman' }],
+          series: [{ name: SERIES_NAME, position: 4, asin: PROVIDER_SERIES_ID }],
+        },
+      ]);
+      const response = await service.reconcileFromBookAsin('B0BWLC19B7', {
+        manual: true,
+        bookId: book!.id,
+        seriesName: SERIES_NAME,
+        providerSeriesId: PROVIDER_SERIES_ID,
+        bookTitle: book!.title,
+        seriesPosition: book!.seriesPosition,
+      });
+
+      expect(response.status).toBe('refreshed');
+      expect(response.series!.members.length).toBeGreaterThanOrEqual(2);
+      // Real members were persisted — not the -1 synthesized placeholder.
+      const persistedMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id));
+      expect(persistedMembers).toHaveLength(2);
     });
   });
 

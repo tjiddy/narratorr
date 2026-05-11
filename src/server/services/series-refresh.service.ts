@@ -21,6 +21,7 @@ import {
   buildCardData,
   buildCardFromRow,
   readSeriesRow,
+  synthesizeCurrentMemberIfEmpty,
 } from './series-refresh.card-builder.js';
 
 export type { BookSeriesCardData, SeriesMemberCard } from './series-refresh.helpers.js';
@@ -63,6 +64,11 @@ interface ReconcileOpts {
   bookId?: number;
   seriesName?: string | null;
   providerSeriesId?: string | null;
+  /** Book title — plumbed from manual refresh route so the refresh response can
+   *  synthesize the current book as a member when the matched row is empty. */
+  bookTitle?: string;
+  /** Book's series position — same purpose as `bookTitle`. */
+  seriesPosition?: number | null;
 }
 
 export class SeriesRefreshService {
@@ -177,10 +183,12 @@ export class SeriesRefreshService {
 
   private async doReconcile(bookAsin: string, opts: ReconcileOpts, existing: SeriesRow | null): Promise<RefreshResponse> {
     const currentBook = currentBookCtx(opts, bookAsin);
+    const bookForSynth = bookForSynthesis(opts, bookAsin);
 
     // Honor backoff lock from nextFetchAfter
     if (existing?.nextFetchAfter && existing.nextFetchAfter.getTime() > Date.now()) {
       const card = await buildCardFromRow(this.db, existing, currentBook);
+      synthesizeCurrentMemberIfEmpty(card, existing, bookForSynth);
       return {
         status: 'rate_limited',
         series: card,
@@ -198,19 +206,25 @@ export class SeriesRefreshService {
     const upserted = await applySuccessOutcome(this.db, this.log, existing, products, bookAsin, opts);
     // F10: pass currentBook so member.isCurrent survives into the response that
     // the client caches via setQueryData on `refreshed`.
+    // F1 (PR #1076 review): an empty provider response for a historical
+    // zero-member row leaves `upserted` with no members; without the
+    // synthesizer the client would re-cache "No members known yet" on refresh.
     const card = upserted
       ? await buildCardFromRow(this.db, upserted, currentBook)
       : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBook);
+    if (card && upserted) synthesizeCurrentMemberIfEmpty(card, upserted, bookForSynth);
     return { status: 'refreshed', series: card };
   }
 
   private async handleFetchError(error: unknown, existing: SeriesRow | null, opts: ReconcileOpts, bookAsin: string): Promise<RefreshResponse> {
     const currentBook = currentBookCtx(opts, bookAsin);
+    const bookForSynth = bookForSynthesis(opts, bookAsin);
     if (error instanceof RateLimitError) {
       const updated = await applyRateLimitOutcome(this.db, existing, error.retryAfterMs, error.message, opts);
       const card = updated
         ? await buildCardFromRow(this.db, updated, currentBook)
         : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBook);
+      if (card && updated) synthesizeCurrentMemberIfEmpty(card, updated, bookForSynth);
       return {
         status: 'rate_limited',
         series: card,
@@ -221,6 +235,7 @@ export class SeriesRefreshService {
     const card = updated
       ? await buildCardFromRow(this.db, updated, currentBook)
       : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin }, currentBook);
+    if (card && updated) synthesizeCurrentMemberIfEmpty(card, updated, bookForSynth);
     return {
       status: 'failed',
       series: card,
@@ -238,6 +253,27 @@ export class SeriesRefreshService {
 function currentBookCtx(opts: ReconcileOpts, bookAsin: string): { id: number; asin: string | null } | undefined {
   if (opts.bookId != null) return { id: opts.bookId, asin: bookAsin };
   return undefined;
+}
+
+/**
+ * Richer book context for `synthesizeCurrentMemberIfEmpty`. The synthesizer
+ * needs title + seriesName + seriesPosition in addition to id + asin to build a
+ * proper SeriesMemberCard. Returns undefined when those fields aren't plumbed
+ * through — scheduled and import-orchestration paths only ever fire synthesis
+ * incidentally and don't need the extra payload.
+ */
+function bookForSynthesis(
+  opts: ReconcileOpts,
+  bookAsin: string,
+): { id: number; title: string; asin: string | null; seriesName: string | null; seriesPosition: number | null } | undefined {
+  if (opts.bookId == null || opts.bookTitle == null) return undefined;
+  return {
+    id: opts.bookId,
+    title: opts.bookTitle,
+    asin: bookAsin,
+    seriesName: opts.seriesName ?? null,
+    seriesPosition: opts.seriesPosition ?? null,
+  };
 }
 
 async function sleepWithJitter(minMs: number, maxMs: number): Promise<void> {
