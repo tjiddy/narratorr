@@ -1,6 +1,6 @@
 import { eq, and, isNull, lte, or, isNotNull } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db, DbOrTx } from '../../db/index.js';
 import { books, series, seriesMembers } from '../../db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
@@ -47,8 +47,20 @@ export function errorMessage(error: unknown): string {
 
 export async function findExistingSeriesRow(
   db: Db,
-  opts: { providerSeriesId: string | null; seriesName: string | null },
+  opts: { providerSeriesId: string | null; seriesName: string | null; seedAsin?: string | null },
 ): Promise<SeriesRow | null> {
+  // Strongest identity: walk from the seed book's ASIN through the member row
+  // to its parent series. Catches provider-backed rows created by Add Book
+  // even when the caller only knows the book ASIN. (F1)
+  if (opts.seedAsin) {
+    const rows = await db
+      .select({ s: series })
+      .from(seriesMembers)
+      .innerJoin(series, eq(seriesMembers.seriesId, series.id))
+      .where(eq(seriesMembers.providerBookId, opts.seedAsin))
+      .limit(1);
+    if (rows.length > 0) return rows[0]!.s as SeriesRow;
+  }
   if (opts.providerSeriesId) {
     const rows = await db
       .select()
@@ -57,12 +69,14 @@ export async function findExistingSeriesRow(
       .limit(1);
     if (rows.length > 0) return rows[0] as SeriesRow;
   }
+  // Normalized-name fallback matches both provider-backed AND null-providerSeriesId rows.
+  // The previous `isNull(providerSeriesId)` filter hid Add Book rows from manual refresh. (F1)
   if (opts.seriesName) {
     const normalized = normalizeSeriesName(opts.seriesName);
     const rows = await db
       .select()
       .from(series)
-      .where(and(eq(series.provider, AUDIBLE_PROVIDER), eq(series.normalizedName, normalized), isNull(series.providerSeriesId)))
+      .where(and(eq(series.provider, AUDIBLE_PROVIDER), eq(series.normalizedName, normalized)))
       .limit(1);
     if (rows.length > 0) return rows[0] as SeriesRow;
   }
@@ -70,7 +84,7 @@ export async function findExistingSeriesRow(
 }
 
 async function upsertSeriesRow(
-  db: Db,
+  db: DbOrTx,
   existing: SeriesRow | null,
   name: string,
   providerSeriesId: string | null,
@@ -120,7 +134,7 @@ function buildMemberValues(
 }
 
 async function findExistingMemberId(
-  db: Db,
+  db: DbOrTx,
   seriesId: number,
   providerBookId: string | null,
   normalizedTitle: string,
@@ -145,7 +159,7 @@ async function findExistingMemberId(
   return rows[0]?.id ?? null;
 }
 
-async function upsertMember(db: Db, seriesId: number, product: BookMetadata, seriesName: string): Promise<void> {
+async function upsertMember(db: DbOrTx, seriesId: number, product: BookMetadata, seriesName: string): Promise<void> {
   const values = buildMemberValues(seriesId, product, seriesName);
   const existingId = await findExistingMemberId(db, seriesId, product.asin ?? null, values.normalizedTitle, values.positionRaw ?? null);
   if (existingId !== null) {
@@ -155,7 +169,7 @@ async function upsertMember(db: Db, seriesId: number, product: BookMetadata, ser
   await db.insert(seriesMembers).values(values);
 }
 
-async function linkLocalBooksByAsin(db: Db, seriesId: number): Promise<void> {
+async function linkLocalBooksByAsin(db: DbOrTx, seriesId: number): Promise<void> {
   const unlinked = await db
     .select({ id: seriesMembers.id, providerBookId: seriesMembers.providerBookId })
     .from(seriesMembers)
@@ -193,35 +207,41 @@ export async function applySuccessOutcome(
     log.debug({ seedAsin }, 'Same-series response had no series name — skipping upsert');
     return existing;
   }
-  const row = await upsertSeriesRow(db, existing, finalName, inferredSeriesAsin ?? null);
 
-  // Dedupe products by ASIN (Audible returns alternate editions)
-  const dedupedByAsin = new Map<string, BookMetadata>();
-  const noAsin: BookMetadata[] = [];
-  for (const product of products) {
-    if (product.asin) {
-      if (!dedupedByAsin.has(product.asin)) dedupedByAsin.set(product.asin, product);
-    } else {
-      noAsin.push(product);
+  // Atomic reconcile: series upsert + members + local-book linking + status flip
+  // run in a single transaction so a midway failure can't leave half-written
+  // members or a status row out of sync with cache contents. (F5, DB-2)
+  return db.transaction(async (tx) => {
+    const row = await upsertSeriesRow(tx, existing, finalName, inferredSeriesAsin ?? null);
+
+    // Dedupe products by ASIN (Audible returns alternate editions)
+    const dedupedByAsin = new Map<string, BookMetadata>();
+    const noAsin: BookMetadata[] = [];
+    for (const product of products) {
+      if (product.asin) {
+        if (!dedupedByAsin.has(product.asin)) dedupedByAsin.set(product.asin, product);
+      } else {
+        noAsin.push(product);
+      }
     }
-  }
-  for (const product of [...dedupedByAsin.values(), ...noAsin]) {
-    await upsertMember(db, row.id, product, finalName);
-  }
-  await linkLocalBooksByAsin(db, row.id);
+    for (const product of [...dedupedByAsin.values(), ...noAsin]) {
+      await upsertMember(tx, row.id, product, finalName);
+    }
+    await linkLocalBooksByAsin(tx, row.id);
 
-  const updated = await db
-    .update(series)
-    .set({
-      lastFetchedAt: new Date(),
-      lastFetchStatus: 'success',
-      lastFetchError: null,
-      nextFetchAfter: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(series.id, row.id))
-    .returning();
-  return (updated[0] as SeriesRow) ?? row;
+    const updated = await tx
+      .update(series)
+      .set({
+        lastFetchedAt: new Date(),
+        lastFetchStatus: 'success',
+        lastFetchError: null,
+        nextFetchAfter: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(series.id, row.id))
+      .returning();
+    return (updated[0] as SeriesRow) ?? row;
+  });
 }
 
 export async function recordOutcome(
@@ -418,11 +438,12 @@ export async function buildCardData(
 
 export async function readSeriesRow(
   db: Db,
-  opts: { providerSeriesId?: string | null; seriesName?: string | null },
+  opts: { providerSeriesId?: string | null; seriesName?: string | null; seedAsin?: string | null },
 ): Promise<BookSeriesCardData | null> {
   const existing = await findExistingSeriesRow(db, {
     providerSeriesId: opts.providerSeriesId ?? null,
     seriesName: opts.seriesName ?? null,
+    seedAsin: opts.seedAsin ?? null,
   });
   if (!existing) return null;
   return buildCardFromRow(db, existing);

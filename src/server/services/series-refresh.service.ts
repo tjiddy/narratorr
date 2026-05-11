@@ -90,7 +90,7 @@ export class SeriesRefreshService {
 
     const existing = this.inFlight.get(key);
     if (existing) {
-      const current = await readSeriesRow(this.db, opts);
+      const current = await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
       return { status: 'queued', series: current };
     }
 
@@ -150,9 +150,13 @@ export class SeriesRefreshService {
   // ─── Internals ───────────────────────────────────────────────────────
 
   private async doReconcile(bookAsin: string, opts: ReconcileOpts): Promise<RefreshResponse> {
+    // Seed ASIN gives the strongest identity — find the existing series row by
+    // walking the member edge first so provider-backed Add Book rows are found
+    // even when the caller only knows the book ASIN. (F1)
     const existing = await findExistingSeriesRow(this.db, {
       providerSeriesId: opts.providerSeriesId ?? null,
       seriesName: opts.seriesName ?? null,
+      seedAsin: bookAsin,
     });
 
     // Honor backoff lock from nextFetchAfter
@@ -169,18 +173,18 @@ export class SeriesRefreshService {
     try {
       products = await this.metadataService.getSameSeriesBooks(bookAsin);
     } catch (error: unknown) {
-      return this.handleFetchError(error, existing, opts);
+      return this.handleFetchError(error, existing, opts, bookAsin);
     }
 
     const upserted = await applySuccessOutcome(this.db, this.log, existing, products, bookAsin, opts);
-    const card = upserted ? await buildCardFromRow(this.db, upserted) : await readSeriesRow(this.db, opts);
+    const card = upserted ? await buildCardFromRow(this.db, upserted) : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
     return { status: 'refreshed', series: card };
   }
 
-  private async handleFetchError(error: unknown, existing: SeriesRow | null, opts: ReconcileOpts): Promise<RefreshResponse> {
+  private async handleFetchError(error: unknown, existing: SeriesRow | null, opts: ReconcileOpts, bookAsin: string): Promise<RefreshResponse> {
     if (error instanceof RateLimitError) {
       const updated = await applyRateLimitOutcome(this.db, existing, error.retryAfterMs, error.message, opts);
-      const card = updated ? await buildCardFromRow(this.db, updated) : await readSeriesRow(this.db, opts);
+      const card = updated ? await buildCardFromRow(this.db, updated) : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
       return {
         status: 'rate_limited',
         series: card,
@@ -188,7 +192,7 @@ export class SeriesRefreshService {
       };
     }
     const updated = await applyFailureOutcome(this.db, existing, error, opts);
-    const card = updated ? await buildCardFromRow(this.db, updated) : await readSeriesRow(this.db, opts);
+    const card = updated ? await buildCardFromRow(this.db, updated) : await readSeriesRow(this.db, { ...opts, seedAsin: bookAsin });
     return {
       status: 'failed',
       series: card,
