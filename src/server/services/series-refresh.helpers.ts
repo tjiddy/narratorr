@@ -137,6 +137,23 @@ export async function applySuccessOutcome(
     return existing;
   }
 
+  // Empty provider response: do NOT mark the row 'success' with zero members.
+  // A successful zero-member outcome masks Add Book's locally-inserted member
+  // row at read time and creates the deployed `No members known yet` bug. If a
+  // row doesn't exist yet, skip upsert entirely so the local card path renders.
+  // If a row exists, advance the freshness window but leave members and status
+  // alone — local members from Add Book stay intact for a follow-up refresh.
+  if (products.length === 0) {
+    log.debug({ seedAsin, seriesName: finalName }, 'Same-series response was empty — preserving local state, no success flip');
+    if (!existing) return null;
+    const rows = await db
+      .update(series)
+      .set({ lastFetchedAt: new Date(), updatedAt: new Date() })
+      .where(eq(series.id, existing.id))
+      .returning();
+    return (rows[0] as SeriesRow) ?? existing;
+  }
+
   // Atomic reconcile: series upsert + members + local-book linking + status flip
   // run in a single transaction so a midway failure can't leave half-written
   // members or a status row out of sync with cache contents. (F5, DB-2)
