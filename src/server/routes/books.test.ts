@@ -2670,3 +2670,163 @@ describe('#514 books route — missing blacklistService guard', () => {
     expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
   });
 });
+
+describe('#1071 series routes', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  it('GET /api/books/:id/series returns { series: null } when no cache/local data', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: null });
+    (services.seriesRefresh.getSeriesForBook as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ series: null });
+  });
+
+  it('GET /api/books/:id/series returns 404 for missing book', async () => {
+    (services.book.getById as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/999/series' });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('POST /api/books/:id/series/refresh returns the documented envelope on success', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51' });
+    (services.seriesRefresh.reconcileFromBookAsin as Mock).mockResolvedValue({
+      status: 'refreshed',
+      series: {
+        id: 1,
+        name: 'The Band',
+        providerSeriesId: 'B07DHQY7DX',
+        lastFetchedAt: '2026-05-11T00:00:00.000Z',
+        lastFetchStatus: 'success',
+        nextFetchAfter: null,
+        members: [],
+      },
+    });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('refreshed');
+    expect(res.json().series.name).toBe('The Band');
+    expect(services.seriesRefresh.reconcileFromBookAsin).toHaveBeenCalledWith(
+      'B01NA0JA51',
+      expect.objectContaining({ manual: true, bookId: 1 }),
+    );
+  });
+
+  it('POST /api/books/:id/series/refresh returns 400 when book has no ASIN', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: null });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /api/books/:id/series/refresh forwards rate_limited envelope verbatim', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51' });
+    (services.seriesRefresh.reconcileFromBookAsin as Mock).mockResolvedValue({
+      status: 'rate_limited',
+      series: null,
+      nextFetchAfter: '2026-05-11T01:00:00.000Z',
+    });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ status: 'rate_limited', series: null, nextFetchAfter: '2026-05-11T01:00:00.000Z' });
+  });
+
+  it('POST /api/books enqueues async series refresh when the created book has ASIN + seriesName (F7)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: 'The Band', seriesPosition: 1, status: 'wanted' };
+    (services.book.create as Mock).mockResolvedValueOnce(created);
+    const enqueueRefresh = vi.fn();
+    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Kings of the Wyld',
+        authors: [{ name: 'Nicholas Eames' }],
+        asin: 'B01NA0JA51',
+        seriesName: 'The Band',
+        seriesPosition: 1,
+        seriesAsin: 'B07DHQY7DX',
+        seriesProvider: 'audible',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    // Wait for fire-and-forget enqueue to settle
+    await new Promise((r) => setTimeout(r, 10));
+    expect(enqueueRefresh).toHaveBeenCalledTimes(1);
+    expect(enqueueRefresh).toHaveBeenCalledWith('B01NA0JA51', expect.objectContaining({
+      bookId: 42,
+      seriesName: 'The Band',
+      providerSeriesId: 'B07DHQY7DX',
+    }));
+  });
+
+  it('POST /api/books does NOT enqueue refresh when the created book lacks an ASIN (F7 guard)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    const created = { ...mockBook, id: 42, asin: null, seriesName: 'The Band', status: 'wanted' };
+    (services.book.create as Mock).mockResolvedValueOnce(created);
+    const enqueueRefresh = vi.fn();
+    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Title',
+        authors: [{ name: 'Author' }],
+        seriesName: 'The Band',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(enqueueRefresh).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/books does NOT enqueue refresh when the created book has no series (F7 guard)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: null, status: 'wanted' };
+    (services.book.create as Mock).mockResolvedValueOnce(created);
+    const enqueueRefresh = vi.fn();
+    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Standalone',
+        authors: [{ name: 'Author' }],
+        asin: 'B01NA0JA51',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(enqueueRefresh).not.toHaveBeenCalled();
+  });
+});

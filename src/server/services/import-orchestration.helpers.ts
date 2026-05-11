@@ -10,6 +10,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { SeriesRefreshService } from './series-refresh.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
@@ -33,6 +34,7 @@ export interface ImportPipelineDeps {
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
   broadcaster?: EventBroadcasterService | undefined;
+  seriesRefreshService?: SeriesRefreshService | undefined;
 }
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
@@ -47,13 +49,15 @@ export async function copyToLibrary(
 
   const librarySettings = await settingsService.get('library');
   const namingOptions = toNamingOptions(librarySettings);
+  // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
+  // When `meta` is null (no provider match accepted), fall back to item-derived values.
   const targetPath = buildTargetPath(
     librarySettings.path,
     librarySettings.folderFormat,
     {
       title: item.title,
-      seriesName: item.seriesName || meta?.series?.[0]?.name,
-      seriesPosition: item.seriesPosition !== undefined ? item.seriesPosition : meta?.series?.[0]?.position,
+      seriesName: meta?.series?.[0]?.name ?? item.seriesName ?? undefined,
+      seriesPosition: meta?.series?.[0]?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
       narrators: item.narrators?.length
         ? item.narrators.map(name => ({ name }))
         : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
@@ -94,6 +98,26 @@ export async function copyToLibrary(
   }
 
   return targetPath;
+}
+
+/**
+ * Fire-and-forget: enqueue same-series refresh after a successful import
+ * placeholder when the new book has the identity needed to seed the cache
+ * (book ASIN + series metadata). (F3)
+ */
+function enqueueImportSeriesRefresh(
+  deps: ImportPipelineDeps,
+  book: { id: number; asin: string | null; seriesName: string | null },
+  item: ImportConfirmItem,
+): void {
+  if (!deps.seriesRefreshService) return;
+  if (!book.asin || !book.seriesName) return;
+  const providerSeriesId = item.metadata?.series?.[0]?.asin;
+  deps.seriesRefreshService.enqueueRefresh(book.asin, {
+    bookId: book.id,
+    seriesName: book.seriesName,
+    ...(providerSeriesId !== undefined && { providerSeriesId }),
+  });
 }
 
 export async function confirmImport(
@@ -155,6 +179,8 @@ export async function confirmImport(
         eventType: 'book_added',
         source: 'manual',
       }).catch(err => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+
+      enqueueImportSeriesRefresh(deps, book, item);
 
       accepted.push({ bookId: book.id, item });
     } catch (error: unknown) {

@@ -149,6 +149,30 @@ export class AudibleProvider implements MetadataSearchProvider {
     return result.success ? result.data : null;
   }
 
+  /**
+   * Fetch same-series similars for a given book ASIN.
+   * Returns the parsed product list directly so the caller can dedupe alternate
+   * editions and reconcile against local books. Throws RateLimitError on 429.
+   */
+  async getSameSeriesBooks(bookAsin: string): Promise<BookMetadata[]> {
+    const params = new URLSearchParams({
+      similarity_type: 'InTheSameSeries',
+      num_results: '20',
+      response_groups: RESPONSE_GROUPS,
+      image_sizes: IMAGE_SIZES,
+    });
+    const url = `${this.baseUrl}/1.0/catalog/products/${bookAsin}/sims?${params}`;
+    const data = await this.request(url, audibleProductsResponseSchema);
+    const products = data?.products ?? [];
+    const books: BookMetadata[] = [];
+    for (const product of products) {
+      const mapped = mapProduct(product);
+      const result = BookMetadataSchema.safeParse(mapped);
+      if (result.success) books.push(result.data);
+    }
+    return books;
+  }
+
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       const params = new URLSearchParams({

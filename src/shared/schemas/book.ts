@@ -40,6 +40,12 @@ export const createBookBodySchema = z.object({
   isbn: z.string().optional(),
   seriesName: z.string().optional(),
   seriesPosition: z.number().optional(),
+  // Provider-known series identity — persisted into the `series` cache table
+  // when present so the Series card can render without a separate provider
+  // round-trip on first GET. Optional because not every Add Book payload
+  // carries it (manual entry, providers without series ASINs).
+  seriesAsin: z.string().optional(),
+  seriesProvider: z.string().optional(),
   duration: z.number().optional(),
   publishedDate: z.string().optional(),
   genres: z.array(z.string()).optional(),

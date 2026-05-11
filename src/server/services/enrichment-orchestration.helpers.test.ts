@@ -259,21 +259,32 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.narrators).toEqual(['Stephen Fry']);
   });
 
-  it('item.seriesPosition: 0 wins over meta.series[0].position (regression guard)', async () => {
+  it('meta.series[0].position: 0 wins over item.seriesPosition (provider-truth, regression guard for falsy)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T', seriesPosition: 0 },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 99 }] },
+      { path: '/x', title: 'T', seriesPosition: 99 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 0 }] },
       'importing',
     );
     expect(payload.seriesPosition).toBe(0);
   });
 
-  it('item.seriesPosition: 1.5 wins over meta', async () => {
+  it('meta.series[0].position wins over item.seriesPosition (#1071 provider-truth precedence)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T', seriesPosition: 99 },
+      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
+      'importing',
+    );
+    expect(payload.seriesPosition).toBe(1);
+    expect(payload.seriesName).toBe('Wax and Wayne');
+  });
+
+  it('item.seriesPosition: 1.5 falls through when meta has no series', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
       { path: '/x', title: 'T', seriesPosition: 1.5 },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 99 }] },
+      { title: 'T', authors: [{ name: 'A' }] },
       'importing',
     );
     expect(payload.seriesPosition).toBe(1.5);

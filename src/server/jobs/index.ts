@@ -14,6 +14,7 @@ import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
 import { runDiscoveryJob } from './discovery.js';
 import { runCoverBackfill } from './cover-backfill.js';
+import { runSeriesRefreshJob } from './series-refresh.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { LibraryPathError, ScanInProgressError } from '../services/library-scan.service.js';
 
@@ -64,6 +65,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },
     { name: 'import-list-sync', type: 'cron', schedule: '* * * * *', callback: () => services.importList.syncDueLists() },
     { name: 'discovery', type: 'timeout', getIntervalMinutes: () => services.settings.get('discovery').then((s) => s.intervalHours * 60), callback: () => runDiscoveryJob(services.discovery, services.settings, log) },
+    { name: 'series-refresh', type: 'cron', schedule: '0 3 * * 0', callback: () => runSeriesRefreshJob(services.seriesRefresh, log) },
     { name: 'library-rescan', type: 'cron', schedule: '0 */6 * * *', callback: async () => {
       try {
         await services.libraryScan.rescanLibrary();

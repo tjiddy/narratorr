@@ -8,6 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
+import type { SeriesRefreshService } from './series-refresh.service.js';
 import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
 
 vi.mock('./enrichment-orchestration.helpers.js', async () => ({
@@ -321,12 +322,13 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     };
   }
 
-  it('item.seriesPosition wins over meta.series[0].position', async () => {
+  it('meta.series[0] wins over item series fields (#1071 provider-truth precedence)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    const targetPath = '/library/Author/Discworld #5/Title';
+    // Item tags say `Mistborn #5`; provider match says `Wax and Wayne #1` — provider wins.
+    const targetPath = '/library/Author/Wax and Wayne #1/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Discworld', seriesPosition: 5 },
-      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Discworld', position: 99 }] },
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Mistborn', seriesPosition: 5 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
       'copy',
       deps,
     );
@@ -345,12 +347,13 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     expect(path).toBe(targetPath);
   });
 
-  it('item.seriesPosition: 0 wins over meta (regression guard for falsy)', async () => {
+  it('meta.series[0].position: 0 wins over item (#1071 falsy regression guard)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    // Provider says position 0 (prequel); item tags say 5; provider wins, position 0 preserved.
     const targetPath = '/library/Author/Prequels #0/Title';
     const path = await copyToLibrary(
-      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Prequels', seriesPosition: 0 },
-      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 99 }] },
+      { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Prequels', seriesPosition: 5 },
+      { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 0 }] },
       'copy',
       deps,
     );
@@ -379,6 +382,137 @@ describe('copyToLibrary — token precedence (#1028)', () => {
       deps,
     );
     expect(path).toBe(targetPath);
+  });
+});
+
+describe('confirmImport — async series refresh enqueue (#1071 F8)', () => {
+  let deps: ImportPipelineDeps;
+  let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+  let mockBookImportService: { enqueue: ReturnType<typeof vi.fn> };
+  let mockEventHistory: { create: ReturnType<typeof vi.fn> };
+  let mockSeriesRefresh: { enqueueRefresh: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    const chainMethods = { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]), set: vi.fn().mockReturnThis() };
+    const db = {
+      select: vi.fn().mockReturnValue(chainMethods),
+      update: vi.fn().mockReturnValue(chainMethods),
+      insert: vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue(undefined) }),
+      delete: vi.fn().mockReturnValue(chainMethods),
+      transaction: vi.fn(),
+    };
+    mockBookService = {
+      findDuplicate: vi.fn().mockResolvedValue(null),
+      create: vi.fn(),
+    };
+    mockBookImportService = { enqueue: vi.fn().mockResolvedValue({ jobId: 100 }) };
+    mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
+    mockSeriesRefresh = { enqueueRefresh: vi.fn() };
+
+    const log = createMockLogger();
+    const mockSettingsService = createMockSettingsService({ library: { path: '/library' } });
+
+    deps = {
+      db: inject<Db>(db),
+      log,
+      bookService: inject<BookService>(mockBookService),
+      bookImportService: inject<BookImportService>(mockBookImportService),
+      settingsService: inject<SettingsService>(mockSettingsService),
+      eventHistory: inject<EventHistoryService>(mockEventHistory),
+      enrichmentDeps: { db: inject<Db>(db), log, settingsService: inject<SettingsService>(mockSettingsService), bookService: inject<BookService>(mockBookService), metadataService: { searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() } as never } satisfies EnrichmentDeps,
+      seriesRefreshService: inject<SeriesRefreshService>(mockSeriesRefresh),
+    };
+  });
+
+  it('enqueues series refresh with bookId, seriesName, and metadata series ASIN after successful placeholder', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Kings of the Wyld', asin: 'B01NA0JA51', seriesName: 'The Band', status: 'importing' });
+
+    await confirmImport(
+      [{
+        path: '/a',
+        title: 'Kings of the Wyld',
+        authorName: 'Nicholas Eames',
+        seriesName: 'The Band',
+        seriesPosition: 1,
+        asin: 'B01NA0JA51',
+        metadata: { title: 'Kings of the Wyld', authors: [{ name: 'Nicholas Eames' }], asin: 'B01NA0JA51', series: [{ name: 'The Band', position: 1, asin: 'B07DHQY7DX' }] },
+      }],
+      deps,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).toHaveBeenCalledTimes(1);
+    expect(mockSeriesRefresh.enqueueRefresh).toHaveBeenCalledWith('B01NA0JA51', expect.objectContaining({
+      bookId: 42,
+      seriesName: 'The Band',
+      providerSeriesId: 'B07DHQY7DX',
+    }));
+  });
+
+  it('forwards no providerSeriesId when metadata has no series ASIN (scalar-only fallback)', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Foo', asin: 'A1', seriesName: 'Foo Series', status: 'importing' });
+
+    await confirmImport(
+      [{ path: '/a', title: 'Foo', asin: 'A1', seriesName: 'Foo Series' }],
+      deps,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).toHaveBeenCalledTimes(1);
+    const [, opts] = mockSeriesRefresh.enqueueRefresh.mock.calls[0]!;
+    expect(opts.providerSeriesId).toBeUndefined();
+    expect(opts.seriesName).toBe('Foo Series');
+    expect(opts.bookId).toBe(7);
+  });
+
+  it('does NOT enqueue when the created book lacks ASIN', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Foo', asin: null, seriesName: 'Foo Series', status: 'importing' });
+
+    await confirmImport(
+      [{ path: '/a', title: 'Foo', seriesName: 'Foo Series' }],
+      deps,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does NOT enqueue when the created book has no series', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Foo', asin: 'A1', seriesName: null, status: 'importing' });
+
+    await confirmImport(
+      [{ path: '/a', title: 'Foo', asin: 'A1' }],
+      deps,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does NOT enqueue when the placeholder enqueue fails (duplicate active job)', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Foo', asin: 'A1', seriesName: 'Foo Series', status: 'importing' });
+    mockBookImportService.enqueue.mockResolvedValueOnce({ error: 'duplicate' });
+
+    await confirmImport(
+      [{ path: '/a', title: 'Foo', asin: 'A1', seriesName: 'Foo Series' }],
+      deps,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).not.toHaveBeenCalled();
+  });
+
+  it('does NOT enqueue when seriesRefreshService is not wired into deps', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Foo', asin: 'A1', seriesName: 'Foo Series', status: 'importing' });
+    const depsNoSeries = { ...deps, seriesRefreshService: undefined };
+
+    await confirmImport(
+      [{ path: '/a', title: 'Foo', asin: 'A1', seriesName: 'Foo Series' }],
+      depsNoSeries,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).not.toHaveBeenCalled();
   });
 });
 

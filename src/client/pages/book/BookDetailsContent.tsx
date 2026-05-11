@@ -1,5 +1,7 @@
+import { useQuery } from '@tanstack/react-query';
 import { AudioInfo } from '@/components/AudioInfo';
-import { type BookWithAuthor } from '@/lib/api';
+import { SeriesCard } from '@/components/SeriesCard';
+import { api, type BookWithAuthor } from '@/lib/api';
 import { BookDescription } from './BookDescription.js';
 import { BookLocationSection } from './BookLocationSection.js';
 import { FileList } from './FileList.js';
@@ -9,14 +11,28 @@ interface MergedData {
   genres?: string[] | undefined;
 }
 
+function useSidebarSignals(libraryBook: BookWithAuthor, merged: MergedData) {
+  // Fire the series query at the page level so a book with no scalar
+  // seriesName but a DB-cache link (via member ASIN) still surfaces the
+  // Series card. (F9) The query is also issued inside SeriesCard, but
+  // TanStack Query dedupes on the same key.
+  const seriesQuery = useQuery({
+    queryKey: ['book', libraryBook.id, 'series'] as const,
+    queryFn: () => api.getBookSeries(libraryBook.id),
+  });
+  const hasGenres = !!merged.genres && merged.genres.length > 0;
+  const hasPath = !!libraryBook.path;
+  const hasSeries = !!libraryBook.seriesName || seriesQuery.data?.series != null;
+  const hasAudio = !!libraryBook.audioCodec;
+  return { hasGenres, hasPath, hasSeries, hasAudio, hasSidebar: hasAudio || hasGenres || hasPath || hasSeries };
+}
+
 export function BookDetailsContent({ libraryBook, merged }: {
   libraryBook: BookWithAuthor;
   merged: MergedData;
 }) {
   const hasDescription = !!merged.description;
-  const hasGenres = merged.genres && merged.genres.length > 0;
-  const hasPath = !!libraryBook.path;
-  const hasSidebar = libraryBook.audioCodec || hasGenres || hasPath;
+  const { hasGenres, hasPath, hasSeries, hasSidebar } = useSidebarSignals(libraryBook, merged);
 
   if (!hasDescription && !hasSidebar) return null;
 
@@ -30,6 +46,14 @@ export function BookDetailsContent({ libraryBook, merged }: {
 
       {hasSidebar && (
         <div className={`space-y-6 ${hasDescription ? '' : 'lg:col-span-3 lg:max-w-sm'}`}>
+          {hasSeries && (
+            <SeriesCard
+              bookId={libraryBook.id}
+              fallbackSeriesName={libraryBook.seriesName}
+              fallbackSeriesPosition={libraryBook.seriesPosition}
+            />
+          )}
+
           <AudioInfo book={libraryBook} compact />
 
           {hasGenres && (
