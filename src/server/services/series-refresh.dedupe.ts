@@ -87,10 +87,12 @@ export async function findMemberByLogicalIdentity(
   const positionFilter = positionRaw !== null
     ? eq(seriesMembers.positionRaw, positionRaw)
     : isNull(seriesMembers.positionRaw);
-  const authorFilter = normalizedAuthor !== null
-    ? sql`lower(${seriesMembers.authorName}) = ${normalizedAuthor} OR ${seriesMembers.authorName} IS NULL`
-    : isNull(seriesMembers.authorName);
-  // Author filter normalizes at compare-time (no stored normalized_author column).
+  // Author comparison happens in-memory via the shared `normalizePrimaryAuthor`
+  // helper. Don't prefilter with `lower(author_name)` — that would exclude
+  // rows whose stored display author needs trim/punctuation/space-run
+  // normalization to match (e.g. `'  Nicholas Eames  '`, `'J. R. R. Tolkien'`).
+  // The (seriesId + normalizedTitle + positionRaw) prefilter keeps the row set
+  // bounded (single-digit rows per series entry). (F12, #1075 F1)
   const rows = await db
     .select({ id: seriesMembers.id, authorName: seriesMembers.authorName })
     .from(seriesMembers)
@@ -98,7 +100,6 @@ export async function findMemberByLogicalIdentity(
       eq(seriesMembers.seriesId, seriesId),
       eq(seriesMembers.normalizedTitle, normalizedTitle),
       positionFilter,
-      authorFilter,
     ));
   for (const row of rows) {
     if (normalizePrimaryAuthor(row.authorName) === normalizedAuthor) return row.id;

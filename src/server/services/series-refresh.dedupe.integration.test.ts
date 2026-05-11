@@ -295,6 +295,75 @@ describe('series refresh — alternate-edition dedupe (#1073)', () => {
     expect(separate).toBeDefined();
   });
 
+  it('looks up an existing no-ASIN row whose raw stored author only matches after normalization (F1)', async () => {
+    // Seed an existing no-ASIN row directly with a raw author string that
+    // differs from the candidate's author only by whitespace + punctuation.
+    // The SQL prefilter `lower(author_name) = normalizedAuthor` would have
+    // excluded these rows before the helper ran, causing duplicate inserts.
+    const [seriesRow] = await db
+      .insert(series)
+      .values({ provider: 'audible', providerSeriesId: 'F1_SID', name: 'F1 Series', normalizedName: 'f1 series' })
+      .returning();
+    await db.insert(seriesMembers).values({
+      seriesId: seriesRow!.id,
+      providerBookId: null,
+      title: 'Fellowship of the Ring',
+      normalizedTitle: 'fellowship of the ring',
+      authorName: 'J. R. R. Tolkien',
+      positionRaw: '1',
+      position: 1,
+      alternateAsins: [],
+    });
+    await db.insert(seriesMembers).values({
+      seriesId: seriesRow!.id,
+      providerBookId: null,
+      title: 'Two Towers',
+      normalizedTitle: 'two towers',
+      authorName: '  Nicholas Eames  ',
+      positionRaw: '2',
+      position: 2,
+      alternateAsins: [],
+    });
+    const initialCount = (await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id))).length;
+    expect(initialCount).toBe(2);
+
+    // Refresh with candidates whose authors normalize to the stored values
+    // but have a different raw shape ('j r r tolkien' vs 'J. R. R. Tolkien').
+    const existing = await findExistingSeriesRow(db, {
+      providerSeriesId: 'F1_SID',
+      seriesName: 'F1 Series',
+      seedAsin: null,
+    });
+    await applySuccessOutcome(
+      db,
+      log,
+      existing,
+      [
+        // Same logical identity as the stored no-ASIN Tolkien row, but raw
+        // author differs (no dots) — lookup must find the row via the helper,
+        // not via raw lowercase prefilter.
+        {
+          asin: undefined,
+          title: 'Fellowship of the Ring',
+          authors: [{ name: 'j r r tolkien' }],
+          series: [{ name: 'F1 Series', position: 1, asin: 'F1_SID' }],
+        },
+        // Same logical identity as the trimmed-pad row.
+        {
+          asin: undefined,
+          title: 'Two Towers',
+          authors: [{ name: 'nicholas eames' }],
+          series: [{ name: 'F1 Series', position: 2, asin: 'F1_SID' }],
+        },
+      ],
+      'unused-seed',
+      { seriesName: 'F1 Series', providerSeriesId: 'F1_SID' },
+    );
+
+    const final = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id));
+    expect(final).toHaveLength(2);
+  });
+
   it('keeps deterministic alternate_asins order across refreshes (no churn)', async () => {
     await refresh(fourEditionFixture(), 'A1');
     const first = (await db.select().from(seriesMembers).where(eq(seriesMembers.position, 1)))[0]!;
