@@ -1,4 +1,4 @@
-import { eq, and, isNull, ne, sql } from 'drizzle-orm';
+import { eq, and, isNull, ne, sql, inArray } from 'drizzle-orm';
 import type { DbOrTx } from '../../db/index.js';
 import { books, seriesMembers } from '../../db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
@@ -18,19 +18,86 @@ export function normalizePrimaryAuthor(name: string | null | undefined): string 
   return normalizeSeriesName(trimmed);
 }
 
-export function getSeriesRef(product: BookMetadata, seriesName: string): { position: number | null } {
-  const ref = product.series?.find((s) => s.name === seriesName) ?? product.series?.[0];
-  const validPosition = ref?.position != null && Number.isFinite(ref.position) ? ref.position : null;
-  return { position: validPosition };
+/**
+ * Identity used to scope a same-series refresh to the targeted series. Prefer
+ * `asin` (Audible series ASIN) when available — it's the strongest identifier
+ * since two series can share a normalized name across providers. The
+ * `normalizedName` is the dedupe-friendly form computed by `normalizeSeriesName`.
+ * Either field can be null; matching is best-effort across whatever the caller
+ * could derive from the seed book, the existing series row, and request opts. (#1078)
+ */
+export interface TargetSeriesIdentity {
+  asin: string | null;
+  normalizedName: string | null;
+}
+
+export interface MatchedSeriesRef {
+  name: string;
+  asin: string | null;
+  position: number | null;
+}
+
+/**
+ * Strip a leading `the ` so series names like `Stormlight Archive` and
+ * `The Stormlight Archive` cross-match. The leading article gets dropped at
+ * surface-form boundaries by various metadata sources (Audible vs Hardcover
+ * vs hand-typed `book.seriesName`), so a strict-equality compare on
+ * `normalizeSeriesName` output misses real same-series matches. This helper
+ * is intentionally local to cross-source matching — the strict
+ * `normalizeSeriesName` is still what DB `series.normalized_name` rows store,
+ * so we don't introduce a migration or break existing lookup indexes. (#1078)
+ */
+function looseNormalize(normalized: string): string {
+  return normalized.startsWith('the ') ? normalized.slice(4) : normalized;
+}
+
+/**
+ * Find the `series` ref on a provider product that belongs to the target
+ * series. Returns the matched ref (with name/asin/position) or `null` when the
+ * product is not a member of the target series. Provider series ASIN match
+ * wins over normalized-name match; we never fall back to `product.series[0]`
+ * because that's the bug shape from #1078 — a multi-series book on Audible
+ * commonly lists a broader universe (e.g. `The Cosmere`) before the actual
+ * target series, and importing the universe ref would pollute the card with
+ * unrelated members and wrong positions. (#1078)
+ */
+export function findMatchingSeriesRef(
+  product: BookMetadata,
+  target: TargetSeriesIdentity,
+): MatchedSeriesRef | null {
+  if (!product.series || product.series.length === 0) return null;
+  if (target.asin) {
+    const byAsin = product.series.find((s) => s.asin && s.asin === target.asin);
+    if (byAsin) return toMatchedRef(byAsin);
+  }
+  if (target.normalizedName) {
+    const targetLoose = looseNormalize(target.normalizedName);
+    const byName = product.series.find((s) => {
+      if (typeof s.name !== 'string' || s.name.length === 0) return false;
+      const candidate = normalizeSeriesName(s.name);
+      return candidate === target.normalizedName || looseNormalize(candidate) === targetLoose;
+    });
+    if (byName) return toMatchedRef(byName);
+  }
+  return null;
+}
+
+function toMatchedRef(ref: { name?: string | undefined; asin?: string | undefined; position?: number | undefined }): MatchedSeriesRef {
+  const validPosition = ref.position != null && Number.isFinite(ref.position) ? ref.position : null;
+  return {
+    name: ref.name ?? '',
+    asin: ref.asin ?? null,
+    position: validPosition,
+  };
 }
 
 export function buildMemberValues(
   seriesId: number,
   product: BookMetadata,
-  seriesName: string,
+  matchedRef: MatchedSeriesRef,
   alternateAsins: string[],
 ): typeof seriesMembers.$inferInsert {
-  const { position } = getSeriesRef(product, seriesName);
+  const { position } = matchedRef;
   return {
     seriesId,
     providerBookId: product.asin ?? null,
@@ -111,10 +178,10 @@ export async function upsertCanonicalMember(
   db: DbOrTx,
   seriesId: number,
   product: BookMetadata,
-  seriesName: string,
+  matchedRef: MatchedSeriesRef,
   alternateAsins: string[],
 ): Promise<number> {
-  const values = buildMemberValues(seriesId, product, seriesName, alternateAsins);
+  const values = buildMemberValues(seriesId, product, matchedRef, alternateAsins);
   const normalizedAuthor = normalizePrimaryAuthor(product.authors[0]?.name ?? null);
   const existingId = await findMemberByLogicalIdentity(
     db,
@@ -166,6 +233,7 @@ export async function linkLocalBooksByAsin(db: DbOrTx, seriesId: number): Promis
 
 interface CandidateInfo {
   product: BookMetadata;
+  matchedRef: MatchedSeriesRef;
   normalizedTitle: string;
   positionRaw: string | null;
   normalizedAuthor: string | null;
@@ -175,10 +243,11 @@ function logicalGroupKey(c: CandidateInfo): string {
   return `${c.positionRaw ?? '∅'}|${c.normalizedTitle}|${c.normalizedAuthor ?? '∅'}`;
 }
 
-function describeCandidate(product: BookMetadata, seriesName: string): CandidateInfo {
-  const { position } = getSeriesRef(product, seriesName);
+function describeCandidate(product: BookMetadata, matchedRef: MatchedSeriesRef): CandidateInfo {
+  const { position } = matchedRef;
   return {
     product,
+    matchedRef,
     normalizedTitle: normalizeSeriesName(product.title),
     positionRaw: position !== null ? String(position) : null,
     normalizedAuthor: normalizePrimaryAuthor(product.authors[0]?.name ?? null),
@@ -275,21 +344,83 @@ async function cleanupLogicalDuplicates(
 }
 
 /**
- * Logical-identity dedupe: group candidates by (position + normalized title
- * + normalized author), pick a canonical product per group, persist non-
- * canonical ASINs as alternate_asins on the canonical row, then sweep any
- * pre-existing stale logical-duplicate rows. Replaces the prior ASIN-only
- * dedupe which left alternate Audible editions as duplicate logical rows
- * AND failed to converge on existing stale rows. (F12, #1073)
+ * Filter a same-series response down to the products that actually belong to
+ * the target series. Returns the `CandidateInfo` describing each matching
+ * product with its matched series ref so callers don't need to re-run the
+ * match. Used by `reconcileCandidates` and surfaced separately so the helper
+ * layer can detect the empty-filtered case before opening a transaction. (#1078)
+ */
+export function filterProductsToTarget(
+  products: BookMetadata[],
+  target: TargetSeriesIdentity,
+): CandidateInfo[] {
+  const candidates: CandidateInfo[] = [];
+  for (const product of products) {
+    const ref = findMatchingSeriesRef(product, target);
+    if (ref === null) continue;
+    candidates.push(describeCandidate(product, ref));
+  }
+  return candidates;
+}
+
+/** ASINs of products in `products` that did NOT match the target series. */
+function collectNonMatchingAsins(products: BookMetadata[], target: TargetSeriesIdentity): string[] {
+  const out: string[] = [];
+  for (const product of products) {
+    if (!product.asin) continue;
+    if (findMatchingSeriesRef(product, target) === null) out.push(product.asin);
+  }
+  return out;
+}
+
+/**
+ * Delete pre-existing members in the target series whose providerBookId is
+ * also one of the non-matching products in the response. These are the
+ * contaminated rows from the prior buggy refresh path (#1078) — a book that
+ * Audible now explicitly places in a different series cannot simultaneously
+ * be a legit member here, so it's safe to drop. Limited to providerBookId
+ * matches (no alternate_asins sweep) to keep the blast radius bounded.
+ */
+async function deleteContaminatedMembers(
+  tx: DbOrTx,
+  seriesId: number,
+  nonMatchingAsins: string[],
+): Promise<void> {
+  if (nonMatchingAsins.length === 0) return;
+  await tx
+    .delete(seriesMembers)
+    .where(and(
+      eq(seriesMembers.seriesId, seriesId),
+      inArray(seriesMembers.providerBookId, nonMatchingAsins),
+    ));
+}
+
+/**
+ * Logical-identity dedupe: filter candidates to the target series, group by
+ * (position + normalized title + normalized author), pick a canonical product
+ * per group, persist non-canonical ASINs as alternate_asins on the canonical
+ * row, then sweep any pre-existing stale logical-duplicate rows. Replaces the
+ * prior ASIN-only dedupe which left alternate Audible editions as duplicate
+ * logical rows AND failed to converge on existing stale rows. (F12, #1073)
+ *
+ * Filtering to the target identity must happen BEFORE logical grouping —
+ * otherwise unrelated products from a broader Audible "universe" series can
+ * share a (position + title + author) key with a legit target-series member
+ * and collapse into the wrong bucket. (#1078)
  */
 export async function reconcileCandidates(
   tx: DbOrTx,
   seriesId: number,
   products: BookMetadata[],
-  seriesName: string,
+  target: TargetSeriesIdentity,
   seedAsin: string,
 ): Promise<void> {
-  const candidates = products.map((p) => describeCandidate(p, seriesName));
+  // Drop pre-existing members that the new response explicitly puts in a
+  // different series (i.e. they're in `products` but not target-matching).
+  // This is what reconciles a contaminated row back to scope on refresh. (#1078)
+  await deleteContaminatedMembers(tx, seriesId, collectNonMatchingAsins(products, target));
+
+  const candidates = filterProductsToTarget(products, target);
   const groups = new Map<string, CandidateInfo[]>();
   for (const c of candidates) {
     const key = logicalGroupKey(c);
@@ -313,7 +444,7 @@ export async function reconcileCandidates(
     const alternateAsins = uniqueByAsin
       .filter((c) => c !== canonical && c.product.asin && c.product.asin !== canonical.product.asin)
       .map((c) => c.product.asin as string);
-    const canonicalId = await upsertCanonicalMember(tx, seriesId, canonical.product, seriesName, alternateAsins);
+    const canonicalId = await upsertCanonicalMember(tx, seriesId, canonical.product, canonical.matchedRef, alternateAsins);
     await cleanupLogicalDuplicates(tx, canonicalId, seriesId, canonical);
   }
 }

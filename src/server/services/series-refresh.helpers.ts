@@ -6,8 +6,11 @@ import { normalizeSeriesName } from '../utils/series-normalize.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { SeriesRow } from './types.js';
 import {
+  filterProductsToTarget,
+  findMatchingSeriesRef,
   linkLocalBooksByAsin,
   reconcileCandidates,
+  type TargetSeriesIdentity,
 } from './series-refresh.dedupe.js';
 
 // Re-exported for callers that need them (BookService.upsertSeriesLink, tests).
@@ -119,6 +122,69 @@ async function upsertSeriesRow(
 }
 
 
+/**
+ * Resolve the target series identity for a same-series refresh. The seed
+ * product is biased toward the requested ASIN, then falls back to the first
+ * product. Provider series ASIN is the strongest identifier and is preferred
+ * when known; the normalized name acts as a secondary key. Both fields can be
+ * null when the caller has nothing to anchor on. (#1078)
+ */
+function resolveTargetIdentity(
+  seedProduct: BookMetadata | null,
+  existing: SeriesRow | null,
+  opts: { seriesName?: string | null; providerSeriesId?: string | null },
+): TargetSeriesIdentity {
+  const requestedName = opts.seriesName ?? existing?.name ?? null;
+  const normalizedName = requestedName ? normalizeSeriesName(requestedName) : null;
+  const explicitAsin = opts.providerSeriesId ?? existing?.providerSeriesId ?? null;
+  if (explicitAsin) return { asin: explicitAsin, normalizedName };
+  if (normalizedName && seedProduct) {
+    const seedMatch = findMatchingSeriesRef(seedProduct, { asin: null, normalizedName });
+    if (seedMatch?.asin) return { asin: seedMatch.asin, normalizedName };
+  }
+  return { asin: null, normalizedName };
+}
+
+/**
+ * Empty-or-empty-filtered branch: do NOT mark the row 'success' with zero
+ * members. A successful zero-member outcome masks Add Book's locally-inserted
+ * member row at read time (the deployed `No members known yet` bug, #1074). If
+ * a row doesn't exist yet, skip upsert entirely so the local card path
+ * renders. If a row exists, advance the freshness window. When the existing
+ * row has zero members (the historical bug shape — `lastFetchStatus: 'success'`
+ * plus empty `series_members`), also demote any lingering status so the
+ * persisted row no longer carries the `success` claim the AC forbids.
+ * Populated rows keep their existing status because their members are still
+ * good — a transient empty response shouldn't demote a healthy populated row.
+ *
+ * Reused for two cases: provider returned zero products (#1074) AND provider
+ * returned products but none matched the target series identity (#1078).
+ */
+async function applyEmptyOutcome(db: Db, existing: SeriesRow | null): Promise<SeriesRow | null> {
+  if (!existing) return null;
+  const existingMembers = await db
+    .select({ id: seriesMembers.id })
+    .from(seriesMembers)
+    .where(eq(seriesMembers.seriesId, existing.id))
+    .limit(1);
+  const hasMembers = existingMembers.length > 0;
+  const updates: Partial<typeof series.$inferInsert> = {
+    lastFetchedAt: new Date(),
+    updatedAt: new Date(),
+  };
+  if (!hasMembers) {
+    updates.lastFetchStatus = null;
+    updates.lastFetchError = null;
+    updates.nextFetchAfter = null;
+  }
+  const rows = await db
+    .update(series)
+    .set(updates)
+    .where(eq(series.id, existing.id))
+    .returning();
+  return (rows[0] as SeriesRow) ?? existing;
+}
+
 // eslint-disable-next-line complexity -- success path coalesces multiple optional inputs
 export async function applySuccessOutcome(
   db: Db,
@@ -129,57 +195,47 @@ export async function applySuccessOutcome(
   opts: { seriesName?: string | null; providerSeriesId?: string | null },
 ): Promise<SeriesRow | null> {
   const seedProduct = products.find((p) => p.asin === seedAsin) ?? products[0] ?? null;
-  const inferredName = seedProduct?.series?.[0]?.name ?? opts.seriesName ?? null;
-  const inferredSeriesAsin = seedProduct?.series?.[0]?.asin ?? opts.providerSeriesId ?? null;
-  const finalName = inferredName ?? (existing?.name ?? null);
+  const target = resolveTargetIdentity(seedProduct, existing, opts);
+  // Prefer the matching series ref's display name + ASIN from the seed product
+  // so the series row is upserted with the canonical title (e.g. `The
+  // Stormlight Archive` vs `Stormlight Archive`) — never `seed.series[0]`
+  // unconditionally, which is the #1078 bug shape. (#1078)
+  const seedMatchedRef = seedProduct ? findMatchingSeriesRef(seedProduct, target) : null;
+  const inferredName = (seedMatchedRef?.name && seedMatchedRef.name.length > 0)
+    ? seedMatchedRef.name
+    : (opts.seriesName ?? existing?.name ?? null);
+  const inferredSeriesAsin = seedMatchedRef?.asin ?? target.asin ?? null;
+  const finalName = inferredName;
   if (!finalName) {
     log.debug({ seedAsin }, 'Same-series response had no series name — skipping upsert');
     return existing;
   }
 
-  // Empty provider response: do NOT mark the row 'success' with zero members.
-  // A successful zero-member outcome masks Add Book's locally-inserted member
-  // row at read time and creates the deployed `No members known yet` bug. If a
-  // row doesn't exist yet, skip upsert entirely so the local card path renders.
-  // If a row exists, advance the freshness window. When the existing row has
-  // zero members (the historical bug shape — `lastFetchStatus: 'success'` plus
-  // empty `series_members`), also demote any lingering status so the persisted
-  // row no longer carries the `success` claim the AC forbids. Populated rows
-  // keep their existing status because their members are still good — a
-  // transient empty response shouldn't demote a healthy populated row.
   if (products.length === 0) {
     log.debug({ seedAsin, seriesName: finalName }, 'Same-series response was empty — preserving local state, no success flip');
-    if (!existing) return null;
-    const existingMembers = await db
-      .select({ id: seriesMembers.id })
-      .from(seriesMembers)
-      .where(eq(seriesMembers.seriesId, existing.id))
-      .limit(1);
-    const hasMembers = existingMembers.length > 0;
-    const updates: Partial<typeof series.$inferInsert> = {
-      lastFetchedAt: new Date(),
-      updatedAt: new Date(),
-    };
-    if (!hasMembers) {
-      updates.lastFetchStatus = null;
-      updates.lastFetchError = null;
-      updates.nextFetchAfter = null;
-    }
-    const rows = await db
-      .update(series)
-      .set(updates)
-      .where(eq(series.id, existing.id))
-      .returning();
-    return (rows[0] as SeriesRow) ?? existing;
+    return applyEmptyOutcome(db, existing);
+  }
+
+  // Scope to the target series. Audible's `similar_products` for a multi-
+  // series book can include unrelated series + broader-universe entries; only
+  // those whose `series` array contains the target identity (provider series
+  // ASIN preferred, normalized name otherwise) are kept. (#1078)
+  const filtered = filterProductsToTarget(products, target);
+  if (filtered.length === 0) {
+    log.debug(
+      { seedAsin, seriesName: finalName, providerSeriesId: inferredSeriesAsin, productCount: products.length },
+      'Same-series response had no products matching target series — preserving local state',
+    );
+    return applyEmptyOutcome(db, existing);
   }
 
   // Atomic reconcile: series upsert + members + local-book linking + status flip
   // run in a single transaction so a midway failure can't leave half-written
   // members or a status row out of sync with cache contents. (F5, DB-2)
   return db.transaction(async (tx) => {
-    const row = await upsertSeriesRow(tx, existing, finalName, inferredSeriesAsin ?? null);
+    const row = await upsertSeriesRow(tx, existing, finalName, inferredSeriesAsin);
 
-    await reconcileCandidates(tx, row.id, products, finalName, seedAsin);
+    await reconcileCandidates(tx, row.id, products, target, seedAsin);
     await linkLocalBooksByAsin(tx, row.id);
 
     const updated = await tx
