@@ -428,6 +428,100 @@ describe('AudibleProvider', () => {
     });
   });
 
+  describe('getSameSeriesBooks', () => {
+    it('maps books from Audible sims similar_products response', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin/sims', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({
+            response_groups: ['always-returned', 'contributors', 'series', 'product_attrs'],
+            similar_products: [
+              {
+                asin: 'B00B28436Q',
+                title: 'Unravel Me',
+                authors: [{ name: 'Tahereh Mafi' }],
+                narrators: [{ name: 'Kate Simses' }],
+                series: [{ asin: 'B008NA6RDU', title: 'Shatter Me', sequence: '2' }],
+                runtime_length_min: 525,
+                release_date: '2013-02-05',
+                publisher_name: 'HarperAudio',
+                language: 'english',
+                product_images: { '500': 'https://example.com/unravel-500.jpg' },
+                format_type: 'unabridged',
+                content_delivery_type: 'SinglePartBook',
+              },
+              {
+                asin: 'B09FNNKKJ7',
+                title: 'Believe Me',
+                authors: [{ name: 'Tahereh Mafi' }],
+                narrators: [{ name: 'Kate Simses' }],
+                series: [{ asin: 'B008NA6RDU', title: 'Shatter Me', sequence: '6.5' }],
+              },
+            ],
+          });
+        }),
+      );
+
+      const books = await provider.getSameSeriesBooks('B0062P09VW');
+
+      expect(capturedUrl?.searchParams.get('similarity_type')).toBe('InTheSameSeries');
+      expect(capturedUrl?.searchParams.get('response_groups')).toContain('series');
+      expect(books).toHaveLength(2);
+      expect(books[0]).toMatchObject({
+        asin: 'B00B28436Q',
+        title: 'Unravel Me',
+        authors: [{ name: 'Tahereh Mafi' }],
+        narrators: ['Kate Simses'],
+        duration: 525,
+        publishedDate: '2013-02-05',
+        publisher: 'HarperAudio',
+        series: [{ name: 'Shatter Me', position: 2, asin: 'B008NA6RDU' }],
+      });
+      expect(books[1]!.series![0]!.position).toBe(6.5);
+    });
+
+    it('does not treat sims responses with only similar_products as empty', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin/sims', () => {
+          return HttpResponse.json({
+            similar_products: [{
+              asin: '0593451481',
+              title: 'The Man Who Died Twice',
+              authors: [{ name: 'Richard Osman' }],
+              series: [{ asin: 'B09168SRZK', title: 'A Thursday Murder Club Mystery', sequence: '2' }],
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.getSameSeriesBooks('B0BWLC19B7');
+
+      expect(books).toHaveLength(1);
+      expect(books[0]!.title).toBe('The Man Who Died Twice');
+    });
+
+    it('returns an empty array when sims returns no similar_products', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin/sims', () => {
+          return HttpResponse.json({ similar_products: [] });
+        }),
+      );
+
+      await expect(provider.getSameSeriesBooks('B000NONE')).resolves.toEqual([]);
+    });
+
+    it('throws MetadataError when sims similar_products is not an array', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin/sims', () => {
+          return HttpResponse.json({ similar_products: 'not-an-array' });
+        }),
+      );
+
+      await expect(provider.getSameSeriesBooks('B000BAD')).rejects.toThrow(MetadataError);
+    });
+  });
+
   describe('regional TLD', () => {
     it('uses .co.uk for UK region', async () => {
       const ukProvider = new AudibleProvider({ region: 'uk' });

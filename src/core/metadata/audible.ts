@@ -69,6 +69,10 @@ const audibleProductsResponseSchema = z.object({
   products: z.array(audibleProductSchema).nullish(),
 }).passthrough();
 
+const audibleSimilarProductsResponseSchema = z.object({
+  similar_products: z.array(audibleProductSchema).nullish(),
+}).passthrough();
+
 const audibleProductDetailResponseSchema = z.object({
   product: audibleProductSchema.nullish(),
 }).passthrough();
@@ -162,8 +166,8 @@ export class AudibleProvider implements MetadataSearchProvider {
       image_sizes: IMAGE_SIZES,
     });
     const url = `${this.baseUrl}/1.0/catalog/products/${bookAsin}/sims?${params}`;
-    const data = await this.request(url, audibleProductsResponseSchema);
-    const products = data?.products ?? [];
+    const data = await this.request(url, audibleSimilarProductsResponseSchema);
+    const products = data?.similar_products ?? [];
     const books: BookMetadata[] = [];
     for (const product of products) {
       const mapped = mapProduct(product);
