@@ -9,7 +9,21 @@ import { useClickOutside } from '@/hooks/useClickOutside';
 interface AddBookPopoverProps {
   onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
   isPending: boolean;
+  variant?: 'primary' | 'compact';
 }
+
+const TRIGGER_CLASSES = {
+  primary: `flex items-center gap-2 px-4 py-2.5
+    bg-primary text-primary-foreground font-medium rounded-xl
+    hover:opacity-90 hover:shadow-glow
+    disabled:opacity-50 disabled:cursor-not-allowed
+    transition-all duration-200 focus-ring`,
+  compact: `inline-flex items-center gap-1 px-2 py-0.5
+    text-xs font-medium rounded-md
+    text-primary hover:text-primary-foreground hover:bg-primary
+    disabled:opacity-50 disabled:cursor-not-allowed
+    transition-colors duration-200 focus-ring`,
+} as const;
 
 const PANEL_WIDTH = 256; // w-64 = 16rem = 256px
 
@@ -25,7 +39,7 @@ function computePosition(triggerRect: DOMRect) {
   return { top, left };
 }
 
-export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
+export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBookPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -89,23 +103,17 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
         onClick={toggleOpen}
         disabled={isPending}
         aria-label="Add book"
-        className="
-          flex items-center gap-2 px-4 py-2.5
-          bg-primary text-primary-foreground font-medium rounded-xl
-          hover:opacity-90 hover:shadow-glow
-          disabled:opacity-50 disabled:cursor-not-allowed
-          transition-all duration-200 focus-ring
-        "
+        className={TRIGGER_CLASSES[variant]}
       >
         {isPending ? (
           <>
-            <LoadingSpinner className="w-4 h-4" />
-            <span className="hidden sm:inline">Adding...</span>
+            <LoadingSpinner className={variant === 'compact' ? 'w-3 h-3' : 'w-4 h-4'} />
+            <span className={variant === 'compact' ? '' : 'hidden sm:inline'}>Adding...</span>
           </>
         ) : (
           <>
-            <PlusIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Add</span>
+            <PlusIcon className={variant === 'compact' ? 'w-3 h-3' : 'w-4 h-4'} />
+            <span className={variant === 'compact' ? '' : 'hidden sm:inline'}>Add</span>
           </>
         )}
       </button>

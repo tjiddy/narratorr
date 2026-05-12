@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type BookSeriesCardData, type BookSeriesMemberCard, type RefreshBookSeriesResponse } from '@/lib/api';
+import { Link } from 'react-router-dom';
+import {
+  api,
+  type BookSeriesCardData,
+  type BookSeriesMemberCard,
+  type CreateBookPayload,
+  type RefreshBookSeriesResponse,
+} from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
+import { AddBookPopover } from '@/components/AddBookPopover';
 import { RefreshIcon, LoadingSpinner } from '@/components/icons';
 
 interface SeriesCardProps {
@@ -40,6 +49,105 @@ function buildBanner(latest: RefreshBookSeriesResponse | undefined, series: Book
   return null;
 }
 
+function buildCreatePayload(
+  member: BookSeriesMemberCard,
+  cardSeries: BookSeriesCardData,
+  overrides: { searchImmediately: boolean; monitorForUpgrades: boolean },
+): CreateBookPayload {
+  return {
+    title: member.title,
+    asin: member.providerBookId ?? undefined,
+    authors: member.authorName ? [{ name: member.authorName }] : undefined,
+    seriesName: cardSeries.name,
+    seriesPosition: member.position ?? undefined,
+    seriesAsin: cardSeries.providerSeriesId ?? undefined,
+    seriesProvider: 'audible',
+    coverUrl: member.coverUrl ?? undefined,
+    publishedDate: member.publishedDate ?? undefined,
+    duration: member.duration ?? undefined,
+    searchImmediately: overrides.searchImmediately,
+    monitorForUpgrades: overrides.monitorForUpgrades,
+  };
+}
+
+function canAddMember(member: BookSeriesMemberCard): boolean {
+  return member.providerBookId != null && member.authorName != null;
+}
+
+interface AddRowControlProps {
+  member: BookSeriesMemberCard;
+  onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  isPending: boolean;
+}
+
+function AddRowControl({ member, onAdd, isPending }: AddRowControlProps) {
+  if (!canAddMember(member)) {
+    const reason = member.providerBookId == null
+      ? 'Missing provider ID — refresh the series or add manually.'
+      : 'Missing author — refresh the series or add manually.';
+    return (
+      <span
+        className="text-xs text-muted-foreground/60 cursor-not-allowed"
+        title={reason}
+        data-testid="series-card-add-disabled"
+      >
+        Missing
+      </span>
+    );
+  }
+  return <AddBookPopover variant="compact" onAdd={onAdd} isPending={isPending} />;
+}
+
+interface MemberRowProps {
+  member: BookSeriesMemberCard;
+  cardSeries: BookSeriesCardData;
+  onAdd: (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  pendingMemberKey: string | null;
+}
+
+function MemberRow({ member, cardSeries, onAdd, pendingMemberKey }: MemberRowProps) {
+  const inLibrary = member.libraryBookId != null;
+  const memberKey = `${member.id}-${member.providerBookId ?? member.title}`;
+  const isPending = pendingMemberKey === memberKey;
+  const titleNode = (member.title || cardSeries.name);
+  return (
+    <li
+      className={`flex items-center justify-between py-2 ${member.isCurrent ? 'font-medium' : ''}`}
+      data-testid="series-card-member"
+      data-is-current={member.isCurrent ? 'true' : 'false'}
+      data-in-library={inLibrary ? 'true' : 'false'}
+    >
+      <span className="flex items-center gap-2 min-w-0">
+        <span className="text-xs text-muted-foreground tabular-nums w-8 shrink-0 text-right">
+          {formatPositionLabel(member)}
+        </span>
+        {inLibrary ? (
+          <Link
+            to={`/books/${member.libraryBookId}`}
+            className="text-sm truncate text-foreground hover:text-primary transition-colors"
+            data-testid="series-card-member-link"
+          >
+            {titleNode}
+          </Link>
+        ) : (
+          <span className="text-sm truncate">{titleNode}</span>
+        )}
+      </span>
+      <span className="ml-2 shrink-0">
+        {inLibrary ? (
+          <span className="text-xs text-emerald-500">In Library</span>
+        ) : (
+          <AddRowControl
+            member={member}
+            onAdd={(overrides) => onAdd(member, overrides)}
+            isPending={isPending}
+          />
+        )}
+      </span>
+    </li>
+  );
+}
+
 export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition }: SeriesCardProps) {
   const queryClient = useQueryClient();
   const queryKey = ['book', bookId, 'series'] as const;
@@ -65,11 +173,19 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
     },
   });
 
+  const addMember = useMutation({
+    mutationFn: (payload: { memberKey: string; body: CreateBookPayload }) => api.addBook(payload.body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
+      queryClient.invalidateQueries({ queryKey });
+    },
+  });
+
   if (isLoading) return null;
 
   const series = data?.series ?? null;
 
-  // No backend data and no local fallback — render nothing
   if (!series && !fallbackSeriesName) return null;
 
   const cardSeries: BookSeriesCardData = series ?? {
@@ -88,11 +204,21 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
       isCurrent: true,
       libraryBookId: bookId,
       coverUrl: null,
+      authorName: null,
+      publishedDate: null,
+      duration: null,
     }],
   };
 
   const banner = buildBanner(refresh.data, series);
   const isRefreshing = refresh.isPending;
+  const pendingMemberKey = addMember.isPending ? addMember.variables?.memberKey ?? null : null;
+
+  const handleAdd = (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => {
+    if (!canAddMember(member)) return;
+    const memberKey = `${member.id}-${member.providerBookId ?? member.title}`;
+    addMember.mutate({ memberKey, body: buildCreatePayload(member, cardSeries, overrides) });
+  };
 
   return (
     <div data-testid="series-card">
@@ -124,30 +250,15 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
           {cardSeries.members.length === 0 && (
             <li className="text-xs text-muted-foreground py-2">No members known yet.</li>
           )}
-          {cardSeries.members.map((member) => {
-            const inLibrary = member.libraryBookId != null;
-            return (
-              <li
-                key={`${member.id}-${member.providerBookId ?? member.title}`}
-                className={`flex items-center justify-between py-2 ${member.isCurrent ? 'font-medium' : ''}`}
-                data-testid="series-card-member"
-                data-is-current={member.isCurrent ? 'true' : 'false'}
-                data-in-library={inLibrary ? 'true' : 'false'}
-              >
-                <span className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs text-muted-foreground tabular-nums w-8 shrink-0 text-right">
-                    {formatPositionLabel(member)}
-                  </span>
-                  <span className="text-sm truncate">{member.title || cardSeries.name}</span>
-                </span>
-                <span
-                  className={`text-xs ml-2 shrink-0 ${inLibrary ? 'text-emerald-500' : 'text-muted-foreground'}`}
-                >
-                  {inLibrary ? 'In Library' : 'Missing'}
-                </span>
-              </li>
-            );
-          })}
+          {cardSeries.members.map((member) => (
+            <MemberRow
+              key={`${member.id}-${member.providerBookId ?? member.title}`}
+              member={member}
+              cardSeries={cardSeries}
+              onAdd={handleAdd}
+              pendingMemberKey={pendingMemberKey}
+            />
+          ))}
         </ul>
       </div>
     </div>

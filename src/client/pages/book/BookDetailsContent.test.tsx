@@ -121,7 +121,7 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
         lastFetchStatus: 'success',
         nextFetchAfter: null,
         members: [
-          { id: 1, providerBookId: 'B01NA0JA51', title: 'Kings of the Wyld', positionRaw: '1', position: 1, isCurrent: true, libraryBookId: 1, coverUrl: null },
+          { id: 1, providerBookId: 'B01NA0JA51', title: 'Kings of the Wyld', positionRaw: '1', position: 1, isCurrent: true, libraryBookId: 1, coverUrl: null, authorName: null, publishedDate: null, duration: null },
         ],
       },
     });
