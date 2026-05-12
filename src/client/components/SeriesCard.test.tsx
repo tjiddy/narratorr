@@ -7,18 +7,14 @@ import { SeriesCard } from './SeriesCard';
 import type { BookSeriesMemberCard } from '@/lib/api';
 import { createMockSettings } from '@/__tests__/factories';
 
-vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
-  return {
-    ...actual,
-    api: {
-      getBookSeries: vi.fn(),
-      refreshBookSeries: vi.fn(),
-      addBook: vi.fn(),
-      getSettings: vi.fn(),
-    },
-  };
-});
+vi.mock('@/lib/api', () => ({
+  api: {
+    getBookSeries: vi.fn(),
+    refreshBookSeries: vi.fn(),
+    addBook: vi.fn(),
+    getSettings: vi.fn(),
+  },
+}));
 
 import { api } from '@/lib/api';
 

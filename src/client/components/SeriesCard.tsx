@@ -74,6 +74,39 @@ function canAddMember(member: BookSeriesMemberCard): boolean {
   return member.providerBookId != null && member.authorName != null;
 }
 
+function buildFallbackCard(
+  bookId: number,
+  fallbackSeriesName: string,
+  fallbackSeriesPosition: number | null | undefined,
+): BookSeriesCardData {
+  const position = fallbackSeriesPosition ?? null;
+  return {
+    id: -1,
+    name: fallbackSeriesName,
+    providerSeriesId: null,
+    lastFetchedAt: null,
+    lastFetchStatus: null,
+    nextFetchAfter: null,
+    members: [{
+      id: -1,
+      providerBookId: null,
+      title: '',
+      positionRaw: position != null ? String(position) : null,
+      position,
+      isCurrent: true,
+      libraryBookId: bookId,
+      coverUrl: null,
+      authorName: null,
+      publishedDate: null,
+      duration: null,
+    }],
+  };
+}
+
+function memberKeyFor(member: BookSeriesMemberCard): string {
+  return `${member.id}-${member.providerBookId ?? member.title}`;
+}
+
 interface AddRowControlProps {
   member: BookSeriesMemberCard;
   onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
@@ -107,8 +140,7 @@ interface MemberRowProps {
 
 function MemberRow({ member, cardSeries, onAdd, pendingMemberKey }: MemberRowProps) {
   const inLibrary = member.libraryBookId != null;
-  const memberKey = `${member.id}-${member.providerBookId ?? member.title}`;
-  const isPending = pendingMemberKey === memberKey;
+  const isPending = pendingMemberKey === memberKeyFor(member);
   const titleNode = (member.title || cardSeries.name);
   return (
     <li
@@ -188,36 +220,15 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
 
   if (!series && !fallbackSeriesName) return null;
 
-  const cardSeries: BookSeriesCardData = series ?? {
-    id: -1,
-    name: fallbackSeriesName!,
-    providerSeriesId: null,
-    lastFetchedAt: null,
-    lastFetchStatus: null,
-    nextFetchAfter: null,
-    members: [{
-      id: -1,
-      providerBookId: null,
-      title: '',
-      positionRaw: fallbackSeriesPosition != null ? String(fallbackSeriesPosition) : null,
-      position: fallbackSeriesPosition ?? null,
-      isCurrent: true,
-      libraryBookId: bookId,
-      coverUrl: null,
-      authorName: null,
-      publishedDate: null,
-      duration: null,
-    }],
-  };
+  const cardSeries: BookSeriesCardData = series ?? buildFallbackCard(bookId, fallbackSeriesName!, fallbackSeriesPosition);
 
   const banner = buildBanner(refresh.data, series);
   const isRefreshing = refresh.isPending;
-  const pendingMemberKey = addMember.isPending ? addMember.variables?.memberKey ?? null : null;
+  const pendingMemberKey = addMember.isPending ? (addMember.variables?.memberKey ?? null) : null;
 
   const handleAdd = (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => {
     if (!canAddMember(member)) return;
-    const memberKey = `${member.id}-${member.providerBookId ?? member.title}`;
-    addMember.mutate({ memberKey, body: buildCreatePayload(member, cardSeries, overrides) });
+    addMember.mutate({ memberKey: memberKeyFor(member), body: buildCreatePayload(member, cardSeries, overrides) });
   };
 
   return (
@@ -252,7 +263,7 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
           )}
           {cardSeries.members.map((member) => (
             <MemberRow
-              key={`${member.id}-${member.providerBookId ?? member.title}`}
+              key={memberKeyFor(member)}
               member={member}
               cardSeries={cardSeries}
               onAdd={handleAdd}
