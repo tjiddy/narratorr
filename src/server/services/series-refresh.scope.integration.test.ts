@@ -310,6 +310,82 @@ describe('series refresh — scope to selected series (#1078)', () => {
     expect(members.find((m) => m.title === 'Warbreaker')).toBeUndefined();
   });
 
+  it('reconciles when the existing row itself carries a wrong providerSeriesId (#1078 F1)', async () => {
+    // Production-shaped contamination: the prior buggy code persisted Words of
+    // Radiance as a member of a row whose `name` and `providerSeriesId` BOTH
+    // point at the wrong series (e.g. The Mistborn Saga). `findExistingSeriesRow`
+    // then locates the row via the seed book's ASIN edge through that wrong
+    // row's members. Manual refresh from the book detail page passes
+    // `seriesName="The Stormlight Archive"` but `providerSeriesId=null` (the
+    // book row has no provider series id). The fix must derive the target
+    // identity from the seed product's matching Stormlight ref — NOT trust
+    // the existing row's stale Mistborn ASIN — and reconcile the row back to
+    // Stormlight scope.
+    const [contaminatedRow] = await db
+      .insert(series)
+      .values({
+        provider: 'audible',
+        providerSeriesId: MISTBORN_SID,
+        name: MISTBORN,
+        normalizedName: 'the mistborn saga',
+      })
+      .returning();
+    // Seed book wrongly inserted as a member of the Mistborn-labeled row.
+    await db.insert(seriesMembers).values({
+      seriesId: contaminatedRow!.id,
+      providerBookId: 'WOR1',
+      title: 'Words of Radiance',
+      normalizedTitle: 'words of radiance',
+      authorName: 'Brandon Sanderson',
+      positionRaw: '2',
+      position: 2,
+    });
+    // Other contaminants
+    await db.insert(seriesMembers).values({
+      seriesId: contaminatedRow!.id,
+      providerBookId: 'MB1',
+      title: 'Mistborn',
+      normalizedTitle: 'mistborn',
+      authorName: 'Brandon Sanderson',
+      positionRaw: '1',
+      position: 1,
+    });
+    await db.insert(seriesMembers).values({
+      seriesId: contaminatedRow!.id,
+      providerBookId: 'WB1',
+      title: 'Warbreaker',
+      normalizedTitle: 'warbreaker',
+      authorName: 'Brandon Sanderson',
+      positionRaw: '1',
+      position: 1,
+    });
+
+    // Audible response: WoR is in Stormlight (with Cosmere alongside);
+    // Mistborn/Warbreaker products appear with their own series only.
+    const products: BookMetadata[] = [
+      stormlightProduct({ asin: 'WOK1', title: 'The Way of Kings', position: 1, alsoIn: [{ name: COSMERE, asin: COSMERE_SID, position: 50 }] }),
+      stormlightProduct({ asin: 'WOR1', title: 'Words of Radiance', position: 2, alsoIn: [{ name: COSMERE, asin: COSMERE_SID, position: 51 }] }),
+      nonStormlightProduct({ asin: 'MB1', title: 'Mistborn', refs: [{ name: MISTBORN, asin: MISTBORN_SID, position: 1 }] }),
+      nonStormlightProduct({ asin: 'WB1', title: 'Warbreaker', refs: [{ name: WARBREAKER, asin: WARBREAKER_SID, position: 1 }] }),
+    ];
+    // Manual refresh from book detail: caller passes seriesName but NOT
+    // providerSeriesId (the book row has no provider series id field).
+    await refresh(products, 'WOR1', { seriesName: STORMLIGHT, providerSeriesId: null });
+
+    // Row is reconciled back to Stormlight identity end-to-end.
+    const healed = (await db.select().from(series).where(eq(series.id, contaminatedRow!.id)))[0]!;
+    expect(healed.name).toBe(STORMLIGHT);
+    expect(healed.normalizedName).toBe('the stormlight archive');
+    expect(healed.providerSeriesId).toBe(STORMLIGHT_SID);
+
+    // Members are scoped to Stormlight only — Mistborn/Warbreaker contaminants gone.
+    const members = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, contaminatedRow!.id));
+    const titles = members.map((m) => m.title).sort();
+    expect(titles).toEqual(['The Way of Kings', 'Words of Radiance']);
+    const wor = members.find((m) => m.title === 'Words of Radiance')!;
+    expect(wor.position).toBe(2);
+  });
+
   it('persisted position comes from the target ref, never from a fallback unrelated ref', async () => {
     // A product whose series array lists Cosmere FIRST with a different
     // position than its Stormlight ref. The prior buggy code grabbed

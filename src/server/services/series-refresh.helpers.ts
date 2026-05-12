@@ -108,7 +108,13 @@ async function upsertSeriesRow(
       normalizedName: normalizeSeriesName(name),
       updatedAt: new Date(),
     };
-    if (providerSeriesId && !existing.providerSeriesId) {
+    // Write the freshly-derived provider series ASIN whenever it differs from
+    // what's stored — covers both the fill-in-null case and the contamination
+    // case where the existing row holds a stale wrong ASIN inherited from the
+    // #1078 buggy fallback. `resolveTargetIdentity` only emits a different
+    // ASIN when the existing row's name disagrees with the requested target,
+    // so this won't fight a healthy row that already has the right id. (#1078 F1)
+    if (providerSeriesId && providerSeriesId !== existing.providerSeriesId) {
       updates.providerSeriesId = providerSeriesId;
     }
     const rows = await db.update(series).set(updates).where(eq(series.id, existing.id)).returning();
@@ -123,11 +129,20 @@ async function upsertSeriesRow(
 
 
 /**
- * Resolve the target series identity for a same-series refresh. The seed
- * product is biased toward the requested ASIN, then falls back to the first
- * product. Provider series ASIN is the strongest identifier and is preferred
- * when known; the normalized name acts as a secondary key. Both fields can be
- * null when the caller has nothing to anchor on. (#1078)
+ * Resolve the target series identity for a same-series refresh. Precedence:
+ *   1. `opts.providerSeriesId` — explicit caller input wins.
+ *   2. The seed product's matching series ref (by requested name) — this is
+ *      the most trustworthy cross-source ASIN because the seed book IS the
+ *      current book and its series ref carries the canonical Audible series
+ *      ASIN for the target.
+ *   3. `existing.providerSeriesId` — ONLY when the existing row's normalized
+ *      name matches the requested name. A name mismatch means the existing
+ *      row was previously contaminated by the #1078 bug (e.g. a Stormlight
+ *      book whose old buggy refresh persisted it in a Mistborn-titled row
+ *      with Mistborn's ASIN). Trusting the stale ASIN there would re-admit
+ *      the wrong series. (#1078 F1)
+ *
+ * Both fields can be null when the caller has nothing to anchor on.
  */
 function resolveTargetIdentity(
   seedProduct: BookMetadata | null,
@@ -136,11 +151,14 @@ function resolveTargetIdentity(
 ): TargetSeriesIdentity {
   const requestedName = opts.seriesName ?? existing?.name ?? null;
   const normalizedName = requestedName ? normalizeSeriesName(requestedName) : null;
-  const explicitAsin = opts.providerSeriesId ?? existing?.providerSeriesId ?? null;
-  if (explicitAsin) return { asin: explicitAsin, normalizedName };
+  if (opts.providerSeriesId) return { asin: opts.providerSeriesId, normalizedName };
   if (normalizedName && seedProduct) {
     const seedMatch = findMatchingSeriesRef(seedProduct, { asin: null, normalizedName });
     if (seedMatch?.asin) return { asin: seedMatch.asin, normalizedName };
+  }
+  if (existing?.providerSeriesId) {
+    const namesAgree = !normalizedName || existing.normalizedName === normalizedName;
+    if (namesAgree) return { asin: existing.providerSeriesId, normalizedName };
   }
   return { asin: null, normalizedName };
 }
