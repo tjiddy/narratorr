@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook, createMockSettings } from '@/__tests__/factories';
-import { api } from '@/lib/api';
+import { api, RetagFfmpegNotConfiguredError } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
@@ -540,7 +540,7 @@ describe('BookDetails', () => {
       });
     });
 
-    it('disables Re-tag button when ffmpeg is not configured', async () => {
+    it('keeps Re-tag button enabled when ffmpeg is not configured (so the preview modal can surface the inline error)', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
@@ -555,8 +555,7 @@ describe('BookDetails', () => {
       });
 
       const button = screen.getByRole("menuitem", { name: /Re-tag/ });
-      expect(button).toBeDisabled();
-      expect(button).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
+      expect(button).not.toBeDisabled();
     });
 
     it('enables Re-tag button when ffmpeg path is configured', async () => {
@@ -996,17 +995,26 @@ describe('BookDetails', () => {
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 
-    it('Re-tag button is disabled when ffmpegConfigured is false and clicking does not open modal', async () => {
+    it('clicking Re-tag with ffmpeg unconfigured opens the preview modal and surfaces the inline error', async () => {
       const user = userEvent.setup();
-      // ffmpegPath is empty → ffmpegConfigured = false → button disabled
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
-      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
-      await openOverflowMenu(user);
-      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).toBeDisabled());
+      (api.getBookRetagPreview as Mock).mockRejectedValue(
+        new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),
+      );
 
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await openOverflowMenu(user);
+      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
+
+      const dialog = screen.getByRole('dialog');
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent(/ffmpeg/);
+      // Apply button must be hidden in the ffmpeg-not-configured state
+      expect(within(dialog).queryByRole('button', { name: /Re-tag \d+ file/ })).not.toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
     });
 
     it('rename and retag modals are independent — opening one does not affect the other', async () => {

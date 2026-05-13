@@ -85,8 +85,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isRenaming={renameMutation.isPending}
         onRetagClick={() => open('confirmRetag')}
         isRetagging={retagMutation.isPending}
-        retagDisabled={!ffmpegConfigured}
-        retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        retagDisabled={false}
+        retagTooltip={undefined}
         onRefreshScanClick={() => refreshScanMutation.mutate()}
         isRefreshingScanning={refreshScanMutation.isPending}
         showRefreshScan={showRefreshScan}

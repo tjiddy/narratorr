@@ -14,7 +14,7 @@ import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/icons';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { countApplyFiles } from './RetagPreviewModal.utils';
+import { countApplyFiles, effectiveOutcome, visibleDiffOf } from './RetagPreviewModal.utils';
 
 interface RetagPreviewModalProps {
   bookId: number;
@@ -181,8 +181,7 @@ function PreviewBody({
   excludeSet: Set<RetagExcludableField>;
   onToggle: (f: RetagExcludableField) => void;
 }) {
-  const willTagCount = plan.files.filter(f => f.outcome === 'will-tag').length;
-  const isEmpty = willTagCount === 0;
+  const isEmpty = countApplyFiles(plan, excludeSet) === 0;
 
   return (
     <div className="space-y-5">
@@ -319,10 +318,11 @@ function FileRow({
   file: RetagPlanFile;
   excludeSet: Set<RetagExcludableField>;
 }) {
-  const outcomeLabel = formatOutcome(file);
-  const visibleDiff = (file.diff ?? []).filter(d => !excludeSet.has(d.field as RetagExcludableField));
+  const outcome = effectiveOutcome(file, excludeSet);
+  const outcomeLabel = formatOutcome(outcome);
+  const visibleDiff = visibleDiffOf(file, excludeSet);
   const dimmedDiff = (file.diff ?? []).filter(d => excludeSet.has(d.field as RetagExcludableField));
-  const isCoverOnly = file.outcome === 'will-tag' && visibleDiff.length === 0 && file.coverPending;
+  const isCoverOnly = outcome === 'will-tag' && visibleDiff.length === 0 && file.coverPending;
 
   return (
     <li className="rounded-lg border border-border bg-card/40 p-3">
@@ -354,8 +354,8 @@ function DiffRow({ diff, dimmed }: { diff: RetagPlanFileDiff; dimmed: boolean })
   );
 }
 
-function formatOutcome(file: RetagPlanFile): string {
-  switch (file.outcome) {
+function formatOutcome(outcome: RetagPlanFile['outcome']): string {
+  switch (outcome) {
     case 'will-tag': return 'Will tag';
     case 'skip-populated': return 'Skip — already populated';
     case 'skip-unsupported': return 'Skip — unsupported format';
@@ -364,7 +364,9 @@ function formatOutcome(file: RetagPlanFile): string {
 
 function EmptyState({ plan, excludeSet }: { plan: RetagPlan; excludeSet: Set<RetagExcludableField> }) {
   const hasAudioFiles = plan.files.length > 0;
-  const allExcluded = FIELD_ORDER.every(f => excludeSet.has(f) || (f === 'track' && plan.isSingleFile));
+  // Only fields that actually have a checkbox in the canonical card count toward "all excluded".
+  const checkboxFields = canonicalRows(plan).map(r => r.field);
+  const allExcluded = checkboxFields.length > 0 && checkboxFields.every(f => excludeSet.has(f));
 
   let message: string;
   if (!hasAudioFiles) {

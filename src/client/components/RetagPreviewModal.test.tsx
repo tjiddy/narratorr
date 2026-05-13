@@ -173,6 +173,95 @@ describe('RetagPreviewModal', () => {
     expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
   });
 
+  it('unchecking every field shows the all-excluded empty state and hides the per-file table', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(multiFilePlan);
+    renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    for (const cb of screen.getAllByRole('checkbox')) await user.click(cb);
+
+    expect(screen.getByText(/You.ve unchecked every field/)).toBeInTheDocument();
+    // Per-file disclosure should not render when the visible plan is empty
+    expect(screen.queryByRole('button', { name: /per-file changes/ })).not.toBeInTheDocument();
+  });
+
+  it('mixed plan: excluding a field flips zero-write rows to skip-populated but leaves rows with other diffs labelled Will tag', async () => {
+    // Two files: ch01 has only an `artist` diff, ch02 has both `artist` and `title` diffs.
+    // Excluding `artist` zeros out ch01 but leaves ch02 still tagging.
+    const mixedPlan: RetagPlan = {
+      mode: 'overwrite',
+      embedCover: false,
+      hasCoverFile: false,
+      isSingleFile: false,
+      canonical: { artist: 'A', album: 'B', title: 'B' },
+      files: [
+        { file: 'ch01.mp3', outcome: 'will-tag', diff: [{ field: 'artist', current: null, next: 'A' }], coverPending: false },
+        {
+          file: 'ch02.mp3',
+          outcome: 'will-tag',
+          diff: [
+            { field: 'artist', current: null, next: 'A' },
+            { field: 'title', current: null, next: 'B' },
+          ],
+          coverPending: false,
+        },
+      ],
+      warnings: [],
+    };
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(mixedPlan);
+    renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    // Expand the per-file disclosure for multi-file plans
+    await user.click(screen.getByRole('button', { name: /Show per-file changes/ }));
+    // Before opt-out: two Will tag labels
+    expect(screen.getAllByText('Will tag')).toHaveLength(2);
+
+    // Exclude Artist → ch01 has no remaining diff and no cover-pending → effective skip-populated
+    await user.click(screen.getByRole('checkbox', { name: 'Include Artist' }));
+
+    expect(screen.getAllByText('Will tag')).toHaveLength(1);
+    expect(screen.getByText('Skip — already populated')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Re-tag 1 file/ })).toBeEnabled();
+  });
+
+  it('unchecking every diff field on a single will-tag file flips its row label to skip-populated (live recompute)', async () => {
+    // Single-file plan, no cover pending — excluding the diff field should produce a zero-write effective outcome.
+    const singleDiffPlan: RetagPlan = {
+      mode: 'overwrite',
+      embedCover: false,
+      hasCoverFile: false,
+      isSingleFile: true,
+      canonical: { artist: 'Brandon Sanderson', album: 'X', title: 'X' },
+      files: [
+        {
+          file: 'book.mp3',
+          outcome: 'will-tag',
+          diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }],
+          coverPending: false,
+        },
+      ],
+      warnings: [],
+    };
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(singleDiffPlan);
+    renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    // Before opt-out: row labelled Will tag
+    expect(screen.getByText('Will tag')).toBeInTheDocument();
+
+    // Exclude every excludable field — only Artist has a checkbox here, but be permissive
+    for (const cb of screen.getAllByRole('checkbox')) await user.click(cb);
+
+    // After opt-out, the live empty-state replaces the per-file table — assert the empty-state copy
+    // is what the user sees, not a stale "Will tag" label.
+    expect(screen.queryByText('Will tag')).not.toBeInTheDocument();
+    expect(screen.getByText(/You.ve unchecked every field/)).toBeInTheDocument();
+  });
+
   it('unchecking every field with cover-embed pending still counts the cover-only file', async () => {
     vi.mocked(api.getBookRetagPreview).mockResolvedValue(coverOnlyPlan);
     renderModal();
