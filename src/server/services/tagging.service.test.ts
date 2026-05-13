@@ -234,6 +234,28 @@ describe('tagFile', () => {
     expect(result.reason).toBe('All tags already populated');
   });
 
+  it('in overwrite mode with empty desired tags and no cover, skips without invoking ffmpeg (#1086 amendment)', async () => {
+    const result = await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', {}, 'overwrite');
+    expect(result.status).toBe('skipped');
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it('in overwrite mode with empty desired tags but cover present, still tags (cover-only write)', async () => {
+    (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+    const result = await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', {}, 'overwrite', '/books/cover.jpg');
+    expect(result.status).toBe('tagged');
+    const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+    expect(args).toContain('/books/cover.jpg');
+    // No metadata flags
+    expect(args.filter(a => a === '-metadata').length).toBe(0);
+  });
+
+  it('in populate_missing mode with empty desired tags and no cover, skips (regression guard)', async () => {
+    const result = await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', {}, 'populate_missing');
+    expect(result.status).toBe('skipped');
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
   it('returns failed status when ffmpeg errors', async () => {
     const { execFile } = await import('node:child_process');
     (execFile as unknown as Mock).mockImplementationOnce(
@@ -661,6 +683,426 @@ describe('TaggingService', () => {
 
       expect(result.warnings.some(w => w.includes('cover image found'))).toBe(true);
     });
+
+    it('excludeFields strips fields from ffmpeg args', async () => {
+      _readdirFiles = ['book.mp3'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await service.tagBook(1, '/books/test', {
+        title: 'Test Book', authorName: 'Author', narrator: 'Reader',
+      }, '/usr/bin/ffmpeg', 'overwrite', false, new Set(['title']));
+
+      const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+      expect(args).toContain('artist=Author');
+      expect(args).toContain('album=Test Book');
+      expect(args).not.toContain('title=Test Book');
+    });
+
+    it('excludeFields=["track"] strips both track and trackTotal from ffmpeg args', async () => {
+      _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await service.tagBook(1, '/books/test', {
+        title: 'Test', authorName: 'Author',
+      }, '/usr/bin/ffmpeg', 'overwrite', false, new Set(['track']));
+
+      const calls = (execFile as unknown as Mock).mock.calls;
+      const allArgs = calls.map((c: unknown[]) => (c[1] as string[]).join(' '));
+      expect(allArgs.every(a => !a.includes('track='))).toBe(true);
+    });
+
+    it('all metadata fields excluded + no cover → every file skipped', async () => {
+      _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const result = await service.tagBook(1, '/books/test', {
+        title: 'Test', authorName: 'Author', narrator: 'Reader', seriesName: 'Series',
+      }, '/usr/bin/ffmpeg', 'overwrite', false, new Set(['artist', 'albumArtist', 'album', 'title', 'composer', 'grouping', 'track']));
+
+      expect(result.tagged).toBe(0);
+      expect(result.skipped).toBe(2);
+      expect(execFile).not.toHaveBeenCalled();
+    });
+
+    it('all metadata fields excluded + cover present in overwrite mode → cover-only writes', async () => {
+      _readdirFiles = ['ch01.mp3', 'cover.jpg'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const result = await service.tagBook(1, '/books/test', {
+        title: 'Test', authorName: 'Author',
+      }, '/usr/bin/ffmpeg', 'overwrite', true, new Set(['artist', 'albumArtist', 'album', 'title', 'composer', 'grouping', 'track']));
+
+      expect(result.tagged).toBe(1);
+      const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+      // No -metadata flags; cover stream included
+      expect(args.filter(a => a === '-metadata').length).toBe(0);
+      expect(args).toContain('-disposition:v');
+    });
+  });
+
+  describe('planRetag', () => {
+    function setupBook(overrides: Parameters<typeof makeBook>[0] = {}) {
+      mockBookService.getById.mockResolvedValue(makeBook(overrides));
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      _readdirFiles = [];
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+    });
+
+    function makeBook(overrides: {
+      id?: number; title?: string; path?: string | null;
+      authors?: { name: string }[]; narrators?: { name: string }[];
+      seriesName?: string | null; seriesPosition?: number | null; coverUrl?: string | null;
+    } = {}) {
+      return {
+        id: 1,
+        title: 'Test Book',
+        path: '/library/test',
+        authors: [],
+        narrators: [],
+        seriesName: null,
+        seriesPosition: null,
+        coverUrl: null,
+        ...overrides,
+      };
+    }
+
+    it('returns canonical metadata derived from the book', async () => {
+      _readdirFiles = ['ch01.mp3'];
+      setupBook({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: [{ name: 'Michael Kramer' }],
+        seriesName: 'Stormlight',
+      });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+
+      expect(plan.canonical).toEqual({
+        artist: 'Brandon Sanderson',
+        albumArtist: 'Brandon Sanderson',
+        album: 'The Way of Kings',
+        title: 'The Way of Kings',
+        composer: 'Michael Kramer',
+        grouping: 'Stormlight',
+      });
+      expect(plan.mode).toBe('overwrite');
+      expect(plan.isSingleFile).toBe(true);
+    });
+
+    it('omits canonical fields when book has no author/narrator/series', async () => {
+      _readdirFiles = ['book.mp3'];
+      setupBook({ title: 'Solo' });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      expect(plan.canonical).toEqual({ album: 'Solo', title: 'Solo' });
+    });
+
+    it('multi-file book → per-file diff includes track row with sequential numbers', async () => {
+      _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];
+      setupBook({ title: 'Multi', authors: [{ name: 'Author' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const trackRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'track'));
+      expect(trackRows.map(r => r.next)).toEqual(['1/3', '2/3', '3/3']);
+      expect(plan.isSingleFile).toBe(false);
+    });
+
+    it('single-file book → no track row in diff', async () => {
+      _readdirFiles = ['book.mp3'];
+      setupBook({ title: 'Solo', authors: [{ name: 'Author' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const trackRow = plan.files[0]!.diff?.find(d => d.field === 'track');
+      expect(trackRow).toBeUndefined();
+    });
+
+    it('overwrite mode: file with current tags reports will-tag with diff showing current vs next', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'Old Artist', album: 'Old Album', title: 'Old Title' },
+        format: {},
+      });
+      setupBook({ title: 'New Title', authors: [{ name: 'New Artist' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const file = plan.files[0]!;
+      expect(file.outcome).toBe('will-tag');
+      const artistDiff = file.diff?.find(d => d.field === 'artist');
+      expect(artistDiff).toEqual({ field: 'artist', current: 'Old Artist', next: 'New Artist' });
+      const albumDiff = file.diff?.find(d => d.field === 'album');
+      expect(albumDiff).toEqual({ field: 'album', current: 'Old Album', next: 'New Title' });
+    });
+
+    it('populate_missing mode: file with album="" reports will-tag with album current=null', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'Existing Artist', album: '', title: '' },
+        format: {},
+      });
+      setupBook({ title: 'New Title', authors: [{ name: 'New Artist' }] });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'populate_missing' },
+      });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const file = plan.files[0]!;
+      expect(file.outcome).toBe('will-tag');
+      // artist already populated → not in diff
+      expect(file.diff?.find(d => d.field === 'artist')).toBeUndefined();
+      // album was empty string → current rendered as null
+      const albumDiff = file.diff?.find(d => d.field === 'album');
+      expect(albumDiff).toEqual({ field: 'album', current: null, next: 'New Title' });
+    });
+
+    it('populate_missing mode: file with all fields populated reports skip-populated', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: {
+          artist: 'A', albumartist: 'A', album: 'B', title: 'T', composer: ['C'], grouping: 'G',
+          track: { no: 1 },
+        },
+        format: {},
+      });
+      setupBook({ title: 'B', authors: [{ name: 'A' }], narrators: [{ name: 'C' }], seriesName: 'G' });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'populate_missing' },
+      });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      expect(plan.files[0]!.outcome).toBe('skip-populated');
+    });
+
+    it('unsupported formats appear in files[] with outcome skip-unsupported', async () => {
+      _readdirFiles = ['book.flac', 'audio.mp3', 'extra.ogg'];
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const outcomes = plan.files.map(f => ({ file: f.file, outcome: f.outcome }));
+      expect(outcomes).toContainEqual({ file: 'book.flac', outcome: 'skip-unsupported' });
+      expect(outcomes).toContainEqual({ file: 'extra.ogg', outcome: 'skip-unsupported' });
+      expect(outcomes).toContainEqual({ file: 'audio.mp3', outcome: 'will-tag' });
+    });
+
+    it('zero audio files: returns empty files[] with warning', async () => {
+      _readdirFiles = [];
+      setupBook({ title: 'X' });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      expect(plan.files).toEqual([]);
+      expect(plan.warnings).toContain('No taggable audio files found');
+    });
+
+    it('unsupported-only folder: every entry surfaces as skip-unsupported (no taggable files)', async () => {
+      _readdirFiles = ['book.flac', 'extra.ogg', 'side.wav'];
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const outcomes = plan.files.map(f => ({ file: f.file, outcome: f.outcome }));
+      expect(outcomes).toEqual(
+        expect.arrayContaining([
+          { file: 'book.flac', outcome: 'skip-unsupported' },
+          { file: 'extra.ogg', outcome: 'skip-unsupported' },
+          { file: 'side.wav', outcome: 'skip-unsupported' },
+        ]),
+      );
+      expect(plan.files).toHaveLength(3);
+      expect(plan.files.every(f => f.outcome === 'skip-unsupported')).toBe(true);
+      // Warning is still surfaced so the user knows none of those files are taggable
+      expect(plan.warnings).toContain('No taggable audio files found');
+    });
+
+    it('embedCover=true with no cover file: warning surfaced, hasCoverFile=false', async () => {
+      _readdirFiles = ['book.mp3'];
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'overwrite', embedCover: true },
+      });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      expect(plan.warnings.some(w => w.includes('no cover image'))).toBe(true);
+      expect(plan.hasCoverFile).toBe(false);
+    });
+
+    it('embedCover=true with cover present and file lacks embedded art: coverPending=true', async () => {
+      _readdirFiles = ['book.mp3', 'cover.jpg'];
+      (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'populate_missing', embedCover: true },
+      });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      expect(plan.hasCoverFile).toBe(true);
+      const mp3 = plan.files.find(f => f.file === 'book.mp3')!;
+      expect(mp3.outcome).toBe('will-tag');
+      expect(mp3.coverPending).toBe(true);
+    });
+
+    it('embedCover=false: no cover-missing warning, hasCoverFile=false', async () => {
+      _readdirFiles = ['book.mp3'];
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      expect(plan.warnings.some(w => w.includes('cover'))).toBe(false);
+      expect(plan.hasCoverFile).toBe(false);
+    });
+
+    it('throws NOT_FOUND for unknown book id', async () => {
+      mockBookService.getById.mockResolvedValue(null);
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await expect(service.planRetag(999)).rejects.toThrow(RetagError);
+    });
+
+    it('throws NO_PATH when book.path is null', async () => {
+      setupBook({ path: null });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await expect(service.planRetag(1)).rejects.toThrow(/no library path/);
+    });
+
+    it('throws PATH_MISSING when book.path is set but folder absent on disk', async () => {
+      setupBook({ path: '/nonexistent' });
+      (stat as Mock).mockRejectedValueOnce(new Error('ENOENT'));
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await expect(service.planRetag(1)).rejects.toThrow(/does not exist on disk/);
+    });
+
+    it('throws FFMPEG_NOT_CONFIGURED when ffmpeg path is empty', async () => {
+      setupBook({ title: 'X' });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '' },
+        tagging: { enabled: true, mode: 'overwrite' },
+      });
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await expect(service.planRetag(1)).rejects.toThrow(/ffmpeg is not configured/);
+    });
+
+    it('does NOT invoke ffmpeg, write disk, or write DB', async () => {
+      _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      await service.planRetag(1);
+
+      expect(execFile).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(unlink).not.toHaveBeenCalled();
+      expect(db.select).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('TaggingService — preview/apply parity (#1086)', () => {
+  const taggingDefaults = {
+    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    tagging: { enabled: true, mode: 'overwrite' as const },
+  };
+
+  function createLog() {
+    return {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn(),
+    };
+  }
+
+  let mockBookService: { getById: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (stat as Mock).mockResolvedValue({ size: 1000 });
+    mockBookService = { getById: vi.fn().mockResolvedValue({
+      id: 1, title: 'Test', path: '/library/test',
+      authors: [{ name: 'A' }], narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,
+    }) };
+  });
+
+  it('preview will-tag set matches apply tagged set (embedCover off)', async () => {
+    _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'bonus.ogg'];
+    const settings = createMockSettingsService(taggingDefaults);
+    const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+    const plan = await service.planRetag(1);
+    const planWillTag = new Set(plan.files.filter(f => f.outcome === 'will-tag').map(f => f.file));
+    const planSkipped = new Set(plan.files.filter(f => f.outcome !== 'will-tag').map(f => f.file));
+
+    // Re-run with fresh mock state for apply
+    vi.clearAllMocks();
+    (stat as Mock).mockResolvedValue({ size: 1000 });
+    _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'bonus.ogg'];
+
+    const applyResult = await service.retagBook(1);
+
+    // bonus.ogg → skip-unsupported in plan; warning in apply
+    expect(planWillTag.has('ch01.mp3')).toBe(true);
+    expect(planWillTag.has('ch02.mp3')).toBe(true);
+    expect(planSkipped.has('bonus.ogg')).toBe(true);
+    expect(applyResult.tagged).toBe(2);
+    expect(applyResult.skipped).toBe(1);
+  });
+
+  it('preview will-tag set matches apply tagged set (embedCover on with cover file)', async () => {
+    _readdirFiles = ['ch01.mp3', 'cover.jpg'];
+    const settings = createMockSettingsService({
+      processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+      tagging: { enabled: true, mode: 'overwrite', embedCover: true },
+    });
+    const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+    const plan = await service.planRetag(1);
+    expect(plan.files.find(f => f.file === 'ch01.mp3')?.outcome).toBe('will-tag');
+    expect(plan.hasCoverFile).toBe(true);
+
+    vi.clearAllMocks();
+    (stat as Mock).mockResolvedValue({ size: 1000 });
+    _readdirFiles = ['ch01.mp3', 'cover.jpg'];
+
+    const applyResult = await service.retagBook(1);
+    expect(applyResult.tagged).toBe(1);
   });
 });
 

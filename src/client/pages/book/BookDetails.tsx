@@ -5,6 +5,7 @@ import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
 import { RenamePreviewModal } from '@/components/RenamePreviewModal.js';
+import { RetagPreviewModal } from '@/components/RetagPreviewModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
@@ -84,8 +85,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isRenaming={renameMutation.isPending}
         onRetagClick={() => open('confirmRetag')}
         isRetagging={retagMutation.isPending}
-        retagDisabled={!ffmpegConfigured}
-        retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        retagDisabled={false}
+        retagTooltip={undefined}
         onRefreshScanClick={() => refreshScanMutation.mutate()}
         isRefreshingScanning={refreshScanMutation.isPending}
         showRefreshScan={showRefreshScan}
@@ -213,14 +214,14 @@ function BookDetailsModals({
         />
       )}
 
-      <ConfirmModal
-        isOpen={modals.confirmRetag}
-        title="Re-tag audio files?"
-        message={`Re-tag audio files for "${libraryBook.title}"? This will overwrite existing audio metadata tags. This cannot be undone.`}
-        confirmLabel="Re-tag"
-        onConfirm={() => { close('confirmRetag'); retagMutation.mutate(); }}
-        onCancel={() => close('confirmRetag')}
-      />
+      {modals.confirmRetag && (
+        <RetagPreviewModal
+          bookId={libraryBook.id}
+          isOpen={modals.confirmRetag}
+          onClose={() => close('confirmRetag')}
+          onConfirm={(excludeFields) => retagMutation.mutate({ excludeFields })}
+        />
+      )}
 
       <ConfirmModal
         isOpen={modals.confirmMerge}

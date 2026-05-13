@@ -37,10 +37,12 @@ import {
   createBookBodySchema,
   updateBookBodySchema,
   deleteBookQuerySchema,
+  retagBodySchema,
   DEFAULT_LIMITS,
   type CreateBookBody,
   type UpdateBookBody,
   type DeleteBookQuery,
+  type RetagBody,
 } from '../../shared/schemas.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
@@ -347,13 +349,24 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     registerBookSearchRoute(app, deps);
   }
 
-  // POST /api/books/:id/retag
-  app.post<{ Params: IdParam }>(
-    '/api/books/:id/retag',
+  // GET /api/books/:id/retag/preview — dry-run plan for the re-tag action
+  app.get<{ Params: IdParam }>(
+    '/api/books/:id/retag/preview',
     { schema: { params: idParamSchema } },
     async (request) => {
       const { id } = request.params;
-      const result = await taggingService.retagBook(id);
+      return taggingService.planRetag(id);
+    },
+  );
+
+  // POST /api/books/:id/retag
+  app.post<{ Params: IdParam; Body: RetagBody }>(
+    '/api/books/:id/retag',
+    { schema: { params: idParamSchema, body: retagBodySchema } },
+    async (request) => {
+      const { id } = request.params;
+      const excludeFields = new Set(request.body?.excludeFields ?? []);
+      const result = await taggingService.retagBook(id, excludeFields);
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
       return result;
     },
