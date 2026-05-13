@@ -2073,8 +2073,9 @@ describe('MetadataService', () => {
       const result = await service.getSeriesMembersBySeedAsin(seedAsin);
 
       const novella = result.members.find((m) => m.asin === 'NOVELLA1')!;
-      const match = novella.series?.find((s) => s.asin === 'STORMLIGHT_SID')!;
-      expect(match.position).toBeUndefined();
+      const match = novella.series?.find((s) => s.asin === 'STORMLIGHT_SID');
+      expect(match).toBeDefined();
+      expect(match!.position).toBeUndefined();
     });
 
     it('skips children whose Audible detail fetch fails (non-fatal per-child error)', async () => {

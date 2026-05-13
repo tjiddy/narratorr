@@ -195,7 +195,7 @@ export class SeriesRefreshService {
     }
 
     let products: BookMetadata[];
-    let derivedSeriesAsin: string | null = null;
+    let derivedSeriesAsin: string | null;
     try {
       const result = await this.metadataService.getSeriesMembersBySeedAsin(bookAsin);
       products = result.members;
