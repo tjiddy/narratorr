@@ -407,6 +407,67 @@ describe('series refresh — scope to selected series (#1078)', () => {
     expect(rows[0]!.position).not.toBe(77);
   });
 
+  it('drops a child whose Audnexus seriesPrimary disagrees with the target — does NOT fall through to series[] (#1088 F1 / #1091 F1)', async () => {
+    // Production-shaped contamination: the relationships endpoint returned a
+    // child whose Audnexus enrichment puts its primary series in the broader
+    // Cosmere universe, but its raw Audible `series[]` still lists Stormlight.
+    // The membership-validation AC requires the child to be dropped — its
+    // `seriesPrimary` is the canonical signal, and the `series[]` fallback is
+    // ONLY for candidates without Audnexus enrichment. Without the fix, the
+    // child slipped through the `series[]` ASIN/name match and contaminated
+    // the persisted Stormlight card.
+    const cosmereChild: BookMetadata = {
+      asin: 'COSM_ONLY',
+      title: 'Cosmere Universe Story',
+      authors: [{ name: 'Brandon Sanderson' }],
+      // Audible's series[] still lists the target Stormlight — exactly the
+      // shape that the old (PR-1091-F1) code would have matched against.
+      series: [
+        { name: STORMLIGHT, asin: STORMLIGHT_SID, position: 99 },
+        { name: COSMERE, asin: COSMERE_SID, position: 5 },
+      ],
+      // But Audnexus says the canonical primary is Cosmere.
+      seriesPrimary: { name: COSMERE, asin: COSMERE_SID, position: 5 },
+    };
+    const wor = stormlightProduct({
+      asin: 'WOR1',
+      title: 'Words of Radiance',
+      position: 2,
+    });
+
+    await refresh([wor, cosmereChild], 'WOR1');
+
+    const rows = await db.select().from(seriesMembers);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.title).toBe('Words of Radiance');
+    expect(rows.find((r) => r.providerBookId === 'COSM_ONLY')).toBeUndefined();
+  });
+
+  it('keeps a child without seriesPrimary that matches the target via series[] (#1088 F1)', async () => {
+    // Audnexus enrichment was unavailable for this child (no `seriesPrimary`
+    // field). The series[] fallback is the only signal — match by ASIN keeps
+    // the child so non-enriched relationship children can still be persisted.
+    const noPrimaryChild: BookMetadata = {
+      asin: 'NOPRIM',
+      title: 'Way of Kings (No Audnexus)',
+      authors: [{ name: 'Brandon Sanderson' }],
+      series: [{ name: STORMLIGHT, asin: STORMLIGHT_SID, position: 1 }],
+      // no seriesPrimary — falls back to series[] match
+    };
+    const wor = stormlightProduct({
+      asin: 'WOR1',
+      title: 'Words of Radiance',
+      position: 2,
+    });
+
+    await refresh([wor, noPrimaryChild], 'WOR1');
+
+    const rows = await db.select().from(seriesMembers);
+    expect(rows).toHaveLength(2);
+    const titles = rows.map((r) => r.title).sort();
+    expect(titles).toEqual(['Way of Kings (No Audnexus)', 'Words of Radiance']);
+  });
+
   it('regression — simple single-series response still populates correctly (Bobiverse / Name of the Wind shape)', async () => {
     // Most series — Bobiverse, The Kingkiller Chronicle — Audible returns
     // products with a single series ref. The scoping fix must not regress

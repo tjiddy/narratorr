@@ -65,11 +65,15 @@ export function findMatchingSeriesRef(
   product: BookMetadata,
   target: TargetSeriesIdentity,
 ): MatchedSeriesRef | null {
-  // Prefer the candidate's `seriesPrimary` (Audnexus-enriched) over its
-  // `series[]` array when both sides know the canonical identity — Audible's
-  // raw `series[]` can list a broader universe (Cosmere) or share ambiguous
-  // names across providers, so the Audnexus-confirmed primary is the
-  // strongest signal we have when present. (#1088 F1)
+  // When the candidate has an Audnexus-derived `seriesPrimary`, it is the
+  // canonical primary-series identity for that book. The membership-validation
+  // rule (#1088 F1) requires `seriesPrimary` to match the target — a
+  // non-matching primary means the candidate is at best a secondary/universe
+  // member of the target series (e.g. Cosmere-only primary while the target is
+  // Stormlight) and must NOT fall through to the raw Audible `series[]` match.
+  // That fallback is reserved for candidates whose Audnexus enrichment was
+  // unavailable (no `seriesPrimary` field), where `series[]` is the only
+  // signal we have. (#1088 F1 / PR #1091 F1)
   if (product.seriesPrimary) {
     if (target.asin && product.seriesPrimary.asin === target.asin) {
       return toMatchedRef(product.seriesPrimary);
@@ -81,6 +85,7 @@ export function findMatchingSeriesRef(
         return toMatchedRef(product.seriesPrimary);
       }
     }
+    return null;
   }
   if (!product.series || product.series.length === 0) return null;
   if (target.asin) {
