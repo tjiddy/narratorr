@@ -455,4 +455,126 @@ describe('series refresh — alternate-edition dedupe (#1073)', () => {
     // Sanity: the test file does not assert on OS-specific path strings.
     expect(and(eq(series.id, 1))).toBeDefined();
   });
+
+  describe('format-type pre-group filter + tie-breakers (#1088 F3, F7)', () => {
+    it('drops radio / original_recording editions when seed is not radio', async () => {
+      await refresh(
+        [
+          { asin: 'A1', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'unabridged' },
+          { asin: 'A1_RADIO', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'radio' },
+          { asin: 'A1_ORIG', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'original_recording' },
+        ],
+        'A1',
+      );
+
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.providerBookId).toBe('A1');
+      // Radio/original_recording dropped at pre-group filter; not even in alternate_asins.
+      expect(rows[0]!.alternateAsins ?? []).not.toContain('A1_RADIO');
+      expect(rows[0]!.alternateAsins ?? []).not.toContain('A1_ORIG');
+    });
+
+    it('keeps radio-play candidates when the seed itself is radio (Hitchhiker exception)', async () => {
+      await refresh(
+        [
+          { asin: 'RA1', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'radio' },
+          { asin: 'RA2', title: 'Restaurant', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 2, asin: PROVIDER_SERIES_ID }], formatType: 'radio' },
+        ],
+        'RA1',
+      );
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(2);
+    });
+
+    it('comparisons are case-insensitive (RADIO vs radio)', async () => {
+      await refresh(
+        [
+          { asin: 'A1', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'Unabridged' },
+          { asin: 'A1_RADIO', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'RADIO' },
+        ],
+        'A1',
+      );
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.providerBookId).toBe('A1');
+    });
+
+    it('candidate missing formatType is not dropped by the radio filter', async () => {
+      await refresh(
+        [
+          { asin: 'A1', title: 'Hitchhiker', authors: [{ name: 'Adams' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }] }, // no formatType
+        ],
+        'A1',
+      );
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.providerBookId).toBe('A1');
+    });
+
+    it('prefers unabridged over abridged within a duplicate group', async () => {
+      // Seed bias is removed by giving the seedAsin a non-existent ASIN so the
+      // format tie-breaker is exercised.
+      await refresh(
+        [
+          { asin: 'AB', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'abridged' },
+          { asin: 'UN', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'unabridged' },
+        ],
+        'seed-not-in-group',
+      );
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.providerBookId).toBe('UN');
+      expect(rows[0]!.alternateAsins).toContain('AB');
+    });
+
+    it('prefers SinglePartBook over MultiPartBook within a duplicate group', async () => {
+      await refresh(
+        [
+          { asin: 'MP', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], contentDeliveryType: 'MultiPartBook' },
+          { asin: 'SP', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], contentDeliveryType: 'SinglePartBook' },
+        ],
+        'seed-not-in-group',
+      );
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.providerBookId).toBe('SP');
+    });
+
+    it('seed-first wins over format-type preference (seed pick is highest priority)', async () => {
+      await refresh(
+        [
+          { asin: 'AB_SEED', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'abridged' },
+          { asin: 'UN_OTHER', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'unabridged' },
+        ],
+        'AB_SEED', // seed is the abridged edition — must still win
+      );
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.providerBookId).toBe('AB_SEED');
+      expect(rows[0]!.alternateAsins).toContain('UN_OTHER');
+    });
+
+    it('local-library link survives when seed-first pick is not the local edition (F7)', async () => {
+      // Insert local book with ASIN that is NOT the seed.
+      const [localBook] = await db
+        .insert(books)
+        .values({ title: 'WOK', asin: 'LOCAL' })
+        .returning();
+      await refresh(
+        [
+          { asin: 'SEED', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'unabridged' },
+          { asin: 'LOCAL', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'unabridged' },
+        ],
+        'SEED',
+      );
+
+      const rows = await db.select().from(seriesMembers);
+      expect(rows).toHaveLength(1);
+      // Seed wins canonical, but local book is linked via alternate_asins walk.
+      expect(rows[0]!.providerBookId).toBe('SEED');
+      expect(rows[0]!.alternateAsins).toContain('LOCAL');
+      expect(rows[0]!.bookId).toBe(localBook!.id);
+    });
+  });
 });

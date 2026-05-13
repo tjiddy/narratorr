@@ -64,7 +64,7 @@ function makeService(opts?: { metadata?: Partial<MetadataService>; bookService?:
   const db = inject<Db>({ transaction: vi.fn().mockImplementation(async (cb: (tx: unknown) => unknown) => cb({})) });
   const log = createMockLogger();
   const metadata = inject<MetadataService>({
-    getSameSeriesBooks: vi.fn().mockResolvedValue([]),
+    getSeriesMembersBySeedAsin: vi.fn().mockResolvedValue({ seed: null, members: [], seriesAsin: null }),
     ...opts?.metadata,
   });
   const bookService = inject<BookService>({
@@ -169,9 +169,13 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('returns { status: "refreshed" } on a successful provider fetch and reuses the upserted row for the card', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { title: 'Kings of the Wyld', authors: [{ name: 'Nicholas Eames' }], series: [{ name: 'The Band', position: 1, asin: 'B07DHQY7DX' }], asin: 'B01NA0JA51' },
-    ]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      seed: { title: 'Kings of the Wyld', authors: [{ name: 'Nicholas Eames' }], series: [{ name: 'The Band', position: 1, asin: 'B07DHQY7DX' }], asin: 'B01NA0JA51' },
+      members: [
+        { title: 'Kings of the Wyld', authors: [{ name: 'Nicholas Eames' }], series: [{ name: 'The Band', position: 1, asin: 'B07DHQY7DX' }], asin: 'B01NA0JA51' },
+      ],
+      seriesAsin: 'B07DHQY7DX',
+    });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -184,6 +188,39 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
     expect(findExistingSeriesRow).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ seedAsin: 'B01NA0JA51' }));
   });
 
+  it('passes the Audnexus-derived seriesAsin to applySuccessOutcome as providerSeriesId, overriding caller-supplied value (#1088 F5)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({
+      seed: { title: 'Words of Radiance', authors: [{ name: 'Brandon Sanderson' }], series: [{ name: 'The Stormlight Archive', position: 2, asin: 'STORMLIGHT_SID' }], asin: 'WOR1' },
+      members: [
+        { title: 'Words of Radiance', authors: [{ name: 'Brandon Sanderson' }], series: [{ name: 'The Stormlight Archive', position: 2, asin: 'STORMLIGHT_SID' }], asin: 'WOR1' },
+      ],
+      seriesAsin: 'STORMLIGHT_SID',
+    });
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    // Caller passes a *stale* providerSeriesId (the #1078 contamination case).
+    await service.reconcileFromBookAsin('WOR1', { seriesName: 'The Stormlight Archive', providerSeriesId: 'MISTBORN_SID' });
+
+    const opts = vi.mocked(applySuccessOutcome).mock.calls[0]![5] as { providerSeriesId?: string | null };
+    expect(opts.providerSeriesId).toBe('STORMLIGHT_SID');
+  });
+
+  it('leaves caller-supplied providerSeriesId in place when getSeriesMembersBySeedAsin returns seriesAsin: null', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.reconcileFromBookAsin('WOR1', { seriesName: 'The Stormlight Archive', providerSeriesId: 'CACHED_SID' });
+
+    const opts = vi.mocked(applySuccessOutcome).mock.calls[0]![5] as { providerSeriesId?: string | null };
+    expect(opts.providerSeriesId).toBe('CACHED_SID');
+  });
+
   it('honors nextFetchAfter backoff lock without performing a provider fetch (B14)', async () => {
     const { service, metadata } = makeService();
     const lockedRow = { ...PROVIDER_BACKED_ROW, nextFetchAfter: new Date(Date.now() + 30 * 60 * 1000), lastFetchStatus: 'rate_limited' as const };
@@ -194,14 +231,14 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
 
     expect(response.status).toBe('rate_limited');
     expect(response.nextFetchAfter).toBe(lockedRow.nextFetchAfter.toISOString());
-    expect(metadata.getSameSeriesBooks).not.toHaveBeenCalled();
+    expect(metadata.getSeriesMembersBySeedAsin).not.toHaveBeenCalled();
     expect(applySuccessOutcome).not.toHaveBeenCalled();
   });
 
   it('records rate-limit outcome with nextFetchAfter on RateLimitError from provider', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new RateLimitError(60_000, 'Audible.com'));
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockRejectedValue(new RateLimitError(60_000, 'Audible.com'));
     const updatedRow = { ...PROVIDER_BACKED_ROW, lastFetchStatus: 'rate_limited' as const, nextFetchAfter: new Date('2026-05-11T01:00:00Z') };
     vi.mocked(applyRateLimitOutcome).mockResolvedValue(updatedRow);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
@@ -223,7 +260,7 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('records failure outcome with nextFetchAfter and error message on non-rate-limit error', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500 internal'));
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500 internal'));
     const updatedRow = { ...PROVIDER_BACKED_ROW, lastFetchStatus: 'failed' as const, nextFetchAfter: new Date('2026-05-11T01:00:00Z'), lastFetchError: '500 internal' };
     vi.mocked(applyFailureOutcome).mockResolvedValue(updatedRow);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
@@ -240,8 +277,8 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('returns { status: "queued" } with the current cache when a duplicate in-flight refresh is racing', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    let resolveFirst!: (v: unknown[]) => void;
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((r) => { resolveFirst = r as (v: unknown[]) => void; }));
+    let resolveFirst!: (v: unknown) => void;
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((r) => { resolveFirst = r as (v: unknown) => void; }));
     vi.mocked(readSeriesRow).mockResolvedValue(CARD_FIXTURE);
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
@@ -258,14 +295,14 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
       undefined, // F10: no bookId in opts → undefined currentBook context
     );
 
-    resolveFirst([]);
+    resolveFirst({ seed: null, members: [], seriesAsin: null });
     await inFlight;
   });
 
   it('passes currentBook to buildCardFromRow on success so member.isCurrent survives into the response (F10)', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -296,7 +333,7 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('passes currentBook to buildCardFromRow on rate-limit fetch error (F10)', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new RateLimitError(60_000, 'Audible.com'));
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockRejectedValue(new RateLimitError(60_000, 'Audible.com'));
     const updatedRow = { ...PROVIDER_BACKED_ROW, lastFetchStatus: 'rate_limited' as const, nextFetchAfter: new Date('2026-05-11T01:00:00Z') };
     vi.mocked(applyRateLimitOutcome).mockResolvedValue(updatedRow);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
@@ -313,7 +350,7 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('passes currentBook to buildCardFromRow on non-rate-limit fetch error (F10)', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500 internal'));
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('500 internal'));
     const updatedRow = { ...PROVIDER_BACKED_ROW, lastFetchStatus: 'failed' as const, nextFetchAfter: new Date('2026-05-11T01:00:00Z') };
     vi.mocked(applyFailureOutcome).mockResolvedValue(updatedRow);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
@@ -330,7 +367,7 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('omits currentBook context when no bookId is supplied (background scheduled job)', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -346,8 +383,8 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
   it('queued response with manual bookId forwards currentBook to readSeriesRow so the cached snapshot keeps member.isCurrent (F11)', async () => {
     const { service, metadata } = makeService();
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    let resolveFirst!: (v: unknown[]) => void;
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((r) => { resolveFirst = r as (v: unknown[]) => void; }));
+    let resolveFirst!: (v: unknown) => void;
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise((r) => { resolveFirst = r as (v: unknown) => void; }));
     vi.mocked(readSeriesRow).mockResolvedValue(CARD_FIXTURE);
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
@@ -365,7 +402,7 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
       { id: 42, asin: 'B01NA0JA51' }, // F11: currentBook tuple from opts.bookId + bookAsin
     );
 
-    resolveFirst([]);
+    resolveFirst({ seed: null, members: [], seriesAsin: null });
     await inFlight;
   });
 
@@ -373,11 +410,11 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
     const { service, metadata } = makeService();
     // Persisted row already exists — both callers should resolve onto series:7 as the queue key
     vi.mocked(findExistingSeriesRow).mockResolvedValue(PROVIDER_BACKED_ROW);
-    let resolveFirst!: (v: unknown[]) => void;
+    let resolveFirst!: (v: unknown) => void;
     let fetchCount = 0;
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockImplementation(() => {
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockImplementation(() => {
       fetchCount++;
-      return new Promise((r) => { resolveFirst = r as (v: unknown[]) => void; });
+      return new Promise((r) => { resolveFirst = r as (v: unknown) => void; });
     });
     vi.mocked(readSeriesRow).mockResolvedValue(CARD_FIXTURE);
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
@@ -393,7 +430,7 @@ describe('SeriesRefreshService.reconcileFromBookAsin', () => {
     expect(callB.status).toBe('queued');
     expect(callB.series).toBe(CARD_FIXTURE);
 
-    resolveFirst([]);
+    resolveFirst({ seed: null, members: [], seriesAsin: null });
     await callA;
   });
 });
@@ -410,7 +447,7 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
       { id: 2, seriesName: 'Mistborn', providerSeriesId: null, seedAsin: 'A2' },
     ]);
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
     const sleep = vi.fn().mockResolvedValue(undefined);
@@ -418,9 +455,9 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
     const result = await service.runScheduledRefresh({ sleepMs: sleep });
 
     expect(result).toEqual({ refreshed: 2, skipped: 0 });
-    expect(metadata.getSameSeriesBooks).toHaveBeenCalledTimes(2);
-    expect(metadata.getSameSeriesBooks).toHaveBeenNthCalledWith(1, 'A1');
-    expect(metadata.getSameSeriesBooks).toHaveBeenNthCalledWith(2, 'A2');
+    expect(metadata.getSeriesMembersBySeedAsin).toHaveBeenCalledTimes(2);
+    expect(metadata.getSeriesMembersBySeedAsin).toHaveBeenNthCalledWith(1, 'A1');
+    expect(metadata.getSeriesMembersBySeedAsin).toHaveBeenNthCalledWith(2, 'A2');
     // Sleep called with 30s-90s bounds between candidates
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(30_000, 90_000);
@@ -443,7 +480,7 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
       bookSeriesPosition: 2,
     }]);
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -479,7 +516,7 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
       bookSeriesPosition: 2,
     }]);
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -512,7 +549,7 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
       bookSeriesPosition: null,
     }]);
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -542,7 +579,7 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
       // no bookId/bookTitle/bookSeriesName/bookSeriesPosition — provider-only
     }]);
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockResolvedValue({ seed: null, members: [], seriesAsin: null });
     vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
     vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
 
@@ -598,7 +635,7 @@ describe('SeriesRefreshService.enqueueRefresh', () => {
 
   it('returns synchronously and logs on async failure', async () => {
     const { service, metadata, log } = makeService();
-    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
+    (metadata.getSeriesMembersBySeedAsin as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
     vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
     vi.mocked(applyFailureOutcome).mockResolvedValue(null);
 

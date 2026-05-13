@@ -35,6 +35,29 @@ describe('AudnexusProvider', () => {
       ]);
     });
 
+    it('populates seriesPrimary on the mapped BookMetadata (#1088 F1)', async () => {
+      const book = await provider.getBook('B0030DL4GK');
+
+      expect(book!.seriesPrimary).toEqual(
+        { name: 'The Stormlight Archive', position: 1, asin: 'B010XKCR92' },
+      );
+    });
+
+    it('leaves seriesPrimary undefined when Audnexus has no seriesPrimary block', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B_NOSP',
+            title: 'No SeriesPrimary',
+            authors: [{ name: 'A' }],
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B_NOSP');
+      expect(book!.seriesPrimary).toBeUndefined();
+    });
+
     it('maps genres from book detail', async () => {
       const book = await provider.getBook('B0030DL4GK');
 

@@ -7,6 +7,7 @@ import type { BookMetadata } from '../../core/metadata/index.js';
 import type { SeriesRow } from './types.js';
 import {
   filterProductsToTarget,
+  filterRadioFormatType,
   findMatchingSeriesRef,
   linkLocalBooksByAsin,
   reconcileCandidates,
@@ -241,7 +242,10 @@ export async function applySuccessOutcome(
   // series book can include unrelated series + broader-universe entries; only
   // those whose `series` array contains the target identity (provider series
   // ASIN preferred, normalized name otherwise) are kept. (#1078)
-  const filtered = filterProductsToTarget(products, target);
+  // Apply the radio-format pre-group filter alongside target-scope so the
+  // empty-filtered short-circuit also accounts for all-radio responses. (#1088 F3)
+  const formatFiltered = filterRadioFormatType(products, seedAsin);
+  const filtered = filterProductsToTarget(formatFiltered, target);
   if (filtered.length === 0) {
     log.debug(
       { seedAsin, seriesName: finalName, providerSeriesId: inferredSeriesAsin, productCount: products.length },

@@ -77,6 +77,26 @@ const audibleProductDetailResponseSchema = z.object({
   product: audibleProductSchema.nullish(),
 }).passthrough();
 
+const audibleRelationshipSchema = z.object({
+  asin: z.string().nullish(),
+  relationship_type: z.string().nullish(),
+  relationship_to_product: z.string().nullish(),
+  sequence: z.string().nullish(),
+  sort: z.string().nullish(),
+}).passthrough();
+
+const audibleRelationshipsResponseSchema = z.object({
+  product: z.object({
+    asin: z.string().nullish(),
+    relationships: z.array(audibleRelationshipSchema).nullish(),
+  }).passthrough().nullish(),
+}).passthrough();
+
+export interface AudibleSeriesChild {
+  asin: string;
+  sequence: string | null;
+}
+
 type AudibleProduct = z.infer<typeof audibleProductSchema>;
 
 export class AudibleProvider implements MetadataSearchProvider {
@@ -151,6 +171,28 @@ export class AudibleProvider implements MetadataSearchProvider {
     const mapped = mapProduct(product);
     const result = BookMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
+  }
+
+  /**
+   * Fetch canonical series membership from the Audible series product. Maps
+   * each `relationship_type === 'series'` AND `relationship_to_product ===
+   * 'child'` entry to a `{ asin, sequence }` pair so callers can re-fetch
+   * individual book detail and override the position with the relationship's
+   * sequence. Throws RateLimitError on 429.
+   */
+  async getSeriesRelationships(seriesAsin: string): Promise<AudibleSeriesChild[]> {
+    const params = new URLSearchParams({ response_groups: 'relationships' });
+    const url = `${this.baseUrl}/1.0/catalog/products/${seriesAsin}?${params}`;
+    const data = await this.request(url, audibleRelationshipsResponseSchema);
+    const relationships = data?.product?.relationships ?? [];
+    const children: AudibleSeriesChild[] = [];
+    for (const rel of relationships) {
+      if (rel.relationship_type !== 'series') continue;
+      if (rel.relationship_to_product !== 'child') continue;
+      if (!rel.asin) continue;
+      children.push({ asin: rel.asin, sequence: rel.sequence ?? null });
+    }
+    return children;
   }
 
   /**

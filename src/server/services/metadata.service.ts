@@ -15,6 +15,7 @@ import {
   type SearchBooksOptions,
   type SearchBooksResult,
 } from '../../core/index.js';
+import { resolveSeriesMembers, type SeriesMembersResult } from './metadata-series-members.js';
 import { filterByLanguage } from '../../core/utils/index.js';
 import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
@@ -58,8 +59,11 @@ export class MetadataService {
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
+  private region: string;
+
   constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig, private settingsService?: SettingsService) {
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
+    this.region = region;
 
     for (const [type, factory] of Object.entries(METADATA_SEARCH_PROVIDER_FACTORIES)) {
       const provider = factory({ region });
@@ -67,8 +71,8 @@ export class MetadataService {
       this.log.info({ type, name: provider.name }, 'Metadata search provider loaded');
     }
 
-    this.audnexus = new AudnexusProvider();
-    this.log.info('Audnexus enrichment provider loaded');
+    this.audnexus = new AudnexusProvider({ region });
+    this.log.info({ region }, 'Audnexus enrichment provider loaded');
   }
 
   async search(query: string): Promise<MetadataSearchResults> {
@@ -350,6 +354,40 @@ export class MetadataService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Resolve canonical series membership for a Series card by:
+   *   1. Enriching the seed book via Audnexus to capture `seriesPrimary`.
+   *   2. Deriving the series ASIN from `seed.seriesPrimary.asin`, falling back
+   *      to the seed's Audible `series[]` entry with a populated sequence.
+   *   3. Fetching the Audible series product's `relationships` and walking
+   *      `relationship_type === 'series'` AND `relationship_to_product ===
+   *      'child'` children, fetching each via Audible detail + Audnexus
+   *      enrichment, and overriding the matched `series[]` ref's position
+   *      with the relationship payload's sequence.
+   *
+   * Per-child detail/enrichment failures are non-fatal — the child is skipped.
+   * A failure at the seed lookup or relationships call propagates so the
+   * caller can route through `applyFailureOutcome` / `applyRateLimitOutcome`.
+   *
+   * When no `seriesAsin` can be derived, returns `{ seed, members: [],
+   * seriesAsin: null }` without invoking the relationships endpoint so the
+   * caller routes through `applyEmptyOutcome`. (#1088 F2, F5)
+   */
+  getSeriesMembersBySeedAsin(seedAsin: string): Promise<SeriesMembersResult> {
+    return resolveSeriesMembers(
+      {
+        audnexus: this.audnexus,
+        searchProvider: this.providers[0] ?? null,
+        log: this.log,
+        region: this.region,
+        acquireThrottle: () => this.throttle.acquire(),
+        isRateLimited: (name: string) => this.isRateLimited(name),
+        setRateLimited: (name: string, durationMs: number) => this.setRateLimited(name, durationMs),
+      },
+      seedAsin,
+    );
   }
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {

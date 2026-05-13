@@ -195,13 +195,23 @@ export class SeriesRefreshService {
     }
 
     let products: BookMetadata[];
+    let derivedSeriesAsin: string | null;
     try {
-      products = await this.metadataService.getSameSeriesBooks(bookAsin);
+      const result = await this.metadataService.getSeriesMembersBySeedAsin(bookAsin);
+      products = result.members;
+      derivedSeriesAsin = result.seriesAsin;
     } catch (error: unknown) {
       return this.handleFetchError(error, existing, opts, bookAsin);
     }
 
-    const upserted = await applySuccessOutcome(this.db, this.log, existing, products, bookAsin, opts);
+    // Use the Audnexus-derived series ASIN as the canonical providerSeriesId
+    // so a contaminated row stamped by an earlier #1078-bug refresh gets
+    // healed back to the correct identity. Falls back to whatever the caller
+    // provided when Audnexus produced no seriesPrimary. (#1088 F5)
+    const persistOpts = derivedSeriesAsin
+      ? { ...opts, providerSeriesId: derivedSeriesAsin }
+      : opts;
+    const upserted = await applySuccessOutcome(this.db, this.log, existing, products, bookAsin, persistOpts);
     // F10: pass currentBook so member.isCurrent survives into the response that
     // the client caches via setQueryData on `refreshed`.
     // F1 (PR #1076 review): an empty provider response for a historical
