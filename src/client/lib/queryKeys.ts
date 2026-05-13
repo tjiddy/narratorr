@@ -9,6 +9,7 @@ export const queryKeys = {
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
+  bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
   activity: (params?: ActivityListParams) => params ? ['activity', params] as const : ['activity'] as const,
   activityCounts: () => ['activity', 'counts'] as const,
   metadata: {

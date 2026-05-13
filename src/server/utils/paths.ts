@@ -74,26 +74,26 @@ export async function cleanEmptyParents(
 }
 
 /**
- * Rename audio files in a directory using the file format template.
- * Returns count of files renamed. Rolls back on failure.
+ * Pure planner: list audio files in `targetPath` and compute the `{from, to}[]`
+ * filename pairs the apply path would produce, without touching disk.
+ *
+ * Returned pairs are bare filenames (no path component) to match the apply path's
+ * `rename(join(targetPath, from), join(targetPath, to))` call site below.
  */
-// eslint-disable-next-line complexity -- rename pipeline with rollback, covers all file formats
-export async function renameFilesWithTemplate(
+export async function planFileRenames(
   targetPath: string,
   fileFormat: string,
   book: RenameableBook,
   authorName: string | null,
-  log: FastifyBaseLogger,
   options?: NamingOptions,
-  onProgress?: (current: number, total: number) => void,
-): Promise<number> {
+): Promise<{ from: string; to: string }[]> {
   const entries = await readdir(targetPath, { withFileTypes: true });
   const audioFiles = entries
     .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
     .map(e => e.name)
     .sort();
 
-  if (audioFiles.length === 0) return 0;
+  if (audioFiles.length === 0) return [];
 
   const author = authorName || 'Unknown Author';
   const primaryNarrator = book.narrators?.[0]?.name;
@@ -135,6 +135,25 @@ export async function renameFilesWithTemplate(
       renames.push({ from: fileName, to: newName });
     }
   }
+
+  return renames;
+}
+
+/**
+ * Rename audio files in a directory using the file format template.
+ * Returns count of files renamed. Rolls back on failure.
+ */
+export async function renameFilesWithTemplate(
+  targetPath: string,
+  fileFormat: string,
+  book: RenameableBook,
+  authorName: string | null,
+  log: FastifyBaseLogger,
+  options?: NamingOptions,
+  onProgress?: (current: number, total: number) => void,
+): Promise<number> {
+  const renames = await planFileRenames(targetPath, fileFormat, book, authorName, options);
+  if (renames.length === 0) return 0;
 
   // Perform renames with rollback tracking
   const completed: { from: string; to: string }[] = [];

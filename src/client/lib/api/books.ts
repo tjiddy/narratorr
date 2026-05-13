@@ -1,6 +1,6 @@
 import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
-import { fetchApi, fetchMultipart } from './client.js';
+import { ApiError, fetchApi, fetchMultipart } from './client.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 
@@ -107,6 +107,38 @@ export interface RenameResult {
   filesRenamed: number;
 }
 
+export interface RenamePreviewResult {
+  libraryRoot: string;
+  folderFormat: string;
+  fileFormat: string;
+  folderMove: { from: string; to: string } | null;
+  fileRenames: { from: string; to: string }[];
+}
+
+/** Thrown when GET /books/:id/rename/preview returns 409 with code: 'CONFLICT'. */
+export class RenameConflictError extends Error {
+  readonly code = 'CONFLICT' as const;
+  constructor(message: string, public conflictingBook: { id: number; title: string }) {
+    super(message);
+    this.name = 'RenameConflictError';
+  }
+}
+
+function isConflictBody(
+  body: unknown,
+): body is { error: string; code: 'CONFLICT'; conflictingBook: { id: number; title: string } } {
+  if (typeof body !== 'object' || body === null) return false;
+  const b = body as Record<string, unknown>;
+  if (b.code !== 'CONFLICT') return false;
+  const cb = b.conflictingBook;
+  return (
+    typeof cb === 'object' &&
+    cb !== null &&
+    typeof (cb as { id?: unknown }).id === 'number' &&
+    typeof (cb as { title?: unknown }).title === 'string'
+  );
+}
+
 export interface RetagResult {
   bookId: number;
   tagged: number;
@@ -210,6 +242,23 @@ export const booksApi = {
     }),
   renameBook: (id: number) =>
     fetchApi<RenameResult>(`/books/${id}/rename`, { method: 'POST' }),
+  getBookRenamePreview: async (id: number): Promise<RenamePreviewResult> => {
+    try {
+      return await fetchApi<RenamePreviewResult>(`/books/${id}/rename/preview`);
+    } catch (error: unknown) {
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        isConflictBody(error.body)
+      ) {
+        throw new RenameConflictError(
+          (error.body as { error: string }).error,
+          (error.body as { conflictingBook: { id: number; title: string } }).conflictingBook,
+        );
+      }
+      throw error;
+    }
+  },
   retagBook: (id: number) =>
     fetchApi<RetagResult>(`/books/${id}/retag`, { method: 'POST' }),
   refreshScanBook: (id: number) =>

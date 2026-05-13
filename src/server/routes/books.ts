@@ -3,6 +3,7 @@ import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService } from '../services/index.js';
+import { RenameError } from '../services/rename.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -309,6 +310,27 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
   await registerDeleteMissingRoute(app, deps);
   await registerDeleteBookRoute(app, deps);
+  // GET /api/books/:id/rename/preview — dry-run plan for the rename action
+  app.get<{ Params: IdParam }>(
+    '/api/books/:id/rename/preview',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      try {
+        return await renameService.planRename(id);
+      } catch (error: unknown) {
+        if (error instanceof RenameError && error.code === 'CONFLICT' && error.details) {
+          return reply.status(409).send({
+            error: error.message,
+            code: 'CONFLICT',
+            conflictingBook: error.details.conflictingBook,
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
   // POST /api/books/:id/rename
   app.post<{ Params: IdParam }>(
     '/api/books/:id/rename',

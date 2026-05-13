@@ -1,5 +1,5 @@
 import { mkdir, rename, cp, rm, stat } from 'node:fs/promises';
-import { dirname, normalize, resolve } from 'node:path';
+import { dirname, normalize, resolve, relative } from 'node:path';
 import { and, eq, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -9,7 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
+import { cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -19,6 +19,14 @@ export interface RenameResult {
   newPath: string;
   message: string;
   filesRenamed: number;
+}
+
+export interface RenamePlan {
+  libraryRoot: string;
+  folderFormat: string;
+  fileFormat: string;
+  folderMove: { from: string; to: string } | null;
+  fileRenames: { from: string; to: string }[];
 }
 
 export class RenameService {
@@ -39,6 +47,69 @@ export class RenameService {
       source: 'manual',
       reason: { oldPath, newPath, filesRenamed },
     }).catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record renamed event'));
+  }
+
+  /**
+   * Pure planner — returns the folder move + file renames that `renameBook` would
+   * apply, without touching disk or DB. Used by `GET /api/books/:id/rename/preview`
+   * and internally by `renameBook` to keep preview/apply in lockstep.
+   */
+  async planRename(bookId: number): Promise<RenamePlan> {
+    const book = await this.bookService.getById(bookId);
+    if (!book) {
+      throw new RenameError('Book not found', 'NOT_FOUND');
+    }
+    if (!book.path) {
+      throw new RenameError('Book has no path — not imported yet', 'NO_PATH');
+    }
+
+    const librarySettings = await this.settingsService.get('library');
+    const namingOptions = toNamingOptions(librarySettings);
+
+    const authorName = book.authors?.[0]?.name ?? null;
+    const targetPath = buildTargetPath(
+      librarySettings.path,
+      librarySettings.folderFormat,
+      book,
+      authorName,
+      namingOptions,
+    );
+
+    const oldPath = book.path;
+    const pathChanged = normalize(resolve(oldPath)) !== normalize(resolve(targetPath));
+
+    if (pathChanged) {
+      await this.checkConflict(targetPath, bookId);
+    }
+
+    const folderMove = pathChanged
+      ? {
+          from: toLibraryRelative(oldPath, librarySettings.path),
+          to: toLibraryRelative(targetPath, librarySettings.path),
+        }
+      : null;
+
+    let fileRenames: { from: string; to: string }[] = [];
+    if (librarySettings.fileFormat) {
+      // Preview reads the source folder (book.path); apply reads the same files
+      // after the folder move. The folder move doesn't add/remove files, so the
+      // bare-filename pairs match either way.
+      fileRenames = await planFileRenames(
+        oldPath,
+        librarySettings.fileFormat,
+        book,
+        authorName,
+        namingOptions,
+      );
+    }
+
+    return {
+      libraryRoot: librarySettings.path,
+      folderFormat: librarySettings.folderFormat,
+      fileFormat: librarySettings.fileFormat,
+      folderMove,
+      fileRenames,
+    };
   }
 
   /**
@@ -148,9 +219,11 @@ export class RenameService {
       .limit(1);
 
     if (conflicting.length > 0) {
+      const other = conflicting[0]!;
       throw new RenameError(
-        `Target path already belongs to "${conflicting[0]!.title}" (book #${conflicting[0]!.id})`,
+        `Target path already belongs to "${other.title}" (book #${other.id})`,
         'CONFLICT',
+        { conflictingBook: { id: other.id, title: other.title } },
       );
     }
   }
@@ -176,12 +249,28 @@ export class RenameService {
 
 }
 
+export interface RenameErrorDetails {
+  conflictingBook: { id: number; title: string };
+}
+
 export class RenameError extends Error {
   constructor(
     message: string,
     public code: 'NOT_FOUND' | 'NO_PATH' | 'CONFLICT',
+    public details?: RenameErrorDetails,
   ) {
     super(message);
     this.name = 'RenameError';
   }
+}
+
+/**
+ * Convert an absolute folder path to its library-root-relative form, using
+ * POSIX separators for parity with how paths are stored and rendered elsewhere.
+ * Falls back to the original path if it's not actually inside the library root.
+ */
+function toLibraryRelative(absPath: string, libraryRoot: string): string {
+  const rel = relative(normalize(resolve(libraryRoot)), normalize(resolve(absPath)));
+  if (!rel || rel.startsWith('..')) return absPath;
+  return rel.split('\\').join('/');
 }

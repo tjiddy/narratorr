@@ -1,14 +1,14 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
+import { RenamePreviewModal } from '@/components/RenamePreviewModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
 import type { BookWithAuthor } from '@/lib/api';
-import { SUPPORTED_COVER_MIMES } from '../../../shared/mime.js';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
@@ -16,10 +16,10 @@ import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.js';
 import { useBookModals } from '@/hooks/useBookModals.js';
-import { MAX_COVER_SIZE } from '../../../shared/constants.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
+import { useCoverDraft } from '@/hooks/useCoverDraft.js';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { toast } from 'sonner';
 
@@ -33,7 +33,6 @@ function canShowWrongRelease(book: BookWithAuthor): boolean {
 }
 
 
-// eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null | undefined;
@@ -41,8 +40,6 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const navigate = useNavigate();
   const { modals, open, close } = useBookModals();
   const [tab, setTab] = useState<'details' | 'history'>('details');
-  const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
-  const [coverFile, setCoverFile] = useState<File | null>(null);
 
   const merged = mergeBookData(libraryBook, metadataBook);
   const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, monitorMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
@@ -52,40 +49,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const canRetryImport = useRetryImportAvailable(libraryBook.id, libraryBook.status);
 
-  const handleCoverFile = useCallback((file: File) => {
-    if (!SUPPORTED_COVER_MIMES.has(file.type)) {
-      toast.error('Only JPG, PNG, and WebP images are supported');
-      return;
-    }
-    if (file.size > MAX_COVER_SIZE) {
-      toast.error('Cover image must be under 10 MB');
-      return;
-    }
-    setCoverFile(file);
-    setCoverPreviewUrl(URL.createObjectURL(file));
-  }, []);
-
-  const handleCoverConfirm = useCallback(() => {
-    if (!coverFile) return;
-    uploadCoverMutation.mutate(coverFile, {
-      onSuccess: () => {
-        setCoverPreviewUrl(null);
-        setCoverFile(null);
-      },
-    });
-  }, [coverFile, uploadCoverMutation]);
-
-  const handleCoverCancel = useCallback(() => {
-    setCoverPreviewUrl(null);
-    setCoverFile(null);
-  }, []);
-
-  // Single owner of blob URL lifecycle — revokes on every change and unmount
-  useEffect(() => {
-    return () => {
-      if (coverPreviewUrl) URL.revokeObjectURL(coverPreviewUrl);
-    };
-  }, [coverPreviewUrl]);
+  const { previewUrl: coverPreviewUrl, handleCoverFile, handleCoverConfirm, handleCoverCancel } =
+    useCoverDraft(uploadCoverMutation);
 
   useCoverPaste({
     enabled: !!libraryBook.path,
@@ -176,6 +141,54 @@ export function BookDetails({ libraryBook, metadataBook }: {
         </div>
       )}
 
+      <BookDetailsModals
+        libraryBook={libraryBook}
+        modals={modals}
+        close={close}
+        isSaving={isSaving}
+        handleSave={handleSave}
+        renameMutation={renameMutation}
+        retagMutation={retagMutation}
+        mergeMutation={mergeMutation}
+        wrongReleaseMutation={wrongReleaseMutation}
+        deleteMutation={deleteMutation}
+        navigate={navigate}
+      />
+    </div>
+  );
+}
+
+type BookModalsState = ReturnType<typeof useBookModals>['modals'];
+type CloseFn = ReturnType<typeof useBookModals>['close'];
+type BookActions = ReturnType<typeof useBookActions>;
+
+function BookDetailsModals({
+  libraryBook,
+  modals,
+  close,
+  isSaving,
+  handleSave,
+  renameMutation,
+  retagMutation,
+  mergeMutation,
+  wrongReleaseMutation,
+  deleteMutation,
+  navigate,
+}: {
+  libraryBook: BookWithAuthor;
+  modals: BookModalsState;
+  close: CloseFn;
+  isSaving: boolean;
+  handleSave: BookActions['handleSave'];
+  renameMutation: BookActions['renameMutation'];
+  retagMutation: BookActions['retagMutation'];
+  mergeMutation: BookActions['mergeMutation'];
+  wrongReleaseMutation: BookActions['wrongReleaseMutation'];
+  deleteMutation: BookActions['deleteMutation'];
+  navigate: ReturnType<typeof useNavigate>;
+}) {
+  return (
+    <>
       <SearchReleasesModal
         isOpen={modals.search}
         book={libraryBook}
@@ -191,14 +204,14 @@ export function BookDetails({ libraryBook, metadataBook }: {
         />
       )}
 
-      <ConfirmModal
-        isOpen={modals.confirmRename}
-        title="Rename files?"
-        message={`Rename files for "${libraryBook.title}"? This will move files to match your folder format template. This cannot be undone.`}
-        confirmLabel="Rename"
-        onConfirm={() => { close('confirmRename'); renameMutation.mutate(); }}
-        onCancel={() => close('confirmRename')}
-      />
+      {modals.confirmRename && (
+        <RenamePreviewModal
+          bookId={libraryBook.id}
+          isOpen={modals.confirmRename}
+          onClose={() => close('confirmRename')}
+          onConfirm={() => renameMutation.mutate()}
+        />
+      )}
 
       <ConfirmModal
         isOpen={modals.confirmRetag}
@@ -241,7 +254,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         }}
         onCancel={() => close('confirmDelete')}
       />
-    </div>
+    </>
   );
 }
 
