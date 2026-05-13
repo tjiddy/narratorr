@@ -222,6 +222,49 @@ describe('RenameService', () => {
       expect(applyPairs).toEqual(plan.fileRenames);
     });
 
+    it('parity (folder move + file renames): planRename and renameBook produce identical fileRenames', async () => {
+      const { service, bookService } = createService();
+      const oldPath = '/library/Wrong Author/Old Title';
+      const targetPath = '/library/Brandon Sanderson/The Way of Kings';
+      const book = { ...mockBook, path: oldPath };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue({ ...book, path: targetPath });
+      // Same audio file listing whether read from source folder (preview) or target
+      // folder (apply) — folder move is a rename(), so the file set is preserved.
+      (readdir as Mock).mockResolvedValue([
+        { name: 'a.m4b', isFile: () => true },
+        { name: 'b.m4b', isFile: () => true },
+      ]);
+
+      const plan = await service.planRename(1);
+
+      // Path changed → planner must produce a folderMove so this exercises pathChanged === true
+      expect(plan.folderMove).not.toBeNull();
+      expect(plan.fileRenames.length).toBeGreaterThan(0);
+
+      // Exercise the apply path and capture file rename calls.
+      // First rename call is the folder move (oldPath → targetPath); subsequent
+      // calls are per-file renames inside the target folder.
+      (rename as Mock).mockClear();
+      await service.renameBook(1);
+
+      const renameCalls = (rename as Mock).mock.calls;
+      // Folder move first, then one rename per planned file rename.
+      expect(renameCalls.length).toBe(1 + plan.fileRenames.length);
+      const folderMoveCall = renameCalls[0]!;
+      expect((folderMoveCall[0] as string).split('\\').join('/')).toBe(oldPath);
+      expect((folderMoveCall[1] as string).split('\\').join('/')).toBe(targetPath);
+
+      // The remaining calls are the file renames — their bare-filename pairs must
+      // match plan.fileRenames in order.
+      const applyPairs = renameCalls.slice(1).map((args: unknown[]) => {
+        const from = (args[0] as string).split(/[/\\]/).pop()!;
+        const to = (args[1] as string).split(/[/\\]/).pop()!;
+        return { from, to };
+      });
+      expect(applyPairs).toEqual(plan.fileRenames);
+    });
+
     it('purity: planRename does not call fs.rename / mkdir / cp / rm or bookService.update', async () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };

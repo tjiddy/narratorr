@@ -135,6 +135,18 @@ describe('RenamePreviewModal', () => {
     expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
   });
 
+  it('renders a generic error alert and hides Rename on non-conflict preview failures', async () => {
+    vi.mocked(api.getBookRenamePreview).mockRejectedValue(new Error('Server exploded'));
+    renderModal();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Server exploded');
+    // Conflict-specific link should NOT render for a generic error
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
   it('calls onClose when cancel is clicked', async () => {
     vi.mocked(api.getBookRenamePreview).mockResolvedValue(fullPlan);
     const { onClose } = renderModal();
