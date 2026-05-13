@@ -425,6 +425,142 @@ describe('SeriesRefreshService.runScheduledRefresh (B19, B20)', () => {
     expect(sleep).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(30_000, 90_000);
   });
+
+  // #1082: scheduled refresh self-heals contaminated rows the same way manual
+  // refresh does, by mirroring the manual route's payload shape and gating
+  // providerSeriesId on agreement between the cached row name and the linked
+  // local book's seriesName.
+  it('withholds providerSeriesId when linked book seriesName disagrees with cached row name (self-heal)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(selectScheduledCandidates).mockResolvedValue([{
+      id: 7,
+      seriesName: 'The Mistborn Saga', // cached row name (contaminated)
+      providerSeriesId: 'MISTBORN_SID', // cached, also contaminated
+      seedAsin: 'WOR1',
+      bookId: 42,
+      bookTitle: 'Words of Radiance',
+      bookSeriesName: 'The Stormlight Archive', // linked book disagrees
+      bookSeriesPosition: 2,
+    }]);
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.runScheduledRefresh({ sleepMs: vi.fn().mockResolvedValue(undefined) });
+
+    // Linked-book seriesName preferred; providerSeriesId withheld so
+    // resolveTargetIdentity() falls through to the seed product. Manual-route
+    // shape (bookId, bookTitle, seriesPosition) is mirrored.
+    const opts = vi.mocked(applySuccessOutcome).mock.calls[0]![5] as {
+      seriesName?: string;
+      providerSeriesId?: string | null;
+      bookId?: number;
+      bookTitle?: string;
+      seriesPosition?: number | null;
+    };
+    expect(opts.seriesName).toBe('The Stormlight Archive');
+    expect(opts.providerSeriesId).toBeUndefined();
+    expect(opts.bookId).toBe(42);
+    expect(opts.bookTitle).toBe('Words of Radiance');
+    expect(opts.seriesPosition).toBe(2);
+  });
+
+  it('passes providerSeriesId through when linked book seriesName agrees with cached row name', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(selectScheduledCandidates).mockResolvedValue([{
+      id: 7,
+      seriesName: 'The Stormlight Archive',
+      providerSeriesId: 'STORMLIGHT_SID',
+      seedAsin: 'WOR1',
+      bookId: 42,
+      bookTitle: 'Words of Radiance',
+      bookSeriesName: 'The Stormlight Archive', // agrees
+      bookSeriesPosition: 2,
+    }]);
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.runScheduledRefresh({ sleepMs: vi.fn().mockResolvedValue(undefined) });
+
+    const opts = vi.mocked(applySuccessOutcome).mock.calls[0]![5] as {
+      seriesName?: string;
+      providerSeriesId?: string | null;
+      bookId?: number;
+      bookTitle?: string;
+      seriesPosition?: number | null;
+    };
+    expect(opts.seriesName).toBe('The Stormlight Archive');
+    expect(opts.providerSeriesId).toBe('STORMLIGHT_SID');
+    expect(opts.bookId).toBe(42);
+    expect(opts.bookTitle).toBe('Words of Radiance');
+    expect(opts.seriesPosition).toBe(2);
+  });
+
+  it('treats null linked-book seriesName as no override — keeps cached name and providerSeriesId', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(selectScheduledCandidates).mockResolvedValue([{
+      id: 7,
+      seriesName: 'The Stormlight Archive',
+      providerSeriesId: 'STORMLIGHT_SID',
+      seedAsin: 'WOR1',
+      bookId: 42,
+      bookTitle: 'Words of Radiance',
+      bookSeriesName: null, // null, not a disagreement
+      bookSeriesPosition: null,
+    }]);
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.runScheduledRefresh({ sleepMs: vi.fn().mockResolvedValue(undefined) });
+
+    const opts = vi.mocked(applySuccessOutcome).mock.calls[0]![5] as {
+      seriesName?: string;
+      providerSeriesId?: string | null;
+      bookId?: number;
+      bookTitle?: string;
+      seriesPosition?: number | null;
+    };
+    expect(opts.seriesName).toBe('The Stormlight Archive');
+    expect(opts.providerSeriesId).toBe('STORMLIGHT_SID');
+    expect(opts.bookId).toBe(42);
+    expect(opts.bookTitle).toBe('Words of Radiance');
+    expect(opts.seriesPosition).toBeNull();
+  });
+
+  it('omits linked-book context for provider-only candidates (no linked local book)', async () => {
+    const { service, metadata } = makeService();
+    vi.mocked(selectScheduledCandidates).mockResolvedValue([{
+      id: 7,
+      seriesName: 'The Stormlight Archive',
+      providerSeriesId: 'STORMLIGHT_SID',
+      seedAsin: 'WOR1',
+      // no bookId/bookTitle/bookSeriesName/bookSeriesPosition — provider-only
+    }]);
+    vi.mocked(findExistingSeriesRow).mockResolvedValue(null);
+    (metadata.getSameSeriesBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(applySuccessOutcome).mockResolvedValue(PROVIDER_BACKED_ROW);
+    vi.mocked(buildCardFromRow).mockResolvedValue(CARD_FIXTURE);
+
+    await service.runScheduledRefresh({ sleepMs: vi.fn().mockResolvedValue(undefined) });
+
+    const opts = vi.mocked(applySuccessOutcome).mock.calls[0]![5] as {
+      seriesName?: string;
+      providerSeriesId?: string | null;
+      bookId?: number;
+      bookTitle?: string;
+      seriesPosition?: number | null;
+    };
+    expect(opts.seriesName).toBe('The Stormlight Archive');
+    expect(opts.providerSeriesId).toBe('STORMLIGHT_SID');
+    expect(opts.bookId).toBeUndefined();
+    expect(opts.bookTitle).toBeUndefined();
+    expect(opts.seriesPosition).toBeUndefined();
+  });
 });
 
 describe('SeriesRefreshService.getSeriesForBook (B30)', () => {
