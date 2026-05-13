@@ -6,6 +6,7 @@ import {
   METADATA_SEARCH_PROVIDER_FACTORIES,
   RateLimitError,
   TransientError,
+  type AudibleSeriesChild,
   type MetadataSearchProvider,
   type MetadataEnrichmentProvider,
   type MetadataSearchResults,
@@ -23,6 +24,29 @@ import { serializeError } from '../utils/serialize-error.js';
 
 
 const DEFAULT_THROTTLE_MS = 200;
+
+/**
+ * Override a series ref's position when its ASIN matches the target series.
+ * The relationships endpoint is the canonical source for sequence — Audible's
+ * book-detail `series.sequence` can drift from it for non-default editions.
+ * (#1088 F2)
+ */
+function applySeriesPositionOverride(
+  ref: { name: string; position?: number | undefined; asin?: string | undefined },
+  targetAsin: string,
+  overridePosition: number | undefined,
+): { name: string; position?: number; asin?: string } {
+  if (ref.asin !== targetAsin) {
+    const passthrough: { name: string; position?: number; asin?: string } = { name: ref.name };
+    if (ref.position !== undefined) passthrough.position = ref.position;
+    if (ref.asin !== undefined) passthrough.asin = ref.asin;
+    return passthrough;
+  }
+  const next: { name: string; position?: number; asin?: string } = { name: ref.name };
+  if (ref.asin !== undefined) next.asin = ref.asin;
+  if (overridePosition !== undefined) next.position = overridePosition;
+  return next;
+}
 
 class RequestThrottle {
   private lastRequest = 0;
@@ -58,8 +82,11 @@ export class MetadataService {
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
+  private region: string;
+
   constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig, private settingsService?: SettingsService) {
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
+    this.region = region;
 
     for (const [type, factory] of Object.entries(METADATA_SEARCH_PROVIDER_FACTORIES)) {
       const provider = factory({ region });
@@ -67,8 +94,8 @@ export class MetadataService {
       this.log.info({ type, name: provider.name }, 'Metadata search provider loaded');
     }
 
-    this.audnexus = new AudnexusProvider();
-    this.log.info('Audnexus enrichment provider loaded');
+    this.audnexus = new AudnexusProvider({ region });
+    this.log.info({ region }, 'Audnexus enrichment provider loaded');
   }
 
   async search(query: string): Promise<MetadataSearchResults> {
@@ -350,6 +377,166 @@ export class MetadataService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Resolve canonical series membership for a Series card by:
+   *   1. Enriching the seed book via Audnexus to capture `seriesPrimary`.
+   *   2. Deriving the series ASIN from `seed.seriesPrimary.asin`, falling back
+   *      to the seed's Audible `series[]` entry with a populated sequence.
+   *   3. Fetching the Audible series product's `relationships` and walking
+   *      `relationship_type === 'series'` AND `relationship_to_product ===
+   *      'child'` children, fetching each via Audible detail + Audnexus
+   *      enrichment, and overriding the matched `series[]` ref's position
+   *      with the relationship payload's sequence.
+   *
+   * Per-child detail/enrichment failures are non-fatal — the child is skipped.
+   * A failure at the seed lookup or relationships call propagates so the
+   * caller can route through `applyFailureOutcome` / `applyRateLimitOutcome`.
+   *
+   * When no `seriesAsin` can be derived, returns `{ seed, members: [],
+   * seriesAsin: null }` without invoking the relationships endpoint so the
+   * caller routes through `applyEmptyOutcome`. (#1088 F2, F5)
+   */
+  async getSeriesMembersBySeedAsin(
+    seedAsin: string,
+  ): Promise<{ seed: BookMetadata | null; members: BookMetadata[]; seriesAsin: string | null }> {
+    this.log.debug({ seedAsin, region: this.region }, 'Series members lookup — fetching seed via Audnexus');
+    const audnexusSeed = await this.fetchSeedAudnexus(seedAsin);
+    let seriesAsin: string | null = audnexusSeed?.seriesPrimary?.asin ?? null;
+    let audibleSeed: BookMetadata | null = null;
+    if (!seriesAsin) {
+      audibleSeed = await this.fetchSeedAudible(seedAsin);
+      const fallback = (audibleSeed?.series ?? []).find(
+        (s) => s.position != null && Number.isFinite(s.position) && s.asin,
+      );
+      seriesAsin = fallback?.asin ?? null;
+    }
+
+    const seed = audnexusSeed ?? audibleSeed ?? (await this.fetchSeedAudible(seedAsin));
+    if (!seed) {
+      this.log.warn({ seedAsin }, 'Series members lookup — seed book metadata unavailable');
+      return { seed: null, members: [], seriesAsin };
+    }
+
+    if (!seriesAsin) {
+      this.log.debug({ seedAsin }, 'Series members lookup — no series ASIN derivable; routing to empty outcome');
+      return { seed, members: [], seriesAsin: null };
+    }
+
+    this.log.debug({ seedAsin, seriesAsin }, 'Series members lookup — fetching Audible relationships');
+    const children = await this.fetchSeriesRelationships(seriesAsin);
+    if (children.length === 0) {
+      this.log.debug({ seedAsin, seriesAsin }, 'Series members lookup — relationships empty; routing to empty outcome');
+      return { seed, members: [], seriesAsin };
+    }
+
+    // Prepend the seed so the dedupe path's seed-canonical pick still works
+    // when the relationships payload also contains the seed (the typical case).
+    const members: BookMetadata[] = [seed];
+    for (const child of children) {
+      if (child.asin === seedAsin) continue;
+      const detail = await this.fetchSeriesChild(child.asin, seriesAsin, child.sequence);
+      if (detail) members.push(detail);
+    }
+    this.log.debug(
+      { seedAsin, seriesAsin, memberCount: members.length, relationshipChildren: children.length },
+      'Series members lookup — completed',
+    );
+    return { seed, members, seriesAsin };
+  }
+
+  private async fetchSeedAudnexus(asin: string): Promise<BookMetadata | null> {
+    if (this.isRateLimited('Audnexus')) {
+      this.log.warn({ asin }, 'Series seed Audnexus lookup skipped — provider rate limited');
+      return null;
+    }
+    try {
+      await this.throttle.acquire();
+      return await this.audnexus.getBook(asin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) {
+        this.setRateLimited(error.provider, error.retryAfterMs);
+        throw error;
+      }
+      throw error;
+    }
+  }
+
+  private async fetchSeedAudible(asin: string): Promise<BookMetadata | null> {
+    const provider = this.providers[0];
+    if (!provider) return null;
+    if (this.isRateLimited(provider.name)) {
+      this.log.warn({ asin, provider: provider.name }, 'Series seed Audible lookup skipped — provider rate limited');
+      return null;
+    }
+    try {
+      await this.throttle.acquire();
+      return await provider.getBook(asin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) {
+        this.setRateLimited(error.provider, error.retryAfterMs);
+        throw error;
+      }
+      throw error;
+    }
+  }
+
+  private async fetchSeriesRelationships(seriesAsin: string): Promise<AudibleSeriesChild[]> {
+    const provider = this.providers[0];
+    if (!provider) return [];
+    const audible = provider as Partial<{ getSeriesRelationships: (asin: string) => Promise<AudibleSeriesChild[]> }>;
+    if (typeof audible.getSeriesRelationships !== 'function') return [];
+    if (this.isRateLimited(provider.name)) {
+      this.log.warn({ seriesAsin, provider: provider.name }, 'Series relationships skipped — provider rate limited');
+      return [];
+    }
+    try {
+      await this.throttle.acquire();
+      return await audible.getSeriesRelationships(seriesAsin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) {
+        this.setRateLimited(error.provider, error.retryAfterMs);
+        throw error;
+      }
+      throw error;
+    }
+  }
+
+  private async fetchSeriesChild(
+    childAsin: string,
+    seriesAsin: string,
+    sequence: string | null,
+  ): Promise<BookMetadata | null> {
+    let audible: BookMetadata | null;
+    try {
+      audible = await this.fetchSeedAudible(childAsin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) throw error;
+      this.log.debug({ error: serializeError(error), asin: childAsin }, 'Series child Audible detail failed — skipping');
+      return null;
+    }
+    if (!audible) return null;
+
+    let audnexus: BookMetadata | null = null;
+    try {
+      audnexus = await this.fetchSeedAudnexus(childAsin);
+    } catch (error: unknown) {
+      if (error instanceof RateLimitError) throw error;
+      this.log.debug({ error: serializeError(error), asin: childAsin }, 'Series child Audnexus enrichment failed — using Audible-only mapping');
+    }
+
+    const parsedSeq = sequence !== null ? parseFloat(sequence) : NaN;
+    const overridePosition: number | undefined = Number.isFinite(parsedSeq) ? parsedSeq : undefined;
+    const series = (audible.series ?? []).map((s) => applySeriesPositionOverride(s, seriesAsin, overridePosition));
+    const seriesPrimary = audnexus?.seriesPrimary
+      ? applySeriesPositionOverride(audnexus.seriesPrimary, seriesAsin, overridePosition)
+      : undefined;
+    return {
+      ...audible,
+      ...(series.length > 0 && { series }),
+      ...(seriesPrimary && { seriesPrimary }),
+    };
   }
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {

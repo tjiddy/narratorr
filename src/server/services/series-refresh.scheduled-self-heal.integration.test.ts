@@ -49,6 +49,8 @@ function stormlightProduct(opts: {
     title: opts.title,
     authors: [{ name: 'Brandon Sanderson' }],
     series: refs,
+    // Mirrors Audnexus enrichment — seriesPrimary points at the canonical target.
+    seriesPrimary: { name: STORMLIGHT, asin: STORMLIGHT_SID, position: opts.position },
   };
 }
 
@@ -262,7 +264,16 @@ describe('scheduled series refresh — self-heal contaminated rows (#1082)', () 
   describe('runScheduledRefresh — end-to-end self-heal', () => {
     function makeService(products: BookMetadata[]) {
       const metadataService = inject<MetadataService>({
-        getSameSeriesBooks: async (_asin: string) => products,
+        getSeriesMembersBySeedAsin: async (seedAsin: string) => {
+          const seed = products.find((p) => p.asin === seedAsin) ?? products[0] ?? null;
+          // Mimic the real method: prefer Audnexus seriesPrimary.asin, then
+          // fall back to the seed's series[] entry with a populated sequence.
+          const seriesAsin =
+            seed?.seriesPrimary?.asin
+            ?? seed?.series?.find((s) => s.position != null && s.asin)?.asin
+            ?? null;
+          return { seed, members: products, seriesAsin: products.length === 0 ? null : seriesAsin };
+        },
       });
       const bookService = new BookService(db, log);
       return new SeriesRefreshService(db, log, metadataService, bookService);

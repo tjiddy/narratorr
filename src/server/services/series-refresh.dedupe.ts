@@ -65,6 +65,23 @@ export function findMatchingSeriesRef(
   product: BookMetadata,
   target: TargetSeriesIdentity,
 ): MatchedSeriesRef | null {
+  // Prefer the candidate's `seriesPrimary` (Audnexus-enriched) over its
+  // `series[]` array when both sides know the canonical identity — Audible's
+  // raw `series[]` can list a broader universe (Cosmere) or share ambiguous
+  // names across providers, so the Audnexus-confirmed primary is the
+  // strongest signal we have when present. (#1088 F1)
+  if (product.seriesPrimary) {
+    if (target.asin && product.seriesPrimary.asin === target.asin) {
+      return toMatchedRef(product.seriesPrimary);
+    }
+    if (target.normalizedName && typeof product.seriesPrimary.name === 'string' && product.seriesPrimary.name.length > 0) {
+      const candidate = normalizeSeriesName(product.seriesPrimary.name);
+      const targetLoose = looseNormalize(target.normalizedName);
+      if (candidate === target.normalizedName || looseNormalize(candidate) === targetLoose) {
+        return toMatchedRef(product.seriesPrimary);
+      }
+    }
+  }
   if (!product.series || product.series.length === 0) return null;
   if (target.asin) {
     const byAsin = product.series.find((s) => s.asin && s.asin === target.asin);
@@ -263,6 +280,35 @@ function metadataRichness(product: BookMetadata): number {
   return score;
 }
 
+/** Format-type tie-breaker keys (case-insensitive). Lower = preferred. (#1088 F3) */
+const RADIO_FORMAT_TYPES = new Set(['radio', 'original_recording']);
+
+function formatTypeOf(product: BookMetadata): string | null {
+  return product.formatType ? product.formatType.toLowerCase() : null;
+}
+
+function contentDeliveryTypeOf(product: BookMetadata): string | null {
+  return product.contentDeliveryType ? product.contentDeliveryType.toLowerCase() : null;
+}
+
+/**
+ * Score where lower wins. `unabridged` beats `abridged`; absent or any other
+ * value sits between them so it never causes a hard drop. (#1088 F3)
+ */
+function formatTypePreference(product: BookMetadata): number {
+  const ft = formatTypeOf(product);
+  if (ft === 'unabridged') return 0;
+  if (ft === 'abridged') return 2;
+  return 1;
+}
+
+function contentDeliveryPreference(product: BookMetadata): number {
+  const cdt = contentDeliveryTypeOf(product);
+  if (cdt === 'singlepartbook') return 0;
+  if (cdt === 'multipartbook') return 2;
+  return 1;
+}
+
 async function pickCanonical(db: DbOrTx, group: CandidateInfo[], seedAsin: string): Promise<CandidateInfo> {
   // 1. Seed/current book ASIN
   const seedMatch = group.find((c) => c.product.asin === seedAsin);
@@ -273,14 +319,38 @@ async function pickCanonical(db: DbOrTx, group: CandidateInfo[], seedAsin: strin
     const rows = await db.select({ id: books.id }).from(books).where(eq(books.asin, c.product.asin)).limit(1);
     if (rows.length > 0) return c;
   }
-  // 3. Richest metadata, with deterministic lexically-smallest-ASIN tiebreaker
+  // 3. Format-type / content-delivery preferences, then metadata richness, then
+  // lexically-smallest-ASIN. (#1088 F3, F7)
   return [...group].sort((a, b) => {
-    const diff = metadataRichness(b.product) - metadataRichness(a.product);
-    if (diff !== 0) return diff;
+    const ftDiff = formatTypePreference(a.product) - formatTypePreference(b.product);
+    if (ftDiff !== 0) return ftDiff;
+    const cdtDiff = contentDeliveryPreference(a.product) - contentDeliveryPreference(b.product);
+    if (cdtDiff !== 0) return cdtDiff;
+    const richDiff = metadataRichness(b.product) - metadataRichness(a.product);
+    if (richDiff !== 0) return richDiff;
     const aAsin = a.product.asin ?? '￿';
     const bAsin = b.product.asin ?? '￿';
     return aAsin.localeCompare(bAsin);
   })[0]!;
+}
+
+/**
+ * Drop candidates whose `formatType` is `radio` or `original_recording` —
+ * Audible commonly returns radio-play editions alongside the audiobook series
+ * (Hitchhiker's, Doctor Who). Exception: when the seed book itself carries the
+ * same format, the user intentionally seeded with a radio-play ASIN, so the
+ * exception keeps that series buildable. Case-insensitive; absent `formatType`
+ * is never dropped. (#1088 F3)
+ */
+export function filterRadioFormatType(products: BookMetadata[], seedAsin: string): BookMetadata[] {
+  const seed = products.find((p) => p.asin === seedAsin);
+  const seedFormat = seed ? formatTypeOf(seed) : null;
+  return products.filter((p) => {
+    const ft = formatTypeOf(p);
+    if (ft === null) return true;
+    if (!RADIO_FORMAT_TYPES.has(ft)) return true;
+    return seedFormat === ft;
+  });
 }
 
 /**
@@ -420,7 +490,10 @@ export async function reconcileCandidates(
   // This is what reconciles a contaminated row back to scope on refresh. (#1078)
   await deleteContaminatedMembers(tx, seriesId, collectNonMatchingAsins(products, target));
 
-  const candidates = filterProductsToTarget(products, target);
+  // Strip radio-play / original-recording editions before grouping, unless the
+  // seed itself carries that format (the Hitchhiker radio-play exception). (#1088 F3)
+  const formatFiltered = filterRadioFormatType(products, seedAsin);
+  const candidates = filterProductsToTarget(formatFiltered, target);
   const groups = new Map<string, CandidateInfo[]>();
   for (const c of candidates) {
     const key = logicalGroupKey(c);

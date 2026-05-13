@@ -390,7 +390,16 @@ describe('issue #1074 — empty-members reconciliation', () => {
   describe('SeriesRefreshService.reconcileFromBookAsin — manual refresh response synthesis', () => {
     function makeService(products: BookMetadata[]) {
       const metadataService = inject<MetadataService>({
-        getSameSeriesBooks: async (_asin: string) => products,
+        getSeriesMembersBySeedAsin: async (seedAsin: string) => {
+          const seed = products.find((p) => p.asin === seedAsin) ?? products[0] ?? null;
+          // Mimic the real method: prefer Audnexus seriesPrimary.asin, then
+          // fall back to the seed's series[] entry with a populated sequence.
+          const seriesAsin =
+            seed?.seriesPrimary?.asin
+            ?? seed?.series?.find((s) => s.position != null && s.asin)?.asin
+            ?? null;
+          return { seed, members: products, seriesAsin: products.length === 0 ? null : seriesAsin };
+        },
       });
       const bookService = new BookService(db, log);
       return new SeriesRefreshService(db, log, metadataService, bookService);

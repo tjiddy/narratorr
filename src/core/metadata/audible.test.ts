@@ -522,6 +522,104 @@ describe('AudibleProvider', () => {
     });
   });
 
+  describe('getSeriesRelationships', () => {
+    it('returns series children with asin + sequence from the relationships response (#1088 F2)', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({
+            product: {
+              asin: 'BOBIVERSE_SID',
+              relationships: [
+                { asin: 'BOB1', relationship_type: 'series', relationship_to_product: 'child', sequence: '1', sort: '1' },
+                { asin: 'BOB2', relationship_type: 'series', relationship_to_product: 'child', sequence: '2' },
+                { asin: 'BOB3', relationship_type: 'series', relationship_to_product: 'child', sequence: '3' },
+                { asin: 'BOB4', relationship_type: 'series', relationship_to_product: 'child', sequence: '4' },
+                { asin: 'BOB5', relationship_type: 'series', relationship_to_product: 'child', sequence: '5' },
+              ],
+            },
+          });
+        }),
+      );
+
+      const children = await provider.getSeriesRelationships('BOBIVERSE_SID');
+
+      expect(capturedUrl?.searchParams.get('response_groups')).toBe('relationships');
+      expect(children).toEqual([
+        { asin: 'BOB1', sequence: '1' },
+        { asin: 'BOB2', sequence: '2' },
+        { asin: 'BOB3', sequence: '3' },
+        { asin: 'BOB4', sequence: '4' },
+        { asin: 'BOB5', sequence: '5' },
+      ]);
+    });
+
+    it('drops relationships whose relationship_type is not series', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'SID',
+              relationships: [
+                { asin: 'A1', relationship_type: 'series', relationship_to_product: 'child', sequence: '1' },
+                { asin: 'A2', relationship_type: 'recommendation', relationship_to_product: 'child', sequence: '2' },
+                { asin: 'A3', relationship_type: 'series', relationship_to_product: 'parent', sequence: '1' },
+              ],
+            },
+          });
+        }),
+      );
+
+      const children = await provider.getSeriesRelationships('SID');
+      expect(children).toEqual([{ asin: 'A1', sequence: '1' }]);
+    });
+
+    it('keeps non-numeric sequence strings unchanged (caller parses)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'SID',
+              relationships: [
+                { asin: 'X1', relationship_type: 'series', relationship_to_product: 'child', sequence: '2.5' },
+                { asin: 'X2', relationship_type: 'series', relationship_to_product: 'child', sequence: 'prologue' },
+                { asin: 'X3', relationship_type: 'series', relationship_to_product: 'child' }, // sequence missing
+              ],
+            },
+          });
+        }),
+      );
+
+      const children = await provider.getSeriesRelationships('SID');
+      expect(children).toEqual([
+        { asin: 'X1', sequence: '2.5' },
+        { asin: 'X2', sequence: 'prologue' },
+        { asin: 'X3', sequence: null },
+      ]);
+    });
+
+    it('returns an empty array when the response has no relationships', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({ product: { asin: 'SID' } });
+        }),
+      );
+
+      await expect(provider.getSeriesRelationships('SID')).resolves.toEqual([]);
+    });
+
+    it('throws TransientError on 503', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      await expect(provider.getSeriesRelationships('SID')).rejects.toThrow(TransientError);
+    });
+  });
+
   describe('regional TLD', () => {
     it('uses .co.uk for UK region', async () => {
       const ukProvider = new AudibleProvider({ region: 'uk' });

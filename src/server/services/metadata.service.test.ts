@@ -12,6 +12,7 @@ const mockAudibleProvider = {
   searchBooks: vi.fn().mockResolvedValue({ books: [] }),
   searchSeries: vi.fn().mockResolvedValue([]),
   getBook: vi.fn().mockResolvedValue(null),
+  getSeriesRelationships: vi.fn().mockResolvedValue([]),
   test: vi.fn().mockResolvedValue({ success: true }),
 };
 
@@ -45,6 +46,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.searchBooks.mockReset();
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
+    mockAudibleProvider.getSeriesRelationships.mockReset();
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getAuthor.mockReset();
@@ -52,6 +54,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
+    mockAudibleProvider.getSeriesRelationships.mockResolvedValue([]);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
@@ -1950,6 +1953,175 @@ describe('MetadataService', () => {
       const result = await service.searchBooks('keywords query');
       expect(result).toEqual([{ title: 'Result' }]);
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('keywords query', undefined);
+    });
+  });
+
+  // ── #1088 — Series members orchestration ────────────────────────────────
+  describe('getSeriesMembersBySeedAsin (#1088)', () => {
+    const seedAsin = 'WOR1';
+    const audnexusSeed = {
+      asin: seedAsin,
+      title: 'Words of Radiance',
+      authors: [{ name: 'Brandon Sanderson' }],
+      series: [{ name: 'The Stormlight Archive', position: 2, asin: 'STORMLIGHT_SID' }],
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2, asin: 'STORMLIGHT_SID' },
+    };
+    const audibleSeed = {
+      asin: seedAsin,
+      title: 'Words of Radiance',
+      authors: [{ name: 'Brandon Sanderson' }],
+      series: [{ name: 'The Stormlight Archive', position: 2, asin: 'STORMLIGHT_SID' }],
+    };
+
+    it('uses Audnexus seriesPrimary.asin as the derived series ASIN and calls relationships with it (F5)', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(audnexusSeed); // seed
+      mockAudibleProvider.getSeriesRelationships.mockResolvedValueOnce([]);
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      expect(result.seriesAsin).toBe('STORMLIGHT_SID');
+      expect(mockAudibleProvider.getSeriesRelationships).toHaveBeenCalledWith('STORMLIGHT_SID');
+    });
+
+    it('falls back to seed Audible series[] with populated sequence when Audnexus has no seriesPrimary (F5)', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce({ ...audnexusSeed, seriesPrimary: undefined, series: undefined });
+      mockAudibleProvider.getBook.mockResolvedValueOnce(audibleSeed);
+      mockAudibleProvider.getSeriesRelationships.mockResolvedValueOnce([]);
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      expect(result.seriesAsin).toBe('STORMLIGHT_SID');
+      expect(mockAudibleProvider.getSeriesRelationships).toHaveBeenCalledWith('STORMLIGHT_SID');
+    });
+
+    it('returns { seed, members: [], seriesAsin: null } when neither Audnexus nor Audible yields a series ASIN (F5)', async () => {
+      // Audnexus seed exists but no seriesPrimary
+      mockAudnexus.getBook.mockResolvedValueOnce({ ...audnexusSeed, seriesPrimary: undefined, series: undefined });
+      // Audible seed has no usable series entry with sequence
+      mockAudibleProvider.getBook.mockResolvedValueOnce({ ...audibleSeed, series: [] });
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      expect(result.seriesAsin).toBeNull();
+      expect(result.members).toEqual([]);
+      expect(mockAudibleProvider.getSeriesRelationships).not.toHaveBeenCalled();
+    });
+
+    it('returns members:[] when relationships array is empty (caller routes through applyEmptyOutcome)', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(audnexusSeed);
+      mockAudibleProvider.getSeriesRelationships.mockResolvedValueOnce([]);
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      expect(result.seriesAsin).toBe('STORMLIGHT_SID');
+      expect(result.members).toEqual([]);
+    });
+
+    it('fetches each relationship child via Audible + Audnexus, prepends the seed, and overrides position with the relationship sequence', async () => {
+      mockAudnexus.getBook.mockImplementation(async (asin: string) => {
+        if (asin === seedAsin) return audnexusSeed;
+        if (asin === 'WOK1') return { ...audnexusSeed, asin: 'WOK1', title: 'The Way of Kings', seriesPrimary: { name: 'The Stormlight Archive', position: 999, asin: 'STORMLIGHT_SID' } };
+        return null;
+      });
+      mockAudibleProvider.getBook.mockImplementation(async (asin: string) => {
+        if (asin === 'WOK1') return {
+          asin: 'WOK1',
+          title: 'The Way of Kings',
+          authors: [{ name: 'Brandon Sanderson' }],
+          // Audible's `series[]` position is wrong on purpose to prove override.
+          series: [{ name: 'The Stormlight Archive', position: 7, asin: 'STORMLIGHT_SID' }],
+        };
+        return null;
+      });
+      mockAudibleProvider.getSeriesRelationships.mockResolvedValueOnce([
+        { asin: 'WOK1', sequence: '1' },
+        { asin: seedAsin, sequence: '2' }, // seed itself — skipped to avoid dup
+      ]);
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      expect(result.members).toHaveLength(2);
+      expect(result.members[0]).toEqual(audnexusSeed); // seed first
+      const wok = result.members[1]!;
+      expect(wok.asin).toBe('WOK1');
+      // Position was overridden from 7/999 → 1 via the relationships sequence
+      const match = wok.series?.find((s) => s.asin === 'STORMLIGHT_SID');
+      expect(match?.position).toBe(1);
+      // seriesPrimary's position was also overridden.
+      expect(wok.seriesPrimary?.position).toBe(1);
+    });
+
+    it('parses non-numeric sequence as undefined position (row still kept) (F2)', async () => {
+      mockAudnexus.getBook.mockImplementation(async (asin: string) => {
+        if (asin === seedAsin) return audnexusSeed;
+        if (asin === 'NOVELLA1') return null;
+        return null;
+      });
+      mockAudibleProvider.getBook.mockImplementation(async (asin: string) => {
+        if (asin === 'NOVELLA1') return {
+          asin: 'NOVELLA1',
+          title: 'Edgedancer',
+          authors: [{ name: 'Brandon Sanderson' }],
+          series: [{ name: 'The Stormlight Archive', position: 2.5, asin: 'STORMLIGHT_SID' }],
+        };
+        return null;
+      });
+      mockAudibleProvider.getSeriesRelationships.mockResolvedValueOnce([
+        { asin: 'NOVELLA1', sequence: 'prologue' },
+      ]);
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      const novella = result.members.find((m) => m.asin === 'NOVELLA1')!;
+      const match = novella.series?.find((s) => s.asin === 'STORMLIGHT_SID')!;
+      expect(match.position).toBeUndefined();
+    });
+
+    it('skips children whose Audible detail fetch fails (non-fatal per-child error)', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(audnexusSeed); // seed only
+      mockAudibleProvider.getBook
+        .mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'))
+        .mockResolvedValueOnce({
+          asin: 'WOK1',
+          title: 'The Way of Kings',
+          authors: [{ name: 'Brandon Sanderson' }],
+          series: [{ name: 'The Stormlight Archive', position: 1, asin: 'STORMLIGHT_SID' }],
+        });
+      mockAudibleProvider.getSeriesRelationships.mockResolvedValueOnce([
+        { asin: 'WOK0_BAD', sequence: '0' },
+        { asin: 'WOK1', sequence: '1' },
+      ]);
+
+      const result = await service.getSeriesMembersBySeedAsin(seedAsin);
+
+      expect(result.members).toHaveLength(2);
+      expect(result.members.find((m) => m.asin === 'WOK0_BAD')).toBeUndefined();
+      expect(result.members.find((m) => m.asin === 'WOK1')).toBeDefined();
+    });
+
+    it('propagates a RateLimitError from the Audible relationships call', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce(audnexusSeed);
+      mockAudibleProvider.getSeriesRelationships.mockRejectedValueOnce(new RateLimitError(30_000, 'Audible.com'));
+
+      await expect(service.getSeriesMembersBySeedAsin(seedAsin)).rejects.toThrow(RateLimitError);
+    });
+
+    it('propagates a TransientError from the Audnexus seed call (whole-pipeline failure)', async () => {
+      mockAudnexus.getBook.mockRejectedValueOnce(new TransientError('Audnexus', 'HTTP 503'));
+
+      await expect(service.getSeriesMembersBySeedAsin(seedAsin)).rejects.toThrow(TransientError);
+    });
+  });
+
+  describe('Audnexus provider region threading (#1088)', () => {
+    it('constructs AudnexusProvider with the resolved region', async () => {
+      const { AudnexusProvider } = await import('../../core/index.js');
+      const audnexusCtor = vi.mocked(AudnexusProvider);
+      audnexusCtor.mockClear();
+
+      new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
+
+      expect(audnexusCtor).toHaveBeenCalledWith({ region: 'uk' });
     });
   });
 });

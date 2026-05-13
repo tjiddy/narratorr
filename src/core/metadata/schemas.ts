@@ -22,6 +22,7 @@ export const BookMetadataSchema = z.object({
   authors: z.array(AuthorRefSchema).min(1),
   narrators: z.array(z.string()).optional(),
   series: z.array(SeriesRefSchema).optional(),
+  seriesPrimary: SeriesRefSchema.optional(),
   description: z.string().optional(),
   publisher: z.string().optional(),
   publishedDate: z.string().optional(),
