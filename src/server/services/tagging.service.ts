@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { readdir, rename, unlink, stat } from 'node:fs/promises';
 import { join, extname, basename, dirname } from 'node:path';
 import { promisify } from 'node:util';
-import { parseFile } from 'music-metadata';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
@@ -12,6 +11,24 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import {
+  readExistingTags,
+  resolveTags,
+  fileHasCoverArt,
+  buildCanonicalTags,
+  applyExcludeFields,
+  planFile,
+  pickCanonical,
+  type RetagPlan,
+  type RetagPlanFile,
+} from './retag-plan.js';
+
+export type {
+  RetagPlan,
+  RetagPlanFile,
+  RetagPlanFileDiff,
+  RetagPlanCanonical,
+} from './retag-plan.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,60 +58,6 @@ export interface RetagResult {
   skipped: number;
   failed: number;
   warnings: string[];
-}
-
-export interface RetagPlanFileDiff {
-  field: string;
-  current: string | null;
-  next: string | null;
-}
-
-export interface RetagPlanFile {
-  file: string;
-  outcome: 'will-tag' | 'skip-populated' | 'skip-unsupported';
-  diff?: RetagPlanFileDiff[];
-  /** True when cover-embed would run for this file; surfaces cover-only writes to the client. */
-  coverPending?: boolean;
-}
-
-export interface RetagPlanCanonical {
-  artist?: string;
-  albumArtist?: string;
-  album?: string;
-  title?: string;
-  composer?: string;
-  grouping?: string;
-}
-
-export interface RetagPlan {
-  mode: TagMode;
-  embedCover: boolean;
-  hasCoverFile: boolean;
-  isSingleFile: boolean;
-  canonical: RetagPlanCanonical;
-  files: RetagPlanFile[];
-  warnings: string[];
-}
-
-/**
- * Read existing tags from a file to determine which fields are already populated.
- */
-async function readExistingTags(filePath: string): Promise<Partial<TagMetadata>> {
-  try {
-    const metadata = await parseFile(filePath);
-    const common = metadata.common;
-    const result: Partial<TagMetadata> = {};
-    if (common.artist) result.artist = common.artist;
-    if (common.albumartist) result.albumArtist = common.albumartist;
-    if (common.album) result.album = common.album;
-    if (common.title) result.title = common.title;
-    if (common.composer?.[0]) result.composer = common.composer[0];
-    if (common.grouping) result.grouping = common.grouping;
-    if (common.track?.no != null) result.track = common.track.no;
-    return result;
-  } catch {
-    return {};
-  }
 }
 
 /**
@@ -137,47 +100,6 @@ export function buildFfmpegArgs(
 
   args.push(outputPath);
   return args;
-}
-
-/**
- * Determine which tags to write based on mode.
- * In 'populate_missing' mode, only write tags that are currently empty.
- * In 'overwrite' mode, write all tags. Both modes return `null` when there
- * are no tags to write — callers then decide whether to short-circuit or
- * proceed (e.g. for cover-only embeds).
- */
-function resolveTags(
-  desired: TagMetadata,
-  existing: Partial<TagMetadata>,
-  mode: TagMode,
-): TagMetadata | null {
-  if (mode === 'overwrite') {
-    return hasAnyField(desired) ? desired : null;
-  }
-
-  // populate_missing: only write fields that are currently empty
-  const resolved: TagMetadata = {};
-  let hasAnyTag = false;
-
-  for (const key of ['artist', 'albumArtist', 'album', 'title', 'composer', 'grouping'] as const) {
-    if (desired[key] && !existing[key]) {
-      resolved[key] = desired[key];
-      hasAnyTag = true;
-    }
-  }
-
-  if (desired.track != null && existing.track == null) {
-    resolved.track = desired.track;
-    if (desired.trackTotal != null) resolved.trackTotal = desired.trackTotal;
-    hasAnyTag = true;
-  }
-
-  return hasAnyTag ? resolved : null;
-}
-
-function hasAnyField(tags: TagMetadata): boolean {
-  return !!(tags.artist || tags.albumArtist || tags.album || tags.title || tags.composer || tags.grouping
-    || (tags.track != null && tags.trackTotal != null));
 }
 
 /**
@@ -241,15 +163,6 @@ export async function tagFile(
   }
 }
 
-async function fileHasCoverArt(filePath: string): Promise<boolean> {
-  try {
-    const metadata = await parseFile(filePath);
-    return (metadata.common.picture?.length ?? 0) > 0;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Find a cover image file in a directory.
  */
@@ -290,102 +203,6 @@ async function warnUnsupportedFormats(
     }
   }
   return { skipped: unsupported.length, warnings, entries: unsupported };
-}
-
-/**
- * Compute the per-file outcome a planRetag run would produce — same logic as
- * `tagFile` but without invoking ffmpeg or touching disk.
- */
-async function planFile(
-  filePath: string,
-  desired: TagMetadata,
-  mode: TagMode,
-  coverPath: string | undefined,
-): Promise<RetagPlanFile> {
-  const fileName = basename(filePath);
-  const existing = await readExistingTags(filePath);
-  const resolvedTags = resolveTags(desired, existing, mode);
-
-  const fileHasCover = coverPath !== undefined ? await fileHasCoverArt(filePath) : false;
-  const coverPending = coverPath !== undefined && (mode === 'overwrite' || !fileHasCover);
-
-  if (!resolvedTags && !coverPending) {
-    return { file: fileName, outcome: 'skip-populated' };
-  }
-
-  const diff: RetagPlanFileDiff[] = [];
-  if (resolvedTags) {
-    for (const field of TAG_DIFF_FIELDS) {
-      const next = resolvedTags[field];
-      if (next === undefined) continue;
-      const current = existing[field] ?? null;
-      diff.push({ field, current: stringify(current), next: stringify(next) });
-    }
-    if (resolvedTags.track != null && resolvedTags.trackTotal != null) {
-      const currentTrack = existing.track != null ? `${existing.track}` : null;
-      diff.push({ field: 'track', current: currentTrack, next: `${resolvedTags.track}/${resolvedTags.trackTotal}` });
-    }
-  }
-
-  return { file: fileName, outcome: 'will-tag', diff, coverPending };
-}
-
-const TAG_DIFF_FIELDS = ['artist', 'albumArtist', 'album', 'title', 'composer', 'grouping'] as const;
-
-function stringify(value: string | number | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  return typeof value === 'string' ? value : `${value}`;
-}
-
-function pickCanonical(tags: TagMetadata): RetagPlanCanonical {
-  const result: RetagPlanCanonical = {};
-  if (tags.artist) result.artist = tags.artist;
-  if (tags.albumArtist) result.albumArtist = tags.albumArtist;
-  if (tags.album) result.album = tags.album;
-  if (tags.title) result.title = tags.title;
-  if (tags.composer) result.composer = tags.composer;
-  if (tags.grouping) result.grouping = tags.grouping;
-  return result;
-}
-
-/**
- * Build the canonical desired-tag set for a book. The same shape is used in
- * the apply path (per-file loop) and the preview's canonical card.
- */
-export function buildCanonicalTags(
-  metadata: {
-    title: string;
-    authorName?: string | null | undefined;
-    narrator?: string | null | undefined;
-    seriesName?: string | null | undefined;
-  },
-): TagMetadata {
-  return {
-    album: metadata.title,
-    title: metadata.title,
-    ...(metadata.authorName && { artist: metadata.authorName, albumArtist: metadata.authorName }),
-    ...(metadata.narrator && { composer: metadata.narrator }),
-    ...(metadata.seriesName && { grouping: metadata.seriesName }),
-  };
-}
-
-/**
- * Strip the user-excluded fields from a desired-tag set. The user-facing
- * `track` checkbox covers both `track` and `trackTotal` — exclude expands.
- */
-export function applyExcludeFields(tags: TagMetadata, excludeFields: ReadonlySet<RetagExcludableField>): TagMetadata {
-  const result: TagMetadata = {};
-  if (!excludeFields.has('artist') && tags.artist !== undefined) result.artist = tags.artist;
-  if (!excludeFields.has('albumArtist') && tags.albumArtist !== undefined) result.albumArtist = tags.albumArtist;
-  if (!excludeFields.has('album') && tags.album !== undefined) result.album = tags.album;
-  if (!excludeFields.has('title') && tags.title !== undefined) result.title = tags.title;
-  if (!excludeFields.has('composer') && tags.composer !== undefined) result.composer = tags.composer;
-  if (!excludeFields.has('grouping') && tags.grouping !== undefined) result.grouping = tags.grouping;
-  if (!excludeFields.has('track')) {
-    if (tags.track !== undefined) result.track = tags.track;
-    if (tags.trackTotal !== undefined) result.trackTotal = tags.trackTotal;
-  }
-  return result;
 }
 
 export class TaggingService {
@@ -488,7 +305,7 @@ export class TaggingService {
     const authorStr = book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
     const narratorStr = book.narrators.length > 0 ? book.narrators.map(n => n.name).join(', ') : null;
 
-    return await this.tagBook(
+    return this.tagBook(
       bookId,
       book.path!,
       {

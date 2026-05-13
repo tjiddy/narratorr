@@ -355,7 +355,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { params: idParamSchema } },
     async (request) => {
       const { id } = request.params;
-      return await taggingService.planRetag(id);
+      return taggingService.planRetag(id);
     },
   );
 

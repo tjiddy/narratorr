@@ -3,7 +3,8 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
-import { RetagPreviewModal, countApplyFiles } from './RetagPreviewModal';
+import { RetagPreviewModal } from './RetagPreviewModal';
+import { countApplyFiles } from './RetagPreviewModal.utils';
 import { api, RetagFfmpegNotConfiguredError, type RetagPlan, type RetagExcludableField } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
