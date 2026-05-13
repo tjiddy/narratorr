@@ -70,6 +70,27 @@ export const deleteBookQuerySchema = z.object({
   deleteFiles: z.string().optional(),
 });
 
+/**
+ * User-facing tag field names the preview modal exposes a per-field checkbox for.
+ * `track` covers both `track` and `trackTotal` (they're a bundle in ffmpeg args).
+ */
+export const RETAG_EXCLUDABLE_FIELDS = [
+  'artist',
+  'albumArtist',
+  'album',
+  'title',
+  'composer',
+  'grouping',
+  'track',
+] as const;
+export const retagExcludableFieldSchema = z.enum(RETAG_EXCLUDABLE_FIELDS);
+export type RetagExcludableField = z.infer<typeof retagExcludableFieldSchema>;
+
+export const retagBodySchema = z.object({
+  excludeFields: z.array(retagExcludableFieldSchema).optional(),
+}).nullish();
+export type RetagBody = z.infer<typeof retagBodySchema>;
+
 export type BookAuthorInput = z.infer<typeof bookAuthorInputSchema>;
 export type BookListQuery = z.infer<typeof bookListQuerySchema>;
 export type CreateBookBody = z.infer<typeof createBookBodySchema>;

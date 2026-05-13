@@ -835,6 +835,75 @@ describe('books routes', () => {
     });
   });
 
+  describe('GET /api/books/:id/retag/preview', () => {
+    it('returns 200 with the plan for a valid book', async () => {
+      (services.tagging.planRetag as Mock).mockResolvedValue({
+        mode: 'overwrite',
+        embedCover: false,
+        hasCoverFile: false,
+        isSingleFile: true,
+        canonical: { artist: 'A', albumArtist: 'A', album: 'B', title: 'B' },
+        files: [
+          { file: 'book.mp3', outcome: 'will-tag', diff: [{ field: 'artist', current: null, next: 'A' }], coverPending: false },
+        ],
+        warnings: [],
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.canonical.artist).toBe('A');
+      expect(body.files).toHaveLength(1);
+      expect(body.files[0].outcome).toBe('will-tag');
+    });
+
+    it('returns 404 for unknown id', async () => {
+      (services.tagging.planRetag as Mock).mockRejectedValue(
+        new RetagError('NOT_FOUND', 'Book 999 not found'),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/999/retag/preview' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 for NO_PATH', async () => {
+      (services.tagging.planRetag as Mock).mockRejectedValue(
+        new RetagError('NO_PATH', 'Book has no library path'),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for PATH_MISSING', async () => {
+      (services.tagging.planRetag as Mock).mockRejectedValue(
+        new RetagError('PATH_MISSING', 'Book path does not exist on disk'),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for FFMPEG_NOT_CONFIGURED', async () => {
+      (services.tagging.planRetag as Mock).mockRejectedValue(
+        new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured'),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books/abc/retag/preview' });
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('POST /api/books/:id/retag', () => {
     it('returns retag result on success', async () => {
       (services.tagging.retagBook as Mock).mockResolvedValue({
@@ -912,6 +981,63 @@ describe('books routes', () => {
     it('returns 400 for NaN id', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/books/abc/retag' });
       expect(res.statusCode).toBe(400);
+    });
+
+    it('forwards empty excludeFields as empty set to service', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [],
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/retag',
+        payload: { excludeFields: [] },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const callArgs = (services.tagging.retagBook as Mock).mock.calls.at(-1)!;
+      expect(callArgs[0]).toBe(1);
+      const passedSet = callArgs[1] as Set<string>;
+      expect(Array.from(passedSet)).toEqual([]);
+    });
+
+    it('forwards excludeFields to service', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [],
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/retag',
+        payload: { excludeFields: ['title', 'track'] },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const callArgs = (services.tagging.retagBook as Mock).mock.calls.at(-1)!;
+      const passedSet = callArgs[1] as Set<string>;
+      expect(Array.from(passedSet).sort()).toEqual(['title', 'track']);
+    });
+
+    it('rejects unknown excludeFields values with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/retag',
+        payload: { excludeFields: ['foo'] },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('omitting body still calls retagBook with empty excludeFields', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [],
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(200);
+      const callArgs = (services.tagging.retagBook as Mock).mock.calls.at(-1)!;
+      const passedSet = callArgs[1] as Set<string>;
+      expect(passedSet.size).toBe(0);
     });
   });
 

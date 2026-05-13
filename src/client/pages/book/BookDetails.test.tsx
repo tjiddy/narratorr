@@ -45,6 +45,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       getBookRenamePreview: vi.fn(),
       retagBook: vi.fn(),
+      getBookRetagPreview: vi.fn(),
       mergeBookToM4b: vi.fn(),
       cancelMergeBook: vi.fn(),
       markBookAsWrongRelease: vi.fn(),
@@ -106,10 +107,31 @@ function renderBookDetails(
   );
 }
 
+const RETAG_PLAN_FIXTURE = {
+  mode: 'overwrite' as const,
+  embedCover: false,
+  hasCoverFile: false,
+  isSingleFile: false,
+  canonical: {
+    artist: 'Brandon Sanderson',
+    album: 'The Way of Kings',
+    title: 'The Way of Kings',
+  },
+  files: [
+    { file: 'ch01.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }], coverPending: false },
+    { file: 'ch02.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }], coverPending: false },
+    { file: 'ch03.mp3', outcome: 'will-tag' as const, diff: [{ field: 'artist', current: null, next: 'Brandon Sanderson' }], coverPending: false },
+  ],
+  warnings: [],
+};
+
 describe('BookDetails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockNavigate.mockClear();
+    // Default: retag preview returns a plan with 3 will-tag files. Individual
+    // tests override via mockResolvedValue / mockRejectedValue when needed.
+    (api.getBookRetagPreview as Mock).mockResolvedValue(RETAG_PLAN_FIXTURE);
   });
 
   describe('cover cache-busting prop wiring', () => {
@@ -436,6 +458,17 @@ describe('BookDetails', () => {
   });
 
   describe('retag', () => {
+    /** Open the retag preview modal and click the apply button after the plan loads. */
+    async function clickApplyInRetagModal(user: ReturnType<typeof userEvent.setup>) {
+      await openOverflowMenu(user);
+      await waitFor(() => {
+        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
+      });
+      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
+      const applyButton = await screen.findByRole('button', { name: /Re-tag \d+ file/ });
+      await user.click(applyButton);
+    }
+
     it('calls retagBook API and shows success toast with plural', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
@@ -447,18 +480,10 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await openOverflowMenu(user);
+      await clickApplyInRetagModal(user);
 
       await waitFor(() => {
-        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
-      });
-
-      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      const dialog1 = screen.getByRole('dialog');
-      await user.click(within(dialog1).getAllByRole('button')[1]!);
-
-      await waitFor(() => {
-        expect(api.retagBook).toHaveBeenCalledWith(1);
+        expect(api.retagBook).toHaveBeenCalledWith(1, { excludeFields: [] });
       });
       expect(toast.success).toHaveBeenCalledWith('Tagged 3 files');
     });
@@ -474,15 +499,7 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await openOverflowMenu(user);
-
-      await waitFor(() => {
-        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
-      });
-
-      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      const dialog2 = screen.getByRole('dialog');
-      await user.click(within(dialog2).getAllByRole('button')[1]!);
+      await clickApplyInRetagModal(user);
 
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Tagged 1 file');
@@ -500,15 +517,7 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await openOverflowMenu(user);
-
-      await waitFor(() => {
-        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
-      });
-
-      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      const dialog3 = screen.getByRole('dialog');
-      await user.click(within(dialog3).getAllByRole('button')[1]!);
+      await clickApplyInRetagModal(user);
 
       await waitFor(() => {
         expect(toast.warning).toHaveBeenCalledWith('Tagged 2 files, 1 failed');
@@ -524,15 +533,7 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await openOverflowMenu(user);
-
-      await waitFor(() => {
-        expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled();
-      });
-
-      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      const dialog4 = screen.getByRole('dialog');
-      await user.click(within(dialog4).getAllByRole('button')[1]!);
+      await clickApplyInRetagModal(user);
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Re-tag failed: ffmpeg is not configured');
@@ -883,7 +884,7 @@ describe('BookDetails', () => {
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 
-    it('modal message includes the book title', async () => {
+    it('modal shows the preview canonical card after the plan loads', async () => {
       const user = userEvent.setup();
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -892,22 +893,12 @@ describe('BookDetails', () => {
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
 
-      expect(within(screen.getByRole('dialog')).getByText(/The Way of Kings/)).toBeInTheDocument();
+      expect(
+        await within(screen.getByRole('dialog')).findByRole('heading', { name: /These values will be written/ }),
+      ).toBeInTheDocument();
     });
 
-    it('modal message states the action cannot be undone', async () => {
-      const user = userEvent.setup();
-      mockFfmpegEnabled();
-      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
-
-      await openOverflowMenu(user);
-      await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
-      await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-
-      expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/i)).toBeInTheDocument();
-    });
-
-    it('confirm calls api.retagBook with the correct book ID', async () => {
+    it('apply button calls api.retagBook with the correct book ID', async () => {
       const user = userEvent.setup();
       mockFfmpegEnabled();
       (api.retagBook as Mock).mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] });
@@ -916,15 +907,15 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
+      const applyButton = await screen.findByRole('button', { name: /Re-tag \d+ file/ });
+      await user.click(applyButton);
 
       await waitFor(() => {
-        expect(api.retagBook).toHaveBeenCalledWith(1);
+        expect(api.retagBook).toHaveBeenCalledWith(1, { excludeFields: [] });
       });
     });
 
-    it('modal closes immediately when Confirm is clicked (before mutation settles)', async () => {
+    it('modal closes immediately when Apply is clicked (before mutation settles)', async () => {
       const user = userEvent.setup();
       mockFfmpegEnabled();
       (api.retagBook as Mock).mockReturnValue(new Promise(() => {}));
@@ -933,15 +924,13 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-      const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
+      const applyButton = await screen.findByRole('button', { name: /Re-tag \d+ file/ });
+      await user.click(applyButton);
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
-    it('rapid repeated confirm clicks call api.retagBook at most once', async () => {
+    it('rapid repeated apply clicks call api.retagBook at most once', async () => {
       const user = userEvent.setup();
       mockFfmpegEnabled();
       (api.retagBook as Mock).mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] });
@@ -950,8 +939,8 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
-      const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
+      const applyButton = await screen.findByRole('button', { name: /Re-tag \d+ file/ });
+      await user.click(applyButton);
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
       await waitFor(() => {

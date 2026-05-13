@@ -147,6 +147,54 @@ export interface RetagResult {
   warnings: string[];
 }
 
+export type RetagExcludableField =
+  | 'artist'
+  | 'albumArtist'
+  | 'album'
+  | 'title'
+  | 'composer'
+  | 'grouping'
+  | 'track';
+
+export interface RetagPlanFileDiff {
+  field: string;
+  current: string | null;
+  next: string | null;
+}
+
+export interface RetagPlanFile {
+  file: string;
+  outcome: 'will-tag' | 'skip-populated' | 'skip-unsupported';
+  diff?: RetagPlanFileDiff[];
+  coverPending?: boolean;
+}
+
+export interface RetagPlan {
+  mode: 'overwrite' | 'populate_missing';
+  embedCover: boolean;
+  hasCoverFile: boolean;
+  isSingleFile: boolean;
+  canonical: {
+    artist?: string;
+    albumArtist?: string;
+    album?: string;
+    title?: string;
+    composer?: string;
+    grouping?: string;
+  };
+  files: RetagPlanFile[];
+  warnings: string[];
+}
+
+/** Thrown when GET /books/:id/retag/preview returns the ffmpeg-not-configured error. */
+export class RetagFfmpegNotConfiguredError extends Error {
+  readonly code = 'FFMPEG_NOT_CONFIGURED' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'RetagFfmpegNotConfiguredError';
+  }
+}
+
 export interface RefreshScanResult {
   bookId: number;
   codec: string;
@@ -259,8 +307,28 @@ export const booksApi = {
       throw error;
     }
   },
-  retagBook: (id: number) =>
-    fetchApi<RetagResult>(`/books/${id}/retag`, { method: 'POST' }),
+  retagBook: (id: number, options?: { excludeFields?: RetagExcludableField[] }) => {
+    const hasBody = options && options.excludeFields && options.excludeFields.length > 0;
+    return fetchApi<RetagResult>(`/books/${id}/retag`, {
+      method: 'POST',
+      ...(hasBody && { body: JSON.stringify({ excludeFields: options.excludeFields }) }),
+    });
+  },
+  getBookRetagPreview: async (id: number): Promise<RetagPlan> => {
+    try {
+      return await fetchApi<RetagPlan>(`/books/${id}/retag/preview`);
+    } catch (error: unknown) {
+      if (
+        error instanceof ApiError &&
+        error.status === 400 &&
+        typeof (error.body as { error?: string })?.error === 'string' &&
+        (error.body as { error: string }).error.toLowerCase().includes('ffmpeg is not configured')
+      ) {
+        throw new RetagFfmpegNotConfiguredError((error.body as { error: string }).error);
+      }
+      throw error;
+    }
+  },
   refreshScanBook: (id: number) =>
     fetchApi<RefreshScanResult>(`/books/${id}/refresh-scan`, { method: 'POST' }),
   searchBook: (id: number) =>

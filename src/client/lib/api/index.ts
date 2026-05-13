@@ -1,7 +1,7 @@
 export { ApiError } from './client.js';
 
-export type { Author, BookWithAuthor, BookIdentifier, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse } from './books.js';
-export { RenameConflictError } from './books.js';
+export type { Author, BookWithAuthor, BookIdentifier, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, RetagExcludableField, RetagPlan, RetagPlanFile, RetagPlanFileDiff, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse } from './books.js';
+export { RenameConflictError, RetagFfmpegNotConfiguredError } from './books.js';
 export type { SearchResult, SearchResponse } from './search.js';
 export type { Download, ActivityCounts, QualityGateData, ActivityListParams } from './activity.js';
 export type { Indexer } from './indexers.js';
