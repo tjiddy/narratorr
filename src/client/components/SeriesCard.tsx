@@ -9,7 +9,7 @@ import {
 } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { AddBookPopover } from '@/components/AddBookPopover';
-import { RefreshIcon, LoadingSpinner } from '@/components/icons';
+import { RefreshIcon, LoadingSpinner, PlusIcon } from '@/components/icons';
 
 interface SeriesCardProps {
   bookId: number;
@@ -116,16 +116,20 @@ interface AddRowControlProps {
 function AddRowControl({ member, onAdd, isPending }: AddRowControlProps) {
   if (!canAddMember(member)) {
     const reason = member.providerBookId == null
-      ? 'Missing provider ID — refresh the series or add manually.'
-      : 'Missing author — refresh the series or add manually.';
+      ? 'Missing provider ID — refresh the series to enable Add.'
+      : 'Missing author — refresh the series to enable Add.';
     return (
-      <span
-        className="text-xs text-muted-foreground/60 cursor-not-allowed"
+      <button
+        type="button"
+        disabled
+        aria-label="Add book (unavailable)"
         title={reason}
         data-testid="series-card-add-disabled"
+        className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md text-muted-foreground/60 opacity-50 cursor-not-allowed"
       >
-        Missing
-      </span>
+        <PlusIcon className="w-3 h-3" />
+        Add
+      </button>
     );
   }
   return <AddBookPopover variant="compact" onAdd={onAdd} isPending={isPending} />;

@@ -69,7 +69,10 @@ const settingsFixture = createMockSettings({
 
 describe('SeriesCard', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks (not clearAllMocks) drains *Once queues — per CLAUDE.md
+    // gotcha, clearAllMocks only clears call history and would leak queued
+    // mockResolvedValueOnce responses across tests.
+    vi.resetAllMocks();
     vi.mocked(api.getSettings).mockResolvedValue(settingsFixture);
   });
 
@@ -142,7 +145,7 @@ describe('SeriesCard', () => {
     expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
   });
 
-  it('disables the Add control with a tooltip when providerBookId is null', async () => {
+  it('renders a disabled Add control with tooltip (not the Missing badge) when providerBookId is null', async () => {
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
         id: 1,
@@ -159,11 +162,20 @@ describe('SeriesCard', () => {
 
     renderCard({ bookId: 1, fallbackSeriesName: 'The Band' });
     const disabled = await screen.findByTestId('series-card-add-disabled');
+    // The affordance is a disabled Add button — not a Missing badge
+    expect(disabled.tagName).toBe('BUTTON');
+    expect(disabled).toBeDisabled();
+    expect(disabled).toHaveTextContent(/^Add$/);
     expect(disabled).toHaveAttribute('title', expect.stringMatching(/provider id/i));
-    expect(screen.queryByRole('button', { name: /add book/i })).toBeNull();
+    expect(disabled).toHaveAttribute('aria-label', expect.stringMatching(/unavailable/i));
+    // The clickable popover trigger ("Add book", exact) must NOT exist
+    expect(screen.queryByRole('button', { name: 'Add book' })).toBeNull();
+    // No passive Missing badge for this row
+    const memberRow = screen.getByTestId('series-card-member');
+    expect(memberRow).not.toHaveTextContent(/^Missing$/);
   });
 
-  it('disables the Add control with a tooltip when authorName is null', async () => {
+  it('renders a disabled Add control with tooltip (not the Missing badge) when authorName is null', async () => {
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
         id: 1,
@@ -180,8 +192,14 @@ describe('SeriesCard', () => {
 
     renderCard({ bookId: 1, fallbackSeriesName: 'The Band' });
     const disabled = await screen.findByTestId('series-card-add-disabled');
+    expect(disabled.tagName).toBe('BUTTON');
+    expect(disabled).toBeDisabled();
+    expect(disabled).toHaveTextContent(/^Add$/);
     expect(disabled).toHaveAttribute('title', expect.stringMatching(/author/i));
-    expect(screen.queryByRole('button', { name: /add book/i })).toBeNull();
+    expect(disabled).toHaveAttribute('aria-label', expect.stringMatching(/unavailable/i));
+    expect(screen.queryByRole('button', { name: 'Add book' })).toBeNull();
+    const memberRow = screen.getByTestId('series-card-member');
+    expect(memberRow).not.toHaveTextContent(/^Missing$/);
   });
 
   it('calls addBook with the assembled CreateBookPayload including search/monitor overrides and duration passed through unchanged', async () => {
