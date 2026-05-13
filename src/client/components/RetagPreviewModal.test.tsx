@@ -311,6 +311,35 @@ describe('RetagPreviewModal', () => {
     expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
   });
 
+  it('unsupported-only plan: explains unsupported formats and lists the files (does NOT show the populated-metadata copy)', async () => {
+    const unsupportedOnlyPlan: RetagPlan = {
+      mode: 'overwrite',
+      embedCover: false,
+      hasCoverFile: false,
+      isSingleFile: false,
+      canonical: { artist: 'A', album: 'B', title: 'B' },
+      files: [
+        { file: 'book.flac', outcome: 'skip-unsupported' },
+        { file: 'extra.ogg', outcome: 'skip-unsupported' },
+        { file: 'side.wav', outcome: 'skip-unsupported' },
+      ],
+      warnings: ['No taggable audio files found'],
+    };
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(unsupportedOnlyPlan);
+    renderModal();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    // Tailored unsupported-only message — NOT the populated-metadata copy.
+    expect(screen.getByText(/None of the audio files in this folder are in a taggable format/)).toBeInTheDocument();
+    expect(screen.queryByText(/already populated/)).not.toBeInTheDocument();
+    // The unsupported file names are surfaced so the user knows which files are blocked.
+    expect(screen.getByText('book.flac')).toBeInTheDocument();
+    expect(screen.getByText('extra.ogg')).toBeInTheDocument();
+    expect(screen.getByText('side.wav')).toBeInTheDocument();
+    // Apply button still says 0 files, disabled.
+    expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
+  });
+
   it('ffmpeg-not-configured renders inline error and hides apply button', async () => {
     vi.mocked(api.getBookRetagPreview).mockRejectedValue(
       new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),

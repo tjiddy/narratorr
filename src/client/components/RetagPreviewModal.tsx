@@ -367,15 +367,26 @@ function EmptyState({ plan, excludeSet }: { plan: RetagPlan; excludeSet: Set<Ret
   // Only fields that actually have a checkbox in the canonical card count toward "all excluded".
   const checkboxFields = canonicalRows(plan).map(r => r.field);
   const allExcluded = checkboxFields.length > 0 && checkboxFields.every(f => excludeSet.has(f));
+  const unsupportedFiles = plan.files.filter(f => f.outcome === 'skip-unsupported');
+  const allUnsupported = hasAudioFiles && unsupportedFiles.length === plan.files.length;
 
-  let message: string;
   if (!hasAudioFiles) {
-    message = 'No taggable audio files were found in this book’s folder.';
-  } else if (allExcluded) {
-    message = 'You’ve unchecked every field. Include at least one field to re-tag.';
-  } else {
-    message = 'All included fields are already populated. Switch to overwrite mode in Settings, or include a field that has differing values.';
+    return <p className="text-sm text-muted-foreground text-center py-4">No taggable audio files were found in this book’s folder.</p>;
   }
+  if (allUnsupported) {
+    // Tailored message + name the files so the user knows which formats are in the way.
+    return (
+      <div className="text-sm text-muted-foreground py-4 space-y-2 text-center">
+        <p>None of the audio files in this folder are in a taggable format. Re-tagging supports <code className="font-mono">.mp3</code>, <code className="font-mono">.m4a</code>, and <code className="font-mono">.m4b</code>.</p>
+        <ul className="font-mono text-xs space-y-0.5">
+          {unsupportedFiles.map(f => <li key={f.file}>{f.file}</li>)}
+        </ul>
+      </div>
+    );
+  }
+  const message = allExcluded
+    ? 'You’ve unchecked every field. Include at least one field to re-tag.'
+    : 'All included fields are already populated. Switch to overwrite mode in Settings, or include a field that has differing values.';
   return <p className="text-sm text-muted-foreground text-center py-4">{message}</p>;
 }
 
