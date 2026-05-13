@@ -703,6 +703,71 @@ describe('books routes', () => {
     });
   });
 
+  describe('GET /api/books/:id/rename/preview', () => {
+    it('returns 200 with the plan for a valid book', async () => {
+      (services.rename.planRename as Mock).mockResolvedValue({
+        libraryRoot: '/library',
+        folderFormat: '{author}/{title}',
+        fileFormat: '{author} - {title}',
+        folderMove: { from: 'Wrong/Old', to: 'Right/New' },
+        fileRenames: [{ from: 'a.m4b', to: 'Brandon Sanderson - The Way of Kings.m4b' }],
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/rename/preview' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.folderMove).toEqual({ from: 'Wrong/Old', to: 'Right/New' });
+      expect(body.fileRenames).toHaveLength(1);
+    });
+
+    it('returns 404 for unknown id', async () => {
+      (services.rename.planRename as Mock).mockRejectedValue(
+        new RenameError('Book not found', 'NOT_FOUND'),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/999/rename/preview' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
+    });
+
+    it('returns 400 for NO_PATH', async () => {
+      (services.rename.planRename as Mock).mockRejectedValue(
+        new RenameError('Book has no path', 'NO_PATH'),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/rename/preview' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book has no path' });
+    });
+
+    it('returns 409 with structured conflictingBook body on CONFLICT', async () => {
+      (services.rename.planRename as Mock).mockRejectedValue(
+        new RenameError(
+          'Target path already belongs to "Other Book" (book #2)',
+          'CONFLICT',
+          { conflictingBook: { id: 2, title: 'Other Book' } },
+        ),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/rename/preview' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({
+        error: 'Target path already belongs to "Other Book" (book #2)',
+        code: 'CONFLICT',
+        conflictingBook: { id: 2, title: 'Other Book' },
+      });
+    });
+
+    it('returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books/abc/rename/preview' });
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('POST /api/books/:id/rename', () => {
     it('returns rename result on success', async () => {
       (services.rename.renameBook as Mock).mockResolvedValue({
@@ -742,12 +807,18 @@ describe('books routes', () => {
 
     it('returns 409 on conflict with different book', async () => {
       (services.rename.renameBook as Mock).mockRejectedValue(
-        new RenameError('Target path belongs to another book', 'CONFLICT'),
+        new RenameError(
+          'Target path belongs to another book',
+          'CONFLICT',
+          { conflictingBook: { id: 2, title: 'Other' } },
+        ),
       );
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
 
       expect(res.statusCode).toBe(409);
+      // POST behavior unchanged — only `{ error }`, no structured conflictingBook
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Target path belongs to another book' });
     });
 
     it('returns 400 for NaN id', async () => {

@@ -73,6 +73,173 @@ describe('RenameService', () => {
     (rm as Mock).mockResolvedValue(undefined);
   });
 
+  describe('planRename', () => {
+    it('returns both folderMove and fileRenames when book is misplaced and files mismatch', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+      bookService.getById.mockResolvedValue(book);
+      // Audio files exist in the source folder and don't match the file template
+      (readdir as Mock).mockResolvedValue([
+        { name: 'foo.m4b', isFile: () => true },
+      ]);
+
+      const plan = await service.planRename(1);
+
+      expect(plan.folderMove).toEqual({
+        from: 'Wrong Author/Old Title',
+        to: 'Brandon Sanderson/The Way of Kings',
+      });
+      expect(plan.fileRenames).toHaveLength(1);
+      expect(plan.fileRenames[0]).toEqual({
+        from: 'foo.m4b',
+        to: 'Brandon Sanderson - The Way of Kings.m4b',
+      });
+    });
+
+    it('returns folderMove: null when book is already at its target folder', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([
+        { name: 'foo.m4b', isFile: () => true },
+      ]);
+
+      const plan = await service.planRename(1);
+
+      expect(plan.folderMove).toBeNull();
+    });
+
+    it('returns fileRenames: [] when librarySettings.fileFormat is empty', async () => {
+      const { service, bookService, settingsService } = createService();
+      (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '' });
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+
+      const plan = await service.planRename(1);
+
+      expect(plan.fileRenames).toEqual([]);
+    });
+
+    it('returns fileRenames: [] when the book directory has no audio files', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([]);
+
+      const plan = await service.planRename(1);
+
+      expect(plan.fileRenames).toEqual([]);
+    });
+
+    it('returns a fully-empty plan when nothing would change', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      // File already matches the file template
+      (readdir as Mock).mockResolvedValue([
+        { name: 'Brandon Sanderson - The Way of Kings.m4b', isFile: () => true },
+      ]);
+
+      const plan = await service.planRename(1);
+
+      expect(plan.folderMove).toBeNull();
+      expect(plan.fileRenames).toEqual([]);
+    });
+
+    it('throws CONFLICT with structured details when target folder is occupied', async () => {
+      const { service, db, bookService } = createService();
+      const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
+      bookService.getById.mockResolvedValue(book);
+      db.select.mockReturnValue(mockDbChain([
+        { id: 2, title: 'The Way of Kings', path: '/library/Brandon Sanderson/The Way of Kings' },
+      ]));
+      (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
+
+      await expect(service.planRename(1)).rejects.toMatchObject({
+        code: 'CONFLICT',
+        details: { conflictingBook: { id: 2, title: 'The Way of Kings' } },
+      });
+    });
+
+    it('throws NOT_FOUND for an unknown bookId', async () => {
+      const { service, bookService } = createService();
+      bookService.getById.mockResolvedValue(null);
+
+      await expect(service.planRename(999)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('throws NO_PATH when the book row has no path', async () => {
+      const { service, bookService } = createService();
+      bookService.getById.mockResolvedValue({ ...mockBook, path: null });
+
+      await expect(service.planRename(1)).rejects.toMatchObject({ code: 'NO_PATH' });
+    });
+
+    it('returns library-root-relative folder paths and bare filenames', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+      bookService.getById.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([
+        { name: 'foo.m4b', isFile: () => true },
+      ]);
+
+      const plan = await service.planRename(1);
+
+      // Folder paths relative to libraryRoot
+      expect(plan.folderMove?.from.startsWith('/')).toBe(false);
+      expect(plan.folderMove?.to.startsWith('/')).toBe(false);
+      expect(plan.libraryRoot).toBe('/library');
+      // Bare filenames — no path separators
+      for (const r of plan.fileRenames) {
+        expect(r.from).not.toContain('/');
+        expect(r.to).not.toContain('/');
+      }
+    });
+
+    it('parity (no folder move): planRename and renameBook produce identical fileRenames', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([
+        { name: 'a.m4b', isFile: () => true },
+        { name: 'b.m4b', isFile: () => true },
+      ]);
+
+      const plan = await service.planRename(1);
+
+      // Now exercise the apply path and capture rename() calls
+      (rename as Mock).mockClear();
+      await service.renameBook(1);
+
+      // Each rename call: (oldPath, newPath) where both include join(targetPath, filename)
+      const applyPairs = (rename as Mock).mock.calls.map((args: unknown[]) => {
+        const from = (args[0] as string).split(/[/\\]/).pop()!;
+        const to = (args[1] as string).split(/[/\\]/).pop()!;
+        return { from, to };
+      });
+
+      expect(applyPairs).toEqual(plan.fileRenames);
+    });
+
+    it('purity: planRename does not call fs.rename / mkdir / cp / rm or bookService.update', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+      bookService.getById.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([
+        { name: 'foo.m4b', isFile: () => true },
+      ]);
+
+      await service.planRename(1);
+
+      expect(rename).not.toHaveBeenCalled();
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('renameBook', () => {
     it('returns 200 with new path when rename succeeds', async () => {
       const { service, bookService } = createService();
