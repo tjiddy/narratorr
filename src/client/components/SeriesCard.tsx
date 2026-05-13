@@ -1,13 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   api,
+  ApiError,
   type BookSeriesCardData,
   type BookSeriesMemberCard,
   type CreateBookPayload,
   type RefreshBookSeriesResponse,
 } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { RefreshIcon, LoadingSpinner, PlusIcon } from '@/components/icons';
 
@@ -211,10 +214,24 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
 
   const addMember = useMutation({
     mutationFn: (payload: { memberKey: string; body: CreateBookPayload }) => api.addBook(payload.body),
-    onSuccess: () => {
+    onSuccess: (_data, payload) => {
+      toast.success(`Added '${payload.body.title}' to library`);
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
       queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (error: Error, payload) => {
+      // 409 = book already exists. Match the SearchBookCard/DiscoverPage pattern:
+      // surface a neutral "Already in library" toast and still invalidate the
+      // book + series caches so the row flips to In Library without a refresh.
+      if (error instanceof ApiError && error.status === 409) {
+        toast.info(`'${payload.body.title}' is already in library`);
+        queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+        queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
+        queryClient.invalidateQueries({ queryKey });
+        return;
+      }
+      toast.error(`Failed to add '${payload.body.title}': ${getErrorMessage(error)}`);
     },
   });
 

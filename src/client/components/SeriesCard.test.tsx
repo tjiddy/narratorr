@@ -7,16 +7,29 @@ import { SeriesCard } from './SeriesCard';
 import type { BookSeriesMemberCard } from '@/lib/api';
 import { createMockSettings } from '@/__tests__/factories';
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBookSeries: vi.fn(),
-    refreshBookSeries: vi.fn(),
-    addBook: vi.fn(),
-    getSettings: vi.fn(),
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    api: {
+      getBookSeries: vi.fn(),
+      refreshBookSeries: vi.fn(),
+      addBook: vi.fn(),
+      getSettings: vi.fn(),
+    },
+  };
+});
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { toast } from 'sonner';
 
 function createQueryClient() {
   return new QueryClient({
@@ -290,6 +303,106 @@ describe('SeriesCard', () => {
     expect(calls).toContainEqual(['books']);
     expect(calls).toContainEqual(['books', 'stats']);
     expect(calls).toContainEqual(['book', 1, 'series']);
+  });
+
+  it('shows a success toast naming the book on successful add', async () => {
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({
+      series: {
+        id: 1,
+        name: 'The Band',
+        providerSeriesId: 'B07DHQY7DX',
+        lastFetchedAt: null,
+        lastFetchStatus: null,
+        nextFetchAfter: null,
+        members: [
+          makeMember({ id: 2, providerBookId: 'A2', title: 'Bloody Rose', positionRaw: '2', position: 2, libraryBookId: null, authorName: 'Nicholas Eames' }),
+        ],
+      },
+    });
+    vi.mocked(api.addBook).mockResolvedValue({} as never);
+
+    const user = userEvent.setup();
+    renderCard({ bookId: 1, fallbackSeriesName: 'The Band' });
+
+    await user.click(await screen.findByRole('button', { name: /add book/i }));
+    await waitFor(() => expect(screen.getAllByRole('checkbox')[0]).toBeChecked());
+    await user.click(screen.getByRole('button', { name: /add to library/i }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Added 'Bloody Rose' to library");
+    });
+  });
+
+  it('on 409 duplicate, shows an Already in library info toast and still invalidates caches', async () => {
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({
+      series: {
+        id: 1,
+        name: 'The Band',
+        providerSeriesId: 'B07DHQY7DX',
+        lastFetchedAt: null,
+        lastFetchStatus: null,
+        nextFetchAfter: null,
+        members: [
+          makeMember({ id: 2, providerBookId: 'A2', title: 'Bloody Rose', positionRaw: '2', position: 2, libraryBookId: null, authorName: 'Nicholas Eames' }),
+        ],
+      },
+    });
+    vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { id: 7 }));
+
+    const user = userEvent.setup();
+    const { queryClient } = renderCard({ bookId: 1, fallbackSeriesName: 'The Band' });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await user.click(await screen.findByRole('button', { name: /add book/i }));
+    await waitFor(() => expect(screen.getAllByRole('checkbox')[0]).toBeChecked());
+    await user.click(screen.getByRole('button', { name: /add to library/i }));
+
+    await waitFor(() => {
+      expect(toast.info).toHaveBeenCalledWith("'Bloody Rose' is already in library");
+    });
+    expect(toast.error).not.toHaveBeenCalled();
+
+    const calls = invalidate.mock.calls.map((c) => c[0]?.queryKey);
+    expect(calls).toContainEqual(['books']);
+    expect(calls).toContainEqual(['books', 'stats']);
+    expect(calls).toContainEqual(['book', 1, 'series']);
+  });
+
+  it('on non-409 failure, shows an error toast and does NOT invalidate caches', async () => {
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({
+      series: {
+        id: 1,
+        name: 'The Band',
+        providerSeriesId: 'B07DHQY7DX',
+        lastFetchedAt: null,
+        lastFetchStatus: null,
+        nextFetchAfter: null,
+        members: [
+          makeMember({ id: 2, providerBookId: 'A2', title: 'Bloody Rose', positionRaw: '2', position: 2, libraryBookId: null, authorName: 'Nicholas Eames' }),
+        ],
+      },
+    });
+    vi.mocked(api.addBook).mockRejectedValue(new Error('Network down'));
+
+    const user = userEvent.setup();
+    const { queryClient } = renderCard({ bookId: 1, fallbackSeriesName: 'The Band' });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await user.click(await screen.findByRole('button', { name: /add book/i }));
+    await waitFor(() => expect(screen.getAllByRole('checkbox')[0]).toBeChecked());
+    await user.click(screen.getByRole('button', { name: /add to library/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith("Failed to add 'Bloody Rose': Network down");
+    });
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    // No cache invalidation on transient failures — the row should stay missing
+    // so the user can retry from the same Add affordance.
+    const calls = invalidate.mock.calls.map((c) => c[0]?.queryKey);
+    expect(calls).not.toContainEqual(['books']);
+    expect(calls).not.toContainEqual(['books', 'stats']);
+    expect(calls).not.toContainEqual(['book', 1, 'series']);
   });
 
   it('synthesized current-member fallback renders as In Library link, never as Add', async () => {
