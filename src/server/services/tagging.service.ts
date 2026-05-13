@@ -365,7 +365,9 @@ export class TaggingService {
         hasCoverFile: !!coverPath,
         isSingleFile: false,
         canonical: pickCanonical(canonicalTags),
-        files: [],
+        // Surface unsupported-only folders as skip-unsupported rows so the per-file outcomes
+        // mirror the apply path (which reports each entry via `skipped` + per-file warnings).
+        files: unsupported.entries.map(entry => ({ file: entry, outcome: 'skip-unsupported' as const })),
         warnings,
       };
     }

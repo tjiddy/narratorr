@@ -921,6 +921,27 @@ describe('TaggingService', () => {
       expect(plan.warnings).toContain('No taggable audio files found');
     });
 
+    it('unsupported-only folder: every entry surfaces as skip-unsupported (no taggable files)', async () => {
+      _readdirFiles = ['book.flac', 'extra.ogg', 'side.wav'];
+      setupBook({ title: 'X', authors: [{ name: 'A' }] });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      const outcomes = plan.files.map(f => ({ file: f.file, outcome: f.outcome }));
+      expect(outcomes).toEqual(
+        expect.arrayContaining([
+          { file: 'book.flac', outcome: 'skip-unsupported' },
+          { file: 'extra.ogg', outcome: 'skip-unsupported' },
+          { file: 'side.wav', outcome: 'skip-unsupported' },
+        ]),
+      );
+      expect(plan.files).toHaveLength(3);
+      expect(plan.files.every(f => f.outcome === 'skip-unsupported')).toBe(true);
+      // Warning is still surfaced so the user knows none of those files are taggable
+      expect(plan.warnings).toContain('No taggable audio files found');
+    });
+
     it('embedCover=true with no cover file: warning surfaced, hasCoverFile=false', async () => {
       _readdirFiles = ['book.mp3'];
       setupBook({ title: 'X', authors: [{ name: 'A' }] });
