@@ -53,6 +53,9 @@ export function synthesizeCurrentMemberIfEmpty(
     isCurrent: true,
     libraryBookId: book.id,
     coverUrl: null,
+    authorName: null,
+    publishedDate: null,
+    duration: null,
   }];
 }
 
@@ -75,6 +78,9 @@ export async function buildCardFromRow(
     isCurrent: isMemberCurrent(m, currentBook),
     libraryBookId: m.bookId,
     coverUrl: m.coverUrl,
+    authorName: m.authorName,
+    publishedDate: m.publishedDate,
+    duration: m.duration,
   }));
   return {
     id: row.id,
@@ -104,6 +110,9 @@ function buildLocalOnlyCard(book: { id: number; title: string; asin: string | nu
       isCurrent: true,
       libraryBookId: book.id,
       coverUrl: null,
+      authorName: null,
+      publishedDate: null,
+      duration: null,
     }],
   };
 }

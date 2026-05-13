@@ -395,6 +395,60 @@ describe('series refresh — alternate-edition dedupe (#1073)', () => {
     expect(card).not.toBeNull();
     expect(card!.id).toBe(-1);
     expect(card!.members[0]!.title).toBe('Lone Wolf');
+    // local-only synth has no source for these — they should be explicit null, not missing
+    expect(card!.members[0]!.authorName).toBeNull();
+    expect(card!.members[0]!.publishedDate).toBeNull();
+    expect(card!.members[0]!.duration).toBeNull();
+  });
+
+  it('projects authorName, publishedDate, and duration from series_members into the DTO (#1079)', async () => {
+    await refresh(
+      [
+        product({
+          asin: 'A1',
+          title: 'Kings of the Wyld',
+          position: 1,
+          authorName: 'Nicholas Eames',
+          publishedDate: '2017-02-21',
+          duration: 1300,
+        }),
+      ],
+      'A1',
+    );
+
+    const seriesRow = (await db.select().from(series))[0]!;
+    const card = await buildCardFromRow(db, seriesRow);
+    expect(card.members).toHaveLength(1);
+    const member = card.members[0]!;
+    expect(member.authorName).toBe('Nicholas Eames');
+    expect(member.publishedDate).toBe('2017-02-21');
+    expect(member.duration).toBe(1300);
+  });
+
+  it('null source columns map to null in the DTO (not undefined or empty string)', async () => {
+    // Insert a member row directly with null fields so the DTO mapper is exercised end-to-end
+    const [seriesRow] = await db
+      .insert(series)
+      .values({ provider: 'audible', providerSeriesId: PROVIDER_SERIES_ID, name: SERIES_NAME, normalizedName: 'the band' })
+      .returning();
+    await db.insert(seriesMembers).values({
+      seriesId: seriesRow!.id,
+      providerBookId: 'A99',
+      title: 'Mystery Entry',
+      normalizedTitle: 'mystery entry',
+      authorName: null,
+      publishedDate: null,
+      duration: null,
+      positionRaw: null,
+      position: null,
+    });
+
+    const card = await buildCardFromRow(db, seriesRow!);
+    expect(card.members).toHaveLength(1);
+    const member = card.members[0]!;
+    expect(member.authorName).toBeNull();
+    expect(member.publishedDate).toBeNull();
+    expect(member.duration).toBeNull();
   });
 
   it('cross-platform path safety — assertions do not depend on path separators', () => {

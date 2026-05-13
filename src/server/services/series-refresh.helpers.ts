@@ -34,6 +34,9 @@ export interface SeriesMemberCard {
   isCurrent: boolean;
   libraryBookId: number | null;
   coverUrl: string | null;
+  authorName: string | null;
+  publishedDate: string | null;
+  duration: number | null;
 }
 
 export interface BookSeriesCardData {

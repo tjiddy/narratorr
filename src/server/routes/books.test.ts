@@ -2698,6 +2698,41 @@ describe('#1071 series routes', () => {
     expect(res.json()).toEqual({ series: null });
   });
 
+  it('GET /api/books/:id/series surfaces the new authorName/publishedDate/duration member fields (#1079)', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51', seriesName: 'The Band' });
+    (services.seriesRefresh.getSeriesForBook as Mock).mockResolvedValue({
+      id: 1,
+      name: 'The Band',
+      providerSeriesId: 'B07DHQY7DX',
+      lastFetchedAt: '2026-05-11T00:00:00.000Z',
+      lastFetchStatus: 'success',
+      nextFetchAfter: null,
+      members: [
+        {
+          id: 1,
+          providerBookId: 'A1',
+          title: 'Kings of the Wyld',
+          positionRaw: '1',
+          position: 1,
+          isCurrent: true,
+          libraryBookId: 1,
+          coverUrl: null,
+          authorName: 'Nicholas Eames',
+          publishedDate: '2017-02-21',
+          duration: 1300,
+        },
+      ],
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series' });
+
+    expect(res.statusCode).toBe(200);
+    const member = res.json().series.members[0];
+    expect(member.authorName).toBe('Nicholas Eames');
+    expect(member.publishedDate).toBe('2017-02-21');
+    expect(member.duration).toBe(1300);
+  });
+
   it('GET /api/books/:id/series returns 404 for missing book', async () => {
     (services.book.getById as Mock).mockResolvedValue(null);
 

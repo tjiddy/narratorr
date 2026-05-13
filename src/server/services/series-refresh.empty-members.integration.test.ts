@@ -305,9 +305,11 @@ describe('issue #1074 — empty-members reconciliation', () => {
       expect(member.positionRaw).toBe('4');
       expect(member.isCurrent).toBe(true);
       expect(member.libraryBookId).toBe(book!.id);
-      // Author is NOT part of the SeriesMemberCard DTO.
-      expect((member as { author?: unknown }).author).toBeUndefined();
-      expect((member as { authorName?: unknown }).authorName).toBeUndefined();
+      // Synthesized rows expose the extended fields as null — the synthesis path
+      // doesn't know author/publishedDate/duration for the current book.
+      expect(member.authorName).toBeNull();
+      expect(member.publishedDate).toBeNull();
+      expect(member.duration).toBeNull();
     });
 
     it('preserves the empty state when the current book has no seriesName', async () => {
