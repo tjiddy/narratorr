@@ -15,8 +15,8 @@ vi.mock('./client.js', () => ({
   },
 }));
 
-import { booksApi } from './books.js';
-import { fetchMultipart, ApiError } from './client.js';
+import { booksApi, RenameConflictError } from './books.js';
+import { fetchApi, fetchMultipart, ApiError } from './client.js';
 
 describe('booksApi.uploadBookCover', () => {
   beforeEach(() => {
@@ -50,5 +50,60 @@ describe('booksApi.uploadBookCover', () => {
     const file = new File(['data'], 'cover.jpg', { type: 'image/jpeg' });
     const result = await booksApi.uploadBookCover(7, file);
     expect(result).toBe(payload);
+  });
+});
+
+describe('booksApi.getBookRenamePreview', () => {
+  beforeEach(() => {
+    vi.mocked(fetchApi).mockReset();
+  });
+
+  it('calls GET /books/:id/rename/preview and returns the plan body', async () => {
+    const plan = {
+      libraryRoot: '/library',
+      folderFormat: '{author}/{title}',
+      fileFormat: '{author} - {title}',
+      folderMove: { from: 'a', to: 'b' },
+      fileRenames: [{ from: 'x.m4b', to: 'y.m4b' }],
+    };
+    vi.mocked(fetchApi).mockResolvedValue(plan);
+
+    const result = await booksApi.getBookRenamePreview(42);
+
+    expect(fetchApi).toHaveBeenCalledOnce();
+    expect(vi.mocked(fetchApi).mock.calls[0]![0]).toBe('/books/42/rename/preview');
+    expect(result).toEqual(plan);
+  });
+
+  it('throws RenameConflictError when 409 has code: CONFLICT and conflictingBook', async () => {
+    vi.mocked(fetchApi).mockRejectedValue(
+      new ApiError(409, {
+        error: 'Target path already belongs to "Other" (book #2)',
+        code: 'CONFLICT',
+        conflictingBook: { id: 2, title: 'Other' },
+      }),
+    );
+
+    await expect(booksApi.getBookRenamePreview(1)).rejects.toBeInstanceOf(RenameConflictError);
+    await expect(booksApi.getBookRenamePreview(1)).rejects.toMatchObject({
+      conflictingBook: { id: 2, title: 'Other' },
+    });
+  });
+
+  it('propagates non-conflict ApiErrors (e.g. 404) without wrapping', async () => {
+    vi.mocked(fetchApi).mockRejectedValue(new ApiError(404, { error: 'Book not found' }));
+
+    const err = await booksApi.getBookRenamePreview(999).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(RenameConflictError);
+  });
+
+  it('propagates 409 without a CONFLICT body as a plain ApiError', async () => {
+    // Not the structured shape — should not be converted to RenameConflictError
+    vi.mocked(fetchApi).mockRejectedValue(new ApiError(409, { error: 'random conflict' }));
+
+    const err = await booksApi.getBookRenamePreview(1).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(RenameConflictError);
   });
 });

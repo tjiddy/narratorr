@@ -43,6 +43,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getBookFiles: vi.fn(),
       updateBook: vi.fn(),
       renameBook: vi.fn(),
+      getBookRenamePreview: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
       cancelMergeBook: vi.fn(),
@@ -56,6 +57,14 @@ vi.mock('@/lib/api', async (importOriginal) => {
     },
   };
 });
+
+const RENAME_PLAN_FIXTURE = {
+  libraryRoot: '/library',
+  folderFormat: '{author}/{title}',
+  fileFormat: '{author} - {title}',
+  folderMove: { from: 'old/path', to: 'new/path' },
+  fileRenames: [{ from: 'a.m4b', to: 'b.m4b' }],
+};
 
 /** Open the BookHero overflow menu to reveal secondary actions (Edit, Rename, Re-tag, etc.). */
 async function openOverflowMenu(user: ReturnType<typeof userEvent.setup>) {
@@ -328,6 +337,7 @@ describe('BookDetails', () => {
 
     it('calls renameBook API when Rename button is clicked and confirmed', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       (api.renameBook as Mock).mockResolvedValue({
         oldPath: '/library/old',
         newPath: '/library/new',
@@ -340,7 +350,8 @@ describe('BookDetails', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
+      const renameButton = await within(dialog).findByRole('button', { name: 'Rename' });
+      await user.click(renameButton);
 
       await waitFor(() => {
         expect(api.renameBook).toHaveBeenCalledWith(1);
@@ -740,87 +751,74 @@ describe('BookDetails', () => {
     });
   });
 
-  describe('rename confirmation modal', () => {
-    it('shows confirmation modal when Rename button is clicked (api.renameBook not yet called)', async () => {
+  describe('rename preview modal', () => {
+    it('opens RenamePreviewModal when Rename is clicked (api.renameBook not yet called)', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
+      // Header banner from RenamePreviewModal — not present in the legacy ConfirmModal
+      expect(await screen.findByText('/library')).toBeInTheDocument();
       expect(api.renameBook).not.toHaveBeenCalled();
     });
 
-    it('modal message includes the book title', async () => {
-      const user = userEvent.setup();
+    it('does not fetch the preview before the modal opens', async () => {
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await openOverflowMenu(user);
-      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
-
-      expect(within(screen.getByRole('dialog')).getByText(/The Way of Kings/)).toBeInTheDocument();
+      // No click on Rename — modal stays closed
+      expect(api.getBookRenamePreview).not.toHaveBeenCalled();
     });
 
-    it('modal message states the action cannot be undone', async () => {
+    it('hides Rename trigger when book has no path (preview never fires)', async () => {
       const user = userEvent.setup();
-      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
+      renderBookDetails({ id: 1, path: null });
 
       await openOverflowMenu(user);
-      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
-
-      expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/i)).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: /Rename/ })).not.toBeInTheDocument();
+      expect(api.getBookRenamePreview).not.toHaveBeenCalled();
     });
 
     it('confirm calls api.renameBook with the correct book ID', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       (api.renameBook as Mock).mockResolvedValue({ oldPath: '/old', newPath: '/new', message: 'Moved', filesRenamed: 1 });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
+      const renameButton = await within(dialog).findByRole('button', { name: 'Rename' });
+      await user.click(renameButton);
 
       await waitFor(() => {
         expect(api.renameBook).toHaveBeenCalledWith(1);
       });
     });
 
-    it('modal closes immediately when Confirm is clicked (before mutation settles)', async () => {
+    it('modal closes immediately when Rename is clicked (before mutation settles)', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       (api.renameBook as Mock).mockReturnValue(new Promise(() => {}));
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-
       const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
+      const renameButton = await within(dialog).findByRole('button', { name: 'Rename' });
+      await user.click(renameButton);
 
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    });
-
-    it('rapid repeated confirm clicks call api.renameBook at most once', async () => {
-      const user = userEvent.setup();
-      (api.renameBook as Mock).mockResolvedValue({ oldPath: '/old', newPath: '/new', message: 'Moved', filesRenamed: 1 });
-      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
-
-      await openOverflowMenu(user);
-      await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
-      const dialog = screen.getByRole('dialog');
-      await user.click(within(dialog).getAllByRole('button')[1]!);
-      // Modal is now closed — no dialog to click again
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-
-      await waitFor(() => {
-        expect(api.renameBook).toHaveBeenCalledTimes(1);
-      });
     });
 
     it('cancel closes the modal without calling api.renameBook', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       await openOverflowMenu(user);
@@ -835,6 +833,7 @@ describe('BookDetails', () => {
 
     it('Escape key closes the modal without calling api.renameBook', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       await openOverflowMenu(user);
@@ -849,6 +848,7 @@ describe('BookDetails', () => {
 
     it('backdrop click closes the modal without calling api.renameBook', async () => {
       const user = userEvent.setup();
+      (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
       await openOverflowMenu(user);

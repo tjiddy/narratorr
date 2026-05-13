@@ -4,6 +4,7 @@ import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
+import { RenamePreviewModal } from '@/components/RenamePreviewModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { Tabs, type TabItem } from '@/components/Tabs.js';
 import { MergeStatusIcon } from '@/components/MergeStatusIcon.js';
@@ -191,14 +192,14 @@ export function BookDetails({ libraryBook, metadataBook }: {
         />
       )}
 
-      <ConfirmModal
-        isOpen={modals.confirmRename}
-        title="Rename files?"
-        message={`Rename files for "${libraryBook.title}"? This will move files to match your folder format template. This cannot be undone.`}
-        confirmLabel="Rename"
-        onConfirm={() => { close('confirmRename'); renameMutation.mutate(); }}
-        onCancel={() => close('confirmRename')}
-      />
+      {modals.confirmRename && (
+        <RenamePreviewModal
+          bookId={libraryBook.id}
+          isOpen={modals.confirmRename}
+          onClose={() => close('confirmRename')}
+          onConfirm={() => renameMutation.mutate()}
+        />
+      )}
 
       <ConfirmModal
         isOpen={modals.confirmRetag}
