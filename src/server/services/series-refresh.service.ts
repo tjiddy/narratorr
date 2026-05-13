@@ -16,6 +16,7 @@ import {
   findExistingSeriesRow,
   selectScheduledCandidates,
   type BookSeriesCardData,
+  type ScheduledCandidate,
 } from './series-refresh.helpers.js';
 import {
   buildCardData,
@@ -165,10 +166,7 @@ export class SeriesRefreshService {
 
     for (const candidate of candidates) {
       try {
-        await this.reconcileFromBookAsin(candidate.seedAsin, {
-          seriesName: candidate.seriesName,
-          ...(candidate.providerSeriesId !== null && { providerSeriesId: candidate.providerSeriesId }),
-        });
+        await this.reconcileFromBookAsin(candidate.seedAsin, buildScheduledReconcileOpts(candidate));
         refreshed++;
       } catch (error: unknown) {
         this.log.warn({ error: serializeError(error), seriesId: candidate.id }, 'Scheduled series refresh failed');
@@ -274,6 +272,40 @@ function bookForSynthesis(
     seriesName: opts.seriesName ?? null,
     seriesPosition: opts.seriesPosition ?? null,
   };
+}
+
+/**
+ * Build the `ReconcileOpts` payload for a scheduled candidate. Mirrors the
+ * manual route's payload shape (`bookId`, `seriesName`, `bookTitle`,
+ * `seriesPosition`) when the seed came from a linked local book, so both code
+ * paths feed `reconcileFromBookAsin()` consistently.
+ *
+ * Self-heal rule: when the linked book's `seriesName` is non-null AND
+ * disagrees with the cached series row name, withhold the cached
+ * `providerSeriesId`. That lets `resolveTargetIdentity()` fall through to the
+ * seed product's matching series ref (line 158–160 path) and re-derive the
+ * target from the seed product instead of trusting the historically
+ * contaminated cached ASIN.
+ *
+ * Null `book.seriesName` is NOT a disagreement signal — fall back to the
+ * cached row name and pass `providerSeriesId` through unchanged. (#1082)
+ */
+function buildScheduledReconcileOpts(candidate: ScheduledCandidate): ReconcileOpts {
+  const linkedSeriesName = candidate.bookSeriesName ?? null;
+  const effectiveSeriesName = linkedSeriesName ?? candidate.seriesName;
+  const namesDisagree =
+    linkedSeriesName !== null
+    && normalizeSeriesName(linkedSeriesName) !== normalizeSeriesName(candidate.seriesName);
+  const opts: ReconcileOpts = { seriesName: effectiveSeriesName };
+  if (!namesDisagree && candidate.providerSeriesId !== null) {
+    opts.providerSeriesId = candidate.providerSeriesId;
+  }
+  if (candidate.bookId !== undefined) {
+    opts.bookId = candidate.bookId;
+    if (candidate.bookTitle !== undefined) opts.bookTitle = candidate.bookTitle;
+    opts.seriesPosition = candidate.bookSeriesPosition ?? null;
+  }
+  return opts;
 }
 
 async function sleepWithJitter(minMs: number, maxMs: number): Promise<void> {

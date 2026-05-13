@@ -335,20 +335,64 @@ export async function applyFailureOutcome(
 
 // ─── Scheduled selection ───────────────────────────────────────────────
 
-async function pickSeedAsin(db: Db, seriesId: number): Promise<string | null> {
+interface ScheduledSeed {
+  asin: string;
+  /** Local-book context — present only when the seed ASIN came from a linked
+   *  book in the library. Absent when only provider-side member rows exist. */
+  book?: {
+    id: number;
+    title: string;
+    seriesName: string | null;
+    seriesPosition: number | null;
+  };
+}
+
+/**
+ * Pick the seed ASIN (and its linked-book context, when available) for a
+ * scheduled refresh of a series row. Precedence:
+ *   1. Lowest-`books.id` linked local book with a non-null ASIN — gives
+ *      `runScheduledRefresh` enough book context to detect series-name
+ *      contamination and steer the reconcile target.
+ *   2. Provider-only member ASIN — fallback when no linked local book exists,
+ *      preserving today's pure-provider behavior.
+ *
+ * The linked-book branch must order deterministically (lowest `books.id`) so
+ * the choice does not silently flip across scheduled runs when multiple local
+ * books are linked to the same series row. (#1082)
+ */
+async function pickScheduledSeed(db: Db, seriesId: number): Promise<ScheduledSeed | null> {
   const linked = await db
-    .select({ asin: books.asin })
+    .select({
+      asin: books.asin,
+      bookId: books.id,
+      bookTitle: books.title,
+      bookSeriesName: books.seriesName,
+      bookSeriesPosition: books.seriesPosition,
+    })
     .from(seriesMembers)
     .innerJoin(books, eq(seriesMembers.bookId, books.id))
     .where(and(eq(seriesMembers.seriesId, seriesId), isNotNull(books.asin)))
+    .orderBy(books.id)
     .limit(1);
-  if (linked.length > 0 && linked[0]!.asin) return linked[0]!.asin;
+  const linkedRow = linked[0];
+  if (linkedRow?.asin) {
+    return {
+      asin: linkedRow.asin,
+      book: {
+        id: linkedRow.bookId,
+        title: linkedRow.bookTitle,
+        seriesName: linkedRow.bookSeriesName,
+        seriesPosition: linkedRow.bookSeriesPosition,
+      },
+    };
+  }
   const fromMember = await db
     .select({ providerBookId: seriesMembers.providerBookId })
     .from(seriesMembers)
     .where(and(eq(seriesMembers.seriesId, seriesId), isNotNull(seriesMembers.providerBookId)))
     .limit(1);
-  return fromMember[0]?.providerBookId ?? null;
+  if (fromMember[0]?.providerBookId) return { asin: fromMember[0].providerBookId };
+  return null;
 }
 
 export interface ScheduledCandidate {
@@ -356,6 +400,12 @@ export interface ScheduledCandidate {
   seriesName: string;
   providerSeriesId: string | null;
   seedAsin: string;
+  /** Linked-local-book context. Present only when `seedAsin` came from a book
+   *  in the library; absent for provider-only rows. (#1082) */
+  bookId?: number;
+  bookTitle?: string;
+  bookSeriesName?: string | null;
+  bookSeriesPosition?: number | null;
 }
 
 export async function selectScheduledCandidates(db: Db): Promise<ScheduledCandidate[]> {
@@ -371,10 +421,21 @@ export async function selectScheduledCandidates(db: Db): Promise<ScheduledCandid
     .limit(50);
   const result: ScheduledCandidate[] = [];
   for (const row of rows) {
-    const seed = await pickSeedAsin(db, row.id);
-    if (seed) {
-      result.push({ id: row.id, seriesName: row.name, providerSeriesId: row.providerSeriesId, seedAsin: seed });
+    const seed = await pickScheduledSeed(db, row.id);
+    if (!seed) continue;
+    const candidate: ScheduledCandidate = {
+      id: row.id,
+      seriesName: row.name,
+      providerSeriesId: row.providerSeriesId,
+      seedAsin: seed.asin,
+    };
+    if (seed.book) {
+      candidate.bookId = seed.book.id;
+      candidate.bookTitle = seed.book.title;
+      candidate.bookSeriesName = seed.book.seriesName;
+      candidate.bookSeriesPosition = seed.book.seriesPosition;
     }
+    result.push(candidate);
   }
   return result;
 }
