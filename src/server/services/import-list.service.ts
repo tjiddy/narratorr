@@ -217,21 +217,7 @@ export class ImportListService {
    */
   private async enrichItem(item: ImportListItem): Promise<EnrichedItem> {
     const match = await this.resolveMatch(item);
-    const primarySeries = match?.seriesPrimary ?? match?.series?.[0];
-    return {
-      coverUrl: item.coverUrl ?? match?.coverUrl,
-      description: item.description ?? match?.description,
-      seriesName: primarySeries?.name,
-      seriesPosition: primarySeries?.position,
-      seriesAsin: primarySeries?.asin,
-      narrators: match?.narrators,
-      duration: match?.duration,
-      publishedDate: match?.publishedDate,
-      genres: match?.genres,
-      asin: item.asin ?? match?.asin,
-      isbn: item.isbn ?? match?.isbn,
-      authorName: item.author ?? match?.authors?.[0]?.name,
-    };
+    return buildEnrichedItem(item, match);
   }
 
   private async resolveMatch(item: ImportListItem): Promise<BookMetadata | null> {
@@ -298,6 +284,36 @@ export class ImportListService {
       triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
     }
   }
+}
+
+/**
+ * Build the intermediate enriched payload from `(item, match)`.
+ *
+ * Provider-truth precedence (`item.* ?? match.*`) for the fields the provider
+ * has its own value for (cover/description/asin/isbn/author). Match-only
+ * fields (narrators, series identity, duration, etc.) flow through unchanged.
+ * `seriesPrimary` wins over `series[0]` (#1088 / #1097).
+ *
+ * Lives outside the class so its many `??`/`?.` operators don't accumulate
+ * cyclomatic complexity in `enrichItem`.
+ */
+// eslint-disable-next-line complexity -- flat coalescing across item/match
+function buildEnrichedItem(item: ImportListItem, match: BookMetadata | null): EnrichedItem {
+  const primarySeries = match?.seriesPrimary ?? match?.series?.[0];
+  return {
+    coverUrl: item.coverUrl ?? match?.coverUrl,
+    description: item.description ?? match?.description,
+    seriesName: primarySeries?.name,
+    seriesPosition: primarySeries?.position,
+    seriesAsin: primarySeries?.asin,
+    narrators: match?.narrators,
+    duration: match?.duration,
+    publishedDate: match?.publishedDate,
+    genres: match?.genres,
+    asin: item.asin ?? match?.asin,
+    isbn: item.isbn ?? match?.isbn,
+    authorName: item.author ?? match?.authors?.[0]?.name,
+  };
 }
 
 /** Intermediate enriched payload — singular `authorName`, translated to
