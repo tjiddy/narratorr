@@ -364,9 +364,9 @@ describe('startJobs', () => {
 
   // #477 — housekeeping callback coverage
   describe('housekeeping callback (#477)', () => {
-    it('executeTracked housekeeping calls VACUUM, pruneOlderThan, and deleteExpired with correct args', async () => {
+    it('executeTracked housekeeping calls VACUUM, pruneOlderThan, deleteExpired, and sweepOrphanSeries with correct args', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 14 };
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
@@ -383,12 +383,13 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       // Re-mock after clearAllMocks
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 14 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
       (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 0 });
 
       await services.taskRegistry.executeTracked('housekeeping');
 
@@ -399,13 +400,14 @@ describe('startJobs', () => {
       expect(sqlArg.queryChunks[0]!.value[0]).toBe('VACUUM');
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(services.seriesRefresh.sweepOrphanSeries).toHaveBeenCalledWith(14);
       // No warnings emitted on successful housekeeping
       expect(log.warn).not.toHaveBeenCalled();
     });
 
-    it('uses fallback retention of 90 when housekeepingRetentionDays is null', async () => {
+    it('uses fallback retention of 90 when housekeepingRetentionDays is null and 30 when seriesCacheRetentionDays is null', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: null };
+        if (category === 'general') return { housekeepingRetentionDays: null, seriesCacheRetentionDays: null };
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
@@ -420,28 +422,30 @@ describe('startJobs', () => {
 
       vi.clearAllMocks();
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: null };
+        if (category === 'general') return { housekeepingRetentionDays: null, seriesCacheRetentionDays: null };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(0);
       (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 0 });
 
       await services.taskRegistry.executeTracked('housekeeping');
 
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(90);
+      expect(services.seriesRefresh.sweepOrphanSeries).toHaveBeenCalledWith(30);
       // No warnings emitted on successful housekeeping with null retention fallback
       expect(log.warn).not.toHaveBeenCalled();
     });
 
     // #547: per-sub-task error isolation
-    it('VACUUM failure does not prevent pruneOlderThan and deleteExpired from running', async () => {
+    it('VACUUM failure does not prevent pruneOlderThan, deleteExpired, and sweepOrphanSeries from running', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -453,29 +457,31 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(new Error('VACUUM failed'));
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
       (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 0 });
 
       await services.taskRegistry.executeTracked('housekeeping');
 
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(services.seriesRefresh.sweepOrphanSeries).toHaveBeenCalledWith(30);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
         expect.stringContaining('VACUUM'),
       );
     });
 
-    it('pruneOlderThan failure does not prevent deleteExpired from running', async () => {
+    it('pruneOlderThan failure does not prevent deleteExpired and sweepOrphanSeries from running', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -487,28 +493,30 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('prune failed'));
       (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 0 });
 
       await services.taskRegistry.executeTracked('housekeeping');
 
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(services.seriesRefresh.sweepOrphanSeries).toHaveBeenCalledWith(30);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
         expect.stringContaining('prune'),
       );
     });
 
-    it('deleteExpired failure does not affect already-completed VACUUM and prune', async () => {
+    it('deleteExpired failure does not affect already-completed VACUUM and prune, and does not prevent sweepOrphanSeries', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -520,23 +528,25 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
       (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('delete failed'));
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockResolvedValue({ deleted: 0 });
 
       await services.taskRegistry.executeTracked('housekeeping');
 
       expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
       expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
+      expect(services.seriesRefresh.sweepOrphanSeries).toHaveBeenCalledWith(30);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
         expect.stringContaining('blacklist'),
       );
     });
 
-    it('settings.get general failure does not prevent deleteExpired from running', async () => {
+    it('settings.get general failure does not prevent deleteExpired from running (also blocks sweepOrphanSeries)', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
@@ -565,9 +575,15 @@ describe('startJobs', () => {
       expect(services.eventHistory.pruneOlderThan).not.toHaveBeenCalled();
       // deleteExpired should still run
       expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      // sweepOrphanSeries should NOT be called — its retention setting comes from the same failing settings.get('general')
+      expect(services.seriesRefresh.sweepOrphanSeries).not.toHaveBeenCalled();
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
         expect.stringContaining('retention'),
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('orphan series'),
       );
     });
 
@@ -577,7 +593,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -590,13 +606,15 @@ describe('startJobs', () => {
       const vacuumError = new Error('VACUUM failed');
       const pruneError = new Error('prune failed');
       const deleteError = new Error('delete failed');
+      const sweepError = new Error('sweep failed');
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(vacuumError);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(pruneError);
       (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockRejectedValue(deleteError);
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockRejectedValue(sweepError);
 
       await services.taskRegistry.executeTracked('housekeeping');
 
@@ -611,6 +629,48 @@ describe('startJobs', () => {
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: deleteError.message, type: 'Error' }) }),
         expect.stringContaining('blacklist'),
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: sweepError.message, type: 'Error' }) }),
+        expect.stringContaining('orphan series'),
+      );
+    });
+
+    // #1104: orphan series sweep error isolation — the new fourth step must not break the others.
+    it('sweepOrphanSeries failure does not affect already-completed VACUUM, prune, and deleteExpired (#1104)', async () => {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        return {};
+      });
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      vi.clearAllMocks();
+      (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        return {};
+      });
+      (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
+      (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+      (services.seriesRefresh.sweepOrphanSeries as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('sweep failed'));
+
+      await services.taskRegistry.executeTracked('housekeeping');
+
+      expect((db as Record<string, ReturnType<typeof vi.fn>>).run).toHaveBeenCalledTimes(1);
+      expect(services.eventHistory.pruneOlderThan).toHaveBeenCalledWith(30);
+      expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      expect(services.seriesRefresh.sweepOrphanSeries).toHaveBeenCalledWith(30);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: expect.any(String), type: 'Error' }) }),
+        expect.stringContaining('orphan series'),
       );
     });
   });

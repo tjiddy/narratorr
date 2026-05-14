@@ -75,7 +75,7 @@ describe('SettingsService', () => {
       // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
-      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false });
+      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false });
     });
 
     it('returns all defaults when nothing stored', async () => {
@@ -430,7 +430,7 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
-      expect(storedValue).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: true });
+      expect(storedValue).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: true });
     });
 
     it('stores welcomeSeen: false when only welcomeSeen is patched', async () => {

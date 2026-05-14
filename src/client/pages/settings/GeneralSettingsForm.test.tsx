@@ -28,7 +28,7 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  general: { logLevel: 'warn', housekeepingRetentionDays: 60 },
+  general: { logLevel: 'warn', housekeepingRetentionDays: 60, seriesCacheRetentionDays: 45 },
 });
 
 describe('GeneralSettingsForm', () => {
@@ -44,6 +44,75 @@ describe('GeneralSettingsForm', () => {
       expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(60);
       expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
     });
+  });
+
+  // F2 (PR #1111 review): the new Series Cache Retention input must render from
+  // settings, bind through to onSave, and reject out-of-range values via the
+  // shared zodResolver path. Without these assertions, deleting the input while
+  // keeping defaults plumbed would still pass the other payload tests.
+  it('renders Series Cache Retention input bound to settings value', async () => {
+    renderWithProviders(<GeneralSettingsForm />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Series Cache Retention (days)')).toHaveValue(45);
+    });
+  });
+
+  it('Series Cache Retention input uses integer step and the 1-365 numeric bounds', async () => {
+    renderWithProviders(<GeneralSettingsForm />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Series Cache Retention (days)')).toBeInTheDocument();
+    });
+    const input = screen.getByLabelText('Series Cache Retention (days)');
+    expect(input.getAttribute('type')).toBe('number');
+    expect(input.getAttribute('step')).toBe('1');
+    expect(input.getAttribute('min')).toBe('1');
+    expect(input.getAttribute('max')).toBe('365');
+  });
+
+  it('sends complete general category payload when saving after changing only seriesCacheRetentionDays', async () => {
+    const user = userEvent.setup();
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    renderWithProviders(<GeneralSettingsForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Series Cache Retention (days)')).toHaveValue(45);
+    });
+
+    const input = screen.getByLabelText('Series Cache Retention (days)');
+    await user.clear(input);
+    await user.type(input, '14');
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        general: {
+          logLevel: 'warn',
+          housekeepingRetentionDays: 60,
+          seriesCacheRetentionDays: 14,
+        },
+      });
+    });
+  });
+
+  it('blocks submit and shows inline error for out-of-range seriesCacheRetentionDays', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettingsForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Series Cache Retention (days)')).toHaveValue(45);
+    });
+
+    const input = screen.getByLabelText('Series Cache Retention (days)');
+    await user.clear(input);
+    await user.type(input, '0');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
   it('housekeepingRetentionDays input uses integer step', async () => {
@@ -105,6 +174,7 @@ describe('GeneralSettingsForm', () => {
         general: {
           logLevel: 'debug',
           housekeepingRetentionDays: 60,
+          seriesCacheRetentionDays: 45,
         },
       });
     });
@@ -130,6 +200,7 @@ describe('GeneralSettingsForm', () => {
         general: {
           logLevel: 'warn',
           housekeepingRetentionDays: 30,
+          seriesCacheRetentionDays: 45,
         },
       });
     });

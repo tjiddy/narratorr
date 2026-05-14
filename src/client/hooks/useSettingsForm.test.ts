@@ -42,7 +42,7 @@ const testDefaults: TestFormData = { enabled: false, value: 10 };
 const fullSettings = {
   import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
   search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' },
-  general: { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false },
+  general: { logLevel: 'info', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false },
   metadata: { audibleRegion: 'us', languages: ['english'] },
   processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
   tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
