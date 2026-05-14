@@ -7,6 +7,8 @@ import type { WeightMultipliers } from './discovery-weights.js';
 import { DEFAULT_MULTIPLIERS } from './discovery-weights.js';
 import type { LibrarySignals } from './discovery.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { findMatchingSeriesRef, type TargetSeriesIdentity } from './series-refresh.dedupe.js';
+import { normalizeSeriesName } from '../utils/series-normalize.js';
 
 
 const FP_TOLERANCE = 1e-9;
@@ -96,16 +98,28 @@ export async function querySeriesCandidates(deps: QueryDeps, signals: LibrarySig
     try {
       const { books: results, warnings } = await deps.metadataService.searchBooksForDiscovery(gap.seriesName, { title: gap.seriesName, author: gap.authorName });
       ctx.warnings.push(...warnings);
-      const filtered = results.filter(b => {
-        const s = b.series?.find(s => s.name?.toLowerCase() === gap.seriesName.toLowerCase());
-        return s?.position != null && (includesNearly(gap.missingPositions, s.position) || nearlyEqual(s.position, gap.nextPosition));
-      });
+      // Membership is decided by the canonical primary-series-first matcher from
+      // series-refresh: `seriesPrimary` (when present) is the only acceptable
+      // membership signal — a non-matching primary cannot fall through to
+      // secondary `series[]` entries. Without `seriesPrimary`, scan `series[]`.
+      // Both branches use normalized + leading-article equivalence so
+      // `Stormlight Archive` cross-matches `The Stormlight Archive`. (#1099, #1078)
+      const target = makeGapTarget(gap.seriesName);
+      const filtered = target ? results.filter(b => {
+        const matched = findMatchingSeriesRef(b, target);
+        return matched?.position != null && (includesNearly(gap.missingPositions, matched.position) || nearlyEqual(matched.position, gap.nextPosition));
+      }) : [];
       filterAndScore(filtered, 'series', (book) => {
-        const pos = book.series?.find(s => s.name?.toLowerCase() === gap.seriesName.toLowerCase())?.position;
+        const pos = target ? findMatchingSeriesRef(book, target)?.position : null;
         return `Next in ${gap.seriesName} — you have books 1-${gap.maxOwned}${pos != null && nearlyEqual(pos, gap.nextPosition) ? '' : ` (position ${pos})`}`;
       }, 1.0, ctx, map);
     } catch (error: unknown) { deps.log.warn({ error: serializeError(error) }, `Discovery: series query failed for ${gap.seriesName}`); }
   }
+}
+
+function makeGapTarget(seriesName: string): TargetSeriesIdentity | null {
+  const normalizedName = normalizeSeriesName(seriesName);
+  return normalizedName ? { asin: null, normalizedName } : null;
 }
 
 export async function queryGenreCandidates(deps: QueryDeps, signals: LibrarySignals, ctx: CandidateContext, map: Map<string, ScoredCandidate>) {
@@ -230,15 +244,20 @@ export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, 
 }
 
 /**
- * Series-gap bonus against the canonical primary-series ref so a universe
- * entry in `series[0]` (e.g. Cosmere) doesn't shadow the real next-in-series
- * gap (Stormlight). (#1097)
+ * Series-gap bonus, using the same primary-first + normalized + leading-article
+ * matcher as the admission gate so a candidate excluded at the gate cannot
+ * earn a bonus via a secondary `series[]` entry, and a candidate admitted via
+ * article-equivalence (`Stormlight Archive` ≡ `The Stormlight Archive`) still
+ * earns its bonus. (#1099, #1097)
  */
 function seriesGapBonus(book: BookMetadata, signals: LibrarySignals): number {
-  const primary = book.seriesPrimary ?? book.series?.[0];
-  if (!primary?.name || primary.position == null) return 0;
-  const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === primary.name!.toLowerCase());
-  return gap && nearlyEqual(primary.position, gap.nextPosition) ? 20 : 0;
+  for (const gap of signals.seriesGaps) {
+    const target = makeGapTarget(gap.seriesName);
+    if (!target) continue;
+    const matched = findMatchingSeriesRef(book, target);
+    if (matched?.position != null && nearlyEqual(matched.position, gap.nextPosition)) return 20;
+  }
+  return 0;
 }
 
 export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, strength: number, signals: LibrarySignals, multipliers: WeightMultipliers = DEFAULT_MULTIPLIERS): number {
