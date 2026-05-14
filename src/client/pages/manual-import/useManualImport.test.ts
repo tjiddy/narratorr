@@ -953,6 +953,43 @@ describe('useManualImport', () => {
     expect(result.current.counts.reviewCount).toBe(0);
   });
 
+  // #1102 — selectedPendingCount: scoped to selected rows (not global)
+  describe('selectedPendingCount (#1102)', () => {
+    it('only counts selected rows still awaiting a match', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // Both rows pending and selected by default
+      expect(result.current.counts.pendingCount).toBe(2);
+      expect(result.current.counts.selectedPendingCount).toBe(2);
+
+      // Deselect one row → global pending unchanged, selected pending drops
+      act(() => { result.current.actions.handleToggle(0); });
+      expect(result.current.counts.pendingCount).toBe(2);
+      expect(result.current.counts.selectedPendingCount).toBe(1);
+    });
+
+    it('excludes duplicate rows from selectedPendingCount', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
+
+      // Manually select a duplicate row that has no matchResult — it must NOT
+      // be counted in selectedPendingCount (mirrors pendingCount's exclusion).
+      act(() => { result.current.actions.handleToggle(1); });
+      expect(result.current.state.rows[1]!.selected).toBe(true);
+      expect(result.current.state.rows[1]!.book.isDuplicate).toBe(true);
+      expect(result.current.counts.selectedPendingCount).toBe(1); // only the non-dup at index 0
+    });
+  });
+
   // ===========================================================================
   // #114 — duplicate row behavior
   // ===========================================================================
@@ -1611,6 +1648,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       reviewCount: 0,
       noMatchCount: 0,
       pendingCount: 0,
+      selectedPendingCount: 0,
       duplicateCount: 0,
       allSelected: false,
     });

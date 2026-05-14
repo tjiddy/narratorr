@@ -29,6 +29,7 @@ export function LibraryImportPage() {
     registerMutation,
     selectedCount,
     selectedUnmatchedCount,
+    selectedPendingCount,
     readyCount,
     reviewCount,
     noMatchCount,
@@ -193,8 +194,8 @@ export function LibraryImportPage() {
               pendingCount={pendingCount}
               selectedCount={selectedCount}
               selectedUnmatchedCount={selectedUnmatchedCount}
+              selectedPendingCount={selectedPendingCount}
               duplicateCount={duplicateCount}
-              isMatching={isMatching}
               mode="copy"
               onImport={handleRegister}
               importing={registerMutation.isPending}

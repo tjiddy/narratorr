@@ -494,6 +494,66 @@ describe('ManualImportPage', () => {
       const btn = screen.getByRole('button', { name: /Import 1/ });
       expect(btn).toBeDisabled();
     });
+
+    // #1102 — gate is scoped to selection, not the global match-job state
+    it('enables import when only a matched row is selected and others are still pending', async () => {
+      const books = [
+        makeDiscoveredBook({ path: '/a/A', parsedTitle: 'Book A' }),
+        makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' }),
+        makeDiscoveredBook({ path: '/a/C', parsedTitle: 'Book C' }),
+      ];
+      const { rerender } = await scanAndReview(books);
+
+      // Only Book A returns a match — B and C remain pending. Match job stays in flight.
+      await simulateMatchResults(rerender, [
+        makeMatchResult({ path: '/a/A', confidence: 'high', bestMatch: { title: 'Book A', authors: [{ name: 'Author' }] } }),
+      ], /* matching */ true);
+
+      // Deselect Book B and Book C so only the matched Book A row remains selected.
+      // Re-query after each click since the row's button label flips Select<->Deselect.
+      const firstDeselects = screen.getAllByLabelText('Deselect');
+      await userEvent.click(firstDeselects[1]!);
+      const remainingDeselects = screen.getAllByLabelText('Deselect');
+      await userEvent.click(remainingDeselects[1]!);
+      expect(screen.getByText('1 of 3 selected')).toBeInTheDocument();
+
+      const btn = screen.getByRole('button', { name: /Import 1 book$/ });
+      expect(btn).toBeEnabled();
+    });
+
+    it('disables import with "still matching" tooltip when selected rows are awaiting a match', async () => {
+      const books = [
+        makeDiscoveredBook({ path: '/a/A', parsedTitle: 'Book A' }),
+        makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' }),
+      ];
+      await scanAndReview(books);
+
+      // No match results have arrived; both rows are selected by default.
+      const btn = screen.getByRole('button', { name: /Import 2/ });
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', '2 selected books are still matching');
+    });
+
+    it('combines tooltip when selection mixes unmatched and pending rows', async () => {
+      const books = [
+        makeDiscoveredBook({ path: '/a/None', parsedTitle: 'No Match' }),
+        makeDiscoveredBook({ path: '/a/Pending', parsedTitle: 'Pending' }),
+      ];
+      const { rerender } = await scanAndReview(books);
+
+      // Row /a/None comes back as no-match (auto-unchecks). /a/Pending stays pending.
+      await simulateMatchResults(rerender, [
+        makeMatchResult({ path: '/a/None', confidence: 'none', bestMatch: null }),
+      ], /* matching */ true);
+
+      // Re-select the no-match row manually.
+      await userEvent.click(screen.getByLabelText('Select'));
+      expect(screen.getByText('2 of 2 selected')).toBeInTheDocument();
+
+      const btn = screen.getByRole('button', { name: /Import 2/ });
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute('title', '1 selected book needs a match, 1 still matching');
+    });
   });
 
   describe('back navigation', () => {

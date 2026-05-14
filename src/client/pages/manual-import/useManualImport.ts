@@ -186,6 +186,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const reviewCount = rows.filter(r => r.matchResult?.confidence === 'medium').length;
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
   const pendingCount = rows.filter(r => !r.matchResult && !r.book.isDuplicate).length;
+  const selectedPendingCount = rows.filter(r => r.selected && !r.matchResult && !r.book.isDuplicate).length;
   const duplicateCount = rows.filter(r => r.book.isDuplicate).length;
   const allSelected = rows.length > 0 && rows.every(r => r.selected);
 
@@ -223,6 +224,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       reviewCount,
       noMatchCount,
       pendingCount,
+      selectedPendingCount,
       duplicateCount,
       allSelected,
     },

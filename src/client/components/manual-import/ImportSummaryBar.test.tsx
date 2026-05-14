@@ -11,8 +11,8 @@ function renderBar(overrides?: Record<string, unknown>) {
     pendingCount: 0,
     selectedCount: 0,
     selectedUnmatchedCount: 0,
+    selectedPendingCount: 0,
     duplicateCount: 0,
-    isMatching: false,
     mode: 'copy' as const,
     onModeChange: vi.fn(),
     onImport: vi.fn(),
@@ -75,9 +75,15 @@ describe('ImportSummaryBar', () => {
       expect(screen.getByRole('button', { name: /Import 3/ })).toBeDisabled();
     });
 
-    it('disabled while matching is in progress', () => {
-      renderBar({ selectedCount: 3, isMatching: true });
+    it('disabled when selected rows are still awaiting a match (#1102)', () => {
+      renderBar({ selectedCount: 3, selectedPendingCount: 1 });
       expect(screen.getByRole('button', { name: /Import 3/ })).toBeDisabled();
+    });
+
+    it('enabled when other rows are still matching but none of them are selected (#1102)', () => {
+      // pendingCount > 0 globally, but the user's selection is fully matched.
+      renderBar({ selectedCount: 1, selectedPendingCount: 0, pendingCount: 4 });
+      expect(screen.getByRole('button', { name: /Import 1 book$/ })).toBeEnabled();
     });
 
     it('disabled while import is pending', () => {
@@ -86,7 +92,7 @@ describe('ImportSummaryBar', () => {
     });
 
     it('enabled when books selected, all matched, not importing', () => {
-      renderBar({ selectedCount: 5, selectedUnmatchedCount: 0, isMatching: false, importing: false });
+      renderBar({ selectedCount: 5, selectedUnmatchedCount: 0, selectedPendingCount: 0, importing: false });
       expect(screen.getByRole('button', { name: /Import 5/ })).toBeEnabled();
     });
   });
@@ -119,6 +125,24 @@ describe('ImportSummaryBar', () => {
       renderBar({ selectedCount: 3, selectedUnmatchedCount: 1 });
       const btn = screen.getByRole('button', { name: /Import/ });
       expect(btn).toHaveAttribute('title', '1 selected book needs a match');
+    });
+
+    it('shows "still matching" tooltip when selected rows are pending (#1102)', () => {
+      renderBar({ selectedCount: 2, selectedPendingCount: 2 });
+      const btn = screen.getByRole('button', { name: /Import/ });
+      expect(btn).toHaveAttribute('title', '2 selected books are still matching');
+    });
+
+    it('singular "still matching" tooltip for 1 pending selected row (#1102)', () => {
+      renderBar({ selectedCount: 2, selectedPendingCount: 1 });
+      const btn = screen.getByRole('button', { name: /Import/ });
+      expect(btn).toHaveAttribute('title', '1 selected book is still matching');
+    });
+
+    it('combines tooltip when both unmatched and pending rows are selected (#1102)', () => {
+      renderBar({ selectedCount: 4, selectedUnmatchedCount: 2, selectedPendingCount: 1 });
+      const btn = screen.getByRole('button', { name: /Import/ });
+      expect(btn).toHaveAttribute('title', '2 selected books need a match, 1 still matching');
     });
 
     it('no tooltip when all matched', () => {
