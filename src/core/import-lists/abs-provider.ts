@@ -23,6 +23,7 @@ const absItemSchema = z.object({
       authorName: z.string().nullish(),
       asin: z.string().nullish(),
       isbn: z.string().nullish(),
+      description: z.string().nullish(),
     }).passthrough(),
   }).passthrough(),
 }).passthrough();
@@ -81,6 +82,7 @@ export class AbsProvider implements ImportListProvider {
         ...(meta.authorName && { author: meta.authorName }),
         ...(meta.asin && { asin: meta.asin }),
         ...(meta.isbn && { isbn: meta.isbn }),
+        ...(meta.description && { description: meta.description }),
       });
     }
     return items;

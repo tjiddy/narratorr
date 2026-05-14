@@ -17,6 +17,8 @@ const TRENDING_QUERY = `
   query TrendingBooks {
     trending_books(limit: 50) {
       title
+      description
+      image { url }
       contributions {
         author { name }
       }
@@ -33,6 +35,8 @@ const SHELF_QUERY = `
     user_book_reads(where: { status_id: { _eq: $shelfId } }, limit: 100) {
       book {
         title
+        description
+        image { url }
         contributions {
           author { name }
         }
@@ -47,6 +51,8 @@ const SHELF_QUERY = `
 
 const hardcoverBookSchema = z.object({
   title: z.string().nullish(),
+  description: z.string().nullish(),
+  image: z.object({ url: z.string().nullish() }).passthrough().nullish(),
   contributions: z.array(z.object({
     author: z.object({ name: z.string().nullish() }).passthrough().nullish(),
   }).passthrough()).nullish(),
@@ -85,6 +91,8 @@ function mapBook(book: HardcoverBook): ImportListItem | null {
     author,
     asin: asinEntry?.value || undefined,
     isbn: isbnEntry?.value || undefined,
+    coverUrl: book.image?.url || undefined,
+    description: book.description || undefined,
   };
 }
 

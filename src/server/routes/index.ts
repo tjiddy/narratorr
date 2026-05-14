@@ -195,7 +195,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
-  const importList = new ImportListService(db, log, metadata, {
+  const importList = new ImportListService(db, log, book, metadata, {
     indexerSearchService: indexerSearch,
     downloadOrchestrator,
     settingsService: settings,

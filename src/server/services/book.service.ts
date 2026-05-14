@@ -192,6 +192,7 @@ export class BookService {
     genres?: string[] | undefined;
     status?: BookRow['status'] | undefined;
     providerId?: string | undefined;
+    importListId?: number | undefined;
   }): Promise<BookWithAuthor> {
     // Enrich with ASIN from metadata provider if missing
     let enrichedAsin = data.asin;
@@ -222,6 +223,7 @@ export class BookService {
           publishedDate: data.publishedDate,
           genres: data.genres,
           status: data.status || 'wanted',
+          importListId: data.importListId,
         })
         .returning();
 

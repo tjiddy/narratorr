@@ -81,6 +81,50 @@ describe('HardcoverProvider', () => {
       expect(capturedBody!.query).not.toContain('123');
     });
 
+    // #1101 F1 — shelf query must request the new image/description fields
+    // (mirror of the trending coverage at "captures image.url ..." below)
+    it('shelf query body selects description and image { url }, and maps them to ImportListItem', async () => {
+      let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
+      server.use(
+        http.post(GQL_URL, async ({ request }) => {
+          capturedBody = await request.json() as typeof capturedBody;
+          return HttpResponse.json({
+            data: {
+              user_book_reads: [{
+                book: {
+                  title: 'Shelf Book',
+                  description: 'Shelf blurb.',
+                  image: { url: 'https://hardcover.app/shelf-cover.jpg' },
+                  contributions: [{ author: { name: 'Shelf Author' } }],
+                  identifiers: [{ source: { name: 'amazon' }, value: 'B_SHELF' }],
+                },
+              }],
+            },
+          });
+        }),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: 5 });
+      const items = await provider.fetchItems();
+
+      // Query-shape assertion: deleting description or image from SHELF_QUERY
+      // would make these fail (the F1 regression guard).
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.query).toContain('user_book_reads');
+      expect(capturedBody!.query).toContain('description');
+      expect(capturedBody!.query).toContain('image { url }');
+
+      // Mapping assertion: shelf-mode responses with image/description flow through
+      expect(items).toEqual([{
+        title: 'Shelf Book',
+        author: 'Shelf Author',
+        asin: 'B_SHELF',
+        isbn: undefined,
+        coverUrl: 'https://hardcover.app/shelf-cover.jpg',
+        description: 'Shelf blurb.',
+      }]);
+    });
+
     it('does not send shelf query when listType is trending', async () => {
       let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
       server.use(
@@ -108,6 +152,86 @@ describe('HardcoverProvider', () => {
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
       const items = await provider.fetchItems();
       expect(items).toEqual([]);
+    });
+
+    it('captures image.url as coverUrl and description from book node (trending query body selects them)', async () => {
+      let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
+      server.use(
+        http.post(GQL_URL, async ({ request }) => {
+          capturedBody = await request.json() as typeof capturedBody;
+          return HttpResponse.json({
+            data: {
+              trending_books: [{
+                title: 'The Way of Kings',
+                description: 'Epic fantasy.',
+                image: { url: 'https://hardcover.app/img.jpg' },
+                contributions: [{ author: { name: 'Brandon Sanderson' } }],
+                identifiers: [{ source: { name: 'amazon' }, value: 'B003P2WO5E' }],
+              }],
+            },
+          });
+        }),
+      );
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+
+      // Query-shape assertion mirrors the shelf-mode F1 guard above —
+      // deleting description or image from TRENDING_QUERY would fail here.
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.query).toContain('trending_books');
+      expect(capturedBody!.query).toContain('description');
+      expect(capturedBody!.query).toContain('image { url }');
+
+      expect(items[0]).toEqual({
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+        asin: 'B003P2WO5E',
+        isbn: undefined,
+        coverUrl: 'https://hardcover.app/img.jpg',
+        description: 'Epic fantasy.',
+      });
+    });
+
+    it('schema accepts null/missing description and image (Hardcover legitimately omits)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [
+              { title: 'A', description: null, image: null, contributions: [], identifiers: [] },
+              { title: 'B', contributions: [], identifiers: [] }, // image/description missing
+            ],
+          },
+        })),
+      );
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items).toHaveLength(2);
+      expect(items[0]!.coverUrl).toBeUndefined();
+      expect(items[0]!.description).toBeUndefined();
+      expect(items[1]!.coverUrl).toBeUndefined();
+      expect(items[1]!.description).toBeUndefined();
+    });
+
+    it('ignores plural images array when present (singular image is canonical)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [{
+              title: 'X',
+              image: { url: 'https://canonical.example/cover.jpg' },
+              images: [
+                { url: 'https://other-edition-1.example/cover.jpg' },
+                { url: 'https://other-edition-2.example/cover.jpg' },
+              ],
+              contributions: [{ author: { name: 'A' } }],
+              identifiers: [],
+            }],
+          },
+        })),
+      );
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBe('https://canonical.example/cover.jpg');
     });
 
     it('handles GraphQL error response without crash', async () => {
