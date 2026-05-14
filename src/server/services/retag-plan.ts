@@ -1,5 +1,5 @@
 import { parseFile } from 'music-metadata';
-import { basename } from 'node:path';
+import { basename, extname } from 'node:path';
 import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
 import type { TagMetadata } from './tagging.service.js';
 
@@ -133,6 +133,67 @@ export function buildCanonicalTags(
 }
 
 /**
+ * For multi-file books, derive the per-file `title` so the apply path doesn't
+ * clobber legitimate chapter titles with the book title (#1090).
+ *
+ * - `overwrite`: preserve the file's existing title when present; otherwise
+ *   fall back to the file basename (extension stripped). Returns undefined
+ *   when neither is available so the caller can leave title unset.
+ * - `populate_missing`: return basename-derived title. `resolveTags`'s
+ *   `!existing[key]` guard keeps existing titles intact; the basename value
+ *   is only written for files that have no existing title tag.
+ *
+ * Single-file books should NOT use this helper — they keep `title = book.title`.
+ */
+export function derivePerFileTitle(
+  filePath: string,
+  mode: TagMode,
+  existingTags: Partial<TagMetadata>,
+): string | undefined {
+  if (mode === 'overwrite' && existingTags.title) return existingTags.title;
+  const ext = extname(filePath);
+  const base = basename(filePath, ext);
+  return base || undefined;
+}
+
+/**
+ * Build the per-file desired-tag set from canonical (book-wide) tags + file
+ * context. Shared between the apply path (`tagBook` per-file loop) and the
+ * preview path (`planRetag` per-file loop) so the two never diverge on the
+ * per-file `title` rule.
+ *
+ * - Single-file books: passes canonical tags through unchanged
+ *   (`title = book.title`, no track).
+ * - Multi-file books: assigns sequential track numbers and replaces `title`
+ *   with the per-file value from `derivePerFileTitle`.
+ */
+export function buildTagsForFile(args: {
+  canonicalTags: TagMetadata;
+  filePath: string;
+  isSingleFile: boolean;
+  index: number;
+  total: number;
+  mode: TagMode;
+  existingTags: Partial<TagMetadata>;
+}): TagMetadata {
+  if (args.isSingleFile) return { ...args.canonicalTags };
+
+  const result: TagMetadata = {
+    ...args.canonicalTags,
+    track: args.index + 1,
+    trackTotal: args.total,
+  };
+
+  const perFileTitle = derivePerFileTitle(args.filePath, args.mode, args.existingTags);
+  if (perFileTitle !== undefined) {
+    result.title = perFileTitle;
+  } else {
+    delete result.title;
+  }
+  return result;
+}
+
+/**
  * Strip the user-excluded fields from a desired-tag set. The user-facing
  * `track` checkbox covers both `track` and `trackTotal` — exclude expands.
  */
@@ -158,9 +219,10 @@ export async function planFile(
   desired: TagMetadata,
   mode: TagMode,
   coverPath: string | undefined,
+  existingTags?: Partial<TagMetadata>,
 ): Promise<RetagPlanFile> {
   const fileName = basename(filePath);
-  const existing = await readExistingTags(filePath);
+  const existing = existingTags ?? await readExistingTags(filePath);
   const resolvedTags = resolveTags(desired, existing, mode);
 
   const fileHasCover = coverPath !== undefined ? await fileHasCoverArt(filePath) : false;
