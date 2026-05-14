@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
@@ -469,5 +469,96 @@ describe('NotifierCard — edit mode', () => {
     expect(screen.getByText('Method')).toBeInTheDocument();
     expect(screen.getByText('Headers (JSON)')).toBeInTheDocument();
     expect(screen.getByText('Body Template')).toBeInTheDocument();
+  });
+});
+
+// #1103 F7 — empty-events notifier UX. After the migration scrub, an on_upgrade-only
+// notifier row ends up with events: [] and enabled: false. The component must:
+//   - show the no-events hint in view mode
+//   - disable the Enabled toggle in edit mode while events.length === 0
+//   - surface the 'Select at least one event' validation message when the user tries
+//     to save the edit form without selecting an event
+describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
+  const emptyEventsNotifier: Notifier = createMockNotifier({
+    id: 99,
+    name: 'Migrated Notifier',
+    type: 'webhook',
+    enabled: false,
+    events: [],
+    settings: { url: 'https://example.com/hook', method: 'POST' },
+  });
+
+  it('view mode renders the "no events selected" hint instead of the Events line', () => {
+    renderWithProviders(
+      <NotifierCard
+        notifier={emptyEventsNotifier}
+        mode="view"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    // The empty-events hint replaces the normal `Events: ...` line.
+    expect(screen.getByTestId('notifier-empty-events-hint')).toHaveTextContent(
+      /No events selected/i,
+    );
+    expect(screen.queryByText(/^Events:/)).not.toBeInTheDocument();
+  });
+
+  it('edit-mode Enabled checkbox is disabled while events array is empty', () => {
+    renderWithProviders(
+      <NotifierCard
+        notifier={emptyEventsNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const enabledCheckbox = screen.getByRole('checkbox', { name: 'Enabled' });
+    expect(enabledCheckbox).toBeDisabled();
+    // Hint text describes WHY the toggle is disabled — visible to the user.
+    expect(screen.getByText(/Select at least one event to enable this notifier/i)).toBeInTheDocument();
+  });
+
+  it('edit-mode Enabled checkbox becomes enabled after the user selects an event', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={emptyEventsNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Enabled' })).toBeDisabled();
+
+    // Pick any event.
+    await user.click(screen.getByRole('checkbox', { name: 'Grab' }));
+
+    expect(screen.getByRole('checkbox', { name: 'Enabled' })).not.toBeDisabled();
+    expect(screen.queryByText(/Select at least one event to enable this notifier/i)).not.toBeInTheDocument();
+  });
+
+  it('submitting the edit form with no events selected surfaces "Select at least one event" and blocks onSubmit', async () => {
+    const onSubmit = vi.fn();
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={emptyEventsNotifier}
+        mode="edit"
+        onSubmit={onSubmit}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const form = screen.getByText('Edit Notifier').closest('form')!;
+    fireEvent.submit(form);
+
+    // Zod's events.min(1, 'Select at least one event') fires; the error text appears in red below the events list.
+    expect(await screen.findByText('Select at least one event')).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
