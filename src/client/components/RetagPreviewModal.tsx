@@ -31,6 +31,30 @@ interface RetagPreviewModalProps {
   onConfirm: (payload: RetagConfirmPayload) => void;
 }
 
+type SettingsDefaults = { mode: RetagMode; embedCover: boolean };
+type ActiveOverrides = { mode?: RetagMode; embedCover?: boolean };
+
+/** Build the override object emitted to fetch + apply: only fields where the
+ *  user's selection differs from the captured settings defaults. */
+function deriveActiveOverrides(
+  defaults: SettingsDefaults | null,
+  userMode: RetagMode | null,
+  userEmbedCover: boolean | null,
+): ActiveOverrides {
+  if (!defaults) return {};
+  const out: ActiveOverrides = {};
+  if (userMode !== null && userMode !== defaults.mode) out.mode = userMode;
+  if (userEmbedCover !== null && userEmbedCover !== defaults.embedCover) out.embedCover = userEmbedCover;
+  return out;
+}
+
+function buildConfirmPayload(excludeSet: Set<RetagExcludableField>, overrides: ActiveOverrides): RetagConfirmPayload {
+  const payload: RetagConfirmPayload = { excludeFields: Array.from(excludeSet) };
+  if (overrides.mode !== undefined) payload.mode = overrides.mode;
+  if (overrides.embedCover !== undefined) payload.embedCover = overrides.embedCover;
+  return payload;
+}
+
 export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagPreviewModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useEscapeKey(isOpen, onClose, modalRef);
@@ -42,11 +66,9 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
   // not against whether the control was touched (#1098 F2).
   const [userMode, setUserMode] = useState<RetagMode | null>(null);
   const [userEmbedCover, setUserEmbedCover] = useState<boolean | null>(null);
-  const [settingsDefaults, setSettingsDefaults] = useState<{ mode: RetagMode; embedCover: boolean } | null>(null);
+  const [settingsDefaults, setSettingsDefaults] = useState<SettingsDefaults | null>(null);
 
-  const activeOverrides: { mode?: RetagMode; embedCover?: boolean } = {};
-  if (settingsDefaults && userMode !== null && userMode !== settingsDefaults.mode) activeOverrides.mode = userMode;
-  if (settingsDefaults && userEmbedCover !== null && userEmbedCover !== settingsDefaults.embedCover) activeOverrides.embedCover = userEmbedCover;
+  const activeOverrides = deriveActiveOverrides(settingsDefaults, userMode, userEmbedCover);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.bookRetagPreview(bookId, activeOverrides),
@@ -81,10 +103,7 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
 
   const handleConfirm = () => {
     onClose();
-    const payload: RetagConfirmPayload = { excludeFields: Array.from(excludeSet) };
-    if (activeOverrides.mode !== undefined) payload.mode = activeOverrides.mode;
-    if (activeOverrides.embedCover !== undefined) payload.embedCover = activeOverrides.embedCover;
-    onConfirm(payload);
+    onConfirm(buildConfirmPayload(excludeSet, activeOverrides));
   };
 
   return (
