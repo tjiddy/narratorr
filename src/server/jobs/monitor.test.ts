@@ -887,6 +887,32 @@ describe('monitor job', () => {
         'Book status recovered after download failure',
       );
     });
+
+    // #1103 F3 — caller-surface coverage for the imported-book guard inside retrySearch().
+    // Uses the real retrySearch (no spy) and seeds the bookService.getById mock to return
+    // a book with path !== null. Asserts the centralized guard prevents grab and leaves
+    // the retry budget unchanged.
+    it('failure handler inherits retrySearch imported-book guard — no grab, budget unchanged', async () => {
+      retryDeps.retrySearchDeps.bookService.getById.mockResolvedValue({
+        id: 42, title: 'Imported Book', duration: 3600,
+        path: '/library/imported-book',
+        author: { name: 'Author' },
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Imported Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      const budgetBefore = retryDeps.retrySearchDeps.retryBudget.hasRemaining(42);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.retryBudget.hasRemaining(42)).toBe(budgetBefore);
+    });
   });
 
   describe('SSE emissions', () => {

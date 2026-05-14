@@ -125,15 +125,14 @@ describe('grabSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects unknown replaceExisting field (removed)', () => {
+  it('rejects unknown replaceExisting field (#1103: schema is .strict())', () => {
     const result = grabSchema.safeParse({
       downloadUrl: 'https://example.com',
       title: 'Test',
       replaceExisting: true,
     });
-    // The grabSchema accepts the input but drops the unknown property — replaceExisting is no longer in the contract.
-    expect(result.success).toBe(true);
-    if (result.success) expect((result.data as Record<string, unknown>).replaceExisting).toBeUndefined();
+    // .strict() rejects unknown keys with a Zod issue rather than silently stripping them.
+    expect(result.success).toBe(false);
   });
 });
 

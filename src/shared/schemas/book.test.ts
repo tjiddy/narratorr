@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBookBodySchema, enrichmentStatusSchema } from './book.js';
+import { createBookBodySchema, updateBookBodySchema, enrichmentStatusSchema } from './book.js';
 
 describe('enrichmentStatusSchema', () => {
   it.each(['pending', 'enriched', 'failed', 'skipped', 'file-enriched'] as const)(
@@ -85,5 +85,17 @@ describe('createBookBodySchema — trim behavior', () => {
   it('accepts valid title', () => {
     const result = createBookBodySchema.safeParse(validBook);
     expect(result.success).toBe(true);
+  });
+});
+
+describe('createBookBodySchema / updateBookBodySchema — removed monitorForUpgrades (#1103)', () => {
+  it('createBookBodySchema rejects requests containing monitorForUpgrades', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, monitorForUpgrades: true });
+    expect(result.success).toBe(false);
+  });
+
+  it('updateBookBodySchema rejects requests containing monitorForUpgrades', () => {
+    const result = updateBookBodySchema.safeParse({ monitorForUpgrades: false });
+    expect(result.success).toBe(false);
   });
 });

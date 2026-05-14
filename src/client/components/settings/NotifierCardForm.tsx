@@ -54,14 +54,21 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
 
         {isEdit && (
           <div>
-            <label className="flex items-center gap-3 cursor-pointer">
+            <label className={`flex items-center gap-3 ${watchedEvents.length === 0 ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
               <input
                 type="checkbox"
                 {...register('enabled')}
-                className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
+                disabled={watchedEvents.length === 0}
+                aria-describedby={watchedEvents.length === 0 ? 'notifier-enabled-disabled-hint' : undefined}
+                className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0 disabled:cursor-not-allowed"
               />
               <span className="text-sm font-medium">Enabled</span>
             </label>
+            {watchedEvents.length === 0 && (
+              <p id="notifier-enabled-disabled-hint" className="text-xs text-muted-foreground mt-1">
+                Select at least one event to enable this notifier.
+              </p>
+            )}
           </div>
         )}
 

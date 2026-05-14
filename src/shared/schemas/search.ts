@@ -43,7 +43,7 @@ export const grabSchema = z.object({
   size: z.number().int().nonnegative().optional(),
   seeders: z.number().int().nonnegative().optional(),
   guid: z.string().trim().min(1).optional(),
-});
+}).strict();
 
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 export type GrabInput = z.infer<typeof grabSchema>;

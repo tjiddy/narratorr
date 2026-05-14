@@ -190,17 +190,19 @@ describe('QualityGateService', () => {
       expect(result.statusTransition).toEqual({ from: 'checking', to: 'completed' });
     });
 
-    it('does not append imported_book_replacement when other hold reasons already exist (narrator_mismatch)', async () => {
+    it('appends imported_book_replacement alongside other hold reasons (e.g. narrator_mismatch)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      // tagNarrator mismatch produces holdReasons.length > 0 → original hold path fires,
-      // NOT the imported-book replacement path
+      // tagNarrator mismatch produces holdReasons.length > 0, but the imported-book
+      // guard must still append `imported_book_replacement` — the AC requires the
+      // reason to be present for any imported-book replacement, regardless of other
+      // hold reasons.
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }));
 
       expect(result.action).toBe('held');
       expect(result.reason.holdReasons).toContain('narrator_mismatch');
-      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
     });
   });
 
