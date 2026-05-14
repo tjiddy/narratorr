@@ -205,51 +205,82 @@ export class ImportListService {
    *
    * Two paths:
    * - **ASIN-identity** — when `item.asin` is present, hit Audnexus directly
-   *   (`enrichBook(asin)`). Identity lookup, no fuzzy validation.
+   *   (`enrichBook(asin)`). Identity lookup, no fuzzy validation. The metadata
+   *   is treated as canonical identity: a successful match wins title/authors
+   *   over the raw provider fields.
    * - **Search-candidate** — when `item.asin` is absent, run a metadata search
    *   and validate the top candidate via {@link matchPassesValidation}. Failed
    *   validation drops the match (raw provider fields fall through).
    *
-   * Either path can return `match = null` (no metadata service, lookup failed,
-   * search empty, validation rejected). The returned shape uses provider-truth
-   * precedence (`item.* ?? match.*`) for the fields where the provider has its
-   * own value (coverUrl, description, asin, isbn, authorName).
+   * Either path can return `source: 'none'` (no metadata service, lookup
+   * failed, search empty, validation rejected) — callers then fall back to raw
+   * item fields with no metadata side fields populated. Provider-first
+   * precedence still applies to cover/description/asin/isbn even on the
+   * matched branches; only title/authorName flip to metadata-first.
    */
   private async enrichItem(item: ImportListItem): Promise<EnrichedItem> {
-    const match = await this.resolveMatch(item);
-    return buildEnrichedItem(item, match);
+    const resolved = await this.resolveMatch(item);
+    return buildEnrichedItem(item, resolved);
   }
 
-  private async resolveMatch(item: ImportListItem): Promise<BookMetadata | null> {
-    if (!this.metadata) return null;
+  private async resolveMatch(item: ImportListItem): Promise<ResolvedMatch> {
+    if (!this.metadata) return { match: null, source: 'none' };
     try {
       if (item.asin) {
         // ASIN-identity path: trust Audnexus's response, no fuzzy validation
-        return await this.metadata.enrichBook(item.asin);
+        const match = await this.metadata.enrichBook(item.asin);
+        if (!match) return { match: null, source: 'none' };
+        this.logIdentityMismatch(item, match);
+        return { match, source: 'asin' };
       }
       const query = item.author ? `${item.title} ${item.author}` : item.title;
       const searchResults = await this.metadata.search(query);
       const candidate = searchResults.books[0];
-      if (!candidate) return null;
-      return matchPassesValidation(item, candidate) ? candidate : null;
+      if (!candidate) return { match: null, source: 'none' };
+      return matchPassesValidation(item, candidate)
+        ? { match: candidate, source: 'search' }
+        : { match: null, source: 'none' };
     } catch (error: unknown) {
       this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
-      return null;
+      return { match: null, source: 'none' };
     }
+  }
+
+  /**
+   * Emit a warn audit log when ASIN-resolved metadata disagrees with the raw
+   * provider title/author. The metadata is still adopted (ASIN is identity);
+   * the log lets operators trace mixed-identity book rows back to their
+   * source. Skipped when the raw fields are absent or already agree.
+   */
+  private logIdentityMismatch(item: ImportListItem, match: BookMetadata): void {
+    const metadataAuthor = match.authors[0]?.name;
+    const titleDiffers = !!item.title && item.title !== match.title;
+    const authorDiffers = !!item.author && !!metadataAuthor && item.author !== metadataAuthor;
+    if (!titleDiffers && !authorDiffers) return;
+    this.log.warn(
+      {
+        asin: match.asin ?? item.asin,
+        listTitle: item.title,
+        metadataTitle: match.title,
+        listAuthor: item.author,
+        metadataAuthor,
+      },
+      'Import-list ASIN identity disagrees with raw item fields; adopting metadata',
+    );
   }
 
   private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
     const enriched = await this.enrichItem(item);
 
     const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
-    const duplicate = await this.bookService.findDuplicate(item.title, authorList, enriched.asin);
+    const duplicate = await this.bookService.findDuplicate(enriched.title, authorList, enriched.asin);
     if (duplicate) {
-      this.log.debug({ title: item.title, asin: enriched.asin }, 'Book already exists, skipped');
+      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists, skipped');
       return;
     }
 
     const created = await this.bookService.create({
-      title: item.title,
+      title: enriched.title,
       authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
       narrators: enriched.narrators,
       description: enriched.description,
@@ -287,38 +318,75 @@ export class ImportListService {
 }
 
 /**
- * Build the intermediate enriched payload from `(item, match)`.
+ * Outcome of resolving rich metadata for an import-list item.
  *
- * Provider-truth precedence (`item.* ?? match.*`) for the fields the provider
- * has its own value for (cover/description/asin/isbn/author). Match-only
- * fields (narrators, series identity, duration, etc.) flow through unchanged.
+ * `source` tags which path produced the match so {@link buildEnrichedItem}
+ * can apply source-aware precedence: matched paths (`'asin'` / `'search'`)
+ * adopt metadata identity (title/authorName); the `'none'` path falls back
+ * to raw provider fields with no metadata side fields.
+ */
+type ResolvedMatch =
+  | { match: BookMetadata; source: 'asin' | 'search' }
+  | { match: null; source: 'none' };
+
+/**
+ * Build the intermediate enriched payload from `(item, resolved)`.
+ *
+ * Source-aware precedence:
+ * - `'asin'` / `'search'` — metadata wins for `title` and `authorName` (the
+ *   match is treated as canonical identity). `BookMetadataSchema` requires
+ *   `title` and a non-empty `authors`, so no per-field fallback is needed
+ *   inside a successful branch. Provider-first still applies to
+ *   cover/description/asin/isbn (raw item value is a hint).
+ * - `'none'` — raw item fields only; no metadata side fields populated.
+ *
  * `seriesPrimary` wins over `series[0]` (#1088 / #1097).
  *
  * Lives outside the class so its many `??`/`?.` operators don't accumulate
  * cyclomatic complexity in `enrichItem`.
  */
-// eslint-disable-next-line complexity -- flat coalescing across item/match
-function buildEnrichedItem(item: ImportListItem, match: BookMetadata | null): EnrichedItem {
-  const primarySeries = match?.seriesPrimary ?? match?.series?.[0];
+function buildEnrichedItem(item: ImportListItem, resolved: ResolvedMatch): EnrichedItem {
+  if (resolved.source === 'none') return buildRawEnriched(item);
+  return buildMatchedEnriched(item, resolved.match);
+}
+
+function buildRawEnriched(item: ImportListItem): EnrichedItem {
   return {
-    coverUrl: item.coverUrl ?? match?.coverUrl,
-    description: item.description ?? match?.description,
-    seriesName: primarySeries?.name,
-    seriesPosition: primarySeries?.position,
-    seriesAsin: primarySeries?.asin,
-    narrators: match?.narrators,
-    duration: match?.duration,
-    publishedDate: match?.publishedDate,
-    genres: match?.genres,
-    asin: item.asin ?? match?.asin,
-    isbn: item.isbn ?? match?.isbn,
-    authorName: item.author ?? match?.authors?.[0]?.name,
+    title: item.title,
+    authorName: item.author,
+    coverUrl: item.coverUrl,
+    description: item.description,
+    asin: item.asin,
+    isbn: item.isbn,
   };
 }
 
-/** Intermediate enriched payload — singular `authorName`, translated to
- *  `authors: { name: string }[]` at the {@link BookService.create} call site. */
+// eslint-disable-next-line complexity -- flat coalescing across item/match
+function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): EnrichedItem {
+  const primarySeries = match.seriesPrimary ?? match.series?.[0];
+  return {
+    title: match.title,
+    authorName: match.authors[0]?.name,
+    coverUrl: item.coverUrl ?? match.coverUrl,
+    description: item.description ?? match.description,
+    seriesName: primarySeries?.name,
+    seriesPosition: primarySeries?.position,
+    seriesAsin: primarySeries?.asin,
+    narrators: match.narrators,
+    duration: match.duration,
+    publishedDate: match.publishedDate,
+    genres: match.genres,
+    asin: item.asin ?? match.asin,
+    isbn: item.isbn ?? match.isbn,
+  };
+}
+
+/** Intermediate enriched payload — `title` is canonical (metadata title on a
+ *  successful match, raw item title otherwise), and `authorName` is singular,
+ *  translated to `authors: { name: string }[]` at the
+ *  {@link BookService.create} call site. */
 interface EnrichedItem {
+  title: string;
   coverUrl?: string | undefined;
   description?: string | undefined;
   seriesName?: string | undefined;

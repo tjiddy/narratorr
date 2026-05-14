@@ -735,8 +735,9 @@ describe('ImportListService', () => {
         }));
       });
 
-      // F12 — ASIN-bearing items now get rich metadata from enrichBook (NOT skipped)
-      it('item has ASIN → enrichBook called, NOT search; rich metadata flows to BookService.create', async () => {
+      // #1119 — ASIN-bearing items now get rich metadata from enrichBook, and the
+      // metadata's title/author win over the raw provider fields (ASIN is identity).
+      it('item has ASIN → enrichBook called, NOT search; metadata identity + side fields flow to BookService.create', async () => {
         const mockMetadata = {
           enrichBook: vi.fn().mockResolvedValue({
             asin: 'B002', title: 'Different Title From Audnexus', authors: [{ name: 'Audnexus Author' }],
@@ -759,19 +760,19 @@ describe('ImportListService', () => {
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        const create = vi.fn().mockResolvedValue(createdBook(10, 'Item Title'));
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Different Title From Audnexus'));
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
         expect(mockMetadata.enrichBook).toHaveBeenCalledWith('B002');
         expect(mockMetadata.search).not.toHaveBeenCalled();
 
-        // Provider-truth precedence on title/author/coverUrl/description (item.* ?? match.*),
-        // but rich match-only fields (narrators, series, duration, etc.) flow through.
-        // seriesPrimary wins over series[0] per #1088 prior art.
+        // Metadata identity wins for title + authors; cover/description still
+        // accept the raw item value as a hint (item.* ?? match.*); rich
+        // match-only fields flow through. seriesPrimary wins over series[0].
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
-          title: 'Item Title',
-          authors: [{ name: 'Item Author' }],
+          title: 'Different Title From Audnexus',
+          authors: [{ name: 'Audnexus Author' }],
           asin: 'B002',
           narrators: ['Narrator A', 'Narrator B'],
           seriesName: 'Real Series',
@@ -783,18 +784,22 @@ describe('ImportListService', () => {
         }));
       });
 
-      // F12 — ASIN-identity path skips fuzzy validation: even a wildly-different
-      // metadata title/author is still adopted (because ASIN is an identity).
-      it('ASIN-identity path skips §4 fuzzy validation', async () => {
+      // #1119 AC test #1 — ASIN-identity: metadata author + title win at the
+      // create payload (replaces the prior `ASIN-identity path skips §4 fuzzy
+      // validation` test that blessed the chimera behavior).
+      it('ASIN-identity: metadata author + title win at create + findDuplicate', async () => {
         const mockMetadata = {
           enrichBook: vi.fn().mockResolvedValue({
-            asin: 'B00ASIN', title: 'Totally Different Book', authors: [{ name: 'Some Other Author' }],
-            narrators: ['N1'], duration: 1000,
+            asin: 'B00R6S1RCY', title: 'Golden Son',
+            authors: [{ name: 'Pierce Brown' }],
+            narrators: ['Tim Gerard Reynolds'], duration: 64000,
           }),
           search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'Navessa Allen', asin: 'B00ASIN' }]),
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Golden Son', author: 'Navessa Allen', asin: 'B00R6S1RCY' },
+          ]),
           test: vi.fn(),
         };
         mockFactories.abs!.mockReturnValue(mockProvider);
@@ -804,16 +809,224 @@ describe('ImportListService', () => {
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        const create = vi.fn().mockResolvedValue(createdBook(10, 'GAME ON'));
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Golden Son'));
+        const findDuplicate = vi.fn().mockResolvedValue(null);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
+        );
+        await service.syncDueLists();
+
+        expect(findDuplicate).toHaveBeenCalledWith('Golden Son', [{ name: 'Pierce Brown' }], 'B00R6S1RCY');
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Golden Son',
+          authors: [{ name: 'Pierce Brown' }],
+          narrators: ['Tim Gerard Reynolds'],
+          duration: 64000,
+        }));
+      });
+
+      // #1119 AC test #2 — ASIN-identity: metadata title wins when item title differs
+      it('ASIN-identity: metadata title wins when item title differs', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Golden Son',
+            authors: [{ name: 'Pierce Brown' }],
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'golden son (unabridged)', author: 'Pierce Brown', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Golden Son'));
+        const findDuplicate = vi.fn().mockResolvedValue(null);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
+        );
+        await service.syncDueLists();
+
+        expect(findDuplicate).toHaveBeenCalledWith('Golden Son', [{ name: 'Pierce Brown' }], 'B00R6S1RCY');
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son' }));
+      });
+
+      // #1119 AC test #3 — ASIN lookup failure: raw item fields used end-to-end
+      it('ASIN lookup failure: raw item fields used at create, no metadata side fields', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue(null),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Mystery Book', author: 'Some Author', asin: 'B_NOTFOUND' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Mystery Book'));
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        // Match was adopted: narrators flowed through despite fuzzy mismatch
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
-          title: 'GAME ON',
-          authors: [{ name: 'Navessa Allen' }],  // item wins
-          narrators: ['N1'],                      // match flows through
-          duration: 1000,
+          title: 'Mystery Book',
+          authors: [{ name: 'Some Author' }],
+          asin: 'B_NOTFOUND',
+        }));
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.narrators).toBeUndefined();
+        expect(callArgs.duration).toBeUndefined();
+        expect(callArgs.seriesName).toBeUndefined();
+      });
+
+      // #1119 AC test #4 — Search-candidate validation success: metadata identity wins at create payload
+      it('search-candidate path: metadata identity wins at create payload when item differs', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn(),
+          search: vi.fn().mockResolvedValue({
+            books: [{
+              title: 'Game On', authors: [{ name: 'Navessa Allen' }],
+              narrators: ['Real Narrator'], duration: 30000,
+            }],
+            authors: [], series: [],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          // Lowercased title + author match the metadata case-insensitively, so
+          // validation passes; assert the metadata casing reaches the create payload.
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'navessa allen' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Game On'));
+        const findDuplicate = vi.fn().mockResolvedValue(null);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
+        );
+        await service.syncDueLists();
+
+        expect(findDuplicate).toHaveBeenCalledWith('Game On', [{ name: 'Navessa Allen' }], undefined);
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Game On',
+          authors: [{ name: 'Navessa Allen' }],
+          narrators: ['Real Narrator'],
+          duration: 30000,
+        }));
+      });
+
+      // #1119 AC test #7 — Mismatch logging on ASIN identity
+      it('ASIN-identity: emits warn log when raw and metadata fields disagree', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Golden Son',
+            authors: [{ name: 'Pierce Brown' }],
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Golden Son', author: 'Navessa Allen', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            asin: 'B00R6S1RCY',
+            listAuthor: 'Navessa Allen',
+            metadataAuthor: 'Pierce Brown',
+          }),
+          expect.stringContaining('Import-list ASIN identity disagrees'),
+        );
+      });
+
+      // #1119 AC test #7 (negative) — no mismatch log when raw and metadata agree
+      it('ASIN-identity: no mismatch log when raw and metadata agree', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Golden Son',
+            authors: [{ name: 'Pierce Brown' }],
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Golden Son', author: 'Pierce Brown', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list ASIN identity disagrees');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1119 AC test #8 — Item with no author + metadata has authors
+      it('ASIN-identity: item without author still adopts metadata author', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B_AUTHORLESS', title: 'X',
+            authors: [{ name: 'Real Author' }],
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'X', asin: 'B_AUTHORLESS' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'X'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          authors: [{ name: 'Real Author' }],
         }));
       });
 
