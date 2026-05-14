@@ -8,7 +8,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists, series, seriesMembers } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
-import { findMemberByLogicalIdentity, normalizePrimaryAuthor } from './series-refresh.helpers.js';
+import {
+  findMemberByLogicalIdentity,
+  normalizePrimaryAuthor,
+  normalizeSeriesMemberWorkTitle,
+} from './series-refresh.helpers.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -362,6 +366,28 @@ export class BookService {
   }
 
   /**
+   * Reuse-path for `upsertSeriesLink`: link `bookId` to the existing canonical
+   * `seriesMembers` row and fold `candidateAsin` into `alternate_asins` so the
+   * alternate-ASIN preservation contract holds for the BookService path. No-op
+   * when the ASIN matches the canonical providerBookId or is already an
+   * alternate. (#1116 F1, #1117 review F1)
+   */
+  private async linkExistingMember(tx: DbOrTx, existingId: number, bookId: number, candidateAsin: string | null): Promise<void> {
+    const rows = await tx
+      .select({ providerBookId: seriesMembers.providerBookId, alternateAsins: seriesMembers.alternateAsins })
+      .from(seriesMembers)
+      .where(eq(seriesMembers.id, existingId))
+      .limit(1);
+    const existing = rows[0];
+    const update: Partial<typeof seriesMembers.$inferInsert> = { bookId, updatedAt: new Date() };
+    const shouldFold = existing != null && candidateAsin != null && candidateAsin !== existing.providerBookId && !(existing.alternateAsins ?? []).includes(candidateAsin);
+    if (shouldFold) {
+      update.alternateAsins = [...new Set([...(existing!.alternateAsins ?? []), candidateAsin!])].sort();
+    }
+    await tx.update(seriesMembers).set(update).where(eq(seriesMembers.id, existingId));
+  }
+
+  /**
    * Upsert the (series + series_member) cache rows for a freshly-created book
    * when the create payload carries provider-known series identity.
    * Best-effort: failures are caught + logged so book create stays the success path.
@@ -424,7 +450,11 @@ export class BookService {
       // normalized author) when no ASIN match exists. Keeps add-book in lockstep
       // with refresh-time dedupe. (F12)
       const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
-      const normalizedTitle = normalizeSeriesName(args.title);
+      // Use work-title normalization so adding a book whose ASIN belongs to a
+      // dramatized/split-part variant reuses the existing clean canonical row
+      // rather than inserting a new noisy member. Stays in lockstep with the
+      // refresh-time dedupe identity. (#1116 F1)
+      const normalizedTitle = normalizeSeriesMemberWorkTitle(args.title);
       const normalizedAuthor = normalizePrimaryAuthor(args.authorName);
       const existingId = await findMemberByLogicalIdentity(
         tx,
@@ -435,10 +465,7 @@ export class BookService {
         args.asin,
       );
       if (existingId !== null) {
-        await tx
-          .update(seriesMembers)
-          .set({ bookId, updatedAt: new Date() })
-          .where(eq(seriesMembers.id, existingId));
+        await this.linkExistingMember(tx, existingId, bookId, args.asin);
         return;
       }
       await tx.insert(seriesMembers).values({
