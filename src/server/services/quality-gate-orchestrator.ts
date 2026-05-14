@@ -201,30 +201,58 @@ export class QualityGateOrchestrator {
     ffprobePath: string | undefined,
   ): Promise<QualityDecision | null> {
     let savePath: string;
+    let originalPath: string;
     try {
-      ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
+      ({ resolvedPath: savePath, originalPath } = await resolveSavePath(row.download, this.downloadClientService, this.optional.remotePathMappingService));
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
       await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
       return null;
     }
 
+    const scanOpts = {
+      skipCover: true,
+      ...(ffprobePath !== undefined && { ffprobePath }),
+      onWarn: (msg: string, payload?: Record<string, unknown>) => this.log.warn(payload, msg),
+      onDebug: (msg: string, payload?: Record<string, unknown>) => this.log.debug(payload, msg),
+    };
+
     let scanResult;
     try {
-      scanResult = await scanAudioDirectory(savePath, {
-        skipCover: true,
-        ...(ffprobePath !== undefined && { ffprobePath }),
-        onWarn: (msg, payload) => this.log.warn(payload, msg),
-        onDebug: (msg, payload) => this.log.debug(payload, msg),
-      });
+      scanResult = await scanAudioDirectory(savePath, scanOpts);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate: scan failed');
       await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
       return null;
     }
 
+    // Fallback: when the freshly resolved client path scans empty, try the persisted
+    // outputPath that monitor.ts already captured for this download. Guards against
+    // download clients returning a stale/parent-ish path just after completion (#1120).
+    const outputPath = row.download.outputPath;
+    let fallbackAttempted = false;
+    if (!scanResult && outputPath && outputPath !== savePath) {
+      fallbackAttempted = true;
+      try {
+        scanResult = await scanAudioDirectory(outputPath, scanOpts);
+        if (scanResult) {
+          this.log.info({ downloadId: row.download.id, resolvedPath: savePath, outputPath }, 'Quality gate: used persisted outputPath as scan fallback');
+        }
+      } catch (error: unknown) {
+        this.log.debug({ downloadId: row.download.id, outputPath, error: serializeError(error) }, 'Quality gate: outputPath fallback scan failed');
+        scanResult = null;
+      }
+    }
+
     if (!scanResult) {
-      this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found');
+      this.log.warn({
+        downloadId: row.download.id,
+        externalId: row.download.externalId,
+        resolvedPath: savePath,
+        originalPath,
+        outputPath,
+        fallbackAttempted,
+      }, 'Quality gate: no audio files found');
       await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
       return null;
     }

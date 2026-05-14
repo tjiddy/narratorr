@@ -309,6 +309,183 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
+  // ===== #1120 — outputPath fallback when client path resolution scans empty =====
+
+  describe('outputPath fallback (#1120)', () => {
+    const downloadWithOutputPath = { ...baseDownload, outputPath: '/downloads/persisted-correct-path' };
+
+    it('falls back to download.outputPath when first scan returns null and paths differ', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale-from-qb', originalPath: '/downloads/stale-from-qb' });
+      const fallbackScan = makeScan();
+      (scanAudioDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(fallbackScan);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenNthCalledWith(1, '/downloads/stale-from-qb', expect.any(Object));
+      expect(scanAudioDirectory).toHaveBeenNthCalledWith(2, '/downloads/persisted-correct-path', expect.any(Object));
+      expect(qualityGateService.processDownload).toHaveBeenCalledWith(downloadWithOutputPath, baseBook, fallbackScan);
+      // No probe_failed event was recorded
+      const probeFailureCalls = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => {
+          const arg = c[0] as { reason?: { probeFailure?: boolean } };
+          return arg.reason?.probeFailure === true;
+        });
+      expect(probeFailureCalls).toHaveLength(0);
+      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(1, 'pending_review');
+      // Info log records the fallback usage
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1, resolvedPath: '/downloads/stale-from-qb', outputPath: '/downloads/persisted-correct-path' }),
+        expect.stringContaining('outputPath as scan fallback'),
+      );
+    });
+
+    it('preserves probe_failed hold when outputPath is null (no fallback attempted)', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...baseDownload, outputPath: null }, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/x', originalPath: '/downloads/x' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledTimes(1);
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(eventHistory.create).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ outputPath: null, fallbackAttempted: false }),
+        'Quality gate: no audio files found',
+      );
+    });
+
+    it('preserves probe_failed hold when outputPath is empty string (no fallback attempted)', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...baseDownload, outputPath: '' }, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/x', originalPath: '/downloads/x' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledTimes(1);
+      expect(scanAudioDirectory).not.toHaveBeenCalledWith('', expect.any(Object));
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(eventHistory.create).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ outputPath: '', fallbackAttempted: false }),
+        'Quality gate: no audio files found',
+      );
+    });
+
+    it('preserves probe_failed hold with fallbackAttempted: true when both scans return null', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale-from-qb', originalPath: '/downloads/orig' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledTimes(2);
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(eventHistory.create).toHaveBeenCalledTimes(1);
+      // Persisted reason is the unchanged NULL_REASON-based object (no diagnostic keys)
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
+      }));
+      expect(log.warn).toHaveBeenCalledWith(
+        {
+          downloadId: 1,
+          externalId: 'ext-1',
+          resolvedPath: '/downloads/stale-from-qb',
+          originalPath: '/downloads/orig',
+          outputPath: '/downloads/persisted-correct-path',
+          fallbackAttempted: true,
+        },
+        'Quality gate: no audio files found',
+      );
+    });
+
+    it('does not double-scan when resolvedPath equals download.outputPath', async () => {
+      const { orchestrator, qualityGateService, log } = createOrchestrator();
+      const samePath = '/downloads/same-path';
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...baseDownload, outputPath: samePath }, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: samePath, originalPath: samePath });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledTimes(1);
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ outputPath: samePath, fallbackAttempted: false }),
+        'Quality gate: no audio files found',
+      );
+    });
+
+    it('warn log emits the six diagnostic fields as structured context, persisted reason unchanged', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/resolved', originalPath: '/downloads/original' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      const warnCall = (log.warn as ReturnType<typeof vi.fn>).mock.calls
+        .find((c: unknown[]) => c[1] === 'Quality gate: no audio files found');
+      expect(warnCall).toBeDefined();
+      const ctx = warnCall![0] as Record<string, unknown>;
+      expect(ctx).toEqual({
+        downloadId: 1,
+        externalId: 'ext-1',
+        resolvedPath: '/downloads/resolved',
+        originalPath: '/downloads/original',
+        outputPath: '/downloads/persisted-correct-path',
+        fallbackAttempted: true,
+      });
+
+      // Persisted reason has no diagnostic keys — exact match against canonical shape
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
+      }));
+    });
+
+    it('catches fallback scan errors and proceeds with probe_failed hold + fallbackAttempted: true', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale-from-qb', originalPath: '/downloads/stale-from-qb' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+
+      await expect(orchestrator.processCompletedDownloads()).resolves.toBeUndefined();
+
+      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(eventHistory.create).toHaveBeenCalledTimes(1);
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
+      }));
+      // Debug log records the fallback scan failure (with serialized error)
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1, outputPath: '/downloads/persisted-correct-path', error: expect.any(Object) }),
+        expect.stringContaining('outputPath fallback scan failed'),
+      );
+      // Warn log shows fallbackAttempted: true
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ fallbackAttempted: true, outputPath: '/downloads/persisted-correct-path' }),
+        'Quality gate: no audio files found',
+      );
+    });
+  });
+
   describe('side effect dispatch — hold path', () => {
     it('emits download_status_change and review_needed SSE, records event', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
