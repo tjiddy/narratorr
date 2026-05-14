@@ -229,6 +229,18 @@ export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, 
   };
 }
 
+/**
+ * Series-gap bonus against the canonical primary-series ref so a universe
+ * entry in `series[0]` (e.g. Cosmere) doesn't shadow the real next-in-series
+ * gap (Stormlight). (#1097)
+ */
+function seriesGapBonus(book: BookMetadata, signals: LibrarySignals): number {
+  const primary = book.seriesPrimary ?? book.series?.[0];
+  if (!primary?.name || primary.position == null) return 0;
+  const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === primary.name!.toLowerCase());
+  return gap && nearlyEqual(primary.position, gap.nextPosition) ? 20 : 0;
+}
+
 export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, strength: number, signals: LibrarySignals, multipliers: WeightMultipliers = DEFAULT_MULTIPLIERS): number {
   let score = SIGNAL_WEIGHTS[reason] * (multipliers[reason] ?? 1) * strength;
 
@@ -240,13 +252,7 @@ export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, str
     twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
     if (new Date(book.publishedDate) >= twoYearsAgo) score += 10;
   }
-  // Score against the canonical primary-series ref so a universe entry in `series[0]`
-  // (e.g. Cosmere) doesn't shadow the real next-in-series gap (Stormlight).
-  const primary = book.seriesPrimary ?? book.series?.[0];
-  if (reason === 'series' && primary?.name && primary.position != null) {
-    const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === primary.name!.toLowerCase());
-    if (gap && nearlyEqual(primary.position, gap.nextPosition)) score += 20;
-  }
+  if (reason === 'series') score += seriesGapBonus(book, signals);
 
   return Math.min(Math.max(score, 0), 100);
 }
