@@ -61,6 +61,7 @@ vi.mock('../../db/schema.js', () => ({
 
 import { rename, unlink, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { basename } from 'node:path';
 import { parseFile } from 'music-metadata';
 
 describe('buildFfmpegArgs', () => {
@@ -1492,7 +1493,10 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       const args = c[1] as string[];
       const iIdx = args.indexOf('-i');
       const inputPath = args[iIdx + 1]!;
-      const fileName = inputPath.split('/').pop()!;
+      // `basename` handles both POSIX `/` and Windows `\` — the apply path uses
+      // `path.join()` which produces OS-native separators, so splitting on a
+      // hardcoded `/` only works on Linux/macOS.
+      const fileName = basename(inputPath);
       files.add(fileName);
     }
     return files;
@@ -1573,7 +1577,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       const args = c[1] as string[];
       const iIdx = args.indexOf('-i');
       const inputPath = args[iIdx + 1]!;
-      const fileName = inputPath.split('/').pop()!;
+      const fileName = basename(inputPath);
       const titleArg = args.find(a => a.startsWith('title='));
       applyTitleByFile.set(fileName, titleArg?.replace('title=', ''));
     }
