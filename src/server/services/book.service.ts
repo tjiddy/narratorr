@@ -366,6 +366,28 @@ export class BookService {
   }
 
   /**
+   * Reuse-path for `upsertSeriesLink`: link `bookId` to the existing canonical
+   * `seriesMembers` row and fold `candidateAsin` into `alternate_asins` so the
+   * alternate-ASIN preservation contract holds for the BookService path. No-op
+   * when the ASIN matches the canonical providerBookId or is already an
+   * alternate. (#1116 F1, #1117 review F1)
+   */
+  private async linkExistingMember(tx: DbOrTx, existingId: number, bookId: number, candidateAsin: string | null): Promise<void> {
+    const rows = await tx
+      .select({ providerBookId: seriesMembers.providerBookId, alternateAsins: seriesMembers.alternateAsins })
+      .from(seriesMembers)
+      .where(eq(seriesMembers.id, existingId))
+      .limit(1);
+    const existing = rows[0];
+    const update: Partial<typeof seriesMembers.$inferInsert> = { bookId, updatedAt: new Date() };
+    const shouldFold = existing != null && candidateAsin != null && candidateAsin !== existing.providerBookId && !(existing.alternateAsins ?? []).includes(candidateAsin);
+    if (shouldFold) {
+      update.alternateAsins = [...new Set([...(existing!.alternateAsins ?? []), candidateAsin!])].sort();
+    }
+    await tx.update(seriesMembers).set(update).where(eq(seriesMembers.id, existingId));
+  }
+
+  /**
    * Upsert the (series + series_member) cache rows for a freshly-created book
    * when the create payload carries provider-known series identity.
    * Best-effort: failures are caught + logged so book create stays the success path.
@@ -443,31 +465,7 @@ export class BookService {
         args.asin,
       );
       if (existingId !== null) {
-        // Fold the newly-added book's ASIN into the canonical row's
-        // alternate_asins so the alternate-ASIN preservation contract holds
-        // for the BookService path: no-op when the ASIN matches the canonical
-        // providerBookId or is already an alternate; otherwise add it.
-        // (#1116 F1, #1117 review F1)
-        const existingRow = (await tx
-          .select({
-            providerBookId: seriesMembers.providerBookId,
-            alternateAsins: seriesMembers.alternateAsins,
-          })
-          .from(seriesMembers)
-          .where(eq(seriesMembers.id, existingId))
-          .limit(1))[0];
-        const update: Partial<typeof seriesMembers.$inferInsert> = { bookId, updatedAt: new Date() };
-        if (existingRow && args.asin && args.asin !== existingRow.providerBookId) {
-          const merged = new Set<string>(existingRow.alternateAsins ?? []);
-          if (!merged.has(args.asin)) {
-            merged.add(args.asin);
-            update.alternateAsins = [...merged].sort();
-          }
-        }
-        await tx
-          .update(seriesMembers)
-          .set(update)
-          .where(eq(seriesMembers.id, existingId));
+        await this.linkExistingMember(tx, existingId, bookId, args.asin);
         return;
       }
       await tx.insert(seriesMembers).values({
