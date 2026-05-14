@@ -97,4 +97,64 @@ describe('groupBooksBySeries', () => {
       expect(standalone).toEqual([]);
     });
   });
+
+  // #1097 — grouping prefers seriesPrimary over series[0]
+  describe('canonical primary-series preference (#1097)', () => {
+    it('groups books under seriesPrimary.name when it differs from series[0].name', () => {
+      const books = [
+        book({
+          title: 'Way of Kings',
+          seriesPrimary: { name: 'The Stormlight Archive', position: 1 },
+          series: [
+            { name: 'Cosmere', position: 4 },
+            { name: 'The Stormlight Archive', position: 1 },
+          ],
+        }),
+        book({
+          title: 'Words of Radiance',
+          seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+          series: [
+            { name: 'Cosmere', position: 7 },
+            { name: 'The Stormlight Archive', position: 2 },
+          ],
+        }),
+      ];
+
+      const { series } = groupBooksBySeries(books);
+      expect(series).toHaveLength(1);
+      expect(series[0]!.name).toBe('The Stormlight Archive');
+      expect(series[0]!.books).toHaveLength(2);
+    });
+
+    it('sorts grouped books by seriesPrimary.position when it differs from series[0].position', () => {
+      const books = [
+        book({
+          title: 'Words of Radiance',
+          seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+          // series[0] position would put it last (7) — wrong order without primary preference
+          series: [{ name: 'Cosmere', position: 7 }, { name: 'The Stormlight Archive', position: 2 }],
+        }),
+        book({
+          title: 'Way of Kings',
+          seriesPrimary: { name: 'The Stormlight Archive', position: 1 },
+          series: [{ name: 'Cosmere', position: 4 }, { name: 'The Stormlight Archive', position: 1 }],
+        }),
+      ];
+
+      const { series } = groupBooksBySeries(books);
+      expect(series[0]!.books.map((b) => b.title)).toEqual(['Way of Kings', 'Words of Radiance']);
+    });
+
+    it('falls back to series[0] when seriesPrimary is absent', () => {
+      const books = [
+        book({ title: 'Mort', series: [{ name: 'Discworld', position: 4 }] }),
+        book({ title: 'Equal Rites', series: [{ name: 'Discworld', position: 3 }] }),
+      ];
+
+      const { series } = groupBooksBySeries(books);
+      expect(series).toHaveLength(1);
+      expect(series[0]!.name).toBe('Discworld');
+      expect(series[0]!.books.map((b) => b.title)).toEqual(['Equal Rites', 'Mort']);
+    });
+  });
 });

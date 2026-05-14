@@ -595,6 +595,34 @@ describe('applyMetadata (#185)', () => {
       expect(screen.getByDisplayValue('Awesome Series')).toBeInTheDocument();
     });
   });
+
+  // #1097 — applyMetadata prefers seriesPrimary over series[0]
+  it('metadata with seriesPrimary populates series field from primary (not series[0]) (#1097)', async () => {
+    const alt = makeMetadata({
+      title: 'Stormlight Book',
+      authors: [{ name: 'Brandon Sanderson' }],
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+      series: [
+        { name: 'Cosmere', position: 5 },
+        { name: 'The Stormlight Archive', position: 2 },
+      ],
+      providerId: 'stormlight',
+    });
+
+    renderModal({
+      initial: makeEditState({ series: '', metadata: makeMetadata({ providerId: 'best' }) }),
+      alternatives: [alt],
+    });
+
+    await userEvent.click(screen.getByText('Stormlight Book'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('The Stormlight Archive')).toBeInTheDocument();
+    });
+    // Series position input reflects primary's position, not series[0]'s
+    const seriesPosInput = screen.getByLabelText('Series Position') as HTMLInputElement;
+    expect(seriesPosInput.value).toBe('2');
+  });
 });
 
 describe('initialResults fallback (#185)', () => {

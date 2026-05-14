@@ -45,6 +45,22 @@ describe('BookRow', () => {
     expect(screen.queryByText('#1')).not.toBeInTheDocument();
   });
 
+  // #1097 — series position prefers seriesPrimary.position over series[0].position
+  it('renders position from seriesPrimary instead of series[0] when both are present (#1097)', () => {
+    renderBookRow({
+      book: createMockBookMetadata({
+        seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+        series: [
+          { name: 'Cosmere', position: 5 },
+          { name: 'The Stormlight Archive', position: 2 },
+        ],
+      }),
+    });
+    // Prefers primary (#2), not series[0] (#5)
+    expect(screen.getByText('#2')).toBeInTheDocument();
+    expect(screen.queryByText('#5')).not.toBeInTheDocument();
+  });
+
   it('renders narrator names', () => {
     renderBookRow();
     expect(screen.getByText('Michael Kramer, Kate Reading')).toBeInTheDocument();

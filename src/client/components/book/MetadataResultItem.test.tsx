@@ -125,6 +125,30 @@ describe('MetadataResultItem', () => {
       });
       expect(screen.queryByText(/Stormlight/)).not.toBeInTheDocument();
     });
+
+    // #1097 — display prefers seriesPrimary over series[0]
+    it('renders seriesPrimary instead of series[0] when both are present (#1097)', () => {
+      renderItem({
+        meta: createMockBookMetadata({
+          seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+          series: [
+            { name: 'Cosmere', position: 5 },
+            { name: 'The Stormlight Archive', position: 2 },
+          ],
+        }),
+        showSeries: true,
+      });
+      expect(screen.getByText('The Stormlight Archive #2')).toBeInTheDocument();
+      expect(screen.queryByText(/Cosmere/)).not.toBeInTheDocument();
+    });
+
+    it('falls back to series[0] when seriesPrimary is absent (#1097)', () => {
+      renderItem({
+        meta: createMockBookMetadata({ seriesPrimary: undefined, series: [{ name: 'Discworld', position: 9 }] }),
+        showSeries: true,
+      });
+      expect(screen.getByText('Discworld #9')).toBeInTheDocument();
+    });
   });
 
   describe('conditional rows — duration', () => {
