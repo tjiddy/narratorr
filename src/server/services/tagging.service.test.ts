@@ -746,6 +746,180 @@ describe('TaggingService', () => {
       expect(args.filter(a => a === '-metadata').length).toBe(0);
       expect(args).toContain('-disposition:v');
     });
+
+    describe('per-file title (#1090)', () => {
+      function findArg(args: string[], prefix: string): string | undefined {
+        return args.find(a => a.startsWith(prefix));
+      }
+
+      it('single-file book → writes title = book.title for the sole file', async () => {
+        _readdirFiles = ['book.mp3'];
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'The Way of Kings', authorName: 'Brandon Sanderson',
+        }, '/usr/bin/ffmpeg', 'overwrite', false);
+
+        const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+        expect(findArg(args, 'title=')).toBe('title=The Way of Kings');
+        expect(findArg(args, 'album=')).toBe('album=The Way of Kings');
+      });
+
+      it('multi-file overwrite, every file has existing chapter title → existing titles preserved (not clobbered with book.title)', async () => {
+        _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];
+        // tagBook reads existing once per multi-file overwrite file. With overwrite mode,
+        // tagFile does NOT re-read, so exactly 3 parseFile calls total.
+        (parseFile as Mock)
+          .mockResolvedValueOnce({ common: { title: 'Chapter One: The Beginning' }, format: {} })
+          .mockResolvedValueOnce({ common: { title: 'Chapter Two: The Middle' }, format: {} })
+          .mockResolvedValueOnce({ common: { title: 'Chapter Three: The End' }, format: {} });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'This Inevitable Ruin', authorName: 'Will Wight',
+        }, '/usr/bin/ffmpeg', 'overwrite', false);
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const titlesWritten = calls.map((c: unknown[]) => findArg(c[1] as string[], 'title='));
+        expect(titlesWritten).toEqual([
+          'title=Chapter One: The Beginning',
+          'title=Chapter Two: The Middle',
+          'title=Chapter Three: The End',
+        ]);
+        // album invariant: every file gets book title for album
+        const albumsWritten = calls.map((c: unknown[]) => findArg(c[1] as string[], 'album='));
+        expect(albumsWritten).toEqual([
+          'album=This Inevitable Ruin',
+          'album=This Inevitable Ruin',
+          'album=This Inevitable Ruin',
+        ]);
+        // No file ever gets title=<book.title>
+        const titleArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('title=')));
+        expect(titleArgs.every(a => a !== 'title=This Inevitable Ruin')).toBe(true);
+      });
+
+      it('multi-file overwrite, files have NO existing title → per-file title derives from basename (extension stripped, never book.title)', async () => {
+        _readdirFiles = ['001 - The Boy Who Lived.mp3', '002 - The Vanishing Glass.mp3'];
+        // parseFile default mock returns empty common (no title)
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: "Sorcerer's Stone", authorName: 'JK Rowling',
+        }, '/usr/bin/ffmpeg', 'overwrite', false);
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const titlesWritten = calls.map((c: unknown[]) => findArg(c[1] as string[], 'title='));
+        expect(titlesWritten).toEqual([
+          'title=001 - The Boy Who Lived',
+          'title=002 - The Vanishing Glass',
+        ]);
+        // Confirm we did NOT fabricate `Chapter 1`, `Chapter 2`, etc.
+        expect(titlesWritten.some(t => /^title=Chapter \d+$/.test(t ?? ''))).toBe(false);
+      });
+
+      it('multi-file populate_missing, files have existing titles → existing preserved via resolveTags (no title in ffmpeg args)', async () => {
+        _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+        // populate_missing mode reads existing in BOTH tagBook (no — we skip it now) and tagFile.
+        // With mode='populate_missing', tagBook skips the up-front read entirely; only tagFile reads.
+        (parseFile as Mock)
+          .mockResolvedValueOnce({ common: { title: 'Existing Chapter 1' }, format: {} })
+          .mockResolvedValueOnce({ common: { title: 'Existing Chapter 2' }, format: {} });
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'populate_missing' as const },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'Book Title', authorName: 'Author',
+        }, '/usr/bin/ffmpeg', 'populate_missing', false);
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const titleArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('title=')));
+        // populate_missing + existing title set on every file → resolveTags skips title
+        expect(titleArgs).toEqual([]);
+      });
+
+      it('multi-file populate_missing, files have NO existing title → basename-derived title written (NOT book.title)', async () => {
+        _readdirFiles = ['001 - Track Name.mp3', '002 - Another Track.mp3'];
+        // No existing title → readExistingTags returns empty; resolveTags writes desired
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'populate_missing' as const },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'Book Title', authorName: 'Author',
+        }, '/usr/bin/ffmpeg', 'populate_missing', false);
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const titlesWritten = calls.map((c: unknown[]) => findArg(c[1] as string[], 'title='));
+        expect(titlesWritten).toEqual([
+          'title=001 - Track Name',
+          'title=002 - Another Track',
+        ]);
+        expect(titlesWritten.some(t => t === 'title=Book Title')).toBe(false);
+      });
+
+      it('multi-file overwrite, excludeFields=["title"] → no title written for any file (existing per-file rule does not override exclude)', async () => {
+        _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+        (parseFile as Mock)
+          .mockResolvedValueOnce({ common: { title: 'Existing Title 1' }, format: {} })
+          .mockResolvedValueOnce({ common: { title: 'Existing Title 2' }, format: {} });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'Book Title', authorName: 'Author',
+        }, '/usr/bin/ffmpeg', 'overwrite', false, new Set(['title']));
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const titleArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('title=')));
+        expect(titleArgs).toEqual([]);
+        // album=book.title invariant preserved (album is not excluded)
+        const albumArgs = calls.flatMap((c: unknown[]) => (c[1] as string[]).filter(a => a.startsWith('album=')));
+        expect(albumArgs).toEqual(['album=Book Title', 'album=Book Title']);
+      });
+
+      it('multi-file overwrite, mixed (one has title, one does not) → preserve where present, basename otherwise', async () => {
+        _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+        (parseFile as Mock)
+          .mockResolvedValueOnce({ common: { title: 'Preserved Chapter' }, format: {} })
+          .mockResolvedValueOnce({ common: {}, format: {} });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'Book Title', authorName: 'Author',
+        }, '/usr/bin/ffmpeg', 'overwrite', false);
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const titlesWritten = calls.map((c: unknown[]) => findArg(c[1] as string[], 'title='));
+        expect(titlesWritten).toEqual([
+          'title=Preserved Chapter',
+          'title=ch02',
+        ]);
+      });
+
+      it('multi-file overwrite preserves existing track numbering behavior', async () => {
+        // Regression guard for the AC: "Existing track-numbering behavior is unchanged."
+        _readdirFiles = ['02.mp3', '01.mp3', '10.mp3'];
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        await service.tagBook(1, '/books/test', {
+          title: 'Test', authorName: 'Author',
+        }, '/usr/bin/ffmpeg', 'overwrite', false);
+
+        const calls = (execFile as unknown as Mock).mock.calls;
+        const trackArgs = calls.map((c: unknown[]) => findArg(c[1] as string[], 'track='));
+        expect(trackArgs).toEqual(['track=1/3', 'track=2/3', 'track=3/3']);
+      });
+    });
   });
 
   describe('planRetag', () => {
@@ -1020,6 +1194,92 @@ describe('TaggingService', () => {
       await expect(service.planRetag(1)).rejects.toThrow(/ffmpeg is not configured/);
     });
 
+    describe('per-file title (#1090)', () => {
+      it('multi-file overwrite, files with existing chapter titles → diff preserves them (no row claims book.title overwrite)', async () => {
+        _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+        // planRetag reads existing once per file (passed into planFile, which skips its own read).
+        (parseFile as Mock)
+          .mockResolvedValueOnce({ common: { title: 'Chapter One' }, format: {} })
+          .mockResolvedValueOnce({ common: { title: 'Chapter Two' }, format: {} });
+        setupBook({ title: 'Multi Book', authors: [{ name: 'Author' }] });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+        const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
+        expect(titleRows).toEqual([
+          { field: 'title', current: 'Chapter One', next: 'Chapter One' },
+          { field: 'title', current: 'Chapter Two', next: 'Chapter Two' },
+        ]);
+        // album invariant
+        const albumRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'album'));
+        expect(albumRows.map(r => r.next)).toEqual(['Multi Book', 'Multi Book']);
+      });
+
+      it('multi-file overwrite, files without existing title → diff next=basename, current=null (never book.title)', async () => {
+        _readdirFiles = ['001 - The Boy Who Lived.mp3', '002 - The Vanishing Glass.mp3'];
+        // parseFile default returns empty common
+        setupBook({ title: "Sorcerer's Stone", authors: [{ name: 'JK Rowling' }] });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+        const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
+        expect(titleRows).toEqual([
+          { field: 'title', current: null, next: '001 - The Boy Who Lived' },
+          { field: 'title', current: null, next: '002 - The Vanishing Glass' },
+        ]);
+        expect(titleRows.some(r => r.next === "Sorcerer's Stone")).toBe(false);
+      });
+
+      it('multi-file populate_missing, file has existing title → no title row in diff (resolveTags preserves)', async () => {
+        _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
+        (parseFile as Mock)
+          .mockResolvedValueOnce({ common: { title: 'Existing 1' }, format: {} })
+          .mockResolvedValueOnce({ common: { title: 'Existing 2' }, format: {} });
+        setupBook({ title: 'Book Title', authors: [{ name: 'Author' }] });
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'populate_missing' as const },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+        const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
+        expect(titleRows).toEqual([]);
+      });
+
+      it('multi-file populate_missing, file lacks title → basename-derived title in diff (NOT book.title)', async () => {
+        _readdirFiles = ['001 - First.mp3', '002 - Second.mp3'];
+        // Default mock: empty common → no existing title
+        setupBook({ title: 'Book Title', authors: [{ name: 'Author' }] });
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'populate_missing' as const },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+        const titleRows = plan.files.flatMap(f => (f.diff ?? []).filter(d => d.field === 'title'));
+        expect(titleRows).toEqual([
+          { field: 'title', current: null, next: '001 - First' },
+          { field: 'title', current: null, next: '002 - Second' },
+        ]);
+      });
+
+      it('single-file book preserves title=book.title in canonical and diff', async () => {
+        _readdirFiles = ['book.mp3'];
+        setupBook({ title: 'Solo Book', authors: [{ name: 'Author' }] });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+        expect(plan.canonical.title).toBe('Solo Book');
+        const titleRow = plan.files[0]!.diff?.find(d => d.field === 'title');
+        expect(titleRow).toEqual({ field: 'title', current: null, next: 'Solo Book' });
+      });
+    });
+
     it('does NOT invoke ffmpeg, write disk, or write DB', async () => {
       _readdirFiles = ['ch01.mp3', 'ch02.mp3'];
       setupBook({ title: 'X', authors: [{ name: 'A' }] });
@@ -1083,6 +1343,60 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
     expect(planSkipped.has('bonus.ogg')).toBe(true);
     expect(applyResult.tagged).toBe(2);
     expect(applyResult.skipped).toBe(1);
+  });
+
+  it('multi-file overwrite: preview per-file `title` next-values equal what apply writes (#1090 parity)', async () => {
+    _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];
+    mockBookService.getById.mockResolvedValue({
+      id: 1, title: 'Book Title', path: '/library/test',
+      authors: [{ name: 'A' }], narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,
+    });
+    // planRetag reads existing once per file. parseFile mock queue:
+    //   1: ch01 → 'Existing 1'
+    //   2: ch02 → (no title, falls back to basename 'ch02')
+    //   3: ch03 → 'Existing 3'
+    (parseFile as Mock)
+      .mockResolvedValueOnce({ common: { title: 'Existing 1' }, format: {} })
+      .mockResolvedValueOnce({ common: {}, format: {} })
+      .mockResolvedValueOnce({ common: { title: 'Existing 3' }, format: {} });
+    const settings = createMockSettingsService({
+      processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+      tagging: { enabled: true, mode: 'overwrite' as const },
+    });
+    const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+    const plan = await service.planRetag(1);
+    const planTitlesByFile = new Map(
+      plan.files.map(f => [f.file, f.diff?.find(d => d.field === 'title')?.next ?? null] as const),
+    );
+    expect(planTitlesByFile.get('ch01.mp3')).toBe('Existing 1');
+    expect(planTitlesByFile.get('ch02.mp3')).toBe('ch02');
+    expect(planTitlesByFile.get('ch03.mp3')).toBe('Existing 3');
+
+    // Apply path: re-seed mocks
+    vi.clearAllMocks();
+    (stat as Mock).mockResolvedValue({ size: 1000 });
+    _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];
+    (parseFile as Mock)
+      .mockResolvedValueOnce({ common: { title: 'Existing 1' }, format: {} })
+      .mockResolvedValueOnce({ common: {}, format: {} })
+      .mockResolvedValueOnce({ common: { title: 'Existing 3' }, format: {} });
+
+    await service.retagBook(1);
+
+    const calls = (execFile as unknown as Mock).mock.calls;
+    const applyTitleByFile = new Map<string, string | undefined>();
+    for (const c of calls) {
+      const args = c[1] as string[];
+      const iIdx = args.indexOf('-i');
+      const inputPath = args[iIdx + 1]!;
+      const fileName = inputPath.split('/').pop()!;
+      const titleArg = args.find(a => a.startsWith('title='));
+      applyTitleByFile.set(fileName, titleArg?.replace('title=', ''));
+    }
+    expect(applyTitleByFile.get('ch01.mp3')).toBe('Existing 1');
+    expect(applyTitleByFile.get('ch02.mp3')).toBe('ch02');
+    expect(applyTitleByFile.get('ch03.mp3')).toBe('Existing 3');
   });
 
   it('preview will-tag set matches apply tagged set (embedCover on with cover file)', async () => {

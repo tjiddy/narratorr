@@ -16,6 +16,7 @@ import {
   resolveTags,
   fileHasCoverArt,
   buildCanonicalTags,
+  buildTagsForFile,
   applyExcludeFields,
   planFile,
   pickCanonical,
@@ -261,13 +262,21 @@ export class TaggingService {
 
     for (let i = 0; i < audioFiles.length; i++) {
       const filePath = audioFiles[i]!;
-      const fullTags: TagMetadata = { ...canonicalTags };
+      // Multi-file overwrite is the only path where the desired title depends on
+      // the file's current tags (preserve existing chapter title → basename fallback).
+      const existingTags = !isSingleFile && mode === 'overwrite'
+        ? await readExistingTags(filePath)
+        : {};
 
-      // Track numbers only for multi-file books
-      if (!isSingleFile) {
-        fullTags.track = i + 1;
-        fullTags.trackTotal = audioFiles.length;
-      }
+      const fullTags = buildTagsForFile({
+        canonicalTags,
+        filePath,
+        isSingleFile,
+        index: i,
+        total: audioFiles.length,
+        mode,
+        existingTags,
+      });
 
       const tags = applyExcludeFields(fullTags, excludeFields);
 
@@ -386,12 +395,24 @@ export class TaggingService {
 
     for (let i = 0; i < audioFiles.length; i++) {
       const filePath = audioFiles[i]!;
-      const fullTags: TagMetadata = { ...canonicalTags };
-      if (!isSingleFile) {
-        fullTags.track = i + 1;
-        fullTags.trackTotal = audioFiles.length;
-      }
-      const file = await planFile(filePath, fullTags, mode, coverPath);
+      // Mirror tagBook: pre-read existing tags for multi-file overwrite so the
+      // per-file title decision is shared, and pass them to planFile so the
+      // diff-side read isn't repeated.
+      const existingTags = !isSingleFile && mode === 'overwrite'
+        ? await readExistingTags(filePath)
+        : undefined;
+
+      const fullTags = buildTagsForFile({
+        canonicalTags,
+        filePath,
+        isSingleFile,
+        index: i,
+        total: audioFiles.length,
+        mode,
+        existingTags: existingTags ?? {},
+      });
+
+      const file = await planFile(filePath, fullTags, mode, coverPath, existingTags);
       files.push(file);
     }
 
