@@ -99,9 +99,9 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
     });
 
-    it('maps RetagError FFMPEG_NOT_CONFIGURED to 400', async () => {
+    it('maps RetagError FFMPEG_NOT_CONFIGURED to 503', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-retag-ffmpeg' });
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(503);
       expect(JSON.parse(res.payload)).toEqual({ error: 'ffmpeg not installed' });
     });
 

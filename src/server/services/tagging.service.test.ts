@@ -1294,15 +1294,174 @@ describe('TaggingService', () => {
       expect(unlink).not.toHaveBeenCalled();
       expect(db.select).not.toHaveBeenCalled();
     });
+
+    describe('runtime overrides', () => {
+      it('mode override flips populate_missing setting to overwrite plan', async () => {
+        _readdirFiles = ['book.mp3'];
+        (parseFile as Mock).mockResolvedValue({
+          common: { artist: 'Existing Artist', album: 'Existing Album', title: 'Existing Title' },
+          format: {},
+        });
+        setupBook({ title: 'New Title', authors: [{ name: 'New Artist' }] });
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'populate_missing' },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1, { mode: 'overwrite' });
+
+        expect(plan.mode).toBe('overwrite');
+        // overwrite produces an artist diff that populate_missing would have skipped
+        const artistDiff = plan.files[0]!.diff?.find(d => d.field === 'artist');
+        expect(artistDiff?.current).toBe('Existing Artist');
+        expect(artistDiff?.next).toBe('New Artist');
+      });
+
+      it('embedCover override true reports hasCoverFile + coverPending even when settings.embedCover=false', async () => {
+        _readdirFiles = ['book.mp3', 'cover.jpg'];
+        (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+        setupBook({ title: 'X', authors: [{ name: 'A' }] });
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'overwrite', embedCover: false },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1, { embedCover: true });
+
+        expect(plan.embedCover).toBe(true);
+        expect(plan.hasCoverFile).toBe(true);
+        expect(plan.files.find(f => f.file === 'book.mp3')?.coverPending).toBe(true);
+      });
+
+      it('embedCover override false suppresses coverPending even when settings.embedCover=true', async () => {
+        _readdirFiles = ['book.mp3', 'cover.jpg'];
+        (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+        setupBook({ title: 'X', authors: [{ name: 'A' }] });
+        const settings = createMockSettingsService({
+          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          tagging: { enabled: true, mode: 'overwrite', embedCover: true },
+        });
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1, { embedCover: false });
+
+        expect(plan.embedCover).toBe(false);
+        // hasCoverFile reflects disk regardless of toggle — modal needs it to drive checkbox enablement
+        expect(plan.hasCoverFile).toBe(true);
+        expect(plan.files.find(f => f.file === 'book.mp3')?.coverPending).toBeFalsy();
+      });
+
+      it('hasCoverFile reflects disk state when embedCover override left undefined (settings.embedCover=false default)', async () => {
+        // Regression guard for the modal's disabled-checkbox heuristic: the modal needs hasCoverFile
+        // even before the user toggles embedCover, so settings.embedCover=false must NOT zero hasCoverFile.
+        _readdirFiles = ['book.mp3', 'cover.jpg'];
+        setupBook({ title: 'X', authors: [{ name: 'A' }] });
+        const settings = createMockSettingsService(taggingDefaults);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+
+        expect(plan.embedCover).toBe(false);
+        expect(plan.hasCoverFile).toBe(true);
+      });
+    });
+  });
+
+  describe('retagBook overrides', () => {
+    let mockBookService: { getById: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+      mockBookService = { getById: vi.fn().mockResolvedValue({
+        id: 1, title: 'Test', path: '/library/test',
+        authors: [{ name: 'A' }], narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,
+      }) };
+    });
+
+    function createLog() {
+      return {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+        trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn(),
+      };
+    }
+
+    it('mode override changes resolveTags behavior in the apply path', async () => {
+      _readdirFiles = ['book.mp3'];
+      // File has existing artist tag — populate_missing would skip it; overwrite would replace.
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'Existing', album: 'Existing', title: 'Existing' },
+        format: {},
+      });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'populate_missing' },
+      });
+      const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+      await service.retagBook(1, new Set(), { mode: 'overwrite' });
+
+      const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+      // overwrite mode → existing values replaced
+      expect(args).toContain('artist=A');
+      expect(args).toContain('album=Test');
+    });
+
+    it('embedCover override true wires cover into ffmpeg args even when settings.embedCover=false', async () => {
+      _readdirFiles = ['book.mp3', 'cover.jpg'];
+      (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'overwrite', embedCover: false },
+      });
+      const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+      await service.retagBook(1, new Set(), { embedCover: true });
+
+      const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+      expect(args.some(a => a.endsWith('cover.jpg'))).toBe(true);
+      expect(args).toContain('-disposition:v');
+    });
+
+    it('embedCover override false suppresses cover even when settings.embedCover=true', async () => {
+      _readdirFiles = ['book.mp3', 'cover.jpg'];
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'overwrite', embedCover: true },
+      });
+      const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+      await service.retagBook(1, new Set(), { embedCover: false });
+
+      const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+      expect(args.some(a => a.endsWith('cover.jpg'))).toBe(false);
+      expect(args).not.toContain('-disposition:v');
+    });
+
+    it('omitting overrides falls back to settings (regression — bare retagBook call)', async () => {
+      _readdirFiles = ['book.mp3'];
+      (parseFile as Mock).mockResolvedValue({
+        common: { artist: 'Existing', album: 'Existing', title: 'Existing' },
+        format: {},
+      });
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'populate_missing' },
+      });
+      const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+
+      await service.retagBook(1);
+
+      // settings.mode=populate_missing → existing tags preserved (no -metadata flags for set fields)
+      const args = (execFile as unknown as Mock).mock.calls[0]![1] as string[];
+      expect(args).not.toContain('artist=A');
+    });
   });
 });
 
 describe('TaggingService — preview/apply parity (#1086)', () => {
-  const taggingDefaults = {
-    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
-    tagging: { enabled: true, mode: 'overwrite' as const },
-  };
-
   function createLog() {
     return {
       info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
@@ -1321,29 +1480,53 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
     }) };
   });
 
-  it('preview will-tag set matches apply tagged set (embedCover off)', async () => {
-    _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'bonus.ogg'];
-    const settings = createMockSettingsService(taggingDefaults);
-    const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
+  /**
+   * Extract per-file "tagged" set from execFile mock calls. The apply path's
+   * RetagResult exposes only counts, so per-file identity has to come from
+   * what ffmpeg was actually invoked against.
+   */
+  function appliedTaggedFiles(): Set<string> {
+    const calls = (execFile as unknown as Mock).mock.calls;
+    const files = new Set<string>();
+    for (const c of calls) {
+      const args = c[1] as string[];
+      const iIdx = args.indexOf('-i');
+      const inputPath = args[iIdx + 1]!;
+      const fileName = inputPath.split('/').pop()!;
+      files.add(fileName);
+    }
+    return files;
+  }
 
-    const plan = await service.planRetag(1);
-    const planWillTag = new Set(plan.files.filter(f => f.outcome === 'will-tag').map(f => f.file));
-    const planSkipped = new Set(plan.files.filter(f => f.outcome !== 'will-tag').map(f => f.file));
+  for (const embedCover of [false, true] as const) {
+    it(`preview will-tag set equals apply tagged set by file identity (embedCover ${embedCover ? 'on' : 'off'})`, async () => {
+      const dirContents = embedCover ? ['ch01.mp3', 'ch02.mp3', 'bonus.ogg', 'cover.jpg'] : ['ch01.mp3', 'ch02.mp3', 'bonus.ogg'];
+      _readdirFiles = [...dirContents];
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'overwrite', embedCover },
+      });
+      const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
 
-    // Re-run with fresh mock state for apply
-    vi.clearAllMocks();
-    (stat as Mock).mockResolvedValue({ size: 1000 });
-    _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'bonus.ogg'];
+      const plan = await service.planRetag(1);
+      const planWillTag = new Set(plan.files.filter(f => f.outcome === 'will-tag').map(f => f.file));
+      const planSkipped = new Set(plan.files.filter(f => f.outcome !== 'will-tag').map(f => f.file));
 
-    const applyResult = await service.retagBook(1);
+      // Re-run with fresh mock state for apply
+      vi.clearAllMocks();
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+      _readdirFiles = [...dirContents];
 
-    // bonus.ogg → skip-unsupported in plan; warning in apply
-    expect(planWillTag.has('ch01.mp3')).toBe(true);
-    expect(planWillTag.has('ch02.mp3')).toBe(true);
-    expect(planSkipped.has('bonus.ogg')).toBe(true);
-    expect(applyResult.tagged).toBe(2);
-    expect(applyResult.skipped).toBe(1);
-  });
+      const applyResult = await service.retagBook(1);
+      const applyTagged = appliedTaggedFiles();
+
+      // bonus.ogg → skip-unsupported in plan; warning in apply
+      expect(planSkipped.has('bonus.ogg')).toBe(true);
+      // File-identity parity, not just count parity (#1086 parity hardening)
+      expect(applyTagged).toEqual(planWillTag);
+      expect(applyResult.tagged).toBe(planWillTag.size);
+    });
+  }
 
   it('multi-file overwrite: preview per-file `title` next-values equal what apply writes (#1090 parity)', async () => {
     _readdirFiles = ['ch01.mp3', 'ch02.mp3', 'ch03.mp3'];

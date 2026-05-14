@@ -830,18 +830,61 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('returns 400 for FFMPEG_NOT_CONFIGURED', async () => {
+    it('returns 503 for FFMPEG_NOT_CONFIGURED (aligns with MergeError)', async () => {
       (services.tagging.planRetag as Mock).mockRejectedValue(
         new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured'),
       );
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
 
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(503);
     });
 
     it('returns 400 for NaN id', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/books/abc/retag/preview' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('forwards mode + embedCover query params to planRetag as overrides', async () => {
+      (services.tagging.planRetag as Mock).mockResolvedValue({
+        mode: 'overwrite', embedCover: true, hasCoverFile: false, isSingleFile: true,
+        canonical: { album: 'B', title: 'B' }, files: [], warnings: [],
+      });
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/retag/preview?mode=overwrite&embedCover=true',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.tagging.planRetag).toHaveBeenCalledWith(1, { mode: 'overwrite', embedCover: true });
+    });
+
+    it('omits overrides when neither query param is present (settings defaults)', async () => {
+      (services.tagging.planRetag as Mock).mockResolvedValue({
+        mode: 'populate_missing', embedCover: false, hasCoverFile: false, isSingleFile: true,
+        canonical: { album: 'B', title: 'B' }, files: [], warnings: [],
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.tagging.planRetag).toHaveBeenCalledWith(1, {});
+    });
+
+    it('returns 400 when ?mode=garbage', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/retag/preview?mode=garbage',
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 when ?embedCover=maybe (must be true/false)', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/books/1/retag/preview?embedCover=maybe',
+      });
       expect(res.statusCode).toBe(400);
     });
   });
@@ -882,14 +925,14 @@ describe('books routes', () => {
       expect(body.warnings).toHaveLength(1);
     });
 
-    it('returns 400 when ffmpeg not configured', async () => {
+    it('returns 503 when ffmpeg not configured (aligns with MergeError)', async () => {
       (services.tagging.retagBook as Mock).mockRejectedValue(
         new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured'),
       );
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
 
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode).toBe(503);
     });
 
     it('returns 404 when book not found', async () => {
@@ -980,6 +1023,42 @@ describe('books routes', () => {
       const callArgs = (services.tagging.retagBook as Mock).mock.calls.at(-1)!;
       const passedSet = callArgs[1] as Set<string>;
       expect(passedSet.size).toBe(0);
+      // Third arg (overrides) defaults to empty object when no body fields present
+      expect(callArgs[2]).toEqual({});
+    });
+
+    it('forwards mode + embedCover body to retagBook as overrides', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [],
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/retag',
+        payload: { mode: 'overwrite', embedCover: false },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const callArgs = (services.tagging.retagBook as Mock).mock.calls.at(-1)!;
+      expect(callArgs[2]).toEqual({ mode: 'overwrite', embedCover: false });
+    });
+
+    it('rejects unknown mode in body with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/retag',
+        payload: { mode: 'garbage' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects extra body fields with 400 (strict schema)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/1/retag',
+        payload: { embedCover: true, somethingExtra: 1 },
+      });
+      expect(res.statusCode).toBe(400);
     });
   });
 

@@ -308,8 +308,11 @@ export class TaggingService {
   async retagBook(
     bookId: number,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
+    overrides: { mode?: TagMode; embedCover?: boolean } = {},
   ): Promise<RetagResult> {
     const { book, ffmpegPath, taggingSettings } = await this.resolveRetagInputs(bookId);
+    const mode = overrides.mode ?? taggingSettings.mode;
+    const embedCover = overrides.embedCover ?? taggingSettings.embedCover;
 
     const authorStr = book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
     const narratorStr = book.narrators.length > 0 ? book.narrators.map(n => n.name).join(', ') : null;
@@ -326,8 +329,8 @@ export class TaggingService {
         coverUrl: book.coverUrl,
       },
       ffmpegPath,
-      taggingSettings.mode,
-      taggingSettings.embedCover,
+      mode,
+      embedCover,
       excludeFields,
     );
   }
@@ -338,10 +341,13 @@ export class TaggingService {
    * `GET /api/books/:id/retag/preview` so the user can review and opt out
    * of specific tag fields before committing.
    */
-  async planRetag(bookId: number): Promise<RetagPlan> {
+  async planRetag(
+    bookId: number,
+    overrides: { mode?: TagMode; embedCover?: boolean } = {},
+  ): Promise<RetagPlan> {
     const { book, taggingSettings } = await this.resolveRetagInputs(bookId);
-    const mode = taggingSettings.mode;
-    const embedCover = taggingSettings.embedCover;
+    const mode = overrides.mode ?? taggingSettings.mode;
+    const embedCover = overrides.embedCover ?? taggingSettings.embedCover;
     const warnings: string[] = [];
 
     const authorStr = book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
@@ -358,13 +364,13 @@ export class TaggingService {
     const unsupported = await warnUnsupportedFormats(book.path!, this.log);
     warnings.push(...unsupported.warnings);
 
-    let coverPath: string | undefined;
-    if (embedCover) {
-      coverPath = await findCoverFile(book.path!);
-      if (!coverPath) {
-        warnings.push('Cover art embedding enabled but no cover image found in book directory');
-      }
+    // Always probe for cover file so the modal can disable the embedCover checkbox
+    // when no cover is on disk — independent of whether embedCover is currently on.
+    const coverPath = await findCoverFile(book.path!);
+    if (embedCover && !coverPath) {
+      warnings.push('Cover art embedding enabled but no cover image found in book directory');
     }
+    const planCoverPath = embedCover ? coverPath : undefined;
 
     if (audioFiles.length === 0) {
       warnings.push('No taggable audio files found');
@@ -412,7 +418,7 @@ export class TaggingService {
         existingTags: existingTags ?? {},
       });
 
-      const file = await planFile(filePath, fullTags, mode, coverPath, existingTags);
+      const file = await planFile(filePath, fullTags, mode, planCoverPath, existingTags);
       files.push(file);
     }
 

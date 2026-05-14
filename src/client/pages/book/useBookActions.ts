@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type UpdateBookPayload, type RetagExcludableField } from '@/lib/api';
+import { api, type UpdateBookPayload, type RetagExcludableField, type RetagMode } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 
@@ -45,7 +45,7 @@ export function useBookActions(bookId: number) {
   });
 
   const retagMutation = useMutation({
-    mutationFn: (vars?: { excludeFields?: RetagExcludableField[] }) => api.retagBook(bookId, vars),
+    mutationFn: (vars?: { excludeFields?: RetagExcludableField[]; mode?: RetagMode; embedCover?: boolean }) => api.retagBook(bookId, vars),
     onSuccess: (result) => {
       const msg = `Tagged ${result.tagged} file${result.tagged !== 1 ? 's' : ''}`;
       if (result.failed > 0) {

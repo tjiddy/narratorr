@@ -4,7 +4,7 @@ import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
 import type { TagMetadata } from './tagging.service.js';
 
 export interface RetagPlanFileDiff {
-  field: string;
+  field: RetagExcludableField;
   current: string | null;
   next: string | null;
 }
@@ -18,10 +18,10 @@ export interface RetagPlanFile {
 }
 
 export interface RetagPlanCanonical {
+  album: string;
+  title: string;
   artist?: string;
   albumArtist?: string;
-  album?: string;
-  title?: string;
   composer?: string;
   grouping?: string;
 }
@@ -255,11 +255,14 @@ function stringify(value: string | number | null | undefined): string | null {
 }
 
 export function pickCanonical(tags: TagMetadata): RetagPlanCanonical {
-  const result: RetagPlanCanonical = {};
+  // album + title are populated unconditionally by buildCanonicalTags from book.title
+  // (NOT NULL in DB), so RetagPlanCanonical can require both.
+  const result: RetagPlanCanonical = {
+    album: tags.album ?? '',
+    title: tags.title ?? '',
+  };
   if (tags.artist) result.artist = tags.artist;
   if (tags.albumArtist) result.albumArtist = tags.albumArtist;
-  if (tags.album) result.album = tags.album;
-  if (tags.title) result.title = tags.title;
   if (tags.composer) result.composer = tags.composer;
   if (tags.grouping) result.grouping = tags.grouping;
   return result;

@@ -4,6 +4,7 @@ import {
   api,
   RetagFfmpegNotConfiguredError,
   type RetagExcludableField,
+  type RetagMode,
   type RetagPlan,
   type RetagPlanFile,
   type RetagPlanFileDiff,
@@ -16,11 +17,17 @@ import { LoadingSpinner } from '@/components/icons';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { countApplyFiles, effectiveOutcome, visibleDiffOf } from './RetagPreviewModal.utils';
 
+export interface RetagConfirmPayload {
+  excludeFields: RetagExcludableField[];
+  mode?: RetagMode;
+  embedCover?: boolean;
+}
+
 interface RetagPreviewModalProps {
   bookId: number;
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (excludeFields: RetagExcludableField[]) => void;
+  onConfirm: (payload: RetagConfirmPayload) => void;
 }
 
 const FIELD_LABELS: Record<RetagExcludableField, string> = {
@@ -49,10 +56,18 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
   useEscapeKey(isOpen, onClose, modalRef);
 
   const [excludeSet, setExcludeSet] = useState<Set<RetagExcludableField>>(() => new Set());
+  // Undefined overrides = "use settings default" — the wire payload only carries
+  // the override fields the user has explicitly touched.
+  const [modeOverride, setModeOverride] = useState<RetagMode | undefined>(undefined);
+  const [embedCoverOverride, setEmbedCoverOverride] = useState<boolean | undefined>(undefined);
+
+  const overridesForFetch: { mode?: RetagMode; embedCover?: boolean } = {};
+  if (modeOverride !== undefined) overridesForFetch.mode = modeOverride;
+  if (embedCoverOverride !== undefined) overridesForFetch.embedCover = embedCoverOverride;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.bookRetagPreview(bookId),
-    queryFn: () => api.getBookRetagPreview(bookId),
+    queryKey: queryKeys.bookRetagPreview(bookId, overridesForFetch),
+    queryFn: () => api.getBookRetagPreview(bookId, overridesForFetch),
     enabled: isOpen,
     staleTime: 0,
     gcTime: 0,
@@ -76,7 +91,10 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
 
   const handleConfirm = () => {
     onClose();
-    onConfirm(Array.from(excludeSet));
+    const payload: RetagConfirmPayload = { excludeFields: Array.from(excludeSet) };
+    if (modeOverride !== undefined) payload.mode = modeOverride;
+    if (embedCoverOverride !== undefined) payload.embedCover = embedCoverOverride;
+    onConfirm(payload);
   };
 
   return (
@@ -121,7 +139,15 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
             </p>
           )}
 
-          {data && <PreviewBody plan={data} excludeSet={excludeSet} onToggle={toggle} />}
+          {data && (
+            <PreviewBody
+              plan={data}
+              excludeSet={excludeSet}
+              onToggle={toggle}
+              onModeChange={setModeOverride}
+              onEmbedCoverChange={setEmbedCoverOverride}
+            />
+          )}
         </div>
 
         <ModalFooter
@@ -176,16 +202,20 @@ function PreviewBody({
   plan,
   excludeSet,
   onToggle,
+  onModeChange,
+  onEmbedCoverChange,
 }: {
   plan: RetagPlan;
   excludeSet: Set<RetagExcludableField>;
   onToggle: (f: RetagExcludableField) => void;
+  onModeChange: (m: RetagMode) => void;
+  onEmbedCoverChange: (v: boolean) => void;
 }) {
   const isEmpty = countApplyFiles(plan, excludeSet) === 0;
 
   return (
     <div className="space-y-5">
-      <ContextBanner plan={plan} />
+      <ContextBanner plan={plan} onModeChange={onModeChange} onEmbedCoverChange={onEmbedCoverChange} />
       {plan.warnings.length > 0 && <WarningsSection warnings={plan.warnings} />}
       <CanonicalCard plan={plan} excludeSet={excludeSet} onToggle={onToggle} />
       {isEmpty ? (
@@ -197,23 +227,87 @@ function PreviewBody({
   );
 }
 
-function ContextBanner({ plan }: { plan: RetagPlan }) {
+function ContextBanner({
+  plan,
+  onModeChange,
+  onEmbedCoverChange,
+}: {
+  plan: RetagPlan;
+  onModeChange: (m: RetagMode) => void;
+  onEmbedCoverChange: (v: boolean) => void;
+}) {
+  const embedCoverDisabled = !plan.hasCoverFile && !plan.embedCover;
+  const embedTooltip = embedCoverDisabled ? 'No cover image found in book folder' : undefined;
+
   return (
-    <div className="text-xs space-y-1 text-muted-foreground bg-muted/40 rounded-lg px-4 py-3">
-      <p>
-        <span className="font-medium text-foreground">Mode:</span>{' '}
-        <code className="font-mono">{plan.mode}</code>{' '}
+    <div
+      role="group"
+      aria-label="Re-tag options"
+      className="text-xs space-y-2 text-muted-foreground bg-muted/40 rounded-lg px-4 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground">Mode:</span>
+        <div role="radiogroup" aria-label="Mode" className="inline-flex rounded-md border border-border overflow-hidden">
+          <ModeOption
+            label="Populate missing"
+            value="populate_missing"
+            current={plan.mode}
+            onChange={onModeChange}
+          />
+          <ModeOption
+            label="Overwrite"
+            value="overwrite"
+            current={plan.mode}
+            onChange={onModeChange}
+          />
+        </div>
         <span>
           ({plan.mode === 'overwrite'
             ? 'replace existing tags with new values'
             : 'only fill in tags that are currently empty'})
         </span>
-      </p>
-      <p>
-        <span className="font-medium text-foreground">Embed cover art:</span>{' '}
-        {plan.embedCover ? (plan.hasCoverFile ? 'yes' : 'yes — but no cover image found') : 'no'}
-      </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-flex items-center gap-2" title={embedTooltip}>
+          <input
+            type="checkbox"
+            checked={plan.embedCover}
+            disabled={embedCoverDisabled}
+            onChange={e => onEmbedCoverChange(e.target.checked)}
+            aria-label="Embed cover art"
+          />
+          <span className="font-medium text-foreground">Embed cover art</span>
+        </label>
+        {plan.embedCover && !plan.hasCoverFile && (
+          <span className="text-amber-600 dark:text-amber-400">no cover image found</span>
+        )}
+      </div>
     </div>
+  );
+}
+
+function ModeOption({
+  label,
+  value,
+  current,
+  onChange,
+}: {
+  label: string;
+  value: RetagMode;
+  current: RetagMode;
+  onChange: (m: RetagMode) => void;
+}) {
+  const active = current === value;
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={() => onChange(value)}
+      className={`px-2.5 py-1 text-xs font-medium ${active ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-muted'}`}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -321,7 +415,7 @@ function FileRow({
   const outcome = effectiveOutcome(file, excludeSet);
   const outcomeLabel = formatOutcome(outcome);
   const visibleDiff = visibleDiffOf(file, excludeSet);
-  const dimmedDiff = (file.diff ?? []).filter(d => excludeSet.has(d.field as RetagExcludableField));
+  const dimmedDiff = (file.diff ?? []).filter(d => excludeSet.has(d.field));
   const isCoverOnly = outcome === 'will-tag' && visibleDiff.length === 0 && file.coverPending;
 
   return (
@@ -344,12 +438,14 @@ function FileRow({
 }
 
 function DiffRow({ diff, dimmed }: { diff: RetagPlanFileDiff; dimmed: boolean }) {
+  // minmax(0,1fr) lets the value cells shrink past min-content so truncation works
+  // at modal width — `1fr` alone expanded to fit content, which forced row wrap.
   return (
-    <li className={`text-xs grid grid-cols-[7rem,1fr,auto,1fr] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`}>
-      <span className="text-muted-foreground">{FIELD_LABELS[diff.field as RetagExcludableField] ?? diff.field}</span>
-      <span className="text-destructive break-all">{diff.current ?? '∅'}</span>
+    <li className={`text-xs grid grid-cols-[5rem_minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`}>
+      <span className="text-muted-foreground truncate">{FIELD_LABELS[diff.field]}</span>
+      <span className="text-destructive truncate" title={diff.current ?? undefined}>{diff.current ?? '(empty)'}</span>
       <span aria-hidden="true" className="text-muted-foreground">→</span>
-      <span className="text-success break-all">{diff.next ?? '∅'}</span>
+      <span className="text-success truncate" title={diff.next ?? undefined}>{diff.next ?? '(empty)'}</span>
     </li>
   );
 }
@@ -386,7 +482,6 @@ function EmptyState({ plan, excludeSet }: { plan: RetagPlan; excludeSet: Set<Ret
   }
   const message = allExcluded
     ? 'You’ve unchecked every field. Include at least one field to re-tag.'
-    : 'All included fields are already populated. Switch to overwrite mode in Settings, or include a field that has differing values.';
+    : 'All included fields are already populated. Switch to overwrite mode to replace existing values, or include a field that has differing values.';
   return <p className="text-sm text-muted-foreground text-center py-4">{message}</p>;
 }
-
