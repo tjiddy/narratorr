@@ -69,28 +69,6 @@ describe('PushoverNotifier', () => {
     expect(result.message).toBe('Request timed out');
   }, 15_000);
 
-  it('formats on_upgrade message', async () => {
-    let capturedBody: unknown;
-
-    server.use(
-      http.post(API_URL, async ({ request }) => {
-        capturedBody = await request.json();
-        return HttpResponse.json({ status: 1 });
-      }),
-    );
-
-    const notifier = new PushoverNotifier({ token: 'app-token', user: 'user-key' });
-    await notifier.send('on_upgrade', {
-      event: 'on_upgrade',
-      book: { title: 'Dune' },
-      upgrade: { previousMbPerHour: 32.5, newMbPerHour: 58.1, previousCodec: 'mp3', newCodec: 'm4b' },
-    });
-
-    const body = capturedBody as { message: string };
-    expect(body.message).toContain('32.5 MB/hr');
-    expect(body.message).toContain('58.1 MB/hr');
-  });
-
   it('formats on_health_issue message', async () => {
     let capturedBody: unknown;
 

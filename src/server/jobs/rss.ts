@@ -1,8 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, compareQuality, filterMultiPartUsenet, resolveBookQualityInputs, scoreResult } from '../../core/utils/index.js';
+import { filterMultiPartUsenet, scoreResult } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
-import type { BookService, BookWithAuthor } from '../services/book.service.js';
+import type { BookWithAuthor } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -25,13 +25,12 @@ export interface RssJobResult {
 
 /**
  * Run a single RSS sync cycle: poll RSS feeds from RSS-capable indexers,
- * match results to wanted/monitored books, and grab the best matches.
+ * match results to wanted books, and grab the best matches.
  */
-// eslint-disable-next-line complexity -- feed-first matching with per-book dedup, upgrades, and error isolation
+// eslint-disable-next-line complexity -- feed-first matching with per-book dedup and error isolation
 export async function runRssJob(
   settingsService: SettingsService,
   bookListService: BookListService,
-  bookService: BookService,
   indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   blacklistService: BlacklistService,
@@ -47,16 +46,11 @@ export async function runRssJob(
   const metadataSettings = await settingsService.get('metadata');
   const searchSettings = await settingsService.get('search');
 
-  // Load candidate books: wanted + monitored-for-upgrade
   const { data: wantedBooks } = await bookListService.getAll('wanted');
-  const monitoredBooks = await bookService.getMonitoredBooks();
-  const candidates: Array<BookWithAuthor & { isUpgrade: boolean }> = [
-    ...wantedBooks.map((b) => ({ ...b, isUpgrade: false })),
-    ...monitoredBooks.map((b) => ({ ...b, isUpgrade: true })),
-  ];
+  const candidates: BookWithAuthor[] = wantedBooks;
 
   if (candidates.length === 0) {
-    log.debug('No wanted or monitored books for RSS sync');
+    log.debug('No wanted books for RSS sync');
     return { polled: 0, matched: 0, grabbed: 0 };
   }
 
@@ -97,7 +91,7 @@ export async function runRssJob(
 
   // Match each feed item to the best candidate book
   // Collect all matching items per book so we can rank the full set after filtering
-  const itemsPerBook = new Map<number, { results: SearchResult[]; candidate: BookWithAuthor & { isUpgrade: boolean } }>();
+  const itemsPerBook = new Map<number, { results: SearchResult[]; candidate: BookWithAuthor }>();
 
   for (const item of filtered) {
     if (!item.title) {
@@ -106,7 +100,7 @@ export async function runRssJob(
     }
 
     let bestScore = 0;
-    let bestCandidate: (BookWithAuthor & { isUpgrade: boolean }) | null = null;
+    let bestCandidate: BookWithAuthor | null = null;
 
     for (const candidate of candidates) {
       const score = scoreResult(
@@ -177,30 +171,13 @@ export async function runRssJob(
     const best = ranked.find((r) => r.downloadUrl);
     if (!best) continue;
 
-    // For upgrades: compare quality to existing import
-    if (candidate.isUpgrade) {
-      if (!candidate.path) continue;
-      const { sizeBytes: existingSize, durationSeconds: existingDuration } = resolveBookQualityInputs(candidate);
-      if (!existingDuration || existingDuration <= 0) continue;
-      if (!best.size) continue;
-
-      const comparison = compareQuality(existingSize, best.size, existingDuration);
-      if (comparison !== 'higher') continue;
-
-      // Double-check: result must also be above grab floor
-      if (qualitySettings.grabFloor > 0) {
-        const resultQuality = calculateQuality(best.size, existingDuration);
-        if (!resultQuality || resultQuality.mbPerHour < qualitySettings.grabFloor) continue;
-      }
-    }
-
     // Attempt grab with mutex
     try {
       await downloadOrchestrator.grab(
         buildGrabPayload(best, bookId, { source: 'rss' }),
       );
       grabbed++;
-      log.info({ bookId, title: best.title, isUpgrade: candidate.isUpgrade }, 'RSS grabbed');
+      log.info({ bookId, title: best.title }, 'RSS grabbed');
     } catch (grabError: unknown) {
       if (grabError instanceof DuplicateDownloadError) {
         log.debug({ bookId }, 'Skipping RSS grab — book already has active download');

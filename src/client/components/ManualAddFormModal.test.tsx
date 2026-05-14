@@ -12,7 +12,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       ...(actual.api as Record<string, unknown>),
       addBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
-        quality: { searchImmediately: true, monitorForUpgrades: false },
+        quality: { searchImmediately: true },
       }),
     },
   };

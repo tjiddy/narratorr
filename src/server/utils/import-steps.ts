@@ -210,7 +210,7 @@ export interface CleanupOldBookPathArgs {
   log: FastifyBaseLogger;
 }
 
-/** Delete old book files when upgrading (book already had a different path). Awaited, nonfatal. */
+/** Delete old book files when re-importing (book already had a different path). Awaited, nonfatal. */
 export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<void> {
   const { bookPath, targetPath, libraryRoot, log } = args;
   if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
@@ -225,9 +225,9 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
   }
   try {
     await rm(bookPath, { recursive: true, force: true });
-    log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during upgrade');
+    log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during re-import');
   } catch (rmError: unknown) {
-    log.warn({ error: serializeError(rmError), oldPath: bookPath }, 'Failed to delete old book files during upgrade — continuing');
+    log.warn({ error: serializeError(rmError), oldPath: bookPath }, 'Failed to delete old book files during re-import — continuing');
   }
 }
 

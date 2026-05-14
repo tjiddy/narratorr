@@ -46,18 +46,18 @@ describe('NewBookDefaultsSection (#284)', () => {
     expect(screen.getByText('Applied when books are added manually or via import lists or discovery')).toBeInTheDocument();
   });
 
-  it('contains Search Immediately and Monitor for Upgrades toggles', async () => {
+  it('contains Search Immediately toggle (Monitor for Upgrades removed)', async () => {
     renderWithProviders(<NewBookDefaultsSection />);
     await waitFor(() => {
       expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
   });
 
-  it('loads quality settings values into toggles', async () => {
+  it('loads quality settings values into toggle', async () => {
     const settingsWithToggles = createMockSettings({
       library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
-      quality: { searchImmediately: true, monitorForUpgrades: true },
+      quality: { searchImmediately: true },
     });
     mockApi.getSettings.mockResolvedValue(settingsWithToggles);
     renderWithProviders(<NewBookDefaultsSection />);
@@ -65,7 +65,6 @@ describe('NewBookDefaultsSection (#284)', () => {
     await waitFor(() => {
       expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
     });
-    expect((screen.getByLabelText('Monitor for Upgrades') as HTMLInputElement).checked).toBe(true);
   });
 
   it('toggling a default field shows save button and submits correct quality payload', async () => {
@@ -85,7 +84,7 @@ describe('NewBookDefaultsSection (#284)', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        quality: { searchImmediately: true, monitorForUpgrades: false },
+        quality: { searchImmediately: true },
       });
     });
   });

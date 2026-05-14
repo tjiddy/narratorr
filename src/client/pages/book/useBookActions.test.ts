@@ -34,7 +34,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         general: { logLevel: 'info', housekeepingRetentionDays: 90 },
         metadata: { audibleRegion: 'us' },
         tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
-        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' },
         network: {},
         rss: { intervalMinutes: 15, enabled: false },
       }),
@@ -62,7 +62,7 @@ describe('useBookActions', () => {
       (api.updateBook as Mock).mockResolvedValue({});
       const onSuccess = vi.fn();
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'New Title' }, false, onSuccess);
@@ -76,7 +76,7 @@ describe('useBookActions', () => {
       (api.updateBook as Mock).mockRejectedValue(new Error('Network error'));
       const onSuccess = vi.fn();
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'New Title' }, false, onSuccess);
@@ -89,7 +89,7 @@ describe('useBookActions', () => {
     it('shows error toast when metadata update rejects with non-Error', async () => {
       (api.updateBook as Mock).mockRejectedValue('string error');
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'x' }, false);
@@ -101,7 +101,7 @@ describe('useBookActions', () => {
     it('resets isSaving after failure', async () => {
       (api.updateBook as Mock).mockRejectedValue(new Error('fail'));
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       expect(result.current.isSaving).toBe(false);
 
@@ -116,7 +116,7 @@ describe('useBookActions', () => {
       (api.updateBook as Mock).mockResolvedValue({});
       (api.renameBook as Mock).mockResolvedValue({ message: 'Renamed', filesRenamed: 1 });
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'x' }, true);
@@ -130,7 +130,7 @@ describe('useBookActions', () => {
       (api.updateBook as Mock).mockResolvedValue({});
       (api.renameBook as Mock).mockRejectedValue(new Error('Rename conflict'));
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'x' }, true);
@@ -145,7 +145,7 @@ describe('useBookActions', () => {
     it('toasts success on rename', async () => {
       (api.renameBook as Mock).mockResolvedValue({ message: 'Moved to new path' });
 
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper: createTestHarness().wrapper });
 
       act(() => {
         result.current.renameMutation.mutate();
@@ -159,7 +159,7 @@ describe('useBookActions', () => {
     it('shows error toast on rename failure', async () => {
       (api.renameBook as Mock).mockRejectedValue(new Error('Permission denied'));
 
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper: createTestHarness().wrapper });
 
       act(() => {
         result.current.renameMutation.mutate();
@@ -177,7 +177,7 @@ describe('useBookActions', () => {
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      const { result } = renderHook(() => useBookActions(42, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(42), { wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'x' }, false);
@@ -194,7 +194,7 @@ describe('useBookActions', () => {
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      const { result } = renderHook(() => useBookActions(42, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(42), { wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'x' }, true);
@@ -212,7 +212,7 @@ describe('useBookActions', () => {
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      const { result } = renderHook(() => useBookActions(7, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(7), { wrapper });
 
       act(() => {
         result.current.renameMutation.mutate();
@@ -225,30 +225,13 @@ describe('useBookActions', () => {
       });
     });
 
-    it('invalidates queries after successful monitor toggle', async () => {
-      (api.updateBook as Mock).mockResolvedValue({});
-      const { queryClient, wrapper } = createTestHarness();
-      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-
-      const { result } = renderHook(() => useBookActions(3, true), { wrapper });
-
-      act(() => {
-        result.current.monitorMutation.mutate();
-      });
-
-      await waitFor(() => {
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 3] });
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 3, 'files'] });
-        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
-      });
-    });
 
     it('does not invalidate queries when save fails', async () => {
       (api.updateBook as Mock).mockRejectedValue(new Error('fail'));
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         await result.current.handleSave({ title: 'x' }, false);
@@ -262,7 +245,7 @@ describe('useBookActions', () => {
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       act(() => {
         result.current.renameMutation.mutate();
@@ -279,7 +262,7 @@ describe('useBookActions', () => {
   describe('mergeMutation', () => {
     it('calls api.mergeBookToM4b with the bookId', async () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -288,7 +271,7 @@ describe('useBookActions', () => {
 
     it('shows info toast when merge is queued with position', async () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'queued', bookId: 3, position: 2 });
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -297,7 +280,7 @@ describe('useBookActions', () => {
 
     it('does not show success or info toast when merge starts immediately', async () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -310,7 +293,7 @@ describe('useBookActions', () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -320,7 +303,7 @@ describe('useBookActions', () => {
 
     it('shows error toast on API-level merge failure (pre-SSE errors like 409)', async () => {
       (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('Merge already in progress'));
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -329,7 +312,7 @@ describe('useBookActions', () => {
 
     it('does not handle enrichmentWarning in onSuccess (moved to SSE handler)', async () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ status: 'started', bookId: 3 });
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -341,7 +324,7 @@ describe('useBookActions', () => {
       (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('fail'));
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-      const { result } = renderHook(() => useBookActions(3, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(3), { wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
@@ -352,7 +335,7 @@ describe('useBookActions', () => {
 
   describe('ffmpegConfigured', () => {
     it('returns true when ffmpegPath is set', async () => {
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper: createTestHarness().wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper: createTestHarness().wrapper });
 
       await waitFor(() => {
         expect(result.current.ffmpegConfigured).toBe(true);
@@ -364,7 +347,7 @@ describe('useBookActions', () => {
     it('calls deleteBook API with correct book ID and deleteFiles=false', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.deleteMutation.mutate({ deleteFiles: false });
@@ -378,7 +361,7 @@ describe('useBookActions', () => {
     it('calls deleteBook API with correct book ID and deleteFiles=true', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.deleteMutation.mutate({ deleteFiles: true });
@@ -392,7 +375,7 @@ describe('useBookActions', () => {
     it('shows success toast on successful delete without files', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.deleteMutation.mutate({ deleteFiles: false });
@@ -406,7 +389,7 @@ describe('useBookActions', () => {
     it('shows success toast mentioning files when deleteFiles=true', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.deleteMutation.mutate({ deleteFiles: true });
@@ -422,7 +405,7 @@ describe('useBookActions', () => {
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.deleteMutation.mutate({ deleteFiles: false });
@@ -436,7 +419,7 @@ describe('useBookActions', () => {
     it('shows error toast on delete failure', async () => {
       (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.deleteMutation.mutate({ deleteFiles: false });
@@ -452,7 +435,7 @@ describe('useBookActions', () => {
     it('calls api.markBookAsWrongRelease with correct book ID', async () => {
       (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.wrongReleaseMutation.mutate();
@@ -466,7 +449,7 @@ describe('useBookActions', () => {
     it('shows success toast on successful wrong release', async () => {
       (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.wrongReleaseMutation.mutate();
@@ -480,7 +463,7 @@ describe('useBookActions', () => {
     it('shows error toast on wrong release failure', async () => {
       (api.markBookAsWrongRelease as Mock).mockRejectedValue(new Error('not imported'));
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       await act(async () => {
         result.current.wrongReleaseMutation.mutate();
@@ -495,7 +478,7 @@ describe('useBookActions', () => {
       (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper });
 
       act(() => { result.current.wrongReleaseMutation.mutate(); });
 
@@ -514,7 +497,7 @@ describe('useBookActions', () => {
     it('calls api.uploadBookCover with bookId and file', async () => {
       (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper });
 
       act(() => { result.current.uploadCoverMutation.mutate(testFile); });
 
@@ -526,7 +509,7 @@ describe('useBookActions', () => {
     it('shows success toast "Cover updated" on success', async () => {
       (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper });
 
       act(() => { result.current.uploadCoverMutation.mutate(testFile); });
 
@@ -539,7 +522,7 @@ describe('useBookActions', () => {
       (api.uploadBookCover as Mock).mockResolvedValue({ id: 5, coverUrl: '/api/books/5/cover' });
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper });
 
       act(() => { result.current.uploadCoverMutation.mutate(testFile); });
 
@@ -553,7 +536,7 @@ describe('useBookActions', () => {
     it('shows error toast on upload failure', async () => {
       (api.uploadBookCover as Mock).mockRejectedValue(new Error('Server error'));
       const { wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(5), { wrapper });
 
       act(() => { result.current.uploadCoverMutation.mutate(testFile); });
 
@@ -569,7 +552,7 @@ describe('useBookActions', () => {
         bookId: 42, codec: 'mp3', bitrate: 128000, fileCount: 3, durationMinutes: 120, narratorsUpdated: true,
       });
       const { queryClient, wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(42, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(42), { wrapper });
 
       act(() => { result.current.refreshScanMutation.mutate(); });
 
@@ -584,7 +567,7 @@ describe('useBookActions', () => {
         bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: false,
       });
       const { queryClient, wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       act(() => { result.current.refreshScanMutation.mutate(); });
 
@@ -597,7 +580,7 @@ describe('useBookActions', () => {
     it('shows error toast on API failure', async () => {
       (api.refreshScanBook as Mock).mockRejectedValue(new Error('No audio files found'));
       const { queryClient, wrapper } = createTestHarness();
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       act(() => { result.current.refreshScanMutation.mutate(); });
 
@@ -613,7 +596,7 @@ describe('useBookActions', () => {
       });
       const { queryClient, wrapper } = createTestHarness();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
 
       act(() => { result.current.refreshScanMutation.mutate(); });
 

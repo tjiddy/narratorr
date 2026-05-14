@@ -13,7 +13,7 @@ const EVENT_TYPE_FILTERS = [
   { value: 'download_failed,import_failed,merge_failed', label: 'Errors' },
   { value: 'held_for_review', label: 'Needs Review' },
   { value: 'grabbed,download_completed,merge_started', label: 'Downloads' },
-  { value: 'imported,upgraded,merged', label: 'Imported' },
+  { value: 'imported,merged', label: 'Imported' },
   { value: 'renamed,file_tagged', label: 'File Changes' },
   { value: 'deleted', label: 'Removed' },
 ];

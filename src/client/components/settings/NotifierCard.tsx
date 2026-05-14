@@ -49,7 +49,7 @@ const defaultValues: CreateNotifierFormData = {
   name: '',
   type: NOTIFIER_TYPES[0],
   enabled: true,
-  events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_upgrade', 'on_health_issue'],
+  events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_health_issue'],
   settings: NOTIFIER_REGISTRY[NOTIFIER_TYPES[0]].defaultSettings,
 };
 
@@ -109,6 +109,7 @@ export function NotifierCard(props: NotifierCardProps) {
 
   if (mode === 'view' && notifier) {
     const typeLabel = NOTIFIER_REGISTRY[notifier.type]?.label || notifier.type;
+    const hasEvents = notifier.events.length > 0;
     return (
       <SettingsCardShell
         name={notifier.name}
@@ -123,9 +124,15 @@ export function NotifierCard(props: NotifierCardProps) {
         testResultTexts={{ success: 'Sent!', failure: 'Failed' }}
         animationDelay={animationDelay}
       >
-        <p className="text-xs text-muted-foreground mt-1">
-          Events: {notifier.events.map((e) => EVENT_LABELS[e] || e).join(', ')}
-        </p>
+        {hasEvents ? (
+          <p className="text-xs text-muted-foreground mt-1">
+            Events: {notifier.events.map((e) => EVENT_LABELS[e] || e).join(', ')}
+          </p>
+        ) : (
+          <p className="text-xs text-yellow-400 mt-1" data-testid="notifier-empty-events-hint">
+            No events selected — select at least one event to re-enable.
+          </p>
+        )}
       </SettingsCardShell>
     );
   }

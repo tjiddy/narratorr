@@ -55,7 +55,7 @@ function buildBanner(latest: RefreshBookSeriesResponse | undefined, series: Book
 function buildCreatePayload(
   member: BookSeriesMemberCard,
   cardSeries: BookSeriesCardData,
-  overrides: { searchImmediately: boolean; monitorForUpgrades: boolean },
+  overrides: { searchImmediately: boolean },
 ): CreateBookPayload {
   return {
     title: member.title,
@@ -69,7 +69,6 @@ function buildCreatePayload(
     publishedDate: member.publishedDate ?? undefined,
     duration: member.duration ?? undefined,
     searchImmediately: overrides.searchImmediately,
-    monitorForUpgrades: overrides.monitorForUpgrades,
   };
 }
 
@@ -112,7 +111,7 @@ function memberKeyFor(member: BookSeriesMemberCard): string {
 
 interface AddRowControlProps {
   member: BookSeriesMemberCard;
-  onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAdd: (overrides: { searchImmediately: boolean }) => void;
   isPending: boolean;
 }
 
@@ -141,7 +140,7 @@ function AddRowControl({ member, onAdd, isPending }: AddRowControlProps) {
 interface MemberRowProps {
   member: BookSeriesMemberCard;
   cardSeries: BookSeriesCardData;
-  onAdd: (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAdd: (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean }) => void;
   pendingMemberKey: string | null;
 }
 
@@ -247,7 +246,7 @@ export function SeriesCard({ bookId, fallbackSeriesName, fallbackSeriesPosition 
   const isRefreshing = refresh.isPending;
   const pendingMemberKey = addMember.isPending ? (addMember.variables?.memberKey ?? null) : null;
 
-  const handleAdd = (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => {
+  const handleAdd = (member: BookSeriesMemberCard, overrides: { searchImmediately: boolean }) => {
     if (!canAddMember(member)) return;
     addMember.mutate({ memberKey: memberKeyFor(member), body: buildCreatePayload(member, cardSeries, overrides) });
   };

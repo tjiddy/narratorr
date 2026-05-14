@@ -37,7 +37,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [IncorrectPasswordError, { type: 'flat', status: 400 }],
   [ScanInProgressError, { type: 'flat', status: 409 }],
   [LibraryPathError, { type: 'flat', status: 400 }],
-  [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, INVALID_STATUS: 400 } }],
+  [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, INVALID_STATUS: 400, IMPORTED_BOOK_NO_RETRY: 409 } }],
   [DuplicateDownloadError, { type: 'coded', codes: { ACTIVE_DOWNLOAD_EXISTS: 409, PIPELINE_ACTIVE: 409 } }],
   [TaskRegistryError, { type: 'coded', codes: { NOT_FOUND: 404, ALREADY_RUNNING: 409 } }],
   [BookRejectionError, { type: 'coded', codes: { NOT_FOUND: 404, NOT_IMPORTED: 400, NO_IDENTIFIERS: 400 } }],

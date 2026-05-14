@@ -32,7 +32,6 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   download_failed: { icon: XCircleIcon, label: 'Download Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
   imported: { icon: PackageIcon, label: 'Imported', color: 'text-success', bgColor: 'bg-success/10' },
   import_failed: { icon: XCircleIcon, label: 'Import Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
-  upgraded: { icon: RefreshIcon, label: 'Upgraded', color: 'text-violet-400', bgColor: 'bg-violet-500/10' },
   deleted: { icon: TrashIcon, label: 'Deleted', color: 'text-muted-foreground', bgColor: 'bg-muted' },
   renamed: { icon: RefreshIcon, label: 'Renamed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
   file_tagged: { icon: CheckCircleIcon, label: 'File Tagged', color: 'text-teal-400', bgColor: 'bg-teal-500/10' },

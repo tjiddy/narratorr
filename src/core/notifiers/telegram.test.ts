@@ -96,30 +96,6 @@ describe('TelegramNotifier', () => {
     expect(result.message).toBe('Request timed out');
   }, 15_000);
 
-  it('formats on_upgrade message', async () => {
-    let capturedBody: unknown;
-
-    server.use(
-      http.post(API_URL, async ({ request }) => {
-        capturedBody = await request.json();
-        return HttpResponse.json({ ok: true });
-      }),
-    );
-
-    const notifier = new TelegramNotifier({ botToken: BOT_TOKEN, chatId: CHAT_ID });
-    const payload: EventPayload = {
-      event: 'on_upgrade',
-      book: { title: 'Dune', author: 'Frank Herbert' },
-      upgrade: { previousMbPerHour: 32.5, newMbPerHour: 58.1, previousCodec: 'mp3', newCodec: 'm4b' },
-    };
-
-    await notifier.send('on_upgrade', payload);
-
-    const body = capturedBody as { text: string };
-    expect(body.text).toContain('32.5 MB/hr');
-    expect(body.text).toContain('58.1 MB/hr');
-  });
-
   it('formats on_health_issue message', async () => {
     let capturedBody: unknown;
 

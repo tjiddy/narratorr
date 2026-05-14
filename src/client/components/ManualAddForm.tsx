@@ -52,7 +52,6 @@ export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
         ...(data.seriesName && { seriesName: data.seriesName }),
         ...(data.seriesPosition && { seriesPosition: Number(data.seriesPosition) }),
         searchImmediately: qualityDefaults?.searchImmediately ?? false,
-        monitorForUpgrades: qualityDefaults?.monitorForUpgrades ?? false,
       }),
     onSuccess: (_result, data) => {
       toast.success(`Added '${data.title}' to library`);

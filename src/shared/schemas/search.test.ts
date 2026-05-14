@@ -125,42 +125,15 @@ describe('grabSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts replaceExisting: true', () => {
+  it('rejects unknown replaceExisting field (removed)', () => {
     const result = grabSchema.safeParse({
       downloadUrl: 'https://example.com',
       title: 'Test',
       replaceExisting: true,
     });
+    // The grabSchema accepts the input but drops the unknown property — replaceExisting is no longer in the contract.
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.replaceExisting).toBe(true);
-  });
-
-  it('accepts replaceExisting: false', () => {
-    const result = grabSchema.safeParse({
-      downloadUrl: 'https://example.com',
-      title: 'Test',
-      replaceExisting: false,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.replaceExisting).toBe(false);
-  });
-
-  it('accepts omitted replaceExisting (optional field)', () => {
-    const result = grabSchema.safeParse({
-      downloadUrl: 'https://example.com',
-      title: 'Test',
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.replaceExisting).toBeUndefined();
-  });
-
-  it('rejects non-boolean replaceExisting (e.g. string "true")', () => {
-    const result = grabSchema.safeParse({
-      downloadUrl: 'https://example.com',
-      title: 'Test',
-      replaceExisting: 'true',
-    });
-    expect(result.success).toBe(false);
+    if (result.success) expect((result.data as Record<string, unknown>).replaceExisting).toBeUndefined();
   });
 });
 

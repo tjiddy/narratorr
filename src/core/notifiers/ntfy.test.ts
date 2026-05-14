@@ -92,27 +92,6 @@ describe('NtfyNotifier', () => {
     expect(result.message).toBe('Request timed out');
   }, 15_000);
 
-  it('formats on_upgrade message', async () => {
-    let capturedBody = '';
-
-    server.use(
-      http.post('https://ntfy.sh/my-topic', async ({ request }) => {
-        capturedBody = await request.text();
-        return new HttpResponse('ok');
-      }),
-    );
-
-    const notifier = new NtfyNotifier({ topic: 'my-topic' });
-    await notifier.send('on_upgrade', {
-      event: 'on_upgrade',
-      book: { title: 'Dune' },
-      upgrade: { previousMbPerHour: 32.5, newMbPerHour: 58.1, previousCodec: 'mp3', newCodec: 'm4b' },
-    });
-
-    expect(capturedBody).toContain('32.5 MB/hr');
-    expect(capturedBody).toContain('58.1 MB/hr');
-  });
-
   it('formats on_health_issue message', async () => {
     let capturedBody = '';
 

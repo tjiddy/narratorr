@@ -101,7 +101,7 @@ describe('MetadataService', () => {
       beforeEach(() => {
         mockSettingsService.get.mockReset();
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
           return Promise.resolve({});
         });
@@ -136,7 +136,7 @@ describe('MetadataService', () => {
 
       it('returns all books when languages array is empty', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
           return Promise.resolve({});
         });
@@ -172,7 +172,7 @@ describe('MetadataService', () => {
 
       it('includes books matching any of multiple configured languages', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english', 'french'] });
           return Promise.resolve({});
         });
@@ -388,7 +388,7 @@ describe('MetadataService', () => {
 
       const setRejectWords = (rejectWords: string) => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
           return Promise.resolve({});
         });
@@ -716,7 +716,7 @@ describe('MetadataService', () => {
 
       const setLanguages = (languages: string[], rejectWords = '', minDurationMinutes = 0) => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages, minDurationMinutes });
           return Promise.resolve({});
         });
@@ -859,7 +859,7 @@ describe('MetadataService', () => {
       // metadata slice fails — language + duration skipped, rejectWords still runs
       const stubMetadataFails = () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: 'Virtual Voice', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'Virtual Voice', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.reject(new Error('DB unavailable'));
           return Promise.resolve({});
         });
@@ -964,7 +964,7 @@ describe('MetadataService', () => {
 
       const setMinDuration = (minDurationMinutes: number, rejectWords = '') => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords, requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [], minDurationMinutes });
           return Promise.resolve({});
         });
@@ -1103,7 +1103,7 @@ describe('MetadataService', () => {
       it('returns unfiltered results when settings lookup throws (fail-open)', async () => {
         // First call (rejectWords) succeeds, second call (min-duration) throws — exercise duration fail-open path
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.reject(new Error('DB unavailable'));
           return Promise.resolve({});
         });
@@ -1463,7 +1463,7 @@ describe('MetadataService', () => {
       beforeEach(() => {
         mockSettingsService.get.mockReset();
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
           return Promise.resolve({});
         });
@@ -1483,7 +1483,7 @@ describe('MetadataService', () => {
 
       it('filters results with reject words in title (case-insensitive)', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: 'dramatized', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'dramatized', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
           return Promise.resolve({});
         });
@@ -1501,7 +1501,7 @@ describe('MetadataService', () => {
 
       it('filters results with reject words in subtitle only', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: 'full-cast', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'full-cast', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
           return Promise.resolve({});
         });
@@ -1519,7 +1519,7 @@ describe('MetadataService', () => {
 
       it('filters results with non-matching language', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
           return Promise.resolve({});
         });
@@ -1537,7 +1537,7 @@ describe('MetadataService', () => {
 
       it('passes through results with no language field', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
           return Promise.resolve({});
         });
@@ -1565,7 +1565,7 @@ describe('MetadataService', () => {
 
       it('returns all results when languages setting is empty array', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
           return Promise.resolve({});
         });
@@ -1583,7 +1583,7 @@ describe('MetadataService', () => {
 
       it('applies both reject word and language filters together', async () => {
         mockSettingsService.get.mockImplementation((key: string) => {
-          if (key === 'quality') return Promise.resolve({ rejectWords: 'dramatized', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false, monitorForUpgrades: false });
+          if (key === 'quality') return Promise.resolve({ rejectWords: 'dramatized', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
           if (key === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: ['english'] });
           return Promise.resolve({});
         });

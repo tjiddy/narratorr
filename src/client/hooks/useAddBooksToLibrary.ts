@@ -8,7 +8,6 @@ import { getErrorMessage } from '@/lib/error-message.js';
 
 export interface QualityDefaults {
   searchImmediately: boolean;
-  monitorForUpgrades: boolean;
 }
 
 export function useAddBooksToLibrary(libraryBooks?: (BookIdentifier | BookWithAuthor)[], qualityDefaults?: QualityDefaults) {

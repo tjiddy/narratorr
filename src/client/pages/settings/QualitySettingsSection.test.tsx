@@ -153,7 +153,6 @@ describe('QualitySettingsSection', () => {
     expect(callArg.quality).not.toHaveProperty('requiredWords');
     expect(callArg.quality).not.toHaveProperty('preferredLanguage');
     expect(callArg.quality).not.toHaveProperty('searchImmediately');
-    expect(callArg.quality).not.toHaveProperty('monitorForUpgrades');
   });
 
   it('hides save button when form is not dirty', async () => {

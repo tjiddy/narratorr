@@ -10,10 +10,9 @@ type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 export function NewBookDefaultsSection() {
   const { form, mutation, onSubmit } = useSettingsForm<NewBookDefaultsFormData>({
     schema: newBookDefaultsFormSchema,
-    defaultValues: { searchImmediately: DEFAULT_SETTINGS.quality.searchImmediately, monitorForUpgrades: DEFAULT_SETTINGS.quality.monitorForUpgrades },
+    defaultValues: { searchImmediately: DEFAULT_SETTINGS.quality.searchImmediately },
     select: (s: AppSettings) => ({
       searchImmediately: s.quality.searchImmediately,
-      monitorForUpgrades: s.quality.monitorForUpgrades,
     }),
     toPayload: (d) => ({ quality: d }),
     successMessage: 'New book defaults saved',
@@ -37,18 +36,6 @@ export function NewBookDefaultsSection() {
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
-          </label>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <label htmlFor="newBookMonitorForUpgrades" className="block text-sm font-medium">Monitor for Upgrades</label>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Include new books in scheduled upgrade searches
-            </p>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="newBookMonitorForUpgrades" {...register('monitorForUpgrades')} />
           </label>
         </div>
 

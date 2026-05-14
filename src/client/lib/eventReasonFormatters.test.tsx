@@ -56,18 +56,6 @@ describe('EventReasonDetails', () => {
     expect(screen.queryByText('Hidden:')).not.toBeInTheDocument();
   });
 
-  it('renders upgraded events with imported-style labels and formatted size', () => {
-    render(<EventReasonDetails eventType="upgraded" reason={{ targetPath: '/lib/Author/Upgraded', fileCount: 8, totalSize: 2097152 }} indexerMap={emptyMap} />);
-    expect(screen.getByText('Path:')).toBeInTheDocument();
-    expect(screen.getByText('/lib/Author/Upgraded')).toBeInTheDocument();
-    expect(screen.getByText('Files:')).toBeInTheDocument();
-    expect(screen.getByText('8')).toBeInTheDocument();
-    expect(screen.getByText('Size:')).toBeInTheDocument();
-    expect(screen.getByText('2 MB')).toBeInTheDocument();
-    // Must NOT fall through to generic labels like "Target Path:"
-    expect(screen.queryByText('Target Path:')).not.toBeInTheDocument();
-  });
-
   it('renders download_failed with error text via error renderer', () => {
     render(<EventReasonDetails eventType="download_failed" reason={{ error: 'connection timeout' }} indexerMap={emptyMap} />);
     expect(screen.getByText('connection timeout')).toBeInTheDocument();

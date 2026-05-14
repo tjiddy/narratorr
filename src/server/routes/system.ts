@@ -87,7 +87,6 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       runRssJob(
         services.settings,
         services.bookList,
-        services.book,
         services.indexerSearch,
         services.downloadOrchestrator,
         services.blacklist,

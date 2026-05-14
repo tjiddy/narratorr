@@ -82,23 +82,6 @@ describe('EmailNotifier', () => {
     expect(result.message).toBe('Connection refused');
   });
 
-  it('formats on_upgrade message with quality info', async () => {
-    const notifier = new EmailNotifier(config);
-    const payload: EventPayload = {
-      event: 'on_upgrade',
-      book: { title: 'Dune', author: 'Frank Herbert' },
-      upgrade: { previousMbPerHour: 32.5, newMbPerHour: 58.1, previousCodec: 'mp3', newCodec: 'm4b' },
-    };
-
-    await notifier.send('on_upgrade', payload);
-
-    const sentText = mockSendMail.mock.calls[0]![0].text as string;
-    expect(sentText).toContain('32.5 MB/hr');
-    expect(sentText).toContain('58.1 MB/hr');
-    expect(sentText).toContain('MP3');
-    expect(sentText).toContain('M4B');
-  });
-
   it('formats on_health_issue message with check details', async () => {
     const notifier = new EmailNotifier(config);
     const payload: EventPayload = {

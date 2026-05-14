@@ -41,9 +41,6 @@ interface BookHeroProps {
   onWrongReleaseClick?: (() => void) | undefined;
   isWrongReleasing?: boolean | undefined;
   importListName?: string | null | undefined;
-  monitorForUpgrades: boolean;
-  onMonitorToggle: () => void;
-  isMonitorToggling: boolean;
   /** Preview object URL from file picker or paste. Null when no preview active. */
   previewUrl?: string | null | undefined;
   /** Called when user selects a file via the file picker. */
@@ -69,7 +66,7 @@ export function BookHero({
   onMergeClick, isMerging, mergePhase, canMerge, mergeDisabled, mergeTooltip,
   onRemoveClick, isRemoving,
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
-  importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
+  importListName,
   previewUrl, onCoverFileSelect, onCoverConfirm, onCoverCancel, isUploadingCover,
   onRetryImportClick, isRetryingImport,
   children,
@@ -240,19 +237,6 @@ export function BookHero({
                 Added via {importListName}
               </span>
             )}
-            <button
-              onClick={onMonitorToggle}
-              disabled={isMonitorToggling}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed ${
-                monitorForUpgrades
-                  ? 'glass-card border-primary/30 text-primary'
-                  : 'glass-card text-muted-foreground hover:text-foreground hover:border-primary/30'
-              }`}
-              title={monitorForUpgrades ? 'Monitoring for quality upgrades' : 'Not monitoring for upgrades'}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${monitorForUpgrades ? 'bg-primary animate-pulse' : 'bg-muted-foreground/40'}`} />
-              {monitorForUpgrades ? 'Monitoring' : 'Monitor'}
-            </button>
             <button
               onClick={onSearchClick}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium glass-card hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"

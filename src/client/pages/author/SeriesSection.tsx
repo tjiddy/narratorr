@@ -15,7 +15,7 @@ export function SeriesSection({
   name: string;
   books: BookMetadata[];
   libraryBooks?: (BookIdentifier | BookWithAuthor)[] | undefined;
-  onAddBook: (book: BookMetadata, overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAddBook: (book: BookMetadata, overrides?: { searchImmediately: boolean }) => void;
   onAddAll: () => void;
   addingAsins: Set<string>;
   isAddingAll: boolean;
@@ -39,7 +39,7 @@ export function SeriesSection({
             onClick={onAddAll}
             disabled={isAddingAll}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring disabled:opacity-50"
-            title="Uses global quality defaults for Search immediately and Monitor for upgrades"
+            title="Uses global quality defaults for Search immediately"
           >
             {isAddingAll ? (
               <LoadingSpinner className="w-3 h-3" />

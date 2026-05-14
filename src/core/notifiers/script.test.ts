@@ -184,35 +184,6 @@ describe('ScriptNotifier', () => {
     );
   });
 
-  it('sets upgrade event environment variables', async () => {
-    mockExecFile.mockImplementation((_file, _opts, callback) => {
-      const cb = callback as (...args: unknown[]) => void;
-      cb(null, '', '');
-      return {} as ReturnType<typeof execFile>;
-    });
-
-    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
-    await notifier.send('on_upgrade', {
-      event: 'on_upgrade',
-      book: { title: 'Dune' },
-      upgrade: { previousMbPerHour: 64, newMbPerHour: 128, previousCodec: 'mp3', newCodec: 'aac' },
-    });
-
-    expect(mockExecFile).toHaveBeenCalledWith(
-      '/scripts/notify.sh',
-      expect.objectContaining({
-        env: expect.objectContaining({
-          NARRATORR_EVENT: 'on_upgrade',
-          NARRATORR_UPGRADE_PREV_MBHR: '64',
-          NARRATORR_UPGRADE_NEW_MBHR: '128',
-          NARRATORR_UPGRADE_PREV_CODEC: 'mp3',
-          NARRATORR_UPGRADE_NEW_CODEC: 'aac',
-        }),
-      }),
-      expect.any(Function),
-    );
-  });
-
   it('sets health event environment variables', async () => {
     mockExecFile.mockImplementation((_file, _opts, callback) => {
       const cb = callback as (...args: unknown[]) => void;

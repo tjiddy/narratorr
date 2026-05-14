@@ -48,7 +48,6 @@ export interface BookWithAuthor {
   audioDuration?: number | null;
   lastGrabGuid?: string | null;
   lastGrabInfoHash?: string | null;
-  monitorForUpgrades: boolean;
   importListId?: number | null;
   importListName?: string | null;
   createdAt: string;
@@ -71,7 +70,6 @@ export interface CreateBookPayload {
   publishedDate?: string | undefined;
   genres?: string[] | undefined;
   providerId?: string | undefined;
-  monitorForUpgrades?: boolean | undefined;
   searchImmediately?: boolean | undefined;
 }
 
@@ -97,7 +95,6 @@ export interface UpdateBookPayload {
   status?: BookStatus | undefined;
   seriesName?: string | null | undefined;
   seriesPosition?: number | null | undefined;
-  monitorForUpgrades?: boolean | undefined;
 }
 
 export interface RenameResult {

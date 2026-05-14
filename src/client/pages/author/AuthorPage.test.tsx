@@ -116,7 +116,7 @@ describe('AuthorPage', () => {
     vi.mocked(api.getAuthorBooks).mockResolvedValue(mockBooks);
     vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockLibraryBooks.map((b) => ({ asin: b.asin ?? null, title: b.title, authorName: b.authors[0]?.name ?? null, authorSlug: null })));
     vi.mocked(api.getSettings).mockResolvedValue({
-      quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
+      quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' },
     } as never);
   });
 

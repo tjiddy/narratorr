@@ -14,7 +14,6 @@ const EVENT_COLORS: Record<NotificationEvent, number> = {
   on_download_complete: 0xf39c12, // orange
   on_import: 0x2ecc71,         // green
   on_failure: 0xe74c3c,        // red
-  on_upgrade: 0x9b59b6,       // purple
   on_health_issue: 0xe67e22,   // dark orange
 };
 
@@ -56,13 +55,6 @@ function buildEmbed(event: NotificationEvent, payload: EventPayload, includeCove
     if (payload.error.stage) {
       fields.push({ name: 'Stage', value: payload.error.stage, inline: true });
     }
-  }
-
-  if (event === 'on_upgrade' && payload.upgrade) {
-    const prev = `${payload.upgrade.previousMbPerHour.toFixed(1)} MB/hr${payload.upgrade.previousCodec ? ` (${payload.upgrade.previousCodec.toUpperCase()})` : ''}`;
-    const next = `${payload.upgrade.newMbPerHour.toFixed(1)} MB/hr${payload.upgrade.newCodec ? ` (${payload.upgrade.newCodec.toUpperCase()})` : ''}`;
-    fields.push({ name: 'Previous', value: prev, inline: true });
-    fields.push({ name: 'New', value: next, inline: true });
   }
 
   if (event === 'on_health_issue' && payload.health) {

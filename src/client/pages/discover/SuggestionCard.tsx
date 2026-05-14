@@ -21,7 +21,7 @@ export function SuggestionCard({
 }: {
   suggestion: SuggestionRow;
   index: number;
-  onAdd: (id: number, overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAdd: (id: number, overrides: { searchImmediately: boolean }) => void;
   onDismiss: (id: number) => void;
   isAdding: boolean;
   isDismissing: boolean;

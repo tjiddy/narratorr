@@ -46,7 +46,7 @@ const fullSettings = {
   metadata: { audibleRegion: 'us', languages: ['english'] },
   processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
   tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
-  quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 1, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
+  quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 1, searchImmediately: false, rejectWords: '', requiredWords: '' },
   network: { proxyUrl: '' },
   rss: { intervalMinutes: 30, enabled: false },
   system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },

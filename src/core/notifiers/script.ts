@@ -35,12 +35,6 @@ function payloadToEnv(event: NotificationEvent, payload: EventPayload): Record<s
     env.NARRATORR_ERROR_MESSAGE = payload.error.message;
     if (payload.error.stage) env.NARRATORR_ERROR_STAGE = payload.error.stage;
   }
-  if (payload.upgrade) {
-    env.NARRATORR_UPGRADE_PREV_MBHR = payload.upgrade.previousMbPerHour.toString();
-    env.NARRATORR_UPGRADE_NEW_MBHR = payload.upgrade.newMbPerHour.toString();
-    if (payload.upgrade.previousCodec) env.NARRATORR_UPGRADE_PREV_CODEC = payload.upgrade.previousCodec;
-    if (payload.upgrade.newCodec) env.NARRATORR_UPGRADE_NEW_CODEC = payload.upgrade.newCodec;
-  }
   if (payload.health) {
     env.NARRATORR_HEALTH_CHECK = payload.health.checkName;
     env.NARRATORR_HEALTH_PREV_STATE = payload.health.previousState;

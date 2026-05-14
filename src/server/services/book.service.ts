@@ -12,7 +12,6 @@ import { findMemberByLogicalIdentity, normalizePrimaryAuthor } from './series-re
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { batchLoadAuthorsNarrators } from './book-batch-load.helpers.js';
 import type { BookRow } from './types.js';
 
 
@@ -193,7 +192,6 @@ export class BookService {
     genres?: string[] | undefined;
     status?: BookRow['status'] | undefined;
     providerId?: string | undefined;
-    monitorForUpgrades?: boolean | undefined;
   }): Promise<BookWithAuthor> {
     // Enrich with ASIN from metadata provider if missing
     let enrichedAsin = data.asin;
@@ -224,7 +222,6 @@ export class BookService {
           publishedDate: data.publishedDate,
           genres: data.genres,
           status: data.status || 'wanted',
-          monitorForUpgrades: data.monitorForUpgrades ?? false,
         })
         .returning();
 
@@ -360,15 +357,6 @@ export class BookService {
 
     await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
     return this.getById(bookId) as Promise<BookWithAuthor>;
-  }
-
-  async getMonitoredBooks(): Promise<BookWithAuthor[]> {
-    const rows = await this.db
-      .select()
-      .from(books)
-      .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
-
-    return batchLoadAuthorsNarrators(this.db, rows);
   }
 
   /**

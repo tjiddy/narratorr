@@ -765,30 +765,4 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
-  describe('searchApi.searchGrab — replaceExisting contract', () => {
-    it('sends replaceExisting: true in POST body when provided', async () => {
-      const params = { downloadUrl: 'magnet:?xt=urn:btih:abc', title: 'Book', bookId: 1, replaceExisting: true as const };
-      await searchApi.searchGrab(params);
-      expect(mockFetchApi).toHaveBeenCalledWith('/search/grab', expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify(params),
-      }));
-    });
-
-    it('sends replaceExisting: false in POST body when provided', async () => {
-      const params = { downloadUrl: 'magnet:?xt=urn:btih:abc', title: 'Book', bookId: 1, replaceExisting: false as const };
-      await searchApi.searchGrab(params);
-      expect(mockFetchApi).toHaveBeenCalledWith('/search/grab', expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify(params),
-      }));
-    });
-
-    it('omits replaceExisting from body when undefined (not serialized as null)', async () => {
-      const params = { downloadUrl: 'magnet:?xt=urn:btih:abc', title: 'Book', bookId: 1 };
-      await searchApi.searchGrab(params);
-      const callBody = JSON.parse(mockFetchApi.mock.calls[0]![1].body);
-      expect('replaceExisting' in callBody).toBe(false);
-    });
-  });
 });

@@ -23,7 +23,7 @@ function renderPopover({
   onAdd = vi.fn(),
   isPending = false,
 }: {
-  onAdd?: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAdd?: (overrides: { searchImmediately: boolean }) => void;
   isPending?: boolean;
 } = {}) {
   const queryClient = createQueryClient();
@@ -36,7 +36,7 @@ function renderPopover({
 }
 
 const defaultSettings = createMockSettings({
-  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: true, monitorForUpgrades: true, rejectWords: '', requiredWords: '' },
+  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: true, rejectWords: '', requiredWords: '' },
 });
 
 describe('AddBookPopover', () => {
@@ -50,7 +50,7 @@ describe('AddBookPopover', () => {
     expect(screen.getByRole('button', { name: /add/i })).toBeInTheDocument();
   });
 
-  it('opens popover on click with checkboxes and Add to Library button', async () => {
+  it('opens popover on click with checkbox and Add to Library button', async () => {
     const user = userEvent.setup();
     renderPopover();
 
@@ -58,7 +58,7 @@ describe('AddBookPopover', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Search immediately')).toBeInTheDocument();
-      expect(screen.getByText('Monitor for upgrades')).toBeInTheDocument();
+      expect(screen.queryByText('Monitor for upgrades')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /add to library/i })).toBeInTheDocument();
     });
   });
@@ -73,11 +73,11 @@ describe('AddBookPopover', () => {
     await waitFor(() => {
       const checkboxes = screen.getAllByRole('checkbox');
       expect(checkboxes[0]).toBeChecked(); // searchImmediately = true
-      expect(checkboxes[1]).toBeChecked(); // monitorForUpgrades = true
+      expect(checkboxes).toHaveLength(1);
     });
   });
 
-  it('calls onAdd with checkbox values when Add to Library is clicked', async () => {
+  it('calls onAdd with checkbox value when Add to Library is clicked', async () => {
     const user = userEvent.setup();
     const onAdd = vi.fn();
     renderPopover({ onAdd });
@@ -97,7 +97,6 @@ describe('AddBookPopover', () => {
     await waitFor(() => {
       expect(onAdd).toHaveBeenCalledWith({
         searchImmediately: false,
-        monitorForUpgrades: true,
       });
     });
   });
@@ -128,30 +127,6 @@ describe('AddBookPopover', () => {
     expect(screen.getByRole('button')).toBeDisabled();
   });
 
-  it('toggles monitorForUpgrades independently of searchImmediately', async () => {
-    const user = userEvent.setup();
-    const onAdd = vi.fn();
-    renderPopover({ onAdd });
-
-    await user.click(screen.getByRole('button', { name: /add/i }));
-
-    await waitFor(() => {
-      expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
-    });
-
-    // Uncheck monitorForUpgrades only (index 1)
-    await user.click(screen.getAllByRole('checkbox')[1]!);
-
-    await user.click(screen.getByRole('button', { name: /add to library/i }));
-
-    await waitFor(() => {
-      expect(onAdd).toHaveBeenCalledWith({
-        searchImmediately: true,
-        monitorForUpgrades: false,
-      });
-    });
-  });
-
   it('defaults to unchecked when settings fetch fails', async () => {
     vi.mocked(api.getSettings).mockRejectedValue(new Error('Network error'));
     const user = userEvent.setup();
@@ -159,11 +134,10 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    // With no settings, checkboxes stay at initial false
+    // With no settings, checkbox stays at initial false
     await waitFor(() => {
       const checkboxes = screen.getAllByRole('checkbox');
       expect(checkboxes[0]).not.toBeChecked();
-      expect(checkboxes[1]).not.toBeChecked();
     });
   });
 
@@ -179,26 +153,24 @@ describe('AddBookPopover', () => {
     // Open popover before settings resolve
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    // Checkboxes should be unchecked (settings not yet loaded)
+    // Checkbox should be unchecked (settings not yet loaded)
     await waitFor(() => {
       const checkboxes = screen.getAllByRole('checkbox');
       expect(checkboxes[0]).not.toBeChecked();
-      expect(checkboxes[1]).not.toBeChecked();
     });
 
     // Now resolve settings
     resolveSettings(defaultSettings);
 
-    // Checkboxes should sync to settings defaults
+    // Checkbox should sync to settings defaults
     await waitFor(() => {
       expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
-      expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
     });
 
     // Submit should use synced values
     await user.click(screen.getByRole('button', { name: /add to library/i }));
     await waitFor(() => {
-      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true, monitorForUpgrades: true });
+      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true });
     });
   });
 
@@ -216,7 +188,7 @@ describe('AddBookPopover', () => {
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
     await waitFor(() => {
-      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: false, monitorForUpgrades: true });
+      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: false });
     });
 
     // Re-open — should reset to defaults
@@ -275,7 +247,6 @@ describe('AddBookPopover', () => {
 
       // Popover should still be open
       expect(screen.getByText('Search immediately')).toBeInTheDocument();
-      expect(screen.getByText('Monitor for upgrades')).toBeInTheDocument();
     });
 
     it('closes popover when clicking outside both trigger and panel', async () => {

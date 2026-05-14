@@ -37,7 +37,7 @@ const baseBook = {
   rating: null, ratingCount: null, pageCount: null,
   audioBitrate: null, audioCodec: null, audioSampleRate: null,
   audioChannels: null, updatedAt: new Date(), addedAt: new Date(),
-  monitorForUpgrades: false, createdAt: new Date(), enrichmentStatus: 'pending' as const,
+  createdAt: new Date(), enrichmentStatus: 'pending' as const,
   audioBitrateMode: null, audioFileFormat: null, audioFileCount: null, topLevelAudioFileCount: null,
   audibleId: null, goodreadsId: null, seriesId: null, importListId: null,
   lastGrabGuid: null, lastGrabInfoHash: null,
@@ -137,65 +137,96 @@ describe('QualityGateService', () => {
     });
   });
 
-  describe('processDownload — quality comparison', () => {
-    it('auto-imports when download MB/hr is strictly greater than existing', async () => {
+  describe('processDownload — imported-book replacement is always held (#1103 F2)', () => {
+    it('holds with imported_book_replacement reason when newMbPerHour > existing (was auto-import)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000 }));
 
-      expect(result.action).toBe('imported');
-      expect(result.reason.action).toBe('imported');
-      expect(result.statusTransition).toEqual({ from: 'checking', to: 'completed' });
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
+      expect(result.statusTransition).toEqual({ from: 'checking', to: 'pending_review' });
     });
 
-    it('auto-rejects when download MB/hr is equal to existing', async () => {
+    it('holds with imported_book_replacement reason when newMbPerHour == existing (was auto-reject)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 400_000_000 }));
 
-      expect(result.action).toBe('rejected');
-      expect(result.statusTransition).toEqual({ from: 'checking', to: 'failed' });
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
     });
 
-    it('auto-rejects when download MB/hr is less than existing', async () => {
+    it('holds with imported_book_replacement reason when newMbPerHour < existing (was auto-reject)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 200_000_000 }));
 
-      expect(result.action).toBe('rejected');
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
     });
 
-    it('auto-imports on tiny positive MB/hr delta', async () => {
+    it('holds with imported_book_replacement reason on tiny positive MB/hr delta (was auto-import)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 400_000_100 }));
 
-      expect(result.action).toBe('imported');
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
     });
 
+    it('first-download path (book.path === null) keeps auto-import behavior', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      const wantedBook = { ...baseBook, path: null };
+
+      const result = await service.processDownload(baseDownload, wantedBook, makeScan({ totalSize: 600_000_000 }));
+
+      expect(result.action).toBe('imported');
+      expect(result.statusTransition).toEqual({ from: 'checking', to: 'completed' });
+    });
+
+    it('does not append imported_book_replacement when other hold reasons already exist (narrator_mismatch)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      // tagNarrator mismatch produces holdReasons.length > 0 → original hold path fires,
+      // NOT the imported-book replacement path
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }));
+
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('narrator_mismatch');
+      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+    });
+  });
+
+  describe('processDownload — quality comparison (path=null first-download)', () => {
     it('holds for review when existing book has no quality data (newMbPerHour null)', async () => {
       const { service, db } = createService();
-      const noQualityBook = { ...baseBook, size: null, audioTotalSize: null, duration: null, audioDuration: null };
+      const noQualityBook = { ...baseBook, path: null, size: null, audioTotalSize: null, duration: null, audioDuration: null };
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, noQualityBook, makeScan());
 
-      expect(result.action).toBe('held');
-      expect(result.reason.holdReasons).toContain('no_quality_data');
+      // path === null → first-download path; no hold reasons → auto-import
+      expect(result.action).toBe('imported');
     });
 
     it('holds for review when both existing and new quality are null', async () => {
       const { service, db } = createService();
-      const noQualityBook = { ...baseBook, size: null, audioTotalSize: null, duration: null, audioDuration: null };
+      const noQualityBook = { ...baseBook, path: null, size: null, audioTotalSize: null, duration: null, audioDuration: null };
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.processDownload(baseDownload, noQualityBook, makeScan({ totalDuration: 0 }));
 
-      expect(result.action).toBe('held');
+      // path === null and no hold reasons → first-download auto-import branch (book.path === null)
+      // newDuration is 0, existing is also null — buildQualityAssessment returns newMbPerHour: null
+      // first-download branch fires before the null-quality check
+      expect(result.action).toBe('imported');
     });
   });
 
@@ -207,7 +238,9 @@ describe('QualityGateService', () => {
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
 
       expect(result.reason.narratorMatch).toBe(true);
-      expect(result.action).toBe('imported');
+      // book.path !== null and no other hold reasons → imported-book replacement hold (#1103 F2)
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
     });
 
     it('holds for review when narrator mismatch detected', async () => {
@@ -484,10 +517,11 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, codec: 'AAC', channels: 1 }));
+      const wantedBook = { ...baseBook, path: null };
+      const result = await service.processDownload(baseDownload, wantedBook, makeScan({ totalSize: 600_000_000, codec: 'AAC', channels: 1 }));
 
       expect(result.reason).toEqual(expect.objectContaining({
-        action: 'imported', mbPerHour: expect.any(Number), existingMbPerHour: expect.any(Number),
+        action: 'imported', mbPerHour: expect.any(Number),
         codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [],
       }));
     });

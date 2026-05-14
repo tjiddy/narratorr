@@ -50,7 +50,6 @@ export const createBookBodySchema = z.object({
   publishedDate: z.string().optional(),
   genres: z.array(z.string()).optional(),
   providerId: z.string().optional(),
-  monitorForUpgrades: z.boolean().optional(),
   searchImmediately: z.boolean().optional(),
 });
 
@@ -63,7 +62,6 @@ export const updateBookBodySchema = z.object({
   status: bookStatusSchema.optional(),
   seriesName: z.string().nullable().optional(),
   seriesPosition: z.number().nullable().optional(),
-  monitorForUpgrades: z.boolean().optional(),
 });
 
 export const deleteBookQuerySchema = z.object({

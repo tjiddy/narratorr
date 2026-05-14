@@ -235,10 +235,11 @@ describe('NotifierCard — create mode', () => {
     expect(screen.getByText('Download Complete')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();
     expect(screen.getByText('Failure')).toBeInTheDocument();
-    expect(screen.getByText('Upgrade')).toBeInTheDocument();
     expect(screen.getByText('Health Issue')).toBeInTheDocument();
+    expect(screen.queryByText('Upgrade')).not.toBeInTheDocument();
 
     const checkboxes = screen.getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(5);
     checkboxes.forEach((cb) => expect(cb).toBeChecked());
   });
 

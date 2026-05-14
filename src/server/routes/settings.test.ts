@@ -131,7 +131,7 @@ describe('settings routes', () => {
     it('persists and returns quality.rejectWords and quality.requiredWords', async () => {
       const updated = {
         ...mockSettings,
-        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: 'German, Abridged', requiredWords: 'M4B' },
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: 'German, Abridged', requiredWords: 'M4B' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 
@@ -150,7 +150,7 @@ describe('settings routes', () => {
     it('returns default empty strings for new quality fields', async () => {
       const settingsWithDefaults = {
         ...mockSettings,
-        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' },
       };
       (services.settings.getAll as Mock).mockResolvedValue(settingsWithDefaults);
 

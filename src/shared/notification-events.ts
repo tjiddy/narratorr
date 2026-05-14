@@ -9,7 +9,6 @@ export const NOTIFICATION_EVENTS = [
   'on_download_complete',
   'on_import',
   'on_failure',
-  'on_upgrade',
   'on_health_issue',
 ] as const;
 
@@ -20,7 +19,6 @@ export const EVENT_LABELS: Record<string, string> = {
   on_download_complete: 'Download Complete',
   on_import: 'Import',
   on_failure: 'Failure',
-  on_upgrade: 'Upgrade',
   on_health_issue: 'Health Issue',
 } satisfies Record<NotificationEvent, string>;
 
@@ -30,7 +28,6 @@ export const EVENT_TITLES: Record<NotificationEvent, string> = {
   on_download_complete: 'Download Complete',
   on_import: 'Import Complete',
   on_failure: 'Failure',
-  on_upgrade: 'Quality Upgrade',
   on_health_issue: 'Health Issue',
 };
 
@@ -58,14 +55,6 @@ export interface EventPayload {
     message: string;
     stage?: string;
   };
-  upgrade?: {
-    previousMbPerHour: number;
-    newMbPerHour: number;
-    previousCodec?: string;
-    newCodec?: string;
-    previousSizeBytes?: number;
-    newSizeBytes?: number;
-  };
   health?: {
     checkName: string;
     previousState: 'healthy' | 'warning' | 'error';
@@ -87,13 +76,6 @@ const EVENT_FORMATTERS: Record<NotificationEvent, EventFormatter> = {
     payload.error
       ? `Failure: ${payload.error.message}${payload.error.stage ? ` (${payload.error.stage})` : ''}`
       : 'Failure occurred',
-  on_upgrade: (payload, bookInfo) => {
-    const u = payload.upgrade;
-    if (!u) return bookInfo ? `Upgraded: ${bookInfo}` : 'Quality upgrade';
-    const prev = `${u.previousMbPerHour.toFixed(1)} MB/hr${u.previousCodec ? ` (${u.previousCodec.toUpperCase()})` : ''}`;
-    const next = `${u.newMbPerHour.toFixed(1)} MB/hr${u.newCodec ? ` (${u.newCodec.toUpperCase()})` : ''}`;
-    return `${bookInfo || 'Book'} upgraded: ${prev} → ${next}`;
-  },
   on_health_issue: (payload) => {
     const h = payload.health;
     if (!h) return 'Health issue detected';

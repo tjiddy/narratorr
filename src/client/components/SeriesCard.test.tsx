@@ -77,7 +77,7 @@ function makeMember(overrides: Partial<BookSeriesMemberCard> & { id: number; tit
 }
 
 const settingsFixture = createMockSettings({
-  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: true, monitorForUpgrades: true, rejectWords: '', requiredWords: '' },
+  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: true, rejectWords: '', requiredWords: '' },
 });
 
 describe('SeriesCard', () => {
@@ -266,7 +266,6 @@ describe('SeriesCard', () => {
         publishedDate: '2018-08-28',
         duration: 1300,
         searchImmediately: true,
-        monitorForUpgrades: true,
       });
     });
   });

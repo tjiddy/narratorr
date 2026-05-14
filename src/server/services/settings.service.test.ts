@@ -231,7 +231,7 @@ describe('SettingsService', () => {
     });
 
     it('preserves other flat fields in quality when updating minSeeders', async () => {
-      const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' };
+      const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: existingQuality }]))  // get('quality')
         .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
@@ -246,7 +246,7 @@ describe('SettingsService', () => {
     });
 
     it('preserves sibling quality fields when updating maxDownloadSize', async () => {
-      const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 3, maxDownloadSize: 5, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' };
+      const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 3, maxDownloadSize: 5, searchImmediately: false, rejectWords: '', requiredWords: '' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: existingQuality }]))
         .mockReturnValueOnce(mockDbChain([]))

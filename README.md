@@ -9,8 +9,8 @@ Narratorr is a self-hosted audiobook acquisition and organization application. S
 ## Features
 
 - **Search & Grab** — Search Torznab, Newznab, and private tracker indexers. Grab releases to qBittorrent, Transmission, Deluge, SABnzbd, NZBGet, or a blackhole watch folder.
-- **Automated Pipeline** — Scheduled search, RSS monitoring, quality-aware upgrades, retry with blacklisting.
-- **Quality Gate** — Auto-accept upgrades, hold questionable releases for review, auto-reject downgrades.
+- **Automated Pipeline** — Scheduled search for wanted books, RSS polling for wanted books, retry with blacklisting.
+- **Quality Gate** — Auto-import the first release for a wanted book, hold questionable releases for review, auto-reject low-quality re-downloads. Imported books are never automatically replaced.
 - **Library Management** — Configurable folder/file naming, audio enrichment from file tags, grid and list views with filtering and bulk actions.
 - **Discovery** — AI-powered book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
 - **Audio Processing** — Optional FFmpeg-based conversion, merging, ID3 tag embedding, and cover art embedding.

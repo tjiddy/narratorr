@@ -32,7 +32,7 @@ export function SearchBookCard({
   const inLibrary = justAdded || isBookInLibrary(book, libraryBooks);
 
   const addMutation = useMutation({
-    mutationFn: (overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) =>
+    mutationFn: (overrides?: { searchImmediately: boolean }) =>
       api.addBook(mapBookMetadataToPayload(book, overrides)),
     onSuccess: () => {
       setJustAdded(true);

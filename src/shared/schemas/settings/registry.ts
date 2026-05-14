@@ -78,7 +78,6 @@ export const settingsRegistry = {
       minDownloadSize: 0,
       maxDownloadSize: 5,
       searchImmediately: false,
-      monitorForUpgrades: false,
       rejectWords: DEFAULT_REJECT_WORDS,
       requiredWords: '',
     },

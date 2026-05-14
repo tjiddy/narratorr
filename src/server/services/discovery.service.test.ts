@@ -86,7 +86,6 @@ function makeBookRow(overrides: Record<string, unknown> = {}) {
       audioFileCount: null,
       audioTotalSize: null,
       audioDuration: null,
-      monitorForUpgrades: false,
       importListId: null,
       createdAt: new Date(),
       updatedAt: new Date(),

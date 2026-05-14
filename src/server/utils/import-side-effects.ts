@@ -103,15 +103,14 @@ export interface RecordImportEventArgs {
 
 /** Fire-and-forget event recording. */
 export function recordImportEvent(args: RecordImportEventArgs): void {
-  const { eventHistory, bookId, bookTitle, authorName, downloadId, bookPath, targetPath, fileCount, totalSize, log } = args;
+  const { eventHistory, bookId, bookTitle, authorName, downloadId, targetPath, fileCount, totalSize, log } = args;
   if (!eventHistory) return;
-  const isUpgrade = !!bookPath;
   eventHistory.create({
     bookId,
     bookTitle,
     authorName: authorName ?? undefined,
     downloadId,
-    eventType: isUpgrade ? 'upgraded' : 'imported',
+    eventType: 'imported',
     source: 'auto',
     reason: { targetPath, fileCount, totalSize },
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record import event'));

@@ -15,7 +15,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       ...(actual.api as Record<string, unknown>),
       addBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
-        quality: { searchImmediately: true, monitorForUpgrades: false },
+        quality: { searchImmediately: true },
       }),
     },
   };
@@ -169,7 +169,7 @@ describe('ManualAddForm', () => {
       const user = userEvent.setup();
       (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });
       (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-        quality: { searchImmediately: false, monitorForUpgrades: true },
+        quality: { searchImmediately: false },
       });
       renderForm();
 
@@ -179,7 +179,6 @@ describe('ManualAddForm', () => {
       await waitFor(() => {
         expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
           searchImmediately: false,
-          monitorForUpgrades: true,
         }));
       });
     });

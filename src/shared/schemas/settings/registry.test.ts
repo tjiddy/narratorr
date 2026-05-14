@@ -151,7 +151,6 @@ describe('settingsRegistry', () => {
         minDownloadSize: 0,
         maxDownloadSize: 5,
         searchImmediately: false,
-        monitorForUpgrades: false,
         rejectWords: 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged',
         requiredWords: '',
       });
@@ -684,7 +683,6 @@ describe('settingsRegistry', () => {
         minDownloadSize: 0,
         maxDownloadSize: 5,
         searchImmediately: false,
-        monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
       });
@@ -698,7 +696,6 @@ describe('settingsRegistry', () => {
         protocolPreference: 'none',
         minSeeders: 1,
         searchImmediately: false,
-        monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
         preferredLanguage: 'english',
@@ -716,7 +713,6 @@ describe('settingsRegistry', () => {
         protocolPreference: 'none',
         minSeeders: 1,
         searchImmediately: false,
-        monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
       });
