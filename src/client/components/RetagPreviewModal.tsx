@@ -36,24 +36,34 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
   useEscapeKey(isOpen, onClose, modalRef);
 
   const [excludeSet, setExcludeSet] = useState<Set<RetagExcludableField>>(() => new Set());
-  // Undefined overrides = "use settings default" — the wire payload only carries
-  // the override fields the user has explicitly touched.
-  const [modeOverride, setModeOverride] = useState<RetagMode | undefined>(undefined);
-  const [embedCoverOverride, setEmbedCoverOverride] = useState<boolean | undefined>(undefined);
+  // `null` = user has not touched the control. `userMode`/`userEmbedCover` hold
+  // the user's selection regardless of whether it matches the settings default;
+  // the AC requires the apply payload to compare against the captured defaults,
+  // not against whether the control was touched (#1098 F2).
+  const [userMode, setUserMode] = useState<RetagMode | null>(null);
+  const [userEmbedCover, setUserEmbedCover] = useState<boolean | null>(null);
+  const [settingsDefaults, setSettingsDefaults] = useState<{ mode: RetagMode; embedCover: boolean } | null>(null);
 
-  const overridesForFetch: { mode?: RetagMode; embedCover?: boolean } = {};
-  if (modeOverride !== undefined) overridesForFetch.mode = modeOverride;
-  if (embedCoverOverride !== undefined) overridesForFetch.embedCover = embedCoverOverride;
+  const activeOverrides: { mode?: RetagMode; embedCover?: boolean } = {};
+  if (settingsDefaults && userMode !== null && userMode !== settingsDefaults.mode) activeOverrides.mode = userMode;
+  if (settingsDefaults && userEmbedCover !== null && userEmbedCover !== settingsDefaults.embedCover) activeOverrides.embedCover = userEmbedCover;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.bookRetagPreview(bookId, overridesForFetch),
-    queryFn: () => api.getBookRetagPreview(bookId, overridesForFetch),
+    queryKey: queryKeys.bookRetagPreview(bookId, activeOverrides),
+    queryFn: () => api.getBookRetagPreview(bookId, activeOverrides),
     enabled: isOpen,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
     retry: false,
   });
+
+  // Capture settings defaults from the first preview response — that response
+  // was fetched with no overrides applied, so it reflects the user's settings.
+  // Render-time guarded setState mirrors React's "derive state from props" pattern.
+  if (data && settingsDefaults === null && userMode === null && userEmbedCover === null) {
+    setSettingsDefaults({ mode: data.mode, embedCover: data.embedCover });
+  }
 
   if (!isOpen) return null;
 
@@ -72,8 +82,8 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
   const handleConfirm = () => {
     onClose();
     const payload: RetagConfirmPayload = { excludeFields: Array.from(excludeSet) };
-    if (modeOverride !== undefined) payload.mode = modeOverride;
-    if (embedCoverOverride !== undefined) payload.embedCover = embedCoverOverride;
+    if (activeOverrides.mode !== undefined) payload.mode = activeOverrides.mode;
+    if (activeOverrides.embedCover !== undefined) payload.embedCover = activeOverrides.embedCover;
     onConfirm(payload);
   };
 
@@ -124,8 +134,8 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
               plan={data}
               excludeSet={excludeSet}
               onToggle={toggle}
-              onModeChange={setModeOverride}
-              onEmbedCoverChange={setEmbedCoverOverride}
+              onModeChange={setUserMode}
+              onEmbedCoverChange={setUserEmbedCover}
             />
           )}
         </div>

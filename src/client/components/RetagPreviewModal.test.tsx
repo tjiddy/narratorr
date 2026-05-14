@@ -464,6 +464,85 @@ describe('RetagPreviewModal', () => {
     expect(payload.embedCover).toBeUndefined();
   });
 
+  it('apply payload omits mode override when user toggles to non-default then back to default (F2)', async () => {
+    // The reviewer flagged that emitting overrides based on "touched" state violates the AC:
+    // overrides must compare against settings defaults, not user interaction.
+    vi.mocked(api.getBookRetagPreview).mockImplementation(async (_id, overrides) => ({
+      ...multiFilePlan,
+      // Settings default is 'overwrite' (mirrors multiFilePlan.mode); echo the override-or-default.
+      mode: overrides?.mode ?? 'overwrite',
+    }));
+    const { onConfirm } = renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    // Toggle to populate_missing (non-default) — fetch should send the override
+    await user.click(screen.getByRole('radio', { name: /populate missing/i }));
+    expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({ mode: 'populate_missing' });
+
+    // Toggle back to overwrite (settings default) — fetch should omit the override now
+    await user.click(screen.getByRole('radio', { name: /^overwrite$/i }));
+    expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({});
+
+    // Apply — payload must omit mode since the active value matches settings default
+    await user.click(screen.getByRole('button', { name: /Re-tag/ }));
+    const payload = onConfirm.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.mode).toBeUndefined();
+    expect(payload.embedCover).toBeUndefined();
+  });
+
+  it('apply payload omits embedCover override when user toggles to non-default then back to default (F2)', async () => {
+    vi.mocked(api.getBookRetagPreview).mockImplementation(async (_id, overrides) => ({
+      ...multiFilePlan,
+      hasCoverFile: true,
+      // Settings default is false; echo override-or-default.
+      embedCover: overrides?.embedCover ?? false,
+    }));
+    const { onConfirm } = renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    const checkbox = screen.getByRole('checkbox', { name: /embed cover art/i });
+    // Toggle on (non-default)
+    await user.click(checkbox);
+    expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({ embedCover: true });
+    // Toggle back off (settings default)
+    await user.click(screen.getByRole('checkbox', { name: /embed cover art/i }));
+    expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({});
+
+    await user.click(screen.getByRole('button', { name: /Re-tag/ }));
+    const payload = onConfirm.mock.calls[0]![0] as Record<string, unknown>;
+    expect(payload.embedCover).toBeUndefined();
+    expect(payload.mode).toBeUndefined();
+  });
+
+  it('DiffRow uses single-line shrinkable grid with truncating value cells (F1)', async () => {
+    // Regression guard for the UX layout contract: the row must use a 4-col grid
+    // with minmax(0,1fr) value cells + truncate, so long values ellipsize instead
+    // of wrapping the row to a new line at modal width. If the layout classes
+    // are deleted or reverted, the long-value no-wrap behavior breaks silently.
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(multiFilePlan);
+    renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    // Multi-file disclosure is collapsed by default — open it so DiffRows render
+    await user.click(screen.getByRole('button', { name: /Show per-file changes/ }));
+
+    const allLis = Array.from(document.body.querySelectorAll('ul li')) as HTMLLIElement[];
+    const diffRows = allLis.filter(li =>
+      li.className.includes('grid-cols-[5rem_minmax(0,1fr)_auto_minmax(0,1fr)]'),
+    );
+    expect(diffRows.length).toBeGreaterThan(0);
+
+    // Each diff row must include `truncate` value cells so long content ellipsizes.
+    // The label + current + next spans all use `truncate` (3 cells per row).
+    for (const row of diffRows) {
+      const truncating = row.querySelectorAll('.truncate');
+      expect(truncating.length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   it('Cancel button calls onClose', async () => {
     vi.mocked(api.getBookRetagPreview).mockResolvedValue(multiFilePlan);
     const { onClose } = renderModal();
