@@ -24,7 +24,7 @@ export function ManualImportPage() {
   const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress } = state;
   const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack } = actions;
   const { scanMutation, importMutation } = mutations;
-  const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, duplicateCount, allSelected } = counts;
+  const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
 
   const isInsideLibraryRoot = libraryPath ? isPathInsideLibrary(scanPath, libraryPath) : false;
 
@@ -113,8 +113,8 @@ export function ManualImportPage() {
               pendingCount={pendingCount}
               selectedCount={selectedCount}
               selectedUnmatchedCount={selectedUnmatchedCount}
+              selectedPendingCount={selectedPendingCount}
               duplicateCount={duplicateCount}
-              isMatching={isMatching}
               mode={mode}
               onModeChange={setMode}
               onImport={handleImport}

@@ -9,8 +9,8 @@ interface ImportSummaryBarBaseProps {
   pendingCount: number;
   selectedCount: number;
   selectedUnmatchedCount: number;
+  selectedPendingCount: number;
   duplicateCount: number;
-  isMatching: boolean;
   mode: ImportMode;
   onImport: () => void;
   importing: boolean;
@@ -18,6 +18,23 @@ interface ImportSummaryBarBaseProps {
   registerLabel?: string;
   /** When true, disable the action button regardless of other state */
   disabled?: boolean;
+}
+
+function pluralizeNeedsMatch(n: number): string {
+  return `${n} selected book${n !== 1 ? 's need' : ' needs'} a match`;
+}
+
+function pluralizeStillMatching(n: number): string {
+  return `${n} selected book${n !== 1 ? 's are' : ' is'} still matching`;
+}
+
+function buildDisabledTooltip(selectedUnmatchedCount: number, selectedPendingCount: number): string | undefined {
+  if (selectedUnmatchedCount > 0 && selectedPendingCount > 0) {
+    return `${pluralizeNeedsMatch(selectedUnmatchedCount)}, ${selectedPendingCount} still matching`;
+  }
+  if (selectedUnmatchedCount > 0) return pluralizeNeedsMatch(selectedUnmatchedCount);
+  if (selectedPendingCount > 0) return pluralizeStillMatching(selectedPendingCount);
+  return undefined;
 }
 
 /**
@@ -37,8 +54,8 @@ export function ImportSummaryBar({
   pendingCount,
   selectedCount,
   selectedUnmatchedCount,
+  selectedPendingCount,
   duplicateCount,
-  isMatching,
   mode,
   onModeChange,
   onImport,
@@ -47,6 +64,7 @@ export function ImportSummaryBar({
   registerLabel,
   disabled,
 }: ImportSummaryBarProps) {
+  const tooltip = buildDisabledTooltip(selectedUnmatchedCount, selectedPendingCount);
   return (
     <div className="sticky bottom-0 z-10 glass-card border-t border-white/10 rounded-b-xl px-4 py-3 flex items-center justify-between gap-4">
       {/* Counts */}
@@ -95,9 +113,9 @@ export function ImportSummaryBar({
 
         <button
           onClick={onImport}
-          disabled={disabled || selectedCount === 0 || selectedUnmatchedCount > 0 || isMatching || importing}
+          disabled={disabled || selectedCount === 0 || selectedUnmatchedCount > 0 || selectedPendingCount > 0 || importing}
           className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 hover:shadow-glow transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
-          title={selectedUnmatchedCount > 0 ? `${selectedUnmatchedCount} selected book${selectedUnmatchedCount !== 1 ? 's need' : ' needs'} a match` : undefined}
+          title={tooltip}
         >
           {importing ? (
             <span className="flex items-center gap-2">

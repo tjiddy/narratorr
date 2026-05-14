@@ -1179,6 +1179,40 @@ describe('empty result edge case', () => {
       expect(result.current.pendingCount).toBe(2); // non-dup + within-scan dup
     });
 
+    // #1102 — selectedPendingCount is scoped to selection, excludes DB duplicates
+    it('selectedPendingCount tracks pending rows scoped to user selection', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Non-dup row is auto-selected; within-scan dup is auto-deselected.
+      expect(result.current.pendingCount).toBe(2);
+      expect(result.current.selectedPendingCount).toBe(1);
+
+      // Selecting all actionable rows includes the within-scan dup → 2 pending selected.
+      act(() => { result.current.handleSelectAll(); });
+      expect(result.current.selectedPendingCount).toBe(2);
+    });
+
+    it('selectedPendingCount excludes DB duplicates even if forcibly selected', async () => {
+      mockScanDirectory.mockResolvedValue(scanResultMixed);
+      const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(result.current.step).toBe('review'); });
+
+      // Locate the DB-dup row index (slug duplicate) and force-select it via handleToggle.
+      const dbDupIndex = result.current.rows.findIndex(r =>
+        r.book.isDuplicate && r.book.duplicateReason !== 'within-scan',
+      );
+      expect(dbDupIndex).toBeGreaterThanOrEqual(0);
+      act(() => { result.current.handleToggle(dbDupIndex); });
+      expect(result.current.rows[dbDupIndex]!.selected).toBe(true);
+
+      // DB dup must NOT contribute to selectedPendingCount (matches pendingCount semantics).
+      expect(result.current.selectedPendingCount).toBe(1);
+    });
+
     it('duplicateCount counts only DB duplicates', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });

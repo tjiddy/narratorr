@@ -236,6 +236,7 @@ export function useLibraryImport() {
   const reviewCount = rows.filter(r => r.matchResult?.confidence === 'medium').length;
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
   const pendingCount = rows.filter(r => !r.matchResult && !isDbDuplicate(r.book)).length;
+  const selectedPendingCount = rows.filter(r => r.selected && !r.matchResult && !isDbDuplicate(r.book)).length;
   const duplicateCount = rows.filter(r => isDbDuplicate(r.book)).length;
   const allSelected = rows.length > 0 && rows.filter(r => !isDbDuplicate(r.book)).every(r => r.selected);
 
@@ -271,6 +272,7 @@ export function useLibraryImport() {
     reviewCount,
     noMatchCount,
     pendingCount,
+    selectedPendingCount,
     duplicateCount,
     allSelected,
   };

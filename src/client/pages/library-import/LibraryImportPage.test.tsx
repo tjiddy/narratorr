@@ -445,6 +445,50 @@ describe('LibraryImportPage (#133)', () => {
       vi.useRealTimers();
     });
 
+    // #1102 — gate is scoped to selection, not the global match-job state
+    it('enables import when only a matched row is selected and others are still pending', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+      mockApi.scanDirectory!.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/A/B1', parsedTitle: 'Matched', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+          { path: '/audiobooks/A/B2', parsedTitle: 'Other Matched', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+          { path: '/audiobooks/A/B3', parsedTitle: 'Still Pending', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        ],
+        totalFolders: 3,
+      });
+      // Match job still in flight; only B1 and B2 have results.
+      mockApi.getMatchJob!.mockResolvedValue({
+        id: 'job-1', status: 'matching', total: 3, matched: 2,
+        results: [
+          { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Matched', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] },
+          { path: '/audiobooks/A/B2', confidence: 'high', bestMatch: { title: 'Other Matched', authors: [{ name: 'A' }], asin: 'A2' }, alternatives: [] },
+        ],
+      });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      await waitFor(() => { expect(screen.getByText('Matched')).toBeInTheDocument(); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+
+      // 2 of 3 should show as ready (B1 + B2 high confidence + selected)
+      await waitFor(() => { expect(screen.getByText('2 ready')).toBeInTheDocument(); });
+
+      // Deselect Other Matched (B2) and Still Pending (B3) so only Matched (B1) is selected.
+      const deselects = screen.getAllByRole('button', { name: /^deselect$/i });
+      await userEvent.click(deselects[1]!);
+      const remainingDeselects = screen.getAllByRole('button', { name: /^deselect$/i });
+      await userEvent.click(remainingDeselects[1]!);
+
+      await waitFor(() => { expect(screen.getByText(/1 of 3 new selected/i)).toBeInTheDocument(); });
+
+      // Despite B3 still pending in the scan, the button is enabled because only matched rows are selected.
+      const registerBtn = screen.getByRole('button', { name: /import 1 book$/i });
+      expect(registerBtn).toBeEnabled();
+
+      vi.useRealTimers();
+    });
+
     it('import button shows "Importing..." when registerMutation.isPending', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
@@ -739,8 +783,11 @@ describe('LibraryImportPage (#133)', () => {
 
     it('Import button enabled after poll resolves with completed job', async () => {
       mockApi.confirmImport!.mockResolvedValue({ accepted: 1 });
-      // Completed match job — polling returns 'completed' immediately so isMatching=false
-      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
+      // Completed match job — return a high-confidence result so the row is no longer pending.
+      mockApi.getMatchJob!.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Book One', authors: [{ name: 'Author A' }], asin: 'A1' }, alternatives: [] }],
+      });
       mockApi.scanDirectory!.mockResolvedValue({
         discoveries: [
           { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
