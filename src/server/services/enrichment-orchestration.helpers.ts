@@ -241,10 +241,12 @@ export function buildBookCreatePayload(
       : (item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : [])),
     narrators: item.narrators?.length ? item.narrators : meta?.narrators,
     // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
-    // When `meta` is null (no provider match accepted), fall back to item-derived values.
-    seriesName: meta?.series?.[0]?.name ?? item.seriesName ?? undefined,
-    seriesPosition: meta?.series?.[0]?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
-    seriesAsin: meta?.series?.[0]?.asin ?? undefined,
+    // Prefer the canonical primary-series ref over `series[0]` (#1088 / #1097) —
+    // `series[0]` on Audible can be a broader universe entry rather than the
+    // real book series. When `meta` is null (no provider match accepted), fall back to item-derived values.
+    seriesName: (meta?.seriesPrimary ?? meta?.series?.[0])?.name ?? item.seriesName ?? undefined,
+    seriesPosition: (meta?.seriesPrimary ?? meta?.series?.[0])?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
+    seriesAsin: (meta?.seriesPrimary ?? meta?.series?.[0])?.asin ?? undefined,
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,

@@ -4,6 +4,9 @@ export function mapBookMetadataToPayload(
   book: BookMetadata,
   qualityDefaults?: { searchImmediately?: boolean },
 ): CreateBookPayload {
+  // Prefer the canonical primary-series ref over `series[0]` (#1088 / #1097) —
+  // `series[0]` on Audible can be a broader universe entry rather than the real series.
+  const primary = book.seriesPrimary ?? book.series?.[0];
   return {
     title: book.title,
     authors: book.authors.map((a) => ({ name: a.name, ...(a.asin !== undefined && { asin: a.asin }) })),
@@ -11,10 +14,10 @@ export function mapBookMetadataToPayload(
     description: book.description,
     coverUrl: book.coverUrl,
     asin: book.asin,
-    seriesName: book.series?.[0]?.name,
-    seriesPosition: book.series?.[0]?.position,
-    seriesAsin: book.series?.[0]?.asin,
-    ...(book.series?.[0]?.asin !== undefined && { seriesProvider: 'audible' }),
+    seriesName: primary?.name,
+    seriesPosition: primary?.position,
+    seriesAsin: primary?.asin,
+    ...(primary?.asin !== undefined && { seriesProvider: 'audible' }),
     duration: book.duration,
     genres: book.genres,
     providerId: book.providerId,

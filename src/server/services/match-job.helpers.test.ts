@@ -303,16 +303,35 @@ describe('tagTitleScore', () => {
     expect(tagTitleScore('Discworld - Eric', meta)).toBeCloseTo(1.0, 5);
   });
 
-  it('uses series[0] only when multiple series entries are present', () => {
+  // #1097 — when seriesPrimary is absent, composition still uses series[0] (Audible-only fallback)
+  it('falls back to series[0] when seriesPrimary is absent', () => {
     const meta = makeBook({
       title: 'Mistborn',
       series: [{ name: 'Cosmere' }, { name: 'Mistborn Era 1' }],
     });
-    // Composition uses Cosmere (index 0); Mistborn Era 1 is ignored
+    // No seriesPrimary → composition uses series[0] (Cosmere); series[1] is ignored
     expect(tagTitleScore('Cosmere: Mistborn', meta)).toBeCloseTo(1.0, 5);
-    // The series[1] composition is NOT used — input matching series[1] scores lower than input matching series[0]
     expect(tagTitleScore('Mistborn Era 1: Mistborn', meta)).toBeLessThan(
       tagTitleScore('Cosmere: Mistborn', meta),
+    );
+  });
+
+  // #1097 — canonical primary-series preference over series[0]
+  it('prefers seriesPrimary over series[0] when both are present (Stormlight in a Cosmere-prefixed series[])', () => {
+    const meta = makeBook({
+      title: 'The Way of Kings',
+      series: [
+        { name: 'Cosmere', position: 4 },
+        { name: 'The Stormlight Archive', position: 1 },
+      ],
+      seriesPrimary: { name: 'The Stormlight Archive', position: 1 },
+    });
+    // Pre-#1097 the composition would have used series[0] (Cosmere); the canonical
+    // Stormlight-shaped input now scores 1.0 because seriesPrimary wins.
+    expect(tagTitleScore('The Stormlight Archive: The Way of Kings', meta)).toBeCloseTo(1.0, 5);
+    // And it beats the matching-series[0] composition
+    expect(tagTitleScore('The Stormlight Archive: The Way of Kings', meta)).toBeGreaterThan(
+      tagTitleScore('Cosmere: The Way of Kings', meta),
     );
   });
 

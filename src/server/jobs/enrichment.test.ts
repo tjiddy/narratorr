@@ -746,6 +746,35 @@ describe('enrichment job', () => {
       expect(setCall).not.toHaveProperty('seriesName');
       expect(setCall).not.toHaveProperty('seriesPosition');
     });
+
+    // #1097 — canonical primary-series preference over series[0]
+    it('prefers seriesPrimary over series[0] when both are present', async () => {
+      setupEnrichment(
+        { seriesName: null, seriesPosition: null },
+        {
+          seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+          series: [
+            { name: 'The Cosmere', position: 5 },
+            { name: 'The Stormlight Archive', position: 2 },
+          ],
+        },
+      );
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('seriesName', 'The Stormlight Archive');
+      expect(setCall).toHaveProperty('seriesPosition', 2);
+    });
+
+    it('falls back to series[0] when only it is present (no seriesPrimary)', async () => {
+      setupEnrichment(
+        { seriesName: null, seriesPosition: null },
+        { series: [{ name: 'Discworld', position: 3 }] },
+      );
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('seriesName', 'Discworld');
+      expect(setCall).toHaveProperty('seriesPosition', 3);
+    });
   });
 
   // ── #398 Counter tracking ─────────────────────────────────────────────

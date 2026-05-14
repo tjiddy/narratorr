@@ -340,4 +340,25 @@ describe('buildBookCreatePayload (#1028)', () => {
     );
     expect(payload.seriesAsin).toBeUndefined();
   });
+
+  // #1097 — canonical primary-series preference over series[0]
+  it('prefers seriesPrimary over series[0] when both are present (#1097)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      {
+        title: 'T',
+        authors: [{ name: 'A' }],
+        seriesPrimary: { name: 'The Stormlight Archive', position: 2, asin: 'B009NF6YPM' },
+        series: [
+          { name: 'The Cosmere', position: 5, asin: 'B07CWP1KCD' },
+          { name: 'The Stormlight Archive', position: 2, asin: 'B009NF6YPM' },
+        ],
+      },
+      'importing',
+    );
+    expect(payload.seriesName).toBe('The Stormlight Archive');
+    expect(payload.seriesPosition).toBe(2);
+    expect(payload.seriesAsin).toBe('B009NF6YPM');
+  });
 });

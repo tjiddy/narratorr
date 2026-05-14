@@ -28,7 +28,9 @@ export function SearchBookCard({
 }) {
   const [justAdded, setJustAdded] = useState(false);
   const authorNames = book.authors.map((a) => a.name).join(', ');
-  const seriesInfo = book.series?.[0];
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
+  // on Audible can be a broader universe entry rather than the real book series.
+  const seriesInfo = book.seriesPrimary ?? book.series?.[0];
   const inLibrary = justAdded || isBookInLibrary(book, libraryBooks);
 
   const addMutation = useMutation({

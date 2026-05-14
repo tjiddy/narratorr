@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   toScoredCandidate,
+  scoreCandidate,
   isEligibleCandidate,
   queryAuthorCandidates,
   querySeriesCandidates,
@@ -10,6 +11,7 @@ import {
   type CandidateContext,
   type ScoredCandidate,
 } from './discovery-candidates.js';
+import type { LibrarySignals } from './discovery.service.js';
 import type { BookMetadata } from '../../core/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
@@ -57,6 +59,76 @@ describe('toScoredCandidate', () => {
     const result = toScoredCandidate(book, 'genre', 'test', 60);
     expect(result.authorName).toBe('Unknown');
     expect(result.authorAsin).toBeUndefined();
+  });
+
+  // #1097 — canonical primary-series preference
+  it('emits seriesPrimary.name as seriesName when both seriesPrimary and a different series[0] exist', () => {
+    const book = makeBook({
+      seriesPrimary: { name: 'The Stormlight Archive', position: 1 },
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 1 }],
+    });
+    const result = toScoredCandidate(book, 'series', 'test', 80);
+    expect(result.seriesName).toBe('The Stormlight Archive');
+    expect(result.seriesPosition).toBe(1);
+  });
+
+  it('falls back to series[0] when seriesPrimary is absent (Audible-only candidate)', () => {
+    const book = makeBook({
+      series: [{ name: 'Discworld', position: 3 }],
+    });
+    const result = toScoredCandidate(book, 'author', 'test', 80);
+    expect(result.seriesName).toBe('Discworld');
+    expect(result.seriesPosition).toBe(3);
+  });
+
+  it('returns undefined series fields when both seriesPrimary and series are absent', () => {
+    const book = makeBook({});
+    const result = toScoredCandidate(book, 'author', 'test', 80);
+    expect(result.seriesName).toBeUndefined();
+    expect(result.seriesPosition).toBeUndefined();
+  });
+});
+
+describe('scoreCandidate — #1097 canonical primary-series scoring', () => {
+  function makeSignals(overrides: Partial<LibrarySignals> = {}): LibrarySignals {
+    return {
+      authorAffinity: new Map(),
+      genreDistribution: new Map(),
+      seriesGaps: [],
+      narratorAffinity: new Map(),
+      durationStats: null,
+      ...overrides,
+    };
+  }
+
+  it('scores against seriesPrimary when it matches the gap, even when series[0] is an unrelated universe-series', () => {
+    const book = makeBook({
+      asin: 'B001',
+      // series[0] is the broader universe; series[1] / seriesPrimary is the real book series
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+    });
+    const signals = makeSignals({
+      seriesGaps: [{ seriesName: 'The Stormlight Archive', authorName: 'Sanderson', missingPositions: [2], nextPosition: 2, maxOwned: 1 }],
+    });
+    const score = scoreCandidate(book, 'series', 1.0, signals);
+    const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
+    // The +20 series-gap bonus applies because seriesPrimary matched
+    expect(score).toBeGreaterThanOrEqual(baseline + 20);
+  });
+
+  it('treats seriesPrimary.position === 0 as valid (not falsy-coerced)', () => {
+    const book = makeBook({
+      asin: 'B001',
+      seriesPrimary: { name: 'Sample', position: 0 },
+      series: [{ name: 'Unrelated', position: 9 }],
+    });
+    const signals = makeSignals({
+      seriesGaps: [{ seriesName: 'Sample', authorName: 'A', missingPositions: [0], nextPosition: 0, maxOwned: 0 }],
+    });
+    const score = scoreCandidate(book, 'series', 1.0, signals);
+    const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
+    expect(score).toBeGreaterThanOrEqual(baseline + 20);
   });
 });
 

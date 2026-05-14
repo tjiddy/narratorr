@@ -15,7 +15,9 @@ export function BookRow({
   onAdd: (overrides: { searchImmediately: boolean }) => void;
   isAdding: boolean;
 }) {
-  const seriesPos = book.series?.[0]?.position;
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
+  // on Audible can be a broader universe entry rather than the real book series.
+  const seriesPos = (book.seriesPrimary ?? book.series?.[0])?.position;
   const duration = formatDurationMinutes(book.duration);
   const narratorNames = book.narrators?.join(', ');
 

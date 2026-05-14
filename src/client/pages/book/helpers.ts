@@ -13,6 +13,7 @@ export interface MetadataBook {
   publisher?: string | undefined;
   publishedDate?: string | undefined;
   series?: { name: string; position?: number | undefined }[] | undefined;
+  seriesPrimary?: { name: string; position?: number | undefined } | undefined;
 }
 
 // eslint-disable-next-line complexity -- flat data coalescing across two sources, no nesting
@@ -20,8 +21,11 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const description = libraryBook.description || metadataBook?.description;
   const coverUrl = libraryBook.coverUrl || metadataBook?.coverUrl;
   const genres = libraryBook.genres ?? metadataBook?.genres;
-  const seriesName = libraryBook.seriesName || metadataBook?.series?.[0]?.name;
-  const seriesPosition = libraryBook.seriesPosition ?? metadataBook?.series?.[0]?.position;
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
+  // on Audible can be a broader universe entry rather than the real book series.
+  const primaryMetaSeries = metadataBook?.seriesPrimary ?? metadataBook?.series?.[0];
+  const seriesName = libraryBook.seriesName || primaryMetaSeries?.name;
+  const seriesPosition = libraryBook.seriesPosition ?? primaryMetaSeries?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
   const publisher = metadataBook?.publisher;
   const year = formatYear(libraryBook.publishedDate || metadataBook?.publishedDate);

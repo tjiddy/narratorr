@@ -8,11 +8,14 @@ import type { BookEditState } from './types.js';
  * ImportConfirmItem fields stay in sync between the two hooks.
  */
 export function buildEditedFromBestMatch(bestMatch: BookMetadata, fallback: BookEditState): BookEditState {
-  const mergedSeriesPosition = bestMatch.series?.[0]?.position ?? fallback.seriesPosition;
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
+  // on Audible can be a broader universe entry rather than the real book series.
+  const primary = bestMatch.seriesPrimary ?? bestMatch.series?.[0];
+  const mergedSeriesPosition = primary?.position ?? fallback.seriesPosition;
   return {
     title: bestMatch.title,
     author: bestMatch.authors?.[0]?.name ?? fallback.author,
-    series: bestMatch.series?.[0]?.name ?? fallback.series,
+    series: primary?.name ?? fallback.series,
     ...(bestMatch.narrators?.length && { narrators: bestMatch.narrators }),
     ...(mergedSeriesPosition !== undefined && { seriesPosition: mergedSeriesPosition }),
     ...(bestMatch.coverUrl !== undefined && { coverUrl: bestMatch.coverUrl }),
