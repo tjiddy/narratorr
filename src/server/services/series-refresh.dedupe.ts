@@ -27,9 +27,11 @@ export function normalizePrimaryAuthor(name: string | null | undefined): string 
 /**
  * Strip well-known Audible edition / split-part / adaptation suffixes from a
  * product title before normalization so noisy variants collapse into the same
- * logical-work slot on the Series card. Conservative: only parens matching the
- * explicit descriptor patterns are dropped — real subtitles like `(A Novel)`
- * are preserved. (#1116)
+ * logical-work slot on the Series card. Conservative: only parens/brackets
+ * matching the explicit descriptor patterns are dropped — real subtitles like
+ * `(A Novel)` are preserved. Bracket variants cover Audible products that
+ * surface descriptors as `[Dramatized Adaptation]` instead of parenthesized.
+ * (#1116)
  */
 const EDITION_SUFFIX_PATTERNS: RegExp[] = [
   /\(\s*(?:part\s+)?\d+\s+of\s+\d+\s*\)/gi,
@@ -37,6 +39,11 @@ const EDITION_SUFFIX_PATTERNS: RegExp[] = [
   /\(\s*unabridged\s*\)/gi,
   /\(\s*abridged\s*\)/gi,
   /\(\s*original\s+recording\s*\)/gi,
+  /\[\s*(?:part\s+)?\d+\s+of\s+\d+\s*\]/gi,
+  /\[\s*dramatized[^\]]*\]/gi,
+  /\[\s*unabridged\s*\]/gi,
+  /\[\s*abridged\s*\]/gi,
+  /\[\s*original\s+recording\s*\]/gi,
 ];
 
 export function normalizeSeriesMemberWorkTitle(title: string): string {
