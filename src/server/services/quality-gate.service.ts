@@ -96,7 +96,21 @@ export class QualityGateService {
     const reason = buildQualityAssessment(scanResult, book);
     const { holdReasons, mbPerHour: newMbPerHour, existingMbPerHour } = reason;
 
-    // Decision tree
+    // Imported-book replacement guard (#1103 F2): a download whose book is
+    // already imported must ALWAYS be held for explicit review with the
+    // `imported_book_replacement` reason appended, regardless of other hold
+    // reasons. Manual replacement of an imported audiobook is too risky to
+    // auto-decide — edition/abridgement mismatches can silently replace the
+    // user's existing file.
+    if (book !== null && book.path !== null) {
+      reason.action = 'held';
+      reason.holdReasons.push('imported_book_replacement');
+      await this.setStatus(download.id, 'pending_review');
+      this.log.info({ downloadId: download.id, holdReasons: reason.holdReasons }, 'Quality gate: held for imported-book replacement review');
+      return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
+    }
+
+    // Decision tree (book.path === null — first download flow)
     if (holdReasons.length > 0) {
       reason.action = 'held';
       await this.setStatus(download.id, 'pending_review');

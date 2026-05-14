@@ -1,17 +1,12 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, compareQuality, resolveBookQualityInputs } from '../../core/utils/index.js';
 import type { SettingsService } from '../services/settings.service.js';
-import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
-import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
-import { DuplicateDownloadError } from '../services/download.service.js';
-import { buildGrabPayload } from '../services/grab-payload.js';
-import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { buildNarratorPriority, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -129,112 +124,4 @@ export async function searchAllWanted(
 
   log.info({ searched, grabbed, skipped, errors }, 'Search-all-wanted completed');
   return { searched, grabbed, skipped, errors };
-}
-
-/**
- * Run a single upgrade search cycle: find monitored imported books,
- * search indexers, and grab if a higher-quality release is found.
- * Existing scheduled search for wanted books remains unchanged; this is additive.
- */
-// eslint-disable-next-line complexity -- sequential early-return guards for book eligibility + quality comparison
-export async function runUpgradeSearchJob(
-  settingsService: SettingsService,
-  bookService: BookService,
-  indexerSearchService: IndexerSearchService,
-  downloadOrchestrator: DownloadOrchestrator,
-  log: FastifyBaseLogger,
-): Promise<SearchJobResult> {
-  const searchSettings = await settingsService.get('search');
-  if (!searchSettings.enabled) {
-    log.debug('Scheduled search is disabled, skipping upgrade search');
-    return { searched: 0, grabbed: 0 };
-  }
-
-  const qualitySettings = await settingsService.get('quality');
-  const metadataSettings = await settingsService.get('metadata');
-  const monitoredBooks = await bookService.getMonitoredBooks();
-  if (monitoredBooks.length === 0) {
-    log.debug('No monitored books for upgrade search');
-    return { searched: 0, grabbed: 0 };
-  }
-
-  log.info({ count: monitoredBooks.length }, 'Starting upgrade search for monitored books');
-
-  let searched = 0;
-  let grabbed = 0;
-
-  for (const book of monitoredBooks) {
-    if (!book.path) continue;
-
-    const { sizeBytes: existingSize, durationSeconds: existingDuration } = resolveBookQualityInputs(book);
-    if (!existingDuration || existingDuration <= 0) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping upgrade search — no duration');
-      continue;
-    }
-
-    const query = buildSearchQuery(book);
-    try {
-      const rawResults = await indexerSearchService.searchAll(query, {
-        title: book.title,
-        author: book.authors?.[0]?.name,
-      });
-      searched++;
-
-      // Enrich Usenet results before filtering
-      await enrichUsenetLanguages(rawResults, log);
-
-      // Apply quality filtering and ranking
-      const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const searchInputCount = rawResults.length;
-      const { results } = filterAndRankResults(rawResults, existingDuration, {
-        grabFloor: qualitySettings.grabFloor,
-        minSeeders: qualitySettings.minSeeders,
-        protocolPreference: qualitySettings.protocolPreference,
-        rejectWords: qualitySettings.rejectWords,
-        requiredWords: qualitySettings.requiredWords,
-        languages: metadataSettings.languages,
-        narratorPriority,
-        minDownloadSize: qualitySettings.minDownloadSize,
-        maxDownloadSize: qualitySettings.maxDownloadSize,
-      }, log);
-      if (results.length < searchInputCount) {
-        log.debug({ inputCount: searchInputCount, outputCount: results.length }, 'Quality gate filtering applied');
-      }
-
-      if (results.length === 0) continue;
-
-      // Take first downloadable result with size — already canonically ranked
-      const best = results.find((r) => r.downloadUrl && r.size);
-      if (!best) continue;
-
-      // Compare quality: only grab if result is meaningfully better
-      const comparison = compareQuality(existingSize, best.size!, existingDuration);
-      if (comparison !== 'higher') continue;
-
-      // Double-check: result must also be above grab floor
-      if (qualitySettings.grabFloor > 0) {
-        const resultQuality = calculateQuality(best.size!, existingDuration);
-        if (!resultQuality || resultQuality.mbPerHour < qualitySettings.grabFloor) continue;
-      }
-
-      try {
-        await downloadOrchestrator.grab(
-          buildGrabPayload(best, book.id),
-        );
-        grabbed++;
-        log.info({ bookId: book.id, title: best.title }, 'Upgrade grabbed');
-      } catch (grabError: unknown) {
-        if (grabError instanceof DuplicateDownloadError) {
-          log.debug({ bookId: book.id }, 'Skipping upgrade grab — active download exists');
-        } else {
-          throw grabError;
-        }
-      }
-    } catch (error: unknown) {
-      log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Upgrade search failed for book');
-    }
-  }
-
-  log.info({ searched, grabbed }, 'Upgrade search completed');
-  return { searched, grabbed };
 }

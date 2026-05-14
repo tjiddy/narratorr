@@ -20,9 +20,6 @@ const defaultProps = {
   onRetagClick: vi.fn(),
   isRetagging: false,
   retagDisabled: false,
-  monitorForUpgrades: false,
-  onMonitorToggle: vi.fn(),
-  isMonitorToggling: false,
   onMergeClick: vi.fn(),
   isMerging: false,
   canMerge: false,
@@ -259,33 +256,6 @@ describe('BookHero', () => {
     });
   });
 
-  describe('monitor toggle button', () => {
-    it('renders Monitor button when not monitoring', () => {
-      renderHero({ monitorForUpgrades: false });
-      expect(screen.getByText('Monitor')).toBeInTheDocument();
-    });
-
-    it('renders Monitoring button when monitoring is active', () => {
-      renderHero({ monitorForUpgrades: true });
-      expect(screen.getByText('Monitoring')).toBeInTheDocument();
-    });
-
-    it('calls onMonitorToggle when toggle is clicked', async () => {
-      const onMonitorToggle = vi.fn();
-      const user = userEvent.setup();
-      renderHero({ onMonitorToggle });
-
-      await user.click(screen.getByText('Monitor'));
-      expect(onMonitorToggle).toHaveBeenCalledTimes(1);
-    });
-
-    it('disables toggle when isMonitorToggling is true', () => {
-      renderHero({ isMonitorToggling: true });
-      const button = screen.getByText('Monitor').closest('button');
-      expect(button).toBeDisabled();
-    });
-  });
-
   describe('merge button', () => {
     it('calls onMergeClick when Merge to M4B menu item is clicked', async () => {
       const onMergeClick = vi.fn();
@@ -407,10 +377,9 @@ describe('BookHero', () => {
   });
 
   describe('#324 — overflow menu for secondary actions', () => {
-    it('primary actions (Monitor, Search Releases) render as visible buttons outside overflow menu', () => {
+    it('primary action (Search Releases) renders as visible button outside overflow menu', () => {
       renderHero();
-      // These are always visible without opening the menu
-      expect(screen.getByText('Monitor')).toBeInTheDocument();
+      // Always visible without opening the menu
       expect(screen.getByText('Search Releases')).toBeInTheDocument();
     });
 

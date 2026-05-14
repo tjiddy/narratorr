@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { api, type BookWithAuthor, type SearchResult } from '@/lib/api';
 import { grabSchema, type GrabPayload } from '../../shared/schemas/search.js';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js';
@@ -9,7 +9,6 @@ import { queryKeys } from '@/lib/queryKeys';
 import { XIcon, RefreshIcon } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { Modal } from '@/components/Modal';
-import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesContent } from '@/components/SearchReleasesContent';
 import { useSearchStream } from '@/hooks/useSearchStream';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -81,17 +80,17 @@ function SearchReleasesHeader({
 // ============================================================================
 
 /** Fields from grabSchema that come from SearchResult (not from UI context). */
-const CONTEXT_KEYS = new Set(['bookId', 'replaceExisting']);
+const CONTEXT_KEYS = new Set(['bookId']);
 const GRAB_RESULT_KEYS = Object.keys(grabSchema.shape).filter(k => !CONTEXT_KEYS.has(k));
 
 /** Pick SearchResult-sourced grab-contract fields dynamically from grabSchema.shape.
  *  Caller must guard `result.downloadUrl` before calling — the return type assumes it is present. */
-function pickGrabFields(result: SearchResult): Omit<GrabPayload, 'bookId' | 'replaceExisting'> {
+function pickGrabFields(result: SearchResult): Omit<GrabPayload, 'bookId'> {
   const picked: Record<string, unknown> = {};
   for (const key of GRAB_RESULT_KEYS) {
     picked[key] = result[key as keyof SearchResult];
   }
-  return picked as Omit<GrabPayload, 'bookId' | 'replaceExisting'>;
+  return picked as Omit<GrabPayload, 'bookId'>;
 }
 
 export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesModalProps) {
@@ -154,16 +153,10 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       toast.success('Download started! Check the Activity page.');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-      setPendingReplace(null);
       onClose();
     },
-    onError: (err: Error, variables) => {
-      if (err instanceof ApiError && err.status === 409 && (err.body as { code?: string })?.code === 'ACTIVE_DOWNLOAD_EXISTS') {
-        setPendingReplace(variables);
-        return;
-      }
-      setPendingReplace(null);
-      toast.error(`Failed to grab: ${getErrorMessage(err)}`);
+    onError: (err: Error) => {
+      toast.error(`Failed to grab: ${getErrorMessage(err)}. If a download is already active for this book, cancel it manually from the Activity page first.`);
     },
   });
 
@@ -178,15 +171,12 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     });
   };
 
-  const [pendingReplace, setPendingReplace] = useState<GrabPayload | null>(null);
-
   const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen && pendingReplace === null, onClose, modalRef);
+  useEscapeKey(isOpen, onClose, modalRef);
 
   if (!isOpen) return null;
 
   return (
-    <>
     <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-4xl max-h-[85vh] flex flex-col">
       <div
         ref={modalRef}
@@ -230,19 +220,5 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         />
       </div>
     </Modal>
-    <ConfirmModal
-      isOpen={pendingReplace !== null}
-      title="Replace active download?"
-      message={`"${pendingReplace?.title ?? ''}" already has an active download. Replace it with this release?`}
-      confirmLabel="Replace"
-      cancelLabel="Cancel"
-      onConfirm={() => {
-        if (pendingReplace) {
-          grabMutation.mutate({ ...pendingReplace, replaceExisting: true });
-        }
-      }}
-      onCancel={() => setPendingReplace(null)}
-    />
-    </>
   );
 }

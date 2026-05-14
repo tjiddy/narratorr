@@ -122,7 +122,6 @@ describe('SuggestionCard', () => {
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
       expect(onAdd).toHaveBeenCalledWith(42, expect.objectContaining({
         searchImmediately: expect.any(Boolean),
-        monitorForUpgrades: expect.any(Boolean),
       }));
     });
 

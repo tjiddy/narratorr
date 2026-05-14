@@ -31,7 +31,7 @@ export type RetryResult =
 export class DownloadError extends Error {
   constructor(
     message: string,
-    public code: 'NOT_FOUND' | 'INVALID_STATUS' | 'NO_BOOK_LINKED',
+    public code: 'NOT_FOUND' | 'INVALID_STATUS' | 'NO_BOOK_LINKED' | 'IMPORTED_BOOK_NO_RETRY',
   ) {
     super(message);
     this.name = 'DownloadError';
@@ -250,44 +250,33 @@ export class DownloadService {
     return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
   }
 
-  private async checkDuplicateDownloads(bookId: number, replaceExisting?: boolean): Promise<void> {
+  private async checkDuplicateDownloads(bookId: number): Promise<void> {
     const allActive = await this.getActiveByBookId(bookId);
     const replaceableSet = new Set<string>(getReplaceableStatuses());
     const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
 
     if (replaceableActive.length > 0) {
-      if (replaceExisting) {
-        for (const dl of replaceableActive) {
-          try {
-            await this.cancel(dl.id, 'Replaced by new download');
-          } catch (cancelErr: unknown) {
-            this.log.warn({ id: dl.id, error: serializeError(cancelErr) }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
-          }
-        }
-        await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, bookId));
-      } else {
-        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0]!.id})`, 'ACTIVE_DOWNLOAD_EXISTS');
-      }
-    } else {
-      const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
-      if (pipelineActive.length > 0) {
-        throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0]!.id})`, 'PIPELINE_ACTIVE');
-      }
+      throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0]!.id})`, 'ACTIVE_DOWNLOAD_EXISTS');
+    }
 
-      // Guard the window where the download is already `completed` (terminal,
-      // so filtered out above) but an auto import_jobs row is pending/processing.
-      const pendingAutoJobs = await this.db
-        .select({ id: importJobs.id })
-        .from(importJobs)
-        .where(and(
-          eq(importJobs.bookId, bookId),
-          eq(importJobs.type, 'auto'),
-          inArray(importJobs.status, ['pending', 'processing']),
-        ))
-        .limit(1);
-      if (pendingAutoJobs.length > 0) {
-        throw new DuplicateDownloadError(`Book ${bookId} already has an active auto import job (id: ${pendingAutoJobs[0]!.id})`, 'PIPELINE_ACTIVE');
-      }
+    const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+    if (pipelineActive.length > 0) {
+      throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0]!.id})`, 'PIPELINE_ACTIVE');
+    }
+
+    // Guard the window where the download is already `completed` (terminal,
+    // so filtered out above) but an auto import_jobs row is pending/processing.
+    const pendingAutoJobs = await this.db
+      .select({ id: importJobs.id })
+      .from(importJobs)
+      .where(and(
+        eq(importJobs.bookId, bookId),
+        eq(importJobs.type, 'auto'),
+        inArray(importJobs.status, ['pending', 'processing']),
+      ))
+      .limit(1);
+    if (pendingAutoJobs.length > 0) {
+      throw new DuplicateDownloadError(`Book ${bookId} already has an active auto import job (id: ${pendingAutoJobs[0]!.id})`, 'PIPELINE_ACTIVE');
     }
   }
 
@@ -301,11 +290,10 @@ export class DownloadService {
     seeders?: number | undefined;
     guid?: string | undefined;
     skipDuplicateCheck?: boolean | undefined;
-    replaceExisting?: boolean | undefined;
     source?: CreateEventInput['source'] | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
-      await this.checkDuplicateDownloads(params.bookId, params.replaceExisting);
+      await this.checkDuplicateDownloads(params.bookId);
     }
 
     const protocol = params.protocol ?? 'torrent';
@@ -424,6 +412,21 @@ export class DownloadService {
     if (!download) throw new DownloadError(`Download ${id} not found`, 'NOT_FOUND');
     if (download.status !== 'failed') throw new DownloadError(`Download ${id} is not in failed state`, 'INVALID_STATUS');
     if (!download.bookId) throw new DownloadError(`Download ${id} has no book linked`, 'NO_BOOK_LINKED');
+
+    // Imported-book guard (F5): manual retry on a download whose linked book has
+    // been imported must not auto-search a replacement and must not reset the
+    // retry budget. The user has to use Search Releases instead.
+    const bookRow = await this.db
+      .select({ path: books.path })
+      .from(books)
+      .where(eq(books.id, download.bookId))
+      .limit(1);
+    if (bookRow[0]?.path != null) {
+      throw new DownloadError(
+        'Cannot auto-retry: book has been imported. Use Search Releases to manually pick a different release.',
+        'IMPORTED_BOOK_NO_RETRY',
+      );
+    }
 
     const { retrySearchDeps } = this.wired.require();
 

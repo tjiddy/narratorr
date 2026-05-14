@@ -80,7 +80,6 @@ function makeSettings(overrides?: { languages?: string[]; rejectWords?: string }
       protocolPreference: 'none' as const,
       minSeeders: 1,
       searchImmediately: false,
-      monitorForUpgrades: false,
       rejectWords: overrides?.rejectWords ?? '',
       requiredWords: '',
     },
@@ -711,7 +710,6 @@ describe('DiscoverPage', () => {
           seriesPosition: 2,
           genres: ['Fantasy'],
           searchImmediately: expect.any(Boolean),
-          monitorForUpgrades: expect.any(Boolean),
         }));
       });
     });

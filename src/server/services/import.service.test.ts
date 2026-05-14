@@ -666,7 +666,7 @@ describe('ImportService', () => {
   });
   });
 
-  describe('upgrade flow — book already imported', () => {
+  describe('re-import flow — book already imported', () => {
     const importedBook = createMockDbBook({
       status: 'downloading' as const,
       path: '/audiobooks/Old Author/Old Book',
@@ -675,7 +675,7 @@ describe('ImportService', () => {
 
     beforeEach(() => {
       setupDefaults();
-      // Default book for upgrade tests has an existing path
+      // Default book for re-import tests has an existing path
       mockBookService.getById.mockResolvedValue(withAuthor(importedBook));
     });
 
@@ -689,7 +689,7 @@ describe('ImportService', () => {
       expect(rmMock).toHaveBeenCalledWith('/audiobooks/Old Author/Old Book', { recursive: true, force: true });
     });
 
-    it('logs old path at info level during upgrade', async () => {
+    it('logs old path at info level during re-import', async () => {
       const log = createMockLogger();
       const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
@@ -700,11 +700,11 @@ describe('ImportService', () => {
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),
-        'Deleted old book files during upgrade',
+        'Deleted old book files during re-import',
       );
     });
 
-    it('skips deletion when target path equals existing book path (same-path upgrade)', async () => {
+    it('skips deletion when target path equals existing book path (same-path re-import)', async () => {
       // Book with path that matches what buildTargetPath will generate
       const samePathBook = createMockDbBook({
         status: 'downloading' as const,
@@ -758,7 +758,7 @@ describe('ImportService', () => {
     });
 
     it('does not attempt deletion when book has no path', async () => {
-      mockBookService.getById.mockResolvedValueOnce(withAuthor(mockBook)); // override upgrade-flow default (no path)
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(mockBook)); // override re-import-flow default (no path)
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
@@ -768,7 +768,7 @@ describe('ImportService', () => {
       expect(rmMock).not.toHaveBeenCalled();
     });
 
-    it('preserves old download record during upgrade (history)', async () => {
+    it('preserves old download record during re-import (history)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
@@ -1253,7 +1253,7 @@ describe('ImportService', () => {
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
     });
 
-    it('logs warn (not error) when upgrade rm() fails on old path', async () => {
+    it('logs warn (not error) when re-import rm() fails on old path', async () => {
       const importedBook = createMockDbBook({
         status: 'downloading' as const,
         path: '/audiobooks/Old Author/Old Book',

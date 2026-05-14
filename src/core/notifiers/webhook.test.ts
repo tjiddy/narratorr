@@ -94,35 +94,6 @@ describe('WebhookNotifier', () => {
     });
   });
 
-  it('renders upgrade template tokens', async () => {
-    let capturedBody = '';
-
-    server.use(
-      http.post('https://example.com/hook', async ({ request }) => {
-        capturedBody = await request.text();
-        return HttpResponse.json({ ok: true });
-      }),
-    );
-
-    const notifier = new WebhookNotifier({
-      url: 'https://example.com/hook',
-      bodyTemplate: '{"prev": "{upgrade.previousMbPerHour}", "new": "{upgrade.newMbPerHour}", "codec": "{upgrade.newCodec}"}',
-    });
-
-    await notifier.send('on_upgrade', {
-      event: 'on_upgrade',
-      book: { title: 'Dune' },
-      upgrade: { previousMbPerHour: 64, newMbPerHour: 128, newCodec: 'aac' },
-    } as EventPayload);
-
-    const parsed = JSON.parse(capturedBody);
-    expect(parsed).toEqual({
-      prev: '64',
-      new: '128',
-      codec: 'aac',
-    });
-  });
-
   it('renders health template tokens', async () => {
     let capturedBody = '';
 

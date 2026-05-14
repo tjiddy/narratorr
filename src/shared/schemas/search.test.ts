@@ -125,41 +125,13 @@ describe('grabSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts replaceExisting: true', () => {
+  it('rejects unknown replaceExisting field (#1103: schema is .strict())', () => {
     const result = grabSchema.safeParse({
       downloadUrl: 'https://example.com',
       title: 'Test',
       replaceExisting: true,
     });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.replaceExisting).toBe(true);
-  });
-
-  it('accepts replaceExisting: false', () => {
-    const result = grabSchema.safeParse({
-      downloadUrl: 'https://example.com',
-      title: 'Test',
-      replaceExisting: false,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.replaceExisting).toBe(false);
-  });
-
-  it('accepts omitted replaceExisting (optional field)', () => {
-    const result = grabSchema.safeParse({
-      downloadUrl: 'https://example.com',
-      title: 'Test',
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.replaceExisting).toBeUndefined();
-  });
-
-  it('rejects non-boolean replaceExisting (e.g. string "true")', () => {
-    const result = grabSchema.safeParse({
-      downloadUrl: 'https://example.com',
-      title: 'Test',
-      replaceExisting: 'true',
-    });
+    // .strict() rejects unknown keys with a Zod issue rather than silently stripping them.
     expect(result.success).toBe(false);
   });
 });

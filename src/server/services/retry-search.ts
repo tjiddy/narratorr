@@ -69,16 +69,23 @@ export async function retrySearch(
     return { outcome: 'exhausted' };
   }
 
+  // Look up the book before consuming budget so imported-book guard doesn't
+  // burn an attempt (F1, F6). Imported books are never auto-retried — Search
+  // Releases is the only path for replacing an imported book, and the user
+  // must do it manually.
+  const book = await bookService.getById(bookId);
+  if (!book) {
+    return { outcome: 'retry_error', error: 'Book not found' };
+  }
+  if (book.path !== null) {
+    log.debug({ bookId, title: book.title }, 'Retry search skipped — book is imported');
+    return { outcome: 'no_candidates' };
+  }
+
   // Consume an attempt
   const attempt = retryBudget.consumeAttempt(bookId);
 
   try {
-    // Look up the book for search query construction
-    const book = await bookService.getById(bookId);
-    if (!book) {
-      return { outcome: 'retry_error', error: 'Book not found' };
-    }
-
     const query = buildSearchQuery(book);
     const rawResults = await indexerSearchService.searchAll(query, {
       title: book.title,

@@ -589,49 +589,11 @@ describe('BookDetails', () => {
     });
   });
 
-  describe('monitor toggle', () => {
-    it('shows Monitor button and toggles to enabled on click', async () => {
-      const user = userEvent.setup();
-      (api.updateBook as Mock).mockResolvedValue({ ...makeBook(), monitorForUpgrades: true });
-
-      renderBookDetails({ monitorForUpgrades: false });
-
-      const button = screen.getByText('Monitor').closest('button')!;
-      expect(button).not.toBeDisabled();
-
-      await user.click(button);
-
-      await waitFor(() => {
-        expect(api.updateBook).toHaveBeenCalledWith(expect.any(Number), { monitorForUpgrades: true });
-      });
-      expect(toast.success).toHaveBeenCalledWith('Upgrade monitoring enabled');
-    });
-
-    it('toggles monitoring off when already enabled', async () => {
-      const user = userEvent.setup();
-      (api.updateBook as Mock).mockResolvedValue({ ...makeBook(), monitorForUpgrades: false });
-
-      renderBookDetails({ monitorForUpgrades: true });
-
-      await user.click(screen.getByText('Monitoring'));
-
-      await waitFor(() => {
-        expect(api.updateBook).toHaveBeenCalledWith(expect.any(Number), { monitorForUpgrades: false });
-      });
-      expect(toast.success).toHaveBeenCalledWith('Upgrade monitoring disabled');
-    });
-
-    it('shows error toast when monitor toggle fails', async () => {
-      const user = userEvent.setup();
-      (api.updateBook as Mock).mockRejectedValue(new Error('Network error'));
-
-      renderBookDetails({ monitorForUpgrades: false });
-
-      await user.click(screen.getByText('Monitor'));
-
-      await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith('Failed to update: Network error');
-      });
+  describe('monitor toggle (removed in #1103)', () => {
+    it('does not render any Monitor / Monitoring pill', () => {
+      renderBookDetails();
+      expect(screen.queryByText('Monitor')).not.toBeInTheDocument();
+      expect(screen.queryByText('Monitoring')).not.toBeInTheDocument();
     });
   });
 

@@ -39,10 +39,10 @@ describe('eventHistoryQuerySchema — comma-separated eventType', () => {
     expect(result.eventType).toEqual(['grabbed']);
   });
 
-  it('accepts all 13 event types in a single comma list', () => {
-    const all = 'grabbed,download_completed,download_failed,imported,import_failed,upgraded,deleted,renamed,merged,file_tagged,held_for_review,merge_started,merge_failed';
+  it('accepts all 12 event types in a single comma list', () => {
+    const all = 'grabbed,download_completed,download_failed,imported,import_failed,deleted,renamed,merged,file_tagged,held_for_review,merge_started,merge_failed';
     const result = eventHistoryQuerySchema.parse({ eventType: all });
-    expect(result.eventType).toHaveLength(13);
+    expect(result.eventType).toHaveLength(12);
   });
 });
 
@@ -52,16 +52,20 @@ describe('eventTypeSchema', () => {
     expect(eventTypeSchema.parse('merge_failed')).toBe('merge_failed');
   });
 
-  it('still includes all original 11 event types', () => {
+  it('still includes the surviving original event types', () => {
     const originalTypes = [
       'grabbed', 'download_completed', 'download_failed',
-      'imported', 'import_failed', 'upgraded',
+      'imported', 'import_failed',
       'deleted', 'renamed', 'merged',
       'file_tagged', 'held_for_review',
     ];
     for (const type of originalTypes) {
       expect(eventTypeSchema.parse(type)).toBe(type);
     }
+  });
+
+  it('rejects the removed upgraded event type', () => {
+    expect(() => eventTypeSchema.parse('upgraded')).toThrow();
   });
 
   it('rejects unknown event type strings', () => {

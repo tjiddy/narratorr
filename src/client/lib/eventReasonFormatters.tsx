@@ -90,7 +90,6 @@ const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown
   grabbed: ({ reason, indexerMap }) => <GrabbedDetails reason={reason} indexerMap={indexerMap} />,
   download_completed: ({ reason }) => <DownloadCompletedDetails reason={reason} />,
   imported: ({ reason }) => <ImportedDetails reason={reason} />,
-  upgraded: ({ reason }) => <ImportedDetails reason={reason} />,
   import_failed: ({ reason }) => <ErrorDetails reason={reason} />,
   merge_failed: ({ reason }) => <ErrorDetails reason={reason} />,
   download_failed: ({ reason }) => <ErrorDetails reason={reason} />,

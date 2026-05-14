@@ -5,7 +5,7 @@ import { api, type UpdateBookPayload, type RetagExcludableField } from '@/lib/ap
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 
-export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
+export function useBookActions(bookId: number) {
   const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
 
@@ -89,17 +89,6 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     },
   });
 
-  const monitorMutation = useMutation({
-    mutationFn: () => api.updateBook(bookId, { monitorForUpgrades: !monitorForUpgrades }),
-    onSuccess: () => {
-      invalidateBookQueries();
-      toast.success(monitorForUpgrades ? 'Upgrade monitoring disabled' : 'Upgrade monitoring enabled');
-    },
-    onError: (error: Error) => {
-      toast.error(`Failed to update: ${getErrorMessage(error)}`);
-    },
-  });
-
   const handleSave = async (data: UpdateBookPayload, renameFiles: boolean, onSuccess?: () => void) => {
     setIsSaving(true);
     try {
@@ -166,7 +155,6 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     retagMutation,
     refreshScanMutation,
     deleteMutation,
-    monitorMutation,
     wrongReleaseMutation,
     retryImportMutation,
     uploadCoverMutation,

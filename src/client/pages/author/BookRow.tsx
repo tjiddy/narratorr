@@ -12,7 +12,7 @@ export function BookRow({
 }: {
   book: BookMetadata;
   inLibrary: boolean;
-  onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAdd: (overrides: { searchImmediately: boolean }) => void;
   isAdding: boolean;
 }) {
   const seriesPos = book.series?.[0]?.position;

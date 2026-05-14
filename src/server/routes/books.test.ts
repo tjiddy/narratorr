@@ -577,34 +577,6 @@ describe('books routes', () => {
       );
     });
 
-    it('passes monitorForUpgrades to create service', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
-      (services.book.create as Mock).mockResolvedValue({ ...mockBook, monitorForUpgrades: true });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/books',
-        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], monitorForUpgrades: true },
-      });
-
-      expect(res.statusCode).toBe(201);
-      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ monitorForUpgrades: true }));
-    });
-
-    it('defaults monitorForUpgrades to undefined when not provided', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
-      (services.book.create as Mock).mockResolvedValue(mockBook);
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/books',
-        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
-      });
-
-      expect(res.statusCode).toBe(201);
-      expect(services.book.create).toHaveBeenCalled();
-    });
-
     it('passes providerId to service for ASIN enrichment', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
@@ -647,36 +619,6 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.book.update).toHaveBeenCalledWith(1, { seriesName: 'Stormlight', seriesPosition: 1 });
-    });
-
-    it('accepts and persists monitorForUpgrades', async () => {
-      const updated = { ...mockBook, monitorForUpgrades: true };
-      (services.book.update as Mock).mockResolvedValue(updated);
-
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/books/1',
-        payload: { monitorForUpgrades: true },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.update).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
-      expect(JSON.parse(res.payload).monitorForUpgrades).toBe(true);
-    });
-
-    it('can toggle monitorForUpgrades from true to false', async () => {
-      const updated = { ...mockBook, monitorForUpgrades: false };
-      (services.book.update as Mock).mockResolvedValue(updated);
-
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/books/1',
-        payload: { monitorForUpgrades: false },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.update).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
-      expect(JSON.parse(res.payload).monitorForUpgrades).toBe(false);
     });
 
     it('rejects empty title', async () => {

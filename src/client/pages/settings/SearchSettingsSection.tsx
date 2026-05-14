@@ -148,7 +148,7 @@ export function SearchSettingsSection() {
           <div className="flex items-center justify-between">
             <div>
               <label htmlFor="rssEnabled" className="block text-sm font-medium">Enable RSS Sync</label>
-              <p className="text-sm text-muted-foreground mt-0.5">Poll indexer RSS feeds to discover new releases and upgrades</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Poll indexer RSS feeds to discover releases for wanted books</p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <ToggleSwitch id="rssEnabled" {...register('rssEnabled')} />

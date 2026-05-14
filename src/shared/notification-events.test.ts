@@ -27,15 +27,14 @@ describe('notification-events (leaf module)', () => {
   });
 
   describe('NOTIFICATION_EVENTS tuple', () => {
-    it('contains all 6 expected event types', () => {
-      expect(NOTIFICATION_EVENTS).toHaveLength(6);
+    it('contains all 5 expected event types', () => {
+      expect(NOTIFICATION_EVENTS).toHaveLength(5);
       expect([...NOTIFICATION_EVENTS].sort()).toEqual([
         'on_download_complete',
         'on_failure',
         'on_grab',
         'on_health_issue',
         'on_import',
-        'on_upgrade',
       ]);
     });
   });
@@ -119,45 +118,6 @@ describe('notification-events (leaf module)', () => {
         error: { message: 'Timeout' },
       }));
       expect(result).toBe('Failure: Timeout');
-    });
-
-    it('on_upgrade with upgrade payload includes MB/hr and codec info', () => {
-      const result = formatEventMessage('on_upgrade', makePayload({
-        book: { title: 'Dune' },
-        upgrade: {
-          previousMbPerHour: 64.0,
-          newMbPerHour: 128.5,
-          previousCodec: 'mp3',
-          newCodec: 'aac',
-          previousSizeBytes: 100000,
-          newSizeBytes: 200000,
-        },
-      }));
-      expect(result).toBe('Dune upgraded: 64.0 MB/hr (MP3) → 128.5 MB/hr (AAC)');
-    });
-
-    it('on_upgrade without upgrade payload returns generic message', () => {
-      const result = formatEventMessage('on_upgrade', makePayload({
-        book: { title: 'Dune' },
-      }));
-      expect(result).toBe('Upgraded: Dune');
-    });
-
-    it('on_upgrade without book or upgrade payload returns fallback', () => {
-      const result = formatEventMessage('on_upgrade', makePayload());
-      expect(result).toBe('Quality upgrade');
-    });
-
-    it('on_upgrade with upgrade payload but no codecs omits codec info', () => {
-      const result = formatEventMessage('on_upgrade', makePayload({
-        upgrade: {
-          previousMbPerHour: 64.0,
-          newMbPerHour: 128.5,
-          previousSizeBytes: 100000,
-          newSizeBytes: 200000,
-        },
-      }));
-      expect(result).toBe('Book upgraded: 64.0 MB/hr → 128.5 MB/hr');
     });
 
     it('on_health_issue with health payload includes check name and state transition', () => {

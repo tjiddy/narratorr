@@ -173,9 +173,9 @@ describe('createNotifierFormSchema', () => {
       expect(result.success).toBe(true);
     });
 
-    it('accepts on_upgrade and on_health_issue events', () => {
+    it('accepts on_health_issue events', () => {
       const result = createNotifierFormSchema.safeParse({
-        ...validBase, events: ['on_upgrade' as const, 'on_health_issue' as const],
+        ...validBase, events: ['on_health_issue' as const],
       });
       expect(result.success).toBe(true);
     });

@@ -43,8 +43,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, monitorMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
-    useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
+    useBookActions(libraryBook.id);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
 
@@ -102,9 +102,6 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onWrongReleaseClick={() => open('confirmWrongRelease')}
         isWrongReleasing={wrongReleaseMutation.isPending}
         importListName={libraryBook.importListName}
-        monitorForUpgrades={libraryBook.monitorForUpgrades}
-        onMonitorToggle={() => monitorMutation.mutate()}
-        isMonitorToggling={monitorMutation.isPending}
         previewUrl={coverPreviewUrl}
         onCoverFileSelect={handleCoverFile}
         onCoverConfirm={handleCoverConfirm}

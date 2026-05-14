@@ -75,7 +75,6 @@ export const books = sqliteTable('books', {
   // Last grab identifiers (populated from download record at import time, cleared on wrong-release)
   lastGrabGuid: text('last_grab_guid'),
   lastGrabInfoHash: text('last_grab_info_hash'),
-  monitorForUpgrades: integer('monitor_for_upgrades', { mode: 'boolean' }).notNull().default(false),
   importListId: integer('import_list_id').references(() => importLists.id, { onDelete: 'set null' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
@@ -301,7 +300,7 @@ export const bookEvents = sqliteTable('book_events', {
   eventType: text('event_type', {
     enum: [
       'grabbed', 'download_completed', 'download_failed',
-      'imported', 'import_failed', 'upgraded',
+      'imported', 'import_failed',
       'deleted', 'renamed', 'merged',
       'file_tagged', 'held_for_review',
       'merge_started', 'merge_failed',

@@ -7,7 +7,7 @@ import { PlusIcon, LoadingSpinner } from '@/components/icons';
 import { useClickOutside } from '@/hooks/useClickOutside';
 
 interface AddBookPopoverProps {
-  onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
+  onAdd: (overrides: { searchImmediately: boolean }) => void;
   isPending: boolean;
   variant?: 'primary' | 'compact';
 }
@@ -55,11 +55,9 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
   // Track user overrides separately from defaults.
   // null = user hasn't touched it yet, use the default from settings.
   const [searchOverride, setSearchOverride] = useState<boolean | null>(null);
-  const [monitorOverride, setMonitorOverride] = useState<boolean | null>(null);
 
   // Resolved values: user override wins, then settings default, then false
   const searchImmediately = searchOverride ?? qualityDefaults?.searchImmediately ?? false;
-  const monitorForUpgrades = monitorOverride ?? qualityDefaults?.monitorForUpgrades ?? false;
 
   const updatePosition = useCallback(() => {
     if (triggerRef.current) {
@@ -72,7 +70,6 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
     if (next) {
       // Reset overrides so fresh open picks up current settings defaults
       setSearchOverride(null);
-      setMonitorOverride(null);
       // Compute initial position before opening
       if (triggerRef.current) {
         setPosition(computePosition(triggerRef.current.getBoundingClientRect()));
@@ -136,20 +133,10 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
               <span className="text-sm font-medium">Search immediately</span>
             </label>
 
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={monitorForUpgrades}
-                onChange={(e) => setMonitorOverride(e.target.checked)}
-                className="w-4 h-4 rounded border-white/20 bg-transparent text-primary focus:ring-primary/30 focus:ring-offset-0"
-              />
-              <span className="text-sm font-medium">Monitor for upgrades</span>
-            </label>
-
             <button
               type="button"
               onClick={() => {
-                onAdd({ searchImmediately, monitorForUpgrades });
+                onAdd({ searchImmediately });
                 setIsOpen(false);
               }}
               disabled={isPending}

@@ -7,6 +7,7 @@ All notable changes to Narratorr are documented in this file.
 Initial public release. Full audiobook acquisition and organization pipeline.
 
 ### Breaking Changes
+- **Automatic audiobook upgrade system removed (#1103).** Imported audiobooks are no longer automatically replaced with higher-quality releases. The scheduled `upgrade-search` job is gone, RSS now only considers `wanted` books, the `monitor_for_upgrades` book flag has been dropped, `quality.monitorForUpgrades` is no longer a setting, and the `'upgraded'` event type plus `on_upgrade` notification event have been retired. Manual `Search Releases` on an imported book still works, but the grab is always held for explicit review (`imported_book_replacement` hold reason) — no auto-import on replacement. `POST /api/activity/:id/retry` now returns 409 (`IMPORTED_BOOK_NO_RETRY`) when the linked book has been imported. Existing `monitor_for_upgrades` values and historical `'upgraded'` event rows are dropped/remapped to `'imported'` by a single migration; `on_upgrade` subscriptions are scrubbed and notifier rows with no remaining events are disabled.
 - **Flatten-on-download removed.** Auto-import no longer runs audio processing (ffmpeg merge/convert) on downloaded books. Imports now complete in seconds instead of minutes. Users who relied on `processing.enabled` for automatic transcoding should configure `postProcessingScript` in Settings → Post Processing → Custom Script as the replacement path.
 - **Unused `authors` columns dropped.** Migration `0002_dizzy_captain_cross.sql` removes `image_url`, `bio`, `monitored`, and `last_checked_at` from the `authors` table — none were ever read or written by production code. Author image and biography continue to be sourced live from audnexus on the author detail page; no UI regression.
 - **Vestigial REST endpoints retired (Wave 11.2, #755).** Endpoints with no UI consumer have been removed; integrations should migrate to the active surfaces listed below. `POST /api/system/tasks/search` is preserved for external API compatibility (see `SECURITY.md` → "Public-compatibility API surfaces"). Removed routes:
@@ -19,7 +20,7 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 - Search indexers (Torznab, Newznab, MyAnonamouse) for audiobooks
 - Grab releases to download clients (qBittorrent, Transmission, Deluge, SABnzbd, NZBGet, Blackhole)
 - Monitor download progress with real-time SSE updates
-- Quality gate: auto-accept upgrades, hold for review, auto-reject downgrades
+- Quality gate: auto-import the first release for a wanted book; hold questionable releases for review
 - Import completed downloads to organized library folder structure
 - Configurable file naming with author/title/series/narrator tokens
 - Audio enrichment: extract metadata from audio file tags
@@ -49,7 +50,7 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 
 ### Search & Monitoring
 - Scheduled automatic search for wanted books
-- RSS feed monitoring with quality-aware upgrades
+- RSS feed polling for wanted books
 - Prowlarr integration for indexer sync
 - Quality filtering: grab floor, min seeders, protocol preference, reject/required words
 
@@ -66,7 +67,7 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 
 ### Notifications
 - Discord, Slack, Telegram, Pushover, Gotify, Ntfy, Email, Webhook
-- Configurable event triggers (grab, import, failure, upgrade, health)
+- Configurable event triggers (grab, download complete, import, failure, health)
 
 ### Settings & Configuration
 - Web-based configuration for all features

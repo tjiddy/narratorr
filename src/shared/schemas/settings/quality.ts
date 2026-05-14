@@ -13,7 +13,6 @@ export const qualitySettingsSchema = z.object({
   minDownloadSize: z.number().nonnegative().default(0),
   maxDownloadSize: z.number().nonnegative().default(5),
   searchImmediately: z.boolean().default(false),
-  monitorForUpgrades: z.boolean().default(false),
   rejectWords: z.string().default(DEFAULT_REJECT_WORDS),
   requiredWords: z.string().default(''),
 });
@@ -29,13 +28,12 @@ export const qualityFormSchema = stripDefaults(qualitySettingsSchema) as z.ZodOb
   minDownloadSize: z.ZodNumber;
   maxDownloadSize: z.ZodNumber;
   searchImmediately: z.ZodBoolean;
-  monitorForUpgrades: z.ZodBoolean;
   rejectWords: z.ZodString;
   requiredWords: z.ZodString;
 }>;
 
 /** Quality-filtering fields only (excludes new-book defaults) — used by QualitySettingsSection form */
-export const qualityFilteringFormSchema = qualityFormSchema.omit({ searchImmediately: true, monitorForUpgrades: true });
+export const qualityFilteringFormSchema = qualityFormSchema.omit({ searchImmediately: true });
 
 /** New-book default fields only — used by LibrarySettingsSection "When a New Book Is Added" form */
-export const newBookDefaultsFormSchema = qualityFormSchema.pick({ searchImmediately: true, monitorForUpgrades: true });
+export const newBookDefaultsFormSchema = qualityFormSchema.pick({ searchImmediately: true });

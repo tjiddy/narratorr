@@ -48,7 +48,6 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     audioDuration: null as number | null,
     lastGrabGuid: null as string | null,
     lastGrabInfoHash: null as string | null,
-    monitorForUpgrades: false,
     importListId: null as number | null,
     createdAt: now,
     updatedAt: now,

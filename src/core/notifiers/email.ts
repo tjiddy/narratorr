@@ -18,7 +18,6 @@ const EVENT_SUBJECTS: Record<NotificationEvent, string> = {
   on_download_complete: 'Narratorr — Download Complete',
   on_import: 'Narratorr — Import Complete',
   on_failure: 'Narratorr — Failure',
-  on_upgrade: 'Narratorr — Quality Upgrade',
   on_health_issue: 'Narratorr — Health Issue',
 };
 

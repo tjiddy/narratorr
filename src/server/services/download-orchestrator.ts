@@ -29,7 +29,6 @@ export interface GrabParams {
   seeders?: number | undefined;
   guid?: string | undefined;
   skipDuplicateCheck?: boolean | undefined;
-  replaceExisting?: boolean | undefined;
   source?: CreateEventInput['source'] | undefined;
 }
 

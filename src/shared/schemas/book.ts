@@ -50,9 +50,8 @@ export const createBookBodySchema = z.object({
   publishedDate: z.string().optional(),
   genres: z.array(z.string()).optional(),
   providerId: z.string().optional(),
-  monitorForUpgrades: z.boolean().optional(),
   searchImmediately: z.boolean().optional(),
-});
+}).strict();
 
 export const updateBookBodySchema = z.object({
   title: z.string().trim().min(1, 'Title cannot be empty').optional(),
@@ -63,8 +62,7 @@ export const updateBookBodySchema = z.object({
   status: bookStatusSchema.optional(),
   seriesName: z.string().nullable().optional(),
   seriesPosition: z.number().nullable().optional(),
-  monitorForUpgrades: z.boolean().optional(),
-});
+}).strict();
 
 export const deleteBookQuerySchema = z.object({
   deleteFiles: z.string().optional(),

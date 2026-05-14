@@ -419,7 +419,7 @@ describe('recordImportEvent', () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'imported' }));
   });
 
-  it('records upgraded event when book had existing path', () => {
+  it('records imported event when book had existing path', () => {
     const log = createMockLog();
     const catchFn = vi.fn();
     const create = vi.fn().mockReturnValue({ catch: catchFn });
@@ -428,7 +428,7 @@ describe('recordImportEvent', () => {
       eventHistory, bookId: 1, bookTitle: 'Book', authorName: 'Author',
       downloadId: 10, bookPath: '/old/path', targetPath: '/lib/book', fileCount: 3, totalSize: 5000, log,
     });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'upgraded' }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'imported' }));
   });
 
   it('skips when eventHistory is undefined', () => {

@@ -390,6 +390,50 @@ describe('retrySearch', () => {
   });
 });
 
+describe('retrySearch — imported-book guard (#1103 F1, F6)', () => {
+  it('short-circuits with no_candidates when book.path is non-null', async () => {
+    const importedBook: BookWithAuthor = {
+      ...createMockDbBook({ duration: 3600 }),
+      path: '/library/some-imported-book',
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    const deps = createDeps({
+      bookService: inject<BookService>({
+        getById: vi.fn().mockResolvedValue(importedBook),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+  });
+
+  it('does not consume a retry-budget attempt when guard fires', async () => {
+    const importedBook: BookWithAuthor = {
+      ...createMockDbBook({ duration: 3600 }),
+      path: '/library/imported-book',
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    const retryBudget = new RetryBudget();
+    const before = retryBudget.hasRemaining(1);
+
+    const deps = createDeps({
+      retryBudget,
+      bookService: inject<BookService>({
+        getById: vi.fn().mockResolvedValue(importedBook),
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    expect(retryBudget.hasRemaining(1)).toBe(before);
+  });
+});
+
 describe('createRetrySearchDeps', () => {
   it('maps service bag fields to RetrySearchDeps contract by reference', () => {
     const indexerSearch = {} as IndexerSearchService;

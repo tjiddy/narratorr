@@ -239,7 +239,6 @@ export class ImportListService {
         status: 'wanted',
         enrichmentStatus: 'pending',
         importListId: list.id,
-        monitorForUpgrades: qualitySettings?.monitorForUpgrades ?? false,
       })
       .onConflictDoNothing()
       .returning();

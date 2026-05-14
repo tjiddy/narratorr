@@ -275,6 +275,27 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    // #1103 F4 — manual retry on an imported-book download returns 409 and does NOT
+    // touch the retry budget. Verifies HTTP contract (status code) AND budget invariance.
+    it('returns 409 IMPORTED_BOOK_NO_RETRY and leaves retry budget unchanged when book is imported', async () => {
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(
+        new DownloadError(
+          'Cannot auto-retry: book has been imported. Use Search Releases to manually pick a different release.',
+          'IMPORTED_BOOK_NO_RETRY',
+        ),
+      );
+
+      // Burn an attempt so we can observe whether the route mutates the budget.
+      services.retryBudget.consumeAttempt(42);
+      const remainingBefore = services.retryBudget.hasRemaining(42);
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error).toContain('imported');
+      expect(services.retryBudget.hasRemaining(42)).toBe(remainingBefore);
+    });
+
     it('returns 500 when retry fails unexpectedly', async () => {
       (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('No client'));
 

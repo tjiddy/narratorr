@@ -2,7 +2,7 @@ import type { BookMetadata, BookWithAuthor, BookIdentifier, CreateBookPayload } 
 
 export function mapBookMetadataToPayload(
   book: BookMetadata,
-  qualityDefaults?: { searchImmediately?: boolean; monitorForUpgrades?: boolean },
+  qualityDefaults?: { searchImmediately?: boolean },
 ): CreateBookPayload {
   return {
     title: book.title,
@@ -18,7 +18,6 @@ export function mapBookMetadataToPayload(
     duration: book.duration,
     genres: book.genres,
     providerId: book.providerId,
-    monitorForUpgrades: qualityDefaults?.monitorForUpgrades,
     searchImmediately: qualityDefaults?.searchImmediately,
   };
 }

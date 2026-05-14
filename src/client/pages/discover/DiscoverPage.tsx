@@ -24,7 +24,7 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
 /** Build a CreateBookPayload from a suggestion row (inline, not via mapBookMetadataToPayload). */
 function suggestionToPayload(
   s: SuggestionRow,
-  overrides: { searchImmediately: boolean; monitorForUpgrades: boolean },
+  overrides: { searchImmediately: boolean },
 ): CreateBookPayload {
   return {
     title: s.title,
@@ -38,7 +38,6 @@ function suggestionToPayload(
     publishedDate: s.publishedDate ?? undefined,
     genres: s.genres ?? undefined,
     searchImmediately: overrides.searchImmediately,
-    monitorForUpgrades: overrides.monitorForUpgrades,
   };
 }
 
@@ -55,7 +54,7 @@ function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<S
   };
 
   const addMutation = useMutation({
-    mutationFn: ({ suggestion, overrides }: { suggestion: SuggestionRow; overrides: { searchImmediately: boolean; monitorForUpgrades: boolean } }) =>
+    mutationFn: ({ suggestion, overrides }: { suggestion: SuggestionRow; overrides: { searchImmediately: boolean } }) =>
       api.addBook(suggestionToPayload(suggestion, overrides)),
     onSuccess: (_data, { suggestion }) => {
       markAdded(suggestion.id);

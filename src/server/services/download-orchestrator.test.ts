@@ -470,21 +470,7 @@ describe('DownloadOrchestrator', () => {
       expect(log.warn).toHaveBeenCalled();
     });
 
-    it('passes replaceExisting: true through to downloadService.grab()', async () => {
-      await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2, replaceExisting: true });
-      expect(downloadService.grab).toHaveBeenCalledWith(
-        expect.objectContaining({ replaceExisting: true }),
-      );
-    });
-
-    it('passes replaceExisting: false through to downloadService.grab()', async () => {
-      await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2, replaceExisting: false });
-      expect(downloadService.grab).toHaveBeenCalledWith(
-        expect.objectContaining({ replaceExisting: false }),
-      );
-    });
-
-    it('omits replaceExisting when not provided (backward-compatible)', async () => {
+    it('does not pass any replaceExisting field (removed in #1103)', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
       const callArg = (downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(callArg.replaceExisting).toBeUndefined();

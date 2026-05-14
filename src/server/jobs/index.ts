@@ -8,7 +8,7 @@ import type { TaskRegistry } from '../services/task-registry.js';
 import { MONITOR_CRON_INTERVAL } from './constants.js';
 import { monitorDownloads } from './monitor.js';
 import { runEnrichment } from './enrichment.js';
-import { runSearchJob, runUpgradeSearchJob } from './search.js';
+import { runSearchJob } from './search.js';
 import { runRssJob } from './rss.js';
 import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
@@ -49,8 +49,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     { name: 'enrichment', type: 'cron', schedule: '*/5 * * * *', callback: () => runEnrichment(db, services.metadata, services.book, log) },
     { name: 'import-maintenance', type: 'cron', schedule: '*/5 * * * *', callback: async () => { await services.qualityGateOrchestrator.processCompletedDownloads(); await services.importOrchestrator.processCompletedDownloads(); await services.qualityGateOrchestrator.cleanupDeferredRejections(); await services.import.cleanupDeferredImports(); } },
     { name: 'search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runSearchJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, log, services.blacklist, services.retryBudget, services.eventBroadcaster) },
-    { name: 'upgrade-search', type: 'timeout', getIntervalMinutes: () => services.settings.get('search').then((s) => s.intervalMinutes), callback: () => runUpgradeSearchJob(services.settings, services.book, services.indexerSearch, services.downloadOrchestrator, log) },
-    { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.book, services.indexerSearch, services.downloadOrchestrator, services.blacklist, log) },
+    { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.indexerSearch, services.downloadOrchestrator, services.blacklist, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => {
       try { await db.run(sql`VACUUM`); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: VACUUM failed'); }

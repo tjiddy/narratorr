@@ -257,7 +257,7 @@ describe('useAddBooksToLibrary', () => {
     it('passes qualityDefaults overrides to api.addBook', async () => {
       vi.mocked(api.addBook).mockResolvedValue({} as BookWithAuthor);
       const book = makeBook({ asin: 'B099', title: 'Quality Book' });
-      const defaults = { searchImmediately: true, monitorForUpgrades: true };
+      const defaults = { searchImmediately: true };
 
       const { result } = renderHook(
         () => useAddBooksToLibrary([], defaults),
@@ -272,7 +272,6 @@ describe('useAddBooksToLibrary', () => {
         expect(api.addBook).toHaveBeenCalledWith(
           expect.objectContaining({
             searchImmediately: true,
-            monitorForUpgrades: true,
           }),
         );
       });
@@ -281,8 +280,8 @@ describe('useAddBooksToLibrary', () => {
     it('allows per-book overrides to override hook defaults', async () => {
       vi.mocked(api.addBook).mockResolvedValue({} as BookWithAuthor);
       const book = makeBook({ asin: 'B100', title: 'Override Book' });
-      const hookDefaults = { searchImmediately: false, monitorForUpgrades: false };
-      const perBookOverrides = { searchImmediately: true, monitorForUpgrades: true };
+      const hookDefaults = { searchImmediately: false };
+      const perBookOverrides = { searchImmediately: true };
 
       const { result } = renderHook(
         () => useAddBooksToLibrary([], hookDefaults),
@@ -297,7 +296,6 @@ describe('useAddBooksToLibrary', () => {
         expect(api.addBook).toHaveBeenCalledWith(
           expect.objectContaining({
             searchImmediately: true,
-            monitorForUpgrades: true,
           }),
         );
       });

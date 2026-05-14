@@ -1004,7 +1004,7 @@ describe('ImportListService', () => {
       );
     });
 
-    // #967 — searchDeps wiring: honor quality.searchImmediately + quality.monitorForUpgrades
+    // #967 — searchDeps wiring: honor quality.searchImmediately
     describe('searchDeps wired (#967)', () => {
       const dueList = {
         id: 1, name: 'Test List', type: 'abs', enabled: true,
@@ -1013,9 +1013,9 @@ describe('ImportListService', () => {
         lastSyncError: null, createdAt: new Date(),
       };
 
-      function makeSearchDeps(quality: { searchImmediately?: boolean; monitorForUpgrades?: boolean } = {}) {
+      function makeSearchDeps(quality: { searchImmediately?: boolean } = {}) {
         const get = vi.fn(async (key: string) => {
-          if (key === 'quality') return { searchImmediately: false, monitorForUpgrades: false, ...quality };
+          if (key === 'quality') return { searchImmediately: false, ...quality };
           return {};
         });
         return inject<ImmediateSearchDeps>({
@@ -1112,79 +1112,6 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
         await service.syncDueLists();
 
-        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
-      });
-
-      it('inserts monitorForUpgrades=true when quality.monitorForUpgrades=true', async () => {
-        const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'Upgradable', author: 'Author' }]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        const bookInsertChain = mockDbChain([{ id: 50, title: 'Upgradable' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        db.insert.mockReturnValue(mockDbChain([]));
-        db.update.mockReturnValue(mockDbChain([]));
-
-        const searchDeps = makeSearchDeps({ monitorForUpgrades: true });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
-        await service.syncDueLists();
-
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ monitorForUpgrades: true }),
-        );
-      });
-
-      it('inserts monitorForUpgrades=false when quality.monitorForUpgrades=false', async () => {
-        const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'NotUpgradable', author: 'Author' }]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        const bookInsertChain = mockDbChain([{ id: 51, title: 'NotUpgradable' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        db.insert.mockReturnValue(mockDbChain([]));
-        db.update.mockReturnValue(mockDbChain([]));
-
-        const searchDeps = makeSearchDeps({ monitorForUpgrades: false });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
-        await service.syncDueLists();
-
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ monitorForUpgrades: false }),
-        );
-      });
-
-      it('legacy path without searchDeps: inserts monitorForUpgrades=false and never triggers search', async () => {
-        const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'Legacy Book', author: 'Author' }]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        const bookInsertChain = mockDbChain([{ id: 60, title: 'Legacy Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        db.insert.mockReturnValue(mockDbChain([]));
-        db.update.mockReturnValue(mockDbChain([]));
-
-        // No searchDeps — legacy fixture path
-        service = new ImportListService(inject<Db>(db), mockLog);
-        await service.syncDueLists();
-
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ monitorForUpgrades: false }),
-        );
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
       });
 

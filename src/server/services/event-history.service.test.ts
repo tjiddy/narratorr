@@ -332,7 +332,7 @@ describe('EventHistoryService', () => {
         indexerSearchService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
-        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, path: null, author: { name: 'Author' } }) },
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
@@ -363,7 +363,7 @@ describe('EventHistoryService', () => {
         indexerSearchService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
-        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, path: null, author: { name: 'Author' } }) },
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
@@ -434,7 +434,7 @@ describe('EventHistoryService', () => {
         indexerSearchService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
-        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, path: null, author: { name: 'Author' } }) },
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
@@ -475,7 +475,7 @@ describe('EventHistoryService', () => {
         indexerSearchService: { searchAll: vi.fn() },
         downloadService: { grab: vi.fn() },
         blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
-        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, path: null, author: { name: 'Author' } }) },
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
         log: createMockLogger(),
@@ -490,6 +490,46 @@ describe('EventHistoryService', () => {
           'Mark-as-failed retry search failed',
         );
       });
+    });
+
+    // #1103 F3 — caller-surface coverage for the imported-book guard inside retrySearch().
+    // markFailed must dispatch retry-search, and the centralized guard must short-circuit
+    // before any indexer search or grab when the linked book has been imported.
+    it('imported-book retry guard — no indexer search, no grab, budget unchanged', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Imported Book' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const { RetryBudget } = await import('./retry-budget.js');
+      const retryBudget = new RetryBudget();
+      const mockSearchAll = vi.fn().mockResolvedValue([]);
+      const mockGrab = vi.fn();
+
+      const fresh = freshService();
+      fresh.wire({ retrySearchDeps: {
+        indexerSearchService: { searchAll: mockSearchAll },
+        downloadOrchestrator: { grab: mockGrab },
+        downloadService: { grab: vi.fn() },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Imported Book', duration: 3600, path: '/library/imported-book', author: { name: 'Author' } }) },
+        settingsService: createMockSettingsService(),
+        retryBudget,
+        log: createMockLogger(),
+      } } as never);
+
+      const budgetBefore = retryBudget.hasRemaining(42);
+      const result = await fresh.markFailed(1);
+      expect(result).toEqual({ success: true });
+
+      // Allow fire-and-forget retrySearch to settle
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(mockSearchAll).not.toHaveBeenCalled();
+      expect(mockGrab).not.toHaveBeenCalled();
+      expect(retryBudget.hasRemaining(42)).toBe(budgetBefore);
     });
   });
 

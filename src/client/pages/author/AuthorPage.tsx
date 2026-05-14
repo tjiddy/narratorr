@@ -23,7 +23,7 @@ export function AuthorPage() {
   const { data: libraryBooks } = useBookIdentifiers();
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
   const qualityDefaults = settings?.quality
-    ? { searchImmediately: settings.quality.searchImmediately, monitorForUpgrades: settings.quality.monitorForUpgrades }
+    ? { searchImmediately: settings.quality.searchImmediately }
     : undefined;
   const { addingAsins, addBook, addAllInSeries } = useAddBooksToLibrary(libraryBooks, qualityDefaults);
 

@@ -218,7 +218,7 @@ describe('EventHistorySection', () => {
       );
     });
 
-    it('Imported chip sends eventType=imported,upgraded,merged', async () => {
+    it('Imported chip sends eventType=imported,merged', async () => {
       const user = userEvent.setup();
       mockDefaultHook();
 
@@ -226,7 +226,7 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Imported'));
 
       expect(mockUseEventHistory).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: 'imported,upgraded,merged' }),
+        expect.objectContaining({ eventType: 'imported,merged' }),
       );
     });
 
