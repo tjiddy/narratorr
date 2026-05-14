@@ -42,22 +42,25 @@ export function emitBookImporting(args: EmitBookImportingArgs): void {
   safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: bookStatus, new_status: 'importing' }, log);
 }
 
-// ── emitImportSuccess ───────────────────────────────────────────────────
+// ── emitImportStatusSuccess ─────────────────────────────────────────────
 
-export interface EmitImportSuccessArgs {
+export interface EmitImportStatusSuccessArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
   bookId: number;
-  bookTitle: string;
   log: FastifyBaseLogger;
 }
 
-/** Emit SSE events for successful import. Each emit is independent so a failure in one doesn't skip the rest. */
-export function emitImportSuccess(args: EmitImportSuccessArgs): void {
-  const { broadcaster, downloadId, bookId, bookTitle, log } = args;
+/**
+ * Emit download/book status_change SSE events on successful import. Each emit is
+ * independent so a failure in one doesn't skip the rest. Job-lifecycle
+ * completion (`import_complete`) is owned by `ImportQueueWorker.processJob`, not
+ * this helper — see #1108.
+ */
+export function emitImportStatusSuccess(args: EmitImportStatusSuccessArgs): void {
+  const { broadcaster, downloadId, bookId, log } = args;
   safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
   safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
-  safeEmit(broadcaster, 'import_complete', { download_id: downloadId, book_id: bookId, book_title: bookTitle }, log);
 }
 
 // ── notifyImportComplete ────────────────────────────────────────────────

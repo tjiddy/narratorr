@@ -32,7 +32,7 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
     ...actual,
     emitDownloadImporting: vi.fn(),
     emitBookImporting: vi.fn(),
-    emitImportSuccess: vi.fn(),
+    emitImportStatusSuccess: vi.fn(),
     emitImportFailure: vi.fn(),
     notifyImportComplete: vi.fn(),
     notifyImportFailure: vi.fn(),
@@ -44,7 +44,7 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
 });
 
 import {
-  emitDownloadImporting, emitBookImporting, emitImportSuccess,
+  emitDownloadImporting, emitBookImporting, emitImportStatusSuccess,
   emitImportFailure, notifyImportComplete, notifyImportFailure,
   recordImportEvent, recordImportFailedEvent,
   embedTagsForImport, runImportPostProcessing,
@@ -176,12 +176,15 @@ describe('ImportOrchestrator', () => {
       }));
     });
 
-    it('emits SSE import success after successful import', async () => {
+    it('emits SSE status transitions after successful import (no import_complete — owned by queue worker, #1108)', async () => {
       await orchestrator.importDownload(1);
 
-      expect(emitImportSuccess).toHaveBeenCalledWith(expect.objectContaining({
-        downloadId: 1, bookId: 1, bookTitle: 'The Way of Kings',
+      expect(emitImportStatusSuccess).toHaveBeenCalledWith(expect.objectContaining({
+        downloadId: 1, bookId: 1,
       }));
+      // #1108 — bookTitle is no longer part of the status-success helper's contract.
+      const callArg = vi.mocked(emitImportStatusSuccess).mock.calls[0]![0] as unknown as Record<string, unknown>;
+      expect(callArg).not.toHaveProperty('bookTitle');
     });
 
     it('dispatches notification on import success', async () => {
@@ -279,7 +282,7 @@ describe('ImportOrchestrator', () => {
       const result = await orchestrator.importDownload(1);
 
       expect(result).toEqual(mockResult);
-      expect(emitImportSuccess).toHaveBeenCalled();
+      expect(emitImportStatusSuccess).toHaveBeenCalled();
     });
 
     it('all fire-and-forget side effects dispatched even when best-effort fails', async () => {
@@ -289,7 +292,7 @@ describe('ImportOrchestrator', () => {
       await orchestrator.importDownload(1);
 
       // Fire-and-forget should still be called
-      expect(emitImportSuccess).toHaveBeenCalled();
+      expect(emitImportStatusSuccess).toHaveBeenCalled();
       expect(notifyImportComplete).toHaveBeenCalled();
       expect(recordImportEvent).toHaveBeenCalled();
     });

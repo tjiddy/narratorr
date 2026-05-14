@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { inject } from '../__tests__/helpers.js';
+import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { ImportQueueWorker } from './import-queue-worker.js';
@@ -7,8 +7,8 @@ import { registerImportAdapter, clearImportAdapters } from './import-adapters/re
 import type { ImportAdapter, ImportJob } from './import-adapters/types.js';
 import { AutoImportAdapter } from './import-adapters/auto.js';
 import { ManualImportAdapter } from './import-adapters/manual.js';
-import type { ImportOrchestrator } from './import-orchestrator.js';
-import type { ImportProgressCallbacks } from './import.service.js';
+import { ImportOrchestrator } from './import-orchestrator.js';
+import type { ImportService, ImportContext, ImportResult, ImportProgressCallbacks } from './import.service.js';
 import type { ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { importFailedPayload } from '../../shared/schemas/sse-events.js';
 
@@ -1615,10 +1615,13 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await w.stop();
 
-      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
-      expect(complete).toBeDefined();
-      expect(complete![1].book_title).toBe('Enriched Auto Title');
-      expect(complete![1].book_title).not.toBe('Unknown');
+      // #1108 — tightened to count: the worker is the canonical (and only) emitter
+      // of import_complete for the auto path now. .find() would let a regression
+      // double-emit slip through.
+      const completes = emitSpy.mock.calls.filter(c => c[0] === 'import_complete');
+      expect(completes).toHaveLength(1);
+      expect(completes[0]![1].book_title).toBe('Enriched Auto Title');
+      expect(completes[0]![1].book_title).not.toBe('Unknown');
     });
 
     it('auto-import success with bookId=null → falls back to extractTitle (which returns "Unknown" for auto)', async () => {
@@ -1711,10 +1714,12 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await w.stop();
 
-      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
-      expect(complete).toBeDefined();
-      expect(complete![1].book_title).toBe('Enriched Title');
-      expect(complete![1].book_title).not.toBe('User Title');
+      // #1108 — count assertion: the worker is the canonical (and only) emitter
+      // of import_complete on the manual path.
+      const completes = emitSpy.mock.calls.filter(c => c[0] === 'import_complete');
+      expect(completes).toHaveLength(1);
+      expect(completes[0]![1].book_title).toBe('Enriched Title');
+      expect(completes[0]![1].book_title).not.toBe('User Title');
     });
 
     it('manual-import success with bookId set but no books row → falls back to the Zod-validated manual title (not "Unknown")', async () => {
@@ -1760,6 +1765,108 @@ describe('ImportQueueWorker', () => {
       expect(failed![1].book_title).toBe('Real Title');
       expect(failed![1].book_title).not.toBe('Unknown');
       expect(failed![1].error_message).toContain('mid-import failure');
+    });
+  });
+
+  // ===========================================================================
+  // #1108 — Auto-import path: import_complete emitted exactly once
+  //
+  // Pre-fix the orchestrator's success-side-effects helper emitted
+  // `import_complete` and the worker's processJob emitted it again, so SSE
+  // clients received two events per auto-import completion. The fix splits the
+  // helper so it no longer emits `import_complete`; the worker remains the
+  // canonical (and only) emitter. This test wires the REAL ImportOrchestrator
+  // and REAL AutoImportAdapter so a regression that re-adds the helper's emit
+  // would surface here as `import_complete` count === 2.
+  // ===========================================================================
+  describe('#1108 single import_complete emit on auto-import success', () => {
+    const mockContext: ImportContext = {
+      downloadId: 99,
+      downloadTitle: 'Some Release [2026]',
+      downloadStatus: 'completed',
+      bookId: 601,
+      bookTitle: 'Test Book',
+      bookStatus: 'wanted',
+      bookPath: null,
+      authorName: 'Test Author',
+      narratorStr: null,
+      book: inject<ImportContext['book']>({
+        id: 601, title: 'Test Book', status: 'wanted', path: null,
+        narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,
+      }),
+      infoHash: 'abc',
+      guid: null,
+    };
+
+    const mockResult: ImportResult = {
+      downloadId: 99,
+      bookId: 601,
+      targetPath: '/lib/Test Author/Test Book',
+      fileCount: 3,
+      totalSize: 1000,
+    };
+
+    it('real AutoImportAdapter + real ImportOrchestrator produce exactly ONE import_complete emit', async () => {
+      const emitSpy = vi.fn();
+      const mockBroadcaster = { emit: emitSpy };
+      const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
+
+      // Real orchestrator with mocked ImportService. The orchestrator owns
+      // download/book status-change SSE transitions but MUST NOT emit
+      // import_complete (job-lifecycle is the worker's responsibility).
+      const importService = inject<ImportService>({
+        getImportContext: vi.fn().mockResolvedValue(mockContext),
+        importDownload: vi.fn().mockImplementation(async (_id: number, callbacks?: ImportProgressCallbacks) => {
+          // Drive phase callbacks the way real import work would so the worker's
+          // phaseHistory matches a production trace.
+          await callbacks?.setPhase?.('copying');
+          return mockResult;
+        }),
+      });
+      const settingsService = createMockSettingsService();
+      const orchestrator = new ImportOrchestrator(
+        importService, settingsService, log,
+        undefined /* notifier */, undefined /* tagging */, undefined /* eventHistory */,
+        mockBroadcaster as never,
+      );
+      registerImportAdapter(new AutoImportAdapter(orchestrator));
+
+      // Worker selects: [1] boot recovery (empty) → [2] candidates → [3] job row
+      // → [4] resolveBookTitle reads books row for SSE title enrichment.
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 701 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 701, bookId: 601, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null }]) };
+        if (selectCallCount === 4) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ title: 'Test Book' }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+
+      await workerWithBroadcaster.start();
+      await new Promise(r => setTimeout(r, 100));
+      await workerWithBroadcaster.stop();
+
+      // AC: exactly one import_complete, originating from ImportQueueWorker.processJob
+      // (carries job_id + elapsed_ms; the orchestrator's older payload had neither).
+      const completes = emitSpy.mock.calls.filter(c => c[0] === 'import_complete');
+      expect(completes).toHaveLength(1);
+      expect(completes[0]![1]).toMatchObject({
+        job_id: 701,
+        book_id: 601,
+        book_title: 'Test Book',
+      });
+      expect(completes[0]![1].elapsed_ms).toBeTypeOf('number');
+
+      // AC: orchestrator's status-change emits still fire (no regression to
+      // status-transition listeners on the auto path).
+      const downloadStatusEmits = emitSpy.mock.calls.filter(c => c[0] === 'download_status_change');
+      const bookStatusEmits = emitSpy.mock.calls.filter(c => c[0] === 'book_status_change');
+      expect(downloadStatusEmits.some(c => (c[1] as { new_status: string }).new_status === 'imported')).toBe(true);
+      expect(bookStatusEmits.some(c => (c[1] as { new_status: string }).new_status === 'imported')).toBe(true);
     });
   });
 

@@ -15,12 +15,12 @@ import { serializeError } from './serialize-error.js';
 
 // Re-export side-effect functions for backwards compatibility
 export {
-  emitDownloadImporting, emitBookImporting, emitImportSuccess,
+  emitDownloadImporting, emitBookImporting, emitImportStatusSuccess,
   emitImportFailure, notifyImportComplete, notifyImportFailure,
   recordImportEvent, recordImportFailedEvent,
 } from './import-side-effects.js';
 export type {
-  EmitDownloadImportingArgs, EmitBookImportingArgs, EmitImportSuccessArgs,
+  EmitDownloadImportingArgs, EmitBookImportingArgs, EmitImportStatusSuccessArgs,
   EmitImportFailureArgs, NotifyImportCompleteArgs, NotifyImportFailureArgs,
   RecordImportEventArgs, RecordImportFailedEventArgs,
 } from './import-side-effects.js';

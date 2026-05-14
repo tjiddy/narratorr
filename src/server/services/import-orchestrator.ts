@@ -8,7 +8,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import {
-  emitDownloadImporting, emitBookImporting, emitImportSuccess,
+  emitDownloadImporting, emitBookImporting, emitImportStatusSuccess,
   emitImportFailure, notifyImportComplete, notifyImportFailure,
   recordImportEvent, recordImportFailedEvent,
   embedTagsForImport, runImportPostProcessing,
@@ -139,8 +139,9 @@ export class ImportOrchestrator {
       this.log.warn({ error: serializeError(scriptError), bookId: ctx.bookId }, 'Post-processing failed during import — continuing');
     }
 
-    // Fire-and-forget: SSE success
-    emitImportSuccess({ broadcaster: this.broadcaster, downloadId: result.downloadId, bookId: result.bookId, bookTitle: ctx.bookTitle, log: this.log });
+    // Fire-and-forget: SSE download/book status transitions. Job-lifecycle
+    // `import_complete` is emitted by ImportQueueWorker.processJob — see #1108.
+    emitImportStatusSuccess({ broadcaster: this.broadcaster, downloadId: result.downloadId, bookId: result.bookId, log: this.log });
 
     // Fire-and-forget: notification
     notifyImportComplete({ notifierService: this.notifierService, bookTitle: ctx.bookTitle, authorName: ctx.authorName, targetPath: result.targetPath, fileCount: result.fileCount, log: this.log });
