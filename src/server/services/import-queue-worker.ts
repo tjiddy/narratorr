@@ -271,10 +271,11 @@ export class ImportQueueWorker {
       }).where(eq(importJobs.id, jobId));
 
       const elapsedMs = Date.now() - startTime;
+      const resolvedTitle = await this.resolveBookTitle(bookId, bookTitle);
       safeEmit(this.broadcaster, 'import_complete', {
         download_id: null,
         book_id: bookId,
-        book_title: bookTitle,
+        book_title: resolvedTitle,
         job_id: jobId,
         elapsed_ms: elapsedMs,
       }, this.log);
@@ -321,13 +322,34 @@ export class ImportQueueWorker {
       errorMessage = lastError;
     }
 
+    const resolvedTitle = await this.resolveBookTitle(bookId, bookTitle);
     safeEmit(this.broadcaster, 'import_failed', {
       job_id: jobId,
       book_id: bookId,
-      book_title: bookTitle,
+      book_title: resolvedTitle,
       phase: currentPhase,
       error_message: errorMessage,
     }, this.log);
+  }
+
+  /**
+   * Resolve the canonical book title from the `books` row for SSE emit.
+   * Falls back to `fallback` when bookId is null, the row is missing, or the
+   * lookup throws — preserves the quiet-path semantics for this high-volume
+   * code (no error logs on failure).
+   */
+  private async resolveBookTitle(bookId: number | null, fallback: string): Promise<string> {
+    if (bookId === null) return fallback;
+    try {
+      const rows = await this.db
+        .select({ title: books.title })
+        .from(books)
+        .where(eq(books.id, bookId))
+        .limit(1);
+      return rows[0]?.title ?? fallback;
+    } catch {
+      return fallback;
+    }
   }
 
   /**

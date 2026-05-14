@@ -492,6 +492,14 @@ describe('ImportQueueWorker', () => {
           };
         }
         if (selectCallCount === 4) {
+          // resolveBookTitle for the failed job 1 — no row → fallback to 'Unknown'
+          return {
+            from: vi.fn().mockReturnThis(),
+            where: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue([]),
+          };
+        }
+        if (selectCallCount === 5) {
           return {
             from: vi.fn().mockReturnThis(),
             where: vi.fn().mockReturnThis(),
@@ -499,7 +507,7 @@ describe('ImportQueueWorker', () => {
             limit: vi.fn().mockResolvedValue([{ id: 2 }]),
           };
         }
-        if (selectCallCount === 5) {
+        if (selectCallCount === 6) {
           // Full job fetch for job 2
           return {
             from: vi.fn().mockReturnThis(),
@@ -824,7 +832,7 @@ describe('ImportQueueWorker', () => {
       });
     });
 
-    it('worker emits import_complete on job success with job_id and elapsed_ms', async () => {
+    it('worker emits import_complete on job success with job_id and elapsed_ms (book_title sourced from DB row, not manual metadata)', async () => {
       const emitSpy = vi.fn();
       const mockBroadcaster = { emit: emitSpy };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
@@ -840,7 +848,10 @@ describe('ImportQueueWorker', () => {
         selectCallCount++;
         if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
         if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5 }]) };
-        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{"path":"/lib/MyBook","title":"My Book"}', phaseHistory: null }]) };
+        // Metadata title intentionally differs from the DB row — DB must win.
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{"path":"/lib/MyBook","title":"User Manual Title"}', phaseHistory: null }]) };
+        // #1094 — resolveBookTitle reads the books row with the canonical (enriched) title.
+        if (selectCallCount === 4) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ title: 'My Book' }]) };
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
 
@@ -859,8 +870,10 @@ describe('ImportQueueWorker', () => {
       expect(completeCalls[0]![1]).toMatchObject({
         job_id: 5,
         book_id: 50,
+        // DB title wins — the manual metadata's "User Manual Title" must not leak through.
         book_title: 'My Book',
       });
+      expect(completeCalls[0]![1].book_title).not.toBe('User Manual Title');
       expect(completeCalls[0]![1].elapsed_ms).toBeTypeOf('number');
     });
 
@@ -1490,13 +1503,15 @@ describe('ImportQueueWorker', () => {
         expect(progress![1].book_title).not.toBe('Stray Auto');
       });
 
-      it('import_failed on unknown-adapter path emits book_title:"Unknown" (call site at import-queue-worker.ts:188)', async () => {
+      it('import_failed on unknown-adapter path with orphan bookId=null emits book_title:"Unknown" (call site at import-queue-worker.ts:188)', async () => {
         const emitSpy = vi.fn();
         const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
         // Intentionally do NOT register an auto adapter — drives the worker
         // through the `if (!adapter)` branch where extractTitle's title
         // leakage would surface in the failure event.
-        setupAutoJobRow(STRAY_TITLE_METADATA, { id: 202, bookId: 302 });
+        // #1094 — orphan case: bookId is null, so resolveBookTitle short-circuits
+        // to the fallback ('Unknown' from the auto extractTitle path).
+        setupAutoJobRow(STRAY_TITLE_METADATA, { id: 202, bookId: null });
 
         await w.start();
         await new Promise(r => setTimeout(r, 100));
@@ -1508,6 +1523,243 @@ describe('ImportQueueWorker', () => {
         expect(failed![1].book_title).not.toBe('Stray Auto');
         expect(failed![1].error_message).toContain('No import adapter registered for type "auto"');
       });
+
+      it('#1094 import_failed on unknown-adapter path with bookId set resolves book_title from the DB row', async () => {
+        const emitSpy = vi.fn();
+        const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+        // Same orphan-adapter trigger, but bookId is populated and the books
+        // row exists with an enriched title — DB title must win over the
+        // 'Unknown' auto-extractTitle fallback.
+        let selectCallCount = 0;
+        mockDb.db.select = vi.fn().mockImplementation(() => {
+          selectCallCount++;
+          if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+          if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 203 }]) };
+          if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 203, bookId: 303, type: 'auto', status: 'processing', metadata: STRAY_TITLE_METADATA, phaseHistory: null }]) };
+          if (selectCallCount === 4) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ title: 'Real Title' }]) };
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+        });
+        mockDb.db.update = vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        }));
+
+        await w.start();
+        await new Promise(r => setTimeout(r, 100));
+        await w.stop();
+
+        const failed = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
+        expect(failed).toBeDefined();
+        expect(failed![1].book_title).toBe('Real Title');
+        expect(failed![1].book_title).not.toBe('Unknown');
+        expect(failed![1].book_title).not.toBe('Stray Auto');
+        expect(failed![1].error_message).toContain('No import adapter registered for type "auto"');
+      });
+    });
+  });
+
+  // ===========================================================================
+  // #1094 — Import-complete / import-failed book_title resolved from books row
+  //
+  // Guards the contract that:
+  //   (a) auto-import success/failure emits the enriched title from the books
+  //       row, never the literal 'Unknown' extractTitle fallback when the row
+  //       exists.
+  //   (b) manual-import success prefers the books row title over the
+  //       Zod-validated metadata title (DB wins).
+  //   (c) when bookId is null OR the books row can't be read (missing row or
+  //       DB throw), the call site silently falls back to the existing
+  //       extractTitle value ('Unknown' for auto, validated title for manual).
+  // ===========================================================================
+  describe('#1094 import_complete/import_failed book_title resolved from books row', () => {
+    function setupJobWithBooksRow(opts: {
+      jobRow: Record<string, unknown>;
+      booksRow: Array<Record<string, unknown>> | (() => Promise<never>);
+    }) {
+      // Sequence: [1] boot recovery, [2] candidates, [3] full job fetch,
+      // [4] resolveBookTitle (only when bookId !== null — otherwise the helper
+      // short-circuits and this slot is consumed by the next drainOne
+      // candidates probe, which needs the orderBy-bearing empty chain).
+      const expectsBooksLookup = opts.jobRow.bookId !== null;
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: opts.jobRow.id }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([opts.jobRow]) };
+        if (selectCallCount === 4 && expectsBooksLookup) {
+          const limit = typeof opts.booksRow === 'function'
+            ? vi.fn().mockImplementation(opts.booksRow)
+            : vi.fn().mockResolvedValue(opts.booksRow);
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit };
+        }
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+      }));
+    }
+
+    it('auto-import success with bookId + books row → import_complete book_title is the enriched DB title (regression guard for the bug)', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'auto',
+        async process() { /* success */ },
+      });
+      setupJobWithBooksRow({
+        jobRow: { id: 401, bookId: 501, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null },
+        booksRow: [{ title: 'Enriched Auto Title' }],
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(complete).toBeDefined();
+      expect(complete![1].book_title).toBe('Enriched Auto Title');
+      expect(complete![1].book_title).not.toBe('Unknown');
+    });
+
+    it('auto-import success with bookId=null → falls back to extractTitle (which returns "Unknown" for auto)', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'auto',
+        async process() { /* success */ },
+      });
+      // booksRow array is never consumed — bookId=null short-circuits resolveBookTitle.
+      setupJobWithBooksRow({
+        jobRow: { id: 402, bookId: null, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null },
+        booksRow: [{ title: 'Should Not Surface' }],
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(complete).toBeDefined();
+      expect(complete![1].book_title).toBe('Unknown');
+    });
+
+    it('auto-import success with bookId set but no books row found → falls back to extractTitle "Unknown" (lookup-miss path)', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'auto',
+        async process() { /* success */ },
+      });
+      setupJobWithBooksRow({
+        jobRow: { id: 403, bookId: 503, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null },
+        booksRow: [],
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(complete).toBeDefined();
+      expect(complete![1].book_title).toBe('Unknown');
+    });
+
+    it('auto-import success: books lookup throws → silently swallowed, falls back to extractTitle "Unknown"', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'auto',
+        async process() { /* success */ },
+      });
+      setupJobWithBooksRow({
+        jobRow: { id: 404, bookId: 504, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null },
+        booksRow: async () => { throw new Error('db unreachable'); },
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      // AC: no new error logs on the high-volume job-finish path — the
+      // resolveBookTitle catch is silent.
+      const completeCall = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(completeCall).toBeDefined();
+      expect(completeCall![1].book_title).toBe('Unknown');
+
+      const logMock = log as unknown as { error: ReturnType<typeof vi.fn> };
+      const swallowedErrorLog = logMock.error.mock.calls.find((call: unknown[]) => {
+        const ctx = call[0] as Record<string, unknown> | undefined;
+        const err = ctx && typeof ctx === 'object' ? (ctx.error as { message?: unknown } | undefined) : undefined;
+        return err?.message === 'db unreachable';
+      });
+      expect(swallowedErrorLog).toBeUndefined();
+    });
+
+    it('manual-import success with metadata title + books row title → DB title wins over manual-supplied title', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'manual',
+        async process() { /* success */ },
+      });
+      setupJobWithBooksRow({
+        jobRow: { id: 405, bookId: 505, type: 'manual', status: 'processing', metadata: '{"path":"/lib/Book","title":"User Title"}', phaseHistory: null },
+        booksRow: [{ title: 'Enriched Title' }],
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(complete).toBeDefined();
+      expect(complete![1].book_title).toBe('Enriched Title');
+      expect(complete![1].book_title).not.toBe('User Title');
+    });
+
+    it('manual-import success with bookId set but no books row → falls back to the Zod-validated manual title (not "Unknown")', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'manual',
+        async process() { /* success */ },
+      });
+      setupJobWithBooksRow({
+        jobRow: { id: 406, bookId: 506, type: 'manual', status: 'processing', metadata: '{"path":"/lib/Book","title":"User Title"}', phaseHistory: null },
+        booksRow: [],
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
+      expect(complete).toBeDefined();
+      // Fallback chain: DB miss → extractTitle's manual path → "User Title".
+      expect(complete![1].book_title).toBe('User Title');
+    });
+
+    it('auto-import failure with bookId + books row → import_failed book_title is the enriched DB title', async () => {
+      const emitSpy = vi.fn();
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
+      registerImportAdapter({
+        type: 'auto',
+        async process() { throw new Error('mid-import failure'); },
+      });
+      setupJobWithBooksRow({
+        jobRow: { id: 407, bookId: 507, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null },
+        booksRow: [{ title: 'Real Title' }],
+      });
+
+      await w.start();
+      await new Promise(r => setTimeout(r, 100));
+      await w.stop();
+
+      const failed = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
+      expect(failed).toBeDefined();
+      expect(failed![1].book_title).toBe('Real Title');
+      expect(failed![1].book_title).not.toBe('Unknown');
+      expect(failed![1].error_message).toContain('mid-import failure');
     });
   });
 
