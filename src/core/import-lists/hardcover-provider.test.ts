@@ -81,6 +81,50 @@ describe('HardcoverProvider', () => {
       expect(capturedBody!.query).not.toContain('123');
     });
 
+    // #1101 F1 — shelf query must request the new image/description fields
+    // (mirror of the trending coverage at "captures image.url ..." below)
+    it('shelf query body selects description and image { url }, and maps them to ImportListItem', async () => {
+      let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
+      server.use(
+        http.post(GQL_URL, async ({ request }) => {
+          capturedBody = await request.json() as typeof capturedBody;
+          return HttpResponse.json({
+            data: {
+              user_book_reads: [{
+                book: {
+                  title: 'Shelf Book',
+                  description: 'Shelf blurb.',
+                  image: { url: 'https://hardcover.app/shelf-cover.jpg' },
+                  contributions: [{ author: { name: 'Shelf Author' } }],
+                  identifiers: [{ source: { name: 'amazon' }, value: 'B_SHELF' }],
+                },
+              }],
+            },
+          });
+        }),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: 5 });
+      const items = await provider.fetchItems();
+
+      // Query-shape assertion: deleting description or image from SHELF_QUERY
+      // would make these fail (the F1 regression guard).
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.query).toContain('user_book_reads');
+      expect(capturedBody!.query).toContain('description');
+      expect(capturedBody!.query).toContain('image { url }');
+
+      // Mapping assertion: shelf-mode responses with image/description flow through
+      expect(items).toEqual([{
+        title: 'Shelf Book',
+        author: 'Shelf Author',
+        asin: 'B_SHELF',
+        isbn: undefined,
+        coverUrl: 'https://hardcover.app/shelf-cover.jpg',
+        description: 'Shelf blurb.',
+      }]);
+    });
+
     it('does not send shelf query when listType is trending', async () => {
       let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
       server.use(
@@ -110,22 +154,34 @@ describe('HardcoverProvider', () => {
       expect(items).toEqual([]);
     });
 
-    it('captures image.url as coverUrl and description from book node', async () => {
+    it('captures image.url as coverUrl and description from book node (trending query body selects them)', async () => {
+      let capturedBody: { query: string; variables?: Record<string, unknown> } | null = null;
       server.use(
-        http.post(GQL_URL, () => HttpResponse.json({
-          data: {
-            trending_books: [{
-              title: 'The Way of Kings',
-              description: 'Epic fantasy.',
-              image: { url: 'https://hardcover.app/img.jpg' },
-              contributions: [{ author: { name: 'Brandon Sanderson' } }],
-              identifiers: [{ source: { name: 'amazon' }, value: 'B003P2WO5E' }],
-            }],
-          },
-        })),
+        http.post(GQL_URL, async ({ request }) => {
+          capturedBody = await request.json() as typeof capturedBody;
+          return HttpResponse.json({
+            data: {
+              trending_books: [{
+                title: 'The Way of Kings',
+                description: 'Epic fantasy.',
+                image: { url: 'https://hardcover.app/img.jpg' },
+                contributions: [{ author: { name: 'Brandon Sanderson' } }],
+                identifiers: [{ source: { name: 'amazon' }, value: 'B003P2WO5E' }],
+              }],
+            },
+          });
+        }),
       );
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
       const items = await provider.fetchItems();
+
+      // Query-shape assertion mirrors the shelf-mode F1 guard above —
+      // deleting description or image from TRENDING_QUERY would fail here.
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.query).toContain('trending_books');
+      expect(capturedBody!.query).toContain('description');
+      expect(capturedBody!.query).toContain('image { url }');
+
       expect(items[0]).toEqual({
         title: 'The Way of Kings',
         author: 'Brandon Sanderson',
