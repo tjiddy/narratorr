@@ -3,6 +3,8 @@ export interface ImportListItem {
   author?: string | undefined;
   asin?: string | undefined;
   isbn?: string | undefined;
+  coverUrl?: string | undefined;
+  description?: string | undefined;
 }
 
 export interface ImportListProvider {

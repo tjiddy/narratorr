@@ -529,6 +529,35 @@ describe('BookService', () => {
       expect(result.title).toBe('The Way of Kings'); // from mock
     });
 
+    it('writes importListId to books.import_list_id when supplied (#1101)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, importListId: 7 }, importListName: 'My List' }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'List Book', authors: [], importListId: 7 });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ importListId: 7 }),
+      );
+    });
+
+    it('omits importListId from values when not supplied (existing tests pass undefined)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Manual Book', authors: [] });
+
+      const valuesArg = insertChain.values.mock.calls[0][0] as Record<string, unknown>;
+      expect(valuesArg.importListId).toBeUndefined();
+    });
+
     it('creates book with full metadata fields', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([mockAuthor]))    // author found

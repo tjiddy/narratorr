@@ -1,13 +1,15 @@
 import { eq, and, lte } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importLists, books, bookEvents, bookAuthors } from '../../db/schema.js';
+import { importLists, bookEvents } from '../../db/schema.js';
 import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js';
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
+import type { BookMetadata } from '../../core/metadata/types.js';
+import { diceCoefficient } from '../../core/utils/similarity.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { findOrCreateAuthor } from '../utils/find-or-create-person.js';
+import type { BookService } from './book.service.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
@@ -39,6 +41,7 @@ export class ImportListService {
   constructor(
     private db: Db,
     private log: FastifyBaseLogger,
+    private bookService: BookService,
     private metadata?: MetadataService,
     private searchDeps?: ImmediateSearchDeps,
   ) {}
@@ -197,88 +200,152 @@ export class ImportListService {
     }
   }
 
-  // eslint-disable-next-line complexity -- passthrough/match/detail-followup branches w/ conditional-spread
-  private async enrichItem(item: ImportListItem): Promise<{ asin?: string; author?: string }> {
-    const passthrough = (): { asin?: string; author?: string } => ({
-      ...(item.asin !== undefined && { asin: item.asin }),
-      ...(item.author !== undefined && { author: item.author }),
-    });
-    if (!this.metadata || item.asin) return passthrough();
+  /**
+   * Resolve the rich metadata for an import-list item.
+   *
+   * Two paths:
+   * - **ASIN-identity** — when `item.asin` is present, hit Audnexus directly
+   *   (`enrichBook(asin)`). Identity lookup, no fuzzy validation.
+   * - **Search-candidate** — when `item.asin` is absent, run a metadata search
+   *   and validate the top candidate via {@link matchPassesValidation}. Failed
+   *   validation drops the match (raw provider fields fall through).
+   *
+   * Either path can return `match = null` (no metadata service, lookup failed,
+   * search empty, validation rejected). The returned shape uses provider-truth
+   * precedence (`item.* ?? match.*`) for the fields where the provider has its
+   * own value (coverUrl, description, asin, isbn, authorName).
+   */
+  private async enrichItem(item: ImportListItem): Promise<EnrichedItem> {
+    const match = await this.resolveMatch(item);
+    const primarySeries = match?.seriesPrimary ?? match?.series?.[0];
+    return {
+      coverUrl: item.coverUrl ?? match?.coverUrl,
+      description: item.description ?? match?.description,
+      seriesName: primarySeries?.name,
+      seriesPosition: primarySeries?.position,
+      seriesAsin: primarySeries?.asin,
+      narrators: match?.narrators,
+      duration: match?.duration,
+      publishedDate: match?.publishedDate,
+      genres: match?.genres,
+      asin: item.asin ?? match?.asin,
+      isbn: item.isbn ?? match?.isbn,
+      authorName: item.author ?? match?.authors?.[0]?.name,
+    };
+  }
+
+  private async resolveMatch(item: ImportListItem): Promise<BookMetadata | null> {
+    if (!this.metadata) return null;
     try {
+      if (item.asin) {
+        // ASIN-identity path: trust Audnexus's response, no fuzzy validation
+        return await this.metadata.enrichBook(item.asin);
+      }
       const query = item.author ? `${item.title} ${item.author}` : item.title;
       const searchResults = await this.metadata.search(query);
-      if (searchResults.books.length === 0) return passthrough();
-      const match = searchResults.books[0]!;
-      let asin = match.asin;
-      // Follow providerId to detail endpoint for ASIN if search result didn't include one
-      if (!asin && match.providerId) {
-        const detail = await this.metadata.getBook(match.providerId);
-        if (detail?.asin) asin = detail.asin;
-      }
-      const enrichedAsin = asin || item.asin;
-      const enrichedAuthor = item.author || match.authors?.[0]?.name;
-      return {
-        ...(enrichedAsin !== undefined && { asin: enrichedAsin }),
-        ...(enrichedAuthor !== undefined && { author: enrichedAuthor }),
-      };
+      const candidate = searchResults.books[0];
+      if (!candidate) return null;
+      return matchPassesValidation(item, candidate) ? candidate : null;
     } catch (error: unknown) {
       this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
-      return passthrough();
+      return null;
     }
   }
 
   private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
     const enriched = await this.enrichItem(item);
 
-    const insertResult = await this.db
-      .insert(books)
-      .values({
-        title: item.title,
-        asin: enriched.asin || null,
-        isbn: item.isbn || null,
-        status: 'wanted',
-        enrichmentStatus: 'pending',
-        importListId: list.id,
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    if (insertResult.length === 0) {
+    const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
+    const duplicate = await this.bookService.findDuplicate(item.title, authorList, enriched.asin);
+    if (duplicate) {
       this.log.debug({ title: item.title, asin: enriched.asin }, 'Book already exists, skipped');
       return;
     }
 
-    const newBook = insertResult[0]!;
-
-    // Insert author junction row if author is known
-    if (enriched.author) {
-      let authorId: number | undefined;
-      try {
-        authorId = await findOrCreateAuthor(this.db, enriched.author);
-      } catch (_error: unknown) {
-        this.log.warn({ title: newBook.title, author: enriched.author }, 'Author resolution failed, skipping bookAuthors');
-      }
-      if (authorId !== undefined) {
-        await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId, position: 0 });
-      }
-    }
+    const created = await this.bookService.create({
+      title: item.title,
+      authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
+      narrators: enriched.narrators,
+      description: enriched.description,
+      coverUrl: enriched.coverUrl,
+      asin: enriched.asin,
+      isbn: enriched.isbn,
+      seriesName: enriched.seriesName,
+      seriesPosition: enriched.seriesPosition,
+      seriesAsin: enriched.seriesAsin,
+      duration: enriched.duration,
+      publishedDate: enriched.publishedDate,
+      genres: enriched.genres,
+      status: 'wanted',
+      importListId: list.id,
+    });
 
     await this.db.insert(bookEvents).values({
-      bookId: newBook.id,
-      bookTitle: newBook.title,
-      authorName: enriched.author || null,
+      bookId: created.id,
+      bookTitle: created.title,
+      authorName: enriched.authorName ?? null,
       eventType: 'grabbed',
       source: 'import_list',
     });
 
-    this.log.info({ bookId: newBook.id, title: newBook.title, listName: list.name }, 'Book added from import list');
+    this.log.info({ bookId: created.id, title: created.title, listName: list.name }, 'Book added from import list');
 
     if (this.searchDeps && qualitySettings?.searchImmediately) {
       const bookForSearch = {
-        ...newBook,
-        authors: enriched.author ? [{ name: enriched.author }] : [],
+        ...created,
+        authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
       };
       triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
     }
   }
+}
+
+/** Intermediate enriched payload — singular `authorName`, translated to
+ *  `authors: { name: string }[]` at the {@link BookService.create} call site. */
+interface EnrichedItem {
+  coverUrl?: string | undefined;
+  description?: string | undefined;
+  seriesName?: string | undefined;
+  seriesPosition?: number | undefined;
+  seriesAsin?: string | undefined;
+  narrators?: string[] | undefined;
+  duration?: number | undefined;
+  publishedDate?: string | undefined;
+  genres?: string[] | undefined;
+  asin?: string | undefined;
+  isbn?: string | undefined;
+  authorName?: string | undefined;
+}
+
+/** Title fuzzy threshold for search-candidate path (Dice coefficient). */
+const TITLE_MATCH_THRESHOLD = 0.7;
+
+/**
+ * AND-gate for adopting a search match (search-candidate path only).
+ *
+ * Title check: dice(item.title, candidate.title) ≥ threshold (always required).
+ * Author check: case-insensitive overlap (full or last-name token), only
+ * required when `item.author` is present.
+ *
+ * If either required check fails → reject. Mirrors AC §4: prevents "Golden Son
+ * by Pierce Brown" cover/series getting attached to a NYT entry that's actually
+ * "Golden Son by Some Romance Author".
+ */
+function matchPassesValidation(item: ImportListItem, candidate: BookMetadata): boolean {
+  if (diceCoefficient(item.title, candidate.title) < TITLE_MATCH_THRESHOLD) return false;
+  if (!item.author) return true;
+  const candidateAuthors = candidate.authors?.map((a) => a.name).filter(Boolean) ?? [];
+  if (candidateAuthors.length === 0) return false;
+  return candidateAuthors.some((name) => authorOverlap(item.author!, name));
+}
+
+function authorOverlap(a: string, b: string): boolean {
+  const aLower = a.trim().toLowerCase();
+  const bLower = b.trim().toLowerCase();
+  if (!aLower || !bLower) return false;
+  if (aLower === bLower) return true;
+  // Last-name overlap (last whitespace-delimited token)
+  const aLast = aLower.split(/\s+/).pop()!;
+  const bLast = bLower.split(/\s+/).pop()!;
+  return aLast.length > 1 && aLast === bLast;
 }

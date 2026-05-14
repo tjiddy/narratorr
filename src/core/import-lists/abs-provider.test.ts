@@ -57,6 +57,44 @@ describe('AbsProvider', () => {
       expect(items[0]!.title).toBe('Valid Book');
     });
 
+    // F10 — ABS contributes description only; cover capture explicitly out of
+    // scope (coverPath is server-local FS, /api/items/<id>/cover requires bearer auth)
+    it('captures media.metadata.description into ImportListItem.description', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [
+            { media: { metadata: { title: 'A', authorName: 'X', description: 'A blurb.' } } },
+          ],
+        })),
+      );
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const items = await provider.fetchItems();
+      expect(items[0]).toEqual({ title: 'A', author: 'X', description: 'A blurb.' });
+    });
+
+    it('NEVER stores coverPath or /api/items/<id>/cover as ImportListItem.coverUrl (F10 scope cut)', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json({
+          results: [{
+            id: 'item-99',
+            media: {
+              metadata: {
+                title: 'Sample', authorName: 'Author', description: 'd',
+                coverPath: '/abs/server/local/path/cover.jpg', // server-local FS path
+              },
+            },
+          }],
+        })),
+      );
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBeUndefined();
+      // Defensive: provider must not synthesize a /cover URL either
+      const stringified = JSON.stringify(items[0]);
+      expect(stringified).not.toContain('coverPath');
+      expect(stringified).not.toContain('/api/items/');
+    });
+
     it('encodes libraryId in URL path (#786)', async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ results: [] }), { status: 200, headers: { 'content-type': 'application/json' } }),

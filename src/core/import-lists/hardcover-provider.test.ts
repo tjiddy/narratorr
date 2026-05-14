@@ -110,6 +110,74 @@ describe('HardcoverProvider', () => {
       expect(items).toEqual([]);
     });
 
+    it('captures image.url as coverUrl and description from book node', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [{
+              title: 'The Way of Kings',
+              description: 'Epic fantasy.',
+              image: { url: 'https://hardcover.app/img.jpg' },
+              contributions: [{ author: { name: 'Brandon Sanderson' } }],
+              identifiers: [{ source: { name: 'amazon' }, value: 'B003P2WO5E' }],
+            }],
+          },
+        })),
+      );
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]).toEqual({
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+        asin: 'B003P2WO5E',
+        isbn: undefined,
+        coverUrl: 'https://hardcover.app/img.jpg',
+        description: 'Epic fantasy.',
+      });
+    });
+
+    it('schema accepts null/missing description and image (Hardcover legitimately omits)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [
+              { title: 'A', description: null, image: null, contributions: [], identifiers: [] },
+              { title: 'B', contributions: [], identifiers: [] }, // image/description missing
+            ],
+          },
+        })),
+      );
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items).toHaveLength(2);
+      expect(items[0]!.coverUrl).toBeUndefined();
+      expect(items[0]!.description).toBeUndefined();
+      expect(items[1]!.coverUrl).toBeUndefined();
+      expect(items[1]!.description).toBeUndefined();
+    });
+
+    it('ignores plural images array when present (singular image is canonical)', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [{
+              title: 'X',
+              image: { url: 'https://canonical.example/cover.jpg' },
+              images: [
+                { url: 'https://other-edition-1.example/cover.jpg' },
+                { url: 'https://other-edition-2.example/cover.jpg' },
+              ],
+              contributions: [{ author: { name: 'A' } }],
+              identifiers: [],
+            }],
+          },
+        })),
+      );
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBe('https://canonical.example/cover.jpg');
+    });
+
     it('handles GraphQL error response without crash', async () => {
       server.use(
         http.post(GQL_URL, () => HttpResponse.json({

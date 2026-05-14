@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
+import type { BookService, BookWithAuthor } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
@@ -29,6 +30,56 @@ const mockTriggerImmediateSearch = triggerImmediateSearch as unknown as ReturnTy
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
 
+/**
+ * Build a stub BookService whose `findDuplicate` and `create` are vi.fn()s.
+ * Default: no duplicates, create returns a BookWithAuthor-like row with the
+ * supplied id/title.
+ */
+function makeBookService(overrides: {
+  findDuplicate?: ReturnType<typeof vi.fn>;
+  create?: ReturnType<typeof vi.fn>;
+} = {}): BookService {
+  const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue(null);
+  const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
+    id: 100,
+    title: data.title,
+    description: null,
+    coverUrl: null,
+    goodreadsId: null,
+    audibleId: null,
+    asin: null,
+    isbn: null,
+    seriesName: null,
+    seriesPosition: null,
+    duration: null,
+    publishedDate: null,
+    genres: null,
+    status: 'wanted',
+    enrichmentStatus: 'pending',
+    path: null,
+    size: null,
+    audioCodec: null,
+    audioBitrate: null,
+    audioSampleRate: null,
+    audioChannels: null,
+    audioBitrateMode: null,
+    audioFileFormat: null,
+    audioFileCount: null,
+    topLevelAudioFileCount: null,
+    audioTotalSize: null,
+    audioDuration: null,
+    lastGrabGuid: null,
+    lastGrabInfoHash: null,
+    importListId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    authors: [],
+    narrators: [],
+    importListName: null,
+  }));
+  return inject<BookService>({ findDuplicate, create });
+}
+
 describe('ImportListService', () => {
   let service: ImportListService;
 
@@ -44,7 +95,7 @@ describe('ImportListService', () => {
       mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.testConfig({
         type: 'abs',
@@ -56,7 +107,7 @@ describe('ImportListService', () => {
 
     it('returns failure for unknown provider type', async () => {
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.testConfig({ type: 'unknown', settings: {} });
       expect(result.success).toBe(false);
@@ -66,7 +117,7 @@ describe('ImportListService', () => {
     it('catches provider test errors', async () => {
       mockFactories.nyt!.mockImplementation(() => { throw new Error('Bad config'); });
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.testConfig({ type: 'nyt', settings: { apiKey: 'key' } });
       expect(result.success).toBe(false);
@@ -86,7 +137,7 @@ describe('ImportListService', () => {
           syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: null,
           lastSyncError: null, createdAt: new Date(),
         }]));
-        service = new ImportListService(inject<Db>(db), mockLog);
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
         const result = await service.testConfig({
           type: 'abs',
@@ -104,7 +155,7 @@ describe('ImportListService', () => {
         const mockProvider = { test: vi.fn().mockResolvedValue({ success: false }), fetchItems: vi.fn() };
         mockFactories.abs!.mockReturnValue(mockProvider);
         const db = createMockDb();
-        service = new ImportListService(inject<Db>(db), mockLog);
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
         await service.testConfig({
           type: 'abs',
@@ -119,7 +170,7 @@ describe('ImportListService', () => {
       it('with id for missing row returns Import list not found and skips provider factory', async () => {
         const db = createMockDb();
         db.select.mockReturnValue(mockDbChain([]));
-        service = new ImportListService(inject<Db>(db), mockLog);
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
         const result = await service.testConfig({
           type: 'abs',
@@ -150,7 +201,7 @@ describe('ImportListService', () => {
 
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: '42' })]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.test(1);
       expect(result.success).toBe(true);
@@ -163,7 +214,7 @@ describe('ImportListService', () => {
       mockFactories.hardcover!.mockClear();
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeHardcoverList({ apiKey: 'k', listType: 'shelf', shelfId: 'junk' })]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.test(1);
       expect(result.success).toBe(false);
@@ -181,15 +232,13 @@ describe('ImportListService', () => {
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const testResult = await service.test(1);
       expect(testResult.success).toBe(true);
-      // Legacy `''` is normalized away before parse, so the parsed object omits shelfId entirely.
       const factoryArg = mockFactories.hardcover!.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(factoryArg).toEqual({ apiKey: 'k', listType: 'trending' });
 
-      // syncDueLists also tolerates the legacy default — no validation error persisted
       await service.syncDueLists();
       const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
       expect(setCall?.lastSyncError).toBeNull();
@@ -202,7 +251,7 @@ describe('ImportListService', () => {
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
       await service.syncDueLists();
 
       const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
@@ -213,7 +262,7 @@ describe('ImportListService', () => {
     it('preview rejects invalid Hardcover shelfId without invoking provider factory (AC6)', async () => {
       mockFactories.hardcover!.mockClear();
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await expect(
         service.preview({ type: 'hardcover', settings: { apiKey: 'k', listType: 'shelf', shelfId: 'junk' } }),
@@ -237,7 +286,7 @@ describe('ImportListService', () => {
       mockFactories.abs!.mockClear();
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.test(1);
       expect(result.success).toBe(false);
@@ -252,7 +301,7 @@ describe('ImportListService', () => {
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
       await service.syncDueLists();
 
       const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
@@ -263,7 +312,7 @@ describe('ImportListService', () => {
     it('preview rejects invalid ABS libraryId without invoking provider factory', async () => {
       mockFactories.abs!.mockClear();
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await expect(
         service.preview({ type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' } }),
@@ -279,7 +328,7 @@ describe('ImportListService', () => {
       mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.preview({ type: 'nyt', settings: { apiKey: 'key', list: 'audio-fiction' } });
       expect(result.items).toHaveLength(10);
@@ -291,7 +340,7 @@ describe('ImportListService', () => {
       mockFactories.hardcover!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.preview({ type: 'hardcover', settings: { apiKey: 'key' } });
       expect(result.items).toHaveLength(0);
@@ -300,7 +349,7 @@ describe('ImportListService', () => {
 
     it('throws for unknown provider type', async () => {
       const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await expect(service.preview({ type: 'unknown', settings: {} })).rejects.toThrow('Unknown provider type');
     });
@@ -310,7 +359,7 @@ describe('ImportListService', () => {
     it('getAll returns all import lists', async () => {
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const results = await service.getAll();
       expect(results).toHaveLength(1);
@@ -321,7 +370,7 @@ describe('ImportListService', () => {
       const db = createMockDb();
       const insertChain = mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key' }, createdAt: new Date() }]);
       db.insert.mockReturnValue(insertChain);
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.create({
         name: 'Test',
@@ -333,7 +382,6 @@ describe('ImportListService', () => {
 
       expect(result).toBeDefined();
       expect(db.insert).toHaveBeenCalled();
-      // Verify nextRunAt was set by checking the values call
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ nextRunAt: expect.any(Date) }),
       );
@@ -347,19 +395,16 @@ describe('ImportListService', () => {
         settings: { serverUrl: 'http://old.local', apiKey: encryptedApiKey, libraryId: 'lib-1' },
       };
 
-      // select().from().where().limit() for sentinel lookup returns existing row
       db.select.mockReturnValue(mockDbChain([existingRow]));
-      // update().set().where().returning() returns updated row
       const updateChain = mockDbChain([existingRow]);
       db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await service.update(1, {
         settings: { serverUrl: 'http://new.local', apiKey: '********', libraryId: 'lib-2' },
       });
 
-      // The .set() call must preserve the exact stored ciphertext, not re-encrypt the sentinel
       expect(updateChain.set).toHaveBeenCalledWith(
         expect.objectContaining({
           settings: expect.objectContaining({
@@ -379,9 +424,8 @@ describe('ImportListService', () => {
       };
       db.select.mockReturnValue(mockDbChain([existingRow]));
       db.update.mockReturnValue(mockDbChain([existingRow]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
-      // serverUrl is NOT in the importList secret allowlist — must throw.
       await expect(
         service.update(1, {
           settings: { serverUrl: '********', apiKey: 'still-real', libraryId: 'lib-1' },
@@ -392,7 +436,7 @@ describe('ImportListService', () => {
     it('delete removes row from DB', async () => {
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.delete(1);
       expect(result).toBe(true);
@@ -401,138 +445,76 @@ describe('ImportListService', () => {
   });
 
   describe('syncDueLists', () => {
+    const dueAbsList = (overrides: Record<string, unknown> = {}) => ({
+      id: 1, name: 'My ABS', type: 'abs', enabled: true,
+      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+      syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+      lastSyncError: null, createdAt: new Date(),
+      ...overrides,
+    });
+
+    /**
+     * Build a `BookWithAuthor`-shaped row that the bookService.create stub returns.
+     * Tests assert against this shape's id/title — other fields just satisfy types.
+     */
+    const createdBook = (id: number, title: string): BookWithAuthor => ({
+      id, title,
+      description: null, coverUrl: null, goodreadsId: null, audibleId: null,
+      asin: null, isbn: null, seriesName: null, seriesPosition: null,
+      duration: null, publishedDate: null, genres: null,
+      status: 'wanted', enrichmentStatus: 'pending',
+      path: null, size: null,
+      audioCodec: null, audioBitrate: null, audioSampleRate: null,
+      audioChannels: null, audioBitrateMode: null, audioFileFormat: null,
+      audioFileCount: null, topLevelAudioFileCount: null, audioTotalSize: null,
+      audioDuration: null, lastGrabGuid: null, lastGrabInfoHash: null,
+      importListId: null, createdAt: new Date(), updatedAt: new Date(),
+      authors: [], narrators: [], importListName: null,
+    });
+
     it('skips disabled lists even if nextRunAt is past due', async () => {
       const db = createMockDb();
-      // Query returns empty (no enabled due lists)
       db.select.mockReturnValue(mockDbChain([]));
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await service.syncDueLists();
-      // Should not attempt to process any lists
       expect(mockLog.info).not.toHaveBeenCalledWith(
         expect.objectContaining({ count: expect.any(Number) }),
         expect.stringContaining('Processing'),
       );
     });
 
-    it('fetches items from provider for each due list', async () => {
+    it('routes a successful, non-duplicate item through BookService.create + writes import_list event + logs', async () => {
       const mockProvider = {
-        fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'Author' }]),
+        fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'Author Name' }]),
         test: vi.fn(),
       };
       mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      const dueList = {
-        id: 1, name: 'My ABS', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-      // Due lists query
-      db.select.mockReturnValueOnce(mockDbChain([dueList]));
-      // Author lookup returns empty
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // Book insert
-      db.insert.mockReturnValue(mockDbChain([{ id: 10, title: 'New Book', authorId: null }]));
-      // Update chain
+      db.select.mockReturnValue(mockDbChain([dueAbsList({ id: 7, name: 'My List' })]));
+      const eventInsertChain = mockDbChain([]);
+      db.insert.mockReturnValue(eventInsertChain);
       db.update.mockReturnValue(mockDbChain([]));
 
-      service = new ImportListService(inject<Db>(db), mockLog);
-
-      await service.syncDueLists();
-      expect(mockProvider.fetchItems).toHaveBeenCalled();
-    });
-
-    it('persists lastRunAt, nextRunAt, clears lastSyncError on success', async () => {
-      const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
-      mockFactories.abs!.mockReturnValue(mockProvider);
-
-      const db = createMockDb();
-      const dueList = {
-        id: 5, name: 'ABS List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 60, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: 'old error', createdAt: new Date(),
-      };
-      db.select.mockReturnValue(mockDbChain([dueList]));
-      const updateChain = mockDbChain([]);
-      db.update.mockReturnValue(updateChain);
-      service = new ImportListService(inject<Db>(db), mockLog);
+      const create = vi.fn().mockResolvedValue(createdBook(42, 'New Book'));
+      const findDuplicate = vi.fn().mockResolvedValue(null);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }));
 
       await service.syncDueLists();
 
-      // Find the set() call on the success path
-      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
-      expect(setCall.lastSyncError).toBeNull();
-      expect(setCall.lastRunAt).toBeInstanceOf(Date);
-      expect(setCall.nextRunAt).toBeInstanceOf(Date);
-      // nextRunAt should be ~60 minutes from now
-      const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
-      expect(diff).toBeGreaterThan(59 * 60_000);
-      expect(diff).toBeLessThan(61 * 60_000);
-    });
-
-    it('persists lastSyncError and advances nextRunAt on failure', async () => {
-      const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Connection timeout')), test: vi.fn() };
-      mockFactories.abs!.mockReturnValue(failProvider);
-
-      const db = createMockDb();
-      const dueList = {
-        id: 3, name: 'Failing List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-      db.select.mockReturnValue(mockDbChain([dueList]));
-      const updateChain = mockDbChain([]);
-      db.update.mockReturnValue(updateChain);
-      service = new ImportListService(inject<Db>(db), mockLog);
-
-      await service.syncDueLists();
-
-      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
-      expect(setCall.lastSyncError).toBe('Connection timeout');
-      expect(setCall.nextRunAt).toBeInstanceOf(Date);
-    });
-
-    it('inserts book with importListId and creates import_list event', async () => {
-      const mockProvider = {
-        fetchItems: vi.fn().mockResolvedValue([{ title: 'Import Book', author: 'Author Name' }]),
-        test: vi.fn(),
-      };
-      mockFactories.abs!.mockReturnValue(mockProvider);
-
-      const db = createMockDb();
-      const dueList = {
-        id: 7, name: 'My List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-      // Due lists query
-      db.select.mockReturnValueOnce(mockDbChain([dueList]));
-      // Author lookup — found
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 99, name: 'Author Name' }]));
-      // Book insert
-      const bookInsertChain = mockDbChain([{ id: 42, title: 'Import Book', authorId: 99 }]);
-      db.insert.mockReturnValueOnce(bookInsertChain);
-      // Event insert
-      db.insert.mockReturnValue(mockDbChain([]));
-      // Update chain
-      db.update.mockReturnValue(mockDbChain([]));
-
-      service = new ImportListService(inject<Db>(db), mockLog);
-
-      await service.syncDueLists();
-
-      // Book insert was attempted
-      expect(db.insert).toHaveBeenCalled();
-      // onConflictDoNothing was used for the book insert
-      expect(bookInsertChain.onConflictDoNothing).toHaveBeenCalled();
-      // Logged the book addition with correct metadata
+      expect(findDuplicate).toHaveBeenCalledWith('New Book', [{ name: 'Author Name' }], undefined);
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'New Book',
+        authors: [{ name: 'Author Name' }],
+        status: 'wanted',
+        importListId: 7,
+      }));
+      expect(eventInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, eventType: 'grabbed', source: 'import_list', authorName: 'Author Name' }),
+      );
       expect(mockLog.info).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 42, title: 'Import Book', listName: 'My List' }),
+        expect.objectContaining({ bookId: 42, title: 'New Book', listName: 'My List' }),
         expect.stringContaining('Book added from import list'),
       );
     });
@@ -548,106 +530,376 @@ describe('ImportListService', () => {
       mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      const dueList = {
-        id: 1, name: 'Mixed List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-      // Due lists query
-      db.select.mockReturnValueOnce(mockDbChain([dueList]));
-      // Author lookup for Valid Book — found
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 50, name: 'Author' }]));
-      // Book insert
-      db.insert.mockReturnValueOnce(mockDbChain([{ id: 20, title: 'Valid Book', authorId: 50 }]));
-      // Event insert + update chain
+      db.select.mockReturnValue(mockDbChain([dueAbsList({ name: 'Mixed List' })]));
       db.insert.mockReturnValue(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain([]));
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      const create = vi.fn().mockResolvedValue(createdBook(20, 'Valid Book'));
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
 
       await service.syncDueLists();
 
-      // Should have logged warning for the empty-title item
       const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
       const emptyTitleWarn = warnCalls.find((call) => {
         const msg = call[1] as string;
         return typeof msg === 'string' && msg.includes('empty/null title');
       });
       expect(emptyTitleWarn).toBeDefined();
-      // Should have processed the valid book
-      const infoCalls = (mockLog.info as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
-      const bookAddedLog = infoCalls.find((call) => {
-        const msg = call[1] as string;
-        return typeof msg === 'string' && msg.includes('Book added');
-      });
-      expect(bookAddedLog).toBeDefined();
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Valid Book' }));
     });
 
-    // #477 — enrichItem branches (tested via syncDueLists)
-    describe('enrichItem via syncDueLists (#477)', () => {
-      const dueList = {
-        id: 1, name: 'Test List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
+    it('persists lastRunAt, nextRunAt, clears lastSyncError on success', async () => {
+      const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
+      mockFactories.abs!.mockReturnValue(mockProvider);
 
-      it('no metadata service — book inserted with original ASIN/author from import list item', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([dueAbsList({ id: 5, syncIntervalMinutes: 60, lastSyncError: 'old error' })]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
+
+      await service.syncDueLists();
+
+      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      expect(setCall.lastSyncError).toBeNull();
+      expect(setCall.lastRunAt).toBeInstanceOf(Date);
+      expect(setCall.nextRunAt).toBeInstanceOf(Date);
+      const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
+      expect(diff).toBeGreaterThan(59 * 60_000);
+      expect(diff).toBeLessThan(61 * 60_000);
+    });
+
+    it('persists lastSyncError and advances nextRunAt on failure', async () => {
+      const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Connection timeout')), test: vi.fn() };
+      mockFactories.abs!.mockReturnValue(failProvider);
+
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([dueAbsList({ id: 3, name: 'Failing List' })]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
+
+      await service.syncDueLists();
+
+      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
+      expect(setCall.lastSyncError).toBe('Connection timeout');
+      expect(setCall.nextRunAt).toBeInstanceOf(Date);
+    });
+
+    // F1 — dedup pre-flight + no audit row + no immediate search on duplicate
+    describe('dedup', () => {
+      it('skips create when findDuplicate returns a match — no event, no immediate search, debug log', async () => {
         const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Original Author', asin: 'B001' }]),
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Already Have', author: 'Someone', asin: 'B_DUP' }]),
           test: vi.fn(),
         };
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        // Author lookup — found
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Original Author', slug: 'original-author' }]));
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'My Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        db.insert.mockReturnValue(mockDbChain([])); // bookAuthors + bookEvents
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
         db.update.mockReturnValue(mockDbChain([]));
 
-        // No metadata service passed
-        service = new ImportListService(inject<Db>(db), mockLog);
+        const findDuplicate = vi.fn().mockResolvedValue({ id: 999, title: 'Already Have' });
+        const create = vi.fn();
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue(null),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), mockMetadata, searchDeps,
+        );
+
         await service.syncDueLists();
 
-        // Book inserted with original ASIN
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ asin: 'B001', title: 'My Book' }),
+        expect(findDuplicate).toHaveBeenCalledWith('Already Have', [{ name: 'Someone' }], 'B_DUP');
+        expect(create).not.toHaveBeenCalled();
+        // No event row written
+        expect(eventInsertChain.values).not.toHaveBeenCalledWith(
+          expect.objectContaining({ source: 'import_list' }),
+        );
+        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        expect(mockLog.debug).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Already Have' }),
+          expect.stringContaining('Book already exists, skipped'),
         );
       });
 
-      it('item already has ASIN — metadata service not called, book inserted with original ASIN', async () => {
-        const mockMetadata = { search: vi.fn(), getBook: vi.fn() } as unknown as MetadataService;
+      it('authorless dedup: passes authorList: undefined to findDuplicate (NOT [{ name: undefined }])', async () => {
         const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Author', asin: 'B002' }]),
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Anonymous Book' }]),
           test: vi.fn(),
         };
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'My Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const create = vi.fn().mockResolvedValue(createdBook(11, 'Anonymous Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
+
         await service.syncDueLists();
 
-        expect(mockMetadata.search).not.toHaveBeenCalled();
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ asin: 'B002' }),
+        expect(findDuplicate).toHaveBeenCalledWith('Anonymous Book', undefined, undefined);
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
+      });
+    });
+
+    // F4 — author failure semantics: rollback inside BookService.create propagates;
+    // catch in syncList logs warn; no event row, no immediate search.
+    describe('author failure semantics (F4)', () => {
+      it('BookService.create throws — no event row, no immediate search, warn logged, sync continues', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Bad Item', author: 'Ghost Author' },
+            { title: 'Good Item', author: 'Real Author' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn()
+          .mockRejectedValueOnce(new Error('Failed to find or create author: Ghost Author'))
+          .mockResolvedValueOnce(createdBook(20, 'Good Item'));
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined, searchDeps,
         );
+
+        await service.syncDueLists();
+
+        // Bad Item: no event row insert and no immediate search
+        const eventValuesCalls = eventInsertChain.values.mock.calls as unknown[][];
+        const badItemEvent = eventValuesCalls.find((call) => {
+          const v = call[0] as { bookTitle?: string };
+          return v.bookTitle === 'Bad Item';
+        });
+        expect(badItemEvent).toBeUndefined();
+
+        // Good Item went through
+        expect(create).toHaveBeenCalledTimes(2);
+        const goodEvent = eventValuesCalls.find((call) => {
+          const v = call[0] as { bookTitle?: string };
+          return v.bookTitle === 'Good Item';
+        });
+        expect(goodEvent).toBeDefined();
+
+        // Bad Item's failure was warn-logged via syncList's per-item try/catch
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const failWarn = warnCalls.find((call) => {
+          const ctx = call[0] as { title?: string };
+          const msg = call[1] as string;
+          return ctx.title === 'Bad Item' && typeof msg === 'string' && msg.includes('Failed to process');
+        });
+        expect(failWarn).toBeDefined();
+
+        // Immediate search fires only for Good Item
+        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
+        const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(bookArg).toEqual(expect.objectContaining({ id: 20, title: 'Good Item' }));
+      });
+    });
+
+    // F12 + §3/§4 — enrichItem behavior: ASIN-identity vs search-candidate paths
+    describe('enrichItem paths', () => {
+      it('no metadata service — book inserted with item-supplied fields, no search/enrichBook calls', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Original Author', asin: 'B001', coverUrl: 'http://nyt.com/cover.jpg', description: 'desc' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'My Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'My Book', asin: 'B001', authors: [{ name: 'Original Author' }],
+          coverUrl: 'http://nyt.com/cover.jpg', description: 'desc',
+        }));
       });
 
-      it('metadata search returns zero results — book inserted with original ASIN unchanged', async () => {
+      // F12 — ASIN-bearing items now get rich metadata from enrichBook (NOT skipped)
+      it('item has ASIN → enrichBook called, NOT search; rich metadata flows to BookService.create', async () => {
         const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B002', title: 'Different Title From Audnexus', authors: [{ name: 'Audnexus Author' }],
+            narrators: ['Narrator A', 'Narrator B'],
+            seriesPrimary: { name: 'Real Series', position: 3, asin: 'SER1' },
+            series: [{ name: 'Broader Universe', position: 99, asin: 'UNI1' }],
+            duration: 36000, publishedDate: '2020-01-01', genres: ['Fantasy'],
+            description: 'rich description', coverUrl: 'http://audnexus/cover.jpg',
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Item Title', author: 'Item Author', asin: 'B002' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Item Title'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(mockMetadata.enrichBook).toHaveBeenCalledWith('B002');
+        expect(mockMetadata.search).not.toHaveBeenCalled();
+
+        // Provider-truth precedence on title/author/coverUrl/description (item.* ?? match.*),
+        // but rich match-only fields (narrators, series, duration, etc.) flow through.
+        // seriesPrimary wins over series[0] per #1088 prior art.
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Item Title',
+          authors: [{ name: 'Item Author' }],
+          asin: 'B002',
+          narrators: ['Narrator A', 'Narrator B'],
+          seriesName: 'Real Series',
+          seriesPosition: 3,
+          seriesAsin: 'SER1',
+          duration: 36000,
+          publishedDate: '2020-01-01',
+          genres: ['Fantasy'],
+        }));
+      });
+
+      // F12 — ASIN-identity path skips fuzzy validation: even a wildly-different
+      // metadata title/author is still adopted (because ASIN is an identity).
+      it('ASIN-identity path skips §4 fuzzy validation', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B00ASIN', title: 'Totally Different Book', authors: [{ name: 'Some Other Author' }],
+            narrators: ['N1'], duration: 1000,
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'Navessa Allen', asin: 'B00ASIN' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'GAME ON'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        // Match was adopted: narrators flowed through despite fuzzy mismatch
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'GAME ON',
+          authors: [{ name: 'Navessa Allen' }],  // item wins
+          narrators: ['N1'],                      // match flows through
+          duration: 1000,
+        }));
+      });
+
+      // §4 — search-candidate path applies fuzzy validation
+      it('search-candidate path: fuzzy mismatch falls back to provider raw fields, no enriched data', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn(),
+          search: vi.fn().mockResolvedValue({
+            books: [{
+              title: 'Game On', authors: [{ name: 'Janet Evanovich' }],
+              narrators: ['Wrong Narrator'], coverUrl: 'http://wrong.com/cover.jpg', asin: 'B_WRONG',
+            }],
+            authors: [], series: [],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'Navessa Allen', coverUrl: 'http://nyt/cover.jpg' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'GAME ON'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        // Author mismatch → match dropped → provider's coverUrl wins, no narrators, no asin
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'GAME ON',
+          authors: [{ name: 'Navessa Allen' }],
+          coverUrl: 'http://nyt/cover.jpg',
+        }));
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.narrators).toBeUndefined();
+        expect(callArgs.asin).toBeUndefined();
+      });
+
+      it('search-candidate path: title fuzzy match + author overlap → match adopted, rich fields flow', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn(),
+          search: vi.fn().mockResolvedValue({
+            books: [{
+              title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }],
+              narrators: ['Michael Kramer'], duration: 50000, asin: 'B_MATCH',
+              seriesPrimary: { name: 'The Stormlight Archive', position: 1, asin: 'SA' },
+              coverUrl: 'http://match.com/cover.jpg',
+            }],
+            authors: [], series: [],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'The Way of Kings', author: 'Brandon Sanderson' }]),
+          test: vi.fn(),
+        };
+        mockFactories.abs!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'The Way of Kings'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'The Way of Kings',
+          authors: [{ name: 'Brandon Sanderson' }],
+          narrators: ['Michael Kramer'],
+          duration: 50000,
+          asin: 'B_MATCH',
+          seriesName: 'The Stormlight Archive',
+          seriesPosition: 1,
+          seriesAsin: 'SA',
+          coverUrl: 'http://match.com/cover.jpg',
+        }));
+      });
+
+      it('search returns no books → match=null, raw item fields used', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn(),
           search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
-          getBook: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Obscure Book', author: 'Nobody' }]),
@@ -656,282 +908,105 @@ describe('ImportListService', () => {
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Nobody', slug: 'nobody' }]));
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'Obscure Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Obscure Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        expect(mockMetadata.search).toHaveBeenCalled();
-        // Book inserted with null ASIN (original item had none)
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ asin: null }),
-        );
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.title).toBe('Obscure Book');
+        expect(callArgs.narrators).toBeUndefined();
+        expect(callArgs.asin).toBeUndefined();
       });
 
-      it('metadata search match with providerId, getBook returns detail with ASIN — book inserted with detail ASIN and bookAuthors created', async () => {
+      it('metadata search throws → match=null, item still processed, warn logged', async () => {
         const mockMetadata = {
-          search: vi.fn().mockResolvedValue({
-            books: [{ asin: undefined, providerId: 'prov-123', authors: [{ name: 'Detail Author' }] }],
-            authors: [], series: [],
-          }),
-          getBook: vi.fn().mockResolvedValue({ asin: 'B_DETAIL' }),
-        } as unknown as MetadataService;
-        const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'Book With Provider', author: 'Author' }]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        // findOrCreateAuthor: existing author found
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        // Book insert
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'Book With Provider' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        // bookAuthors insert
-        const bookAuthorsChain = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookAuthorsChain);
-        // bookEvents insert
-        const bookEventsChain = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookEventsChain);
-        db.update.mockReturnValue(mockDbChain([]));
-
-        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
-        await service.syncDueLists();
-
-        expect(mockMetadata.getBook).toHaveBeenCalledWith('prov-123');
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ asin: 'B_DETAIL' }),
-        );
-        // bookAuthors insert with correct author ID
-        expect(bookAuthorsChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 1, position: 0 });
-        // bookEvents insert with correct payload
-        expect(bookEventsChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 10, eventType: 'grabbed', source: 'import_list' }),
-        );
-      });
-
-      it('metadata search match with providerId, getBook returns null — book inserted with search-result ASIN', async () => {
-        const mockMetadata = {
-          search: vi.fn().mockResolvedValue({
-            books: [{ asin: undefined, providerId: 'prov-456', authors: [{ name: 'Search Author' }] }],
-            authors: [], series: [],
-          }),
-          getBook: vi.fn().mockResolvedValue(null),
-        } as unknown as MetadataService;
-        const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'Fallback Book', author: 'Author' }]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'Fallback Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        db.insert.mockReturnValue(mockDbChain([]));
-        db.update.mockReturnValue(mockDbChain([]));
-
-        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
-        await service.syncDueLists();
-
-        expect(mockMetadata.getBook).toHaveBeenCalledWith('prov-456');
-        // ASIN is null (search result had undefined, getBook returned null)
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ asin: null }),
-        );
-      });
-
-      it('metadata search throws — item still processed with original values, warn logged', async () => {
-        const mockMetadata = {
+          enrichBook: vi.fn(),
           search: vi.fn().mockRejectedValue(new Error('API timeout')),
-          getBook: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
-          // Item WITHOUT asin to trigger search path
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Resilient Book', author: 'Author' }]),
           test: vi.fn(),
         };
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'Resilient Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        service = new ImportListService(inject<Db>(db), mockLog, mockMetadata);
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Resilient Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        // Metadata enrichment failure was logged at warn level
         expect(mockLog.warn).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Resilient Book' }),
           expect.stringContaining('Metadata enrichment failed'),
         );
-        // Book still inserted with null ASIN (original had none)
-        expect(bookInsertChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ asin: null, title: 'Resilient Book' }),
-        );
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Resilient Book' }));
       });
-    });
 
-    // #477 — findOrCreateAuthor branches (tested via syncDueLists)
-    describe('findOrCreateAuthor via syncDueLists (#477)', () => {
-      const dueList = {
-        id: 1, name: 'Test List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-
-      it('author does not exist — insert succeeds — bookAuthors row created with new author ID', async () => {
+      // Cover precedence at insert: provider wins over match
+      it('cover precedence: item.coverUrl wins over match.coverUrl', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn(),
+          search: vi.fn().mockResolvedValue({
+            books: [{
+              title: 'My Book', authors: [{ name: 'My Author' }],
+              coverUrl: 'http://match-cover.jpg',
+            }],
+            authors: [], series: [],
+          }),
+        } as unknown as MetadataService;
         const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'New Author' }]),
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'My Author', coverUrl: 'http://item-cover.jpg' }]),
           test: vi.fn(),
         };
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        // findOrCreateAuthor: initial lookup returns empty
-        db.select.mockReturnValueOnce(mockDbChain([]));
-        // Book insert succeeds
-        const bookInsertChain = mockDbChain([{ id: 10, title: 'New Book' }]);
-        db.insert.mockReturnValueOnce(bookInsertChain);
-        // Author insert succeeds (new author)
-        const authorInsertChain = mockDbChain([{ id: 50, name: 'New Author', slug: 'new-author' }]);
-        db.insert.mockReturnValueOnce(authorInsertChain);
-        // bookAuthors insert
-        const bookAuthorsChain = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookAuthorsChain);
-        // bookEvents insert
-        const bookEventsChain = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookEventsChain);
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        service = new ImportListService(inject<Db>(db), mockLog);
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'My Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        // bookAuthors insert uses new author ID 50
-        expect(bookAuthorsChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 50, position: 0 });
-        // bookEvents insert with correct payload
-        expect(bookEventsChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 10, bookTitle: 'New Book', eventType: 'grabbed', source: 'import_list' }),
-        );
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ coverUrl: 'http://item-cover.jpg' }));
       });
 
-      it('race condition — insert returns empty, retry SELECT finds author — bookAuthors created with recovered ID', async () => {
+      // seriesPrimary preferred over series[0] (#1088 prior art)
+      it('series identity: match.seriesPrimary wins over match.series[0]', async () => {
+        const mockMetadata = {
+          enrichBook: vi.fn().mockResolvedValue({
+            asin: 'B', title: 'X', authors: [{ name: 'A' }],
+            seriesPrimary: { name: 'Real Series', position: 2, asin: 'PRIM' },
+            series: [{ name: 'Universe', position: 50, asin: 'UNI' }],
+          }),
+          search: vi.fn(),
+        } as unknown as MetadataService;
         const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'Race Book', author: 'Race Author' }]),
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'X', author: 'A', asin: 'B' }]),
           test: vi.fn(),
         };
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        // findOrCreateAuthor: initial lookup returns empty
-        db.select.mockReturnValueOnce(mockDbChain([]));
-        // Book insert succeeds
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 10, title: 'Race Book' }]));
-        // Author insert returns empty (onConflictDoNothing — conflict)
-        db.insert.mockReturnValueOnce(mockDbChain([]));
-        // Retry SELECT finds the author
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 77, name: 'Race Author', slug: 'race-author' }]));
-        // bookAuthors insert
-        const bookAuthorsChain = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookAuthorsChain);
-        // bookEvents insert
-        const bookEventsChain = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookEventsChain);
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        service = new ImportListService(inject<Db>(db), mockLog);
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'X'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        // bookAuthors insert uses recovered author ID 77
-        expect(bookAuthorsChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 77, position: 0 });
-        // bookEvents still written
-        expect(bookEventsChain.values).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 10, bookTitle: 'Race Book', eventType: 'grabbed', source: 'import_list' }),
-        );
-      });
-
-      it('race condition null — insert returns empty, retry SELECT returns empty — bookAuthors skipped, bookEvents still inserted, sync continues', async () => {
-        const mockProvider = {
-          // Two items: first triggers null author path, second proves sync continues
-          fetchItems: vi.fn().mockResolvedValue([
-            { title: 'Null Race Book', author: 'Ghost Author' },
-            { title: 'Second Book', author: 'Real Author' },
-          ]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-
-        // --- Item 1: Null Race Book (ghost author path) ---
-        // findOrCreateAuthor: initial lookup returns empty
-        db.select.mockReturnValueOnce(mockDbChain([]));
-        // Book insert succeeds
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 10, title: 'Null Race Book' }]));
-        // Author insert returns empty (conflict)
-        db.insert.mockReturnValueOnce(mockDbChain([]));
-        // Retry SELECT also returns empty (null path)
-        db.select.mockReturnValueOnce(mockDbChain([]));
-        // bookEvents insert for item 1 (no bookAuthors — authorId is null)
-        const bookEventsChain1 = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookEventsChain1);
-
-        // --- Item 2: Second Book (proves sync continues) ---
-        // findOrCreateAuthor: found immediately
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 99, name: 'Real Author', slug: 'real-author' }]));
-        // Book insert succeeds
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 20, title: 'Second Book' }]));
-        // bookAuthors insert for item 2
-        const bookAuthorsChain2 = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookAuthorsChain2);
-        // bookEvents insert for item 2
-        const bookEventsChain2 = mockDbChain([]);
-        db.insert.mockReturnValueOnce(bookEventsChain2);
-
-        db.update.mockReturnValue(mockDbChain([]));
-
-        service = new ImportListService(inject<Db>(db), mockLog);
-        await service.syncDueLists();
-
-        // Item 1: bookEvents written despite null author
-        expect(bookEventsChain1.values).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 10, bookTitle: 'Null Race Book', eventType: 'grabbed', source: 'import_list' }),
-        );
-        // Item 1: bookAuthors NOT written (authorId was null)
-        // The 3 inserts for item 1 are: book, author(empty), bookEvents — no bookAuthors
-        // Verify by checking that item 2's bookAuthors chain IS called (proving the difference)
-        expect(bookAuthorsChain2.values).toHaveBeenCalledWith({ bookId: 20, authorId: 99, position: 0 });
-
-        // Item 2: bookEvents also written (sync continued after null path)
-        expect(bookEventsChain2.values).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 20, bookTitle: 'Second Book', eventType: 'grabbed', source: 'import_list' }),
-        );
-
-        // Both items logged as added
-        expect(mockLog.info).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 10, title: 'Null Race Book' }),
-          expect.stringContaining('Book added from import list'),
-        );
-        expect(mockLog.info).toHaveBeenCalledWith(
-          expect.objectContaining({ bookId: 20, title: 'Second Book' }),
-          expect.stringContaining('Book added from import list'),
-        );
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          seriesName: 'Real Series', seriesPosition: 2, seriesAsin: 'PRIM',
+        }));
       });
     });
 
@@ -947,27 +1022,18 @@ describe('ImportListService', () => {
       mockFactories.abs!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      const dueList = {
-        id: 1, name: 'Failing Items', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 60, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-      db.select.mockReturnValueOnce(mockDbChain([dueList]));
-      // Author lookups all fail → processItem throws for each
-      db.select.mockReturnValue(mockDbChain([]));
-      db.insert.mockReturnValue({ values: vi.fn().mockReturnValue({ onConflictDoNothing: vi.fn().mockReturnValue({ returning: vi.fn().mockRejectedValue(new Error('insert failed')) }) }) });
+      db.select.mockReturnValue(mockDbChain([dueAbsList({ syncIntervalMinutes: 60, name: 'Failing Items' })]));
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      const create = vi.fn().mockRejectedValue(new Error('insert failed'));
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
       await service.syncDueLists();
 
-      // Item failures are swallowed by syncList — outer syncDueLists treats it as success
+      // syncList swallows per-item failures via per-item try/catch
       const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
       expect(setCall.lastSyncError).toBeNull();
       expect(setCall.lastRunAt).toBeInstanceOf(Date);
-      // log.warn called for each failed item
       const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
       const failedItemWarns = warnCalls.filter((call) => {
         const msg = call[1] as string;
@@ -988,13 +1054,12 @@ describe('ImportListService', () => {
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
       await service.syncDueLists();
 
       const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
       expect(setCall.lastSyncError).toContain('Unknown provider type');
       expect(setCall.nextRunAt).toBeInstanceOf(Date);
-      // nextRunAt must advance by ~syncIntervalMinutes (60min), not reuse the old overdue timestamp
       const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
       expect(diff).toBeGreaterThan(59 * 60_000);
       expect(diff).toBeLessThan(61 * 60_000);
@@ -1004,30 +1069,9 @@ describe('ImportListService', () => {
       );
     });
 
-    // #967 — searchDeps wiring: honor quality.searchImmediately
-    describe('searchDeps wired (#967)', () => {
-      const dueList = {
-        id: 1, name: 'Test List', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-
-      function makeSearchDeps(quality: { searchImmediately?: boolean } = {}) {
-        const get = vi.fn(async (key: string) => {
-          if (key === 'quality') return { searchImmediately: false, ...quality };
-          return {};
-        });
-        return inject<ImmediateSearchDeps>({
-          indexerSearchService: {},
-          downloadOrchestrator: {},
-          settingsService: { get },
-          blacklistService: {},
-          eventBroadcaster: {},
-        });
-      }
-
-      it('triggers immediate search when searchImmediately=true and a new book is inserted', async () => {
+    // F9 — searchDeps wiring: honor quality.searchImmediately + new audit-vs-search ordering
+    describe('searchDeps wired (#967, F9)', () => {
+      it('triggers immediate search when searchImmediately=true and a new book is created', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Search Me', author: 'Search Author' }]),
           test: vi.fn(),
@@ -1035,14 +1079,15 @@ describe('ImportListService', () => {
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 5, name: 'Search Author', slug: 'search-author' }]));
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 42, title: 'Search Me' }]));
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
+        const create = vi.fn().mockResolvedValue(createdBook(42, 'Search Me'));
         const searchDeps = makeSearchDeps({ searchImmediately: true });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined, searchDeps,
+        );
         await service.syncDueLists();
 
         await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
@@ -1051,8 +1096,7 @@ describe('ImportListService', () => {
         expect(depsArg).toBe(searchDeps);
       });
 
-      it('passes empty authors array when enriched.author is absent', async () => {
-        // No metadata service + item without author — enrichItem returns no author
+      it('passes empty authors array when enriched.authorName is absent', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Anonymous Book' }]),
           test: vi.fn(),
@@ -1060,13 +1104,15 @@ describe('ImportListService', () => {
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 11, title: 'Anonymous Book' }]));
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
+        const create = vi.fn().mockResolvedValue(createdBook(11, 'Anonymous Book'));
         const searchDeps = makeSearchDeps({ searchImmediately: true });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined, searchDeps,
+        );
         await service.syncDueLists();
 
         await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
@@ -1082,34 +1128,15 @@ describe('ImportListService', () => {
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValueOnce(mockDbChain([{ id: 5, name: 'Author', slug: 'author' }]));
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 30, title: 'Quiet Book' }]));
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
+        const create = vi.fn().mockResolvedValue(createdBook(30, 'Quiet Book'));
         const searchDeps = makeSearchDeps({ searchImmediately: false });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
-        await service.syncDueLists();
-
-        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
-      });
-
-      it('does NOT trigger when book already exists (onConflictDoNothing returns empty)', async () => {
-        const mockProvider = {
-          fetchItems: vi.fn().mockResolvedValue([{ title: 'Existing Book', author: 'Author' }]),
-          test: vi.fn(),
-        };
-        mockFactories.abs!.mockReturnValue(mockProvider);
-
-        const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        // book insert returns empty — already exists
-        db.insert.mockReturnValueOnce(mockDbChain([]));
-        db.update.mockReturnValue(mockDbChain([]));
-
-        const searchDeps = makeSearchDeps({ searchImmediately: true });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined, searchDeps,
+        );
         await service.syncDueLists();
 
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
@@ -1127,25 +1154,18 @@ describe('ImportListService', () => {
         mockFactories.abs!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValueOnce(mockDbChain([dueList]));
-        db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Author', slug: 'author' }]));
-        // Three book inserts each return a unique row, then bookEvents/bookAuthors are empty
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 70, title: 'Book A' }]));
-        db.insert.mockReturnValueOnce(mockDbChain([])); // bookAuthors
-        db.insert.mockReturnValueOnce(mockDbChain([])); // bookEvents
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 71, title: 'Book B' }]));
-        db.insert.mockReturnValueOnce(mockDbChain([]));
-        db.insert.mockReturnValueOnce(mockDbChain([]));
-        db.insert.mockReturnValueOnce(mockDbChain([{ id: 72, title: 'Book C' }]));
-        db.insert.mockReturnValueOnce(mockDbChain([]));
-        db.insert.mockReturnValueOnce(mockDbChain([]));
+        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
+        let id = 70;
+        const create = vi.fn().mockImplementation(async (data: { title: string }) => createdBook(id++, data.title));
         const searchDeps = makeSearchDeps({ searchImmediately: true });
-        service = new ImportListService(inject<Db>(db), mockLog, undefined, searchDeps);
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined, searchDeps,
+        );
         await service.syncDueLists();
 
-        // The trigger is mocked to a no-op vi.fn(), so it cannot pollute settingsService.get calls.
         const get = searchDeps.settingsService.get as unknown as ReturnType<typeof vi.fn>;
         const qualityCalls = get.mock.calls.filter((args) => args[0] === 'quality');
         expect(qualityCalls).toHaveLength(1);
@@ -1171,19 +1191,15 @@ describe('ImportListService', () => {
         syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: null, createdAt: new Date(),
       };
-      // Due lists query returns both
       db.select.mockReturnValue(mockDbChain([list1, list2]));
-      // Update chains for both lists
       db.update.mockReturnValue(mockDbChain([]));
 
-      service = new ImportListService(inject<Db>(db), mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await service.syncDueLists();
 
-      // Both providers should have been called
       expect(failProvider.fetchItems).toHaveBeenCalled();
       expect(successProvider.fetchItems).toHaveBeenCalled();
-      // Error should be logged for the failing list
       expect(mockLog.error).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Failing ABS' }),
         expect.stringContaining('sync failed'),
@@ -1191,3 +1207,17 @@ describe('ImportListService', () => {
     });
   });
 });
+
+function makeSearchDeps(quality: { searchImmediately?: boolean } = {}) {
+  const get = vi.fn(async (key: string) => {
+    if (key === 'quality') return { searchImmediately: false, ...quality };
+    return {};
+  });
+  return inject<ImmediateSearchDeps>({
+    indexerSearchService: {},
+    downloadOrchestrator: {},
+    settingsService: { get },
+    blacklistService: {},
+    eventBroadcaster: {},
+  });
+}
