@@ -253,6 +253,64 @@ describe('SeriesRefreshService.sweepOrphanSeries — housekeeping orphan cleanup
     expect(allSeries).toHaveLength(1);
   });
 
+  // F1 (PR #1111 review): the issue requires non-zero deletions to log
+  // { count, names: first 10 } at info AND zero deletions to emit no info line.
+  // Direct-against-the-logger coverage so removing the log.info call or
+  // dropping the names cap would fail the suite.
+  describe('logging contract', () => {
+    it('emits a single info log with count and first-10 names on non-zero deletions, capping names at 10', async () => {
+      const sixtyDaysAgo = new Date(Date.now() - 60 * ONE_DAY_MS);
+      // 12 orphan series — exceeds the 10-name cap so we can verify it.
+      const rows = Array.from({ length: 12 }, (_, i) => ({
+        provider: 'audible' as const,
+        providerSeriesId: `LOG_${i}`,
+        name: `Log Series ${String(i).padStart(2, '0')}`,
+        normalizedName: `log series ${i}`,
+        lastFetchedAt: sixtyDaysAgo,
+      }));
+      await db.insert(series).values(rows);
+
+      const service = makeService(db, log);
+      const result = await service.sweepOrphanSeries(30);
+
+      expect(result).toEqual({ deleted: 12 });
+      const infoMock = log.info as unknown as { mock: { calls: Array<[unknown, string]> } };
+      const sweepCalls = infoMock.mock.calls.filter(([, msg]) => msg === 'Housekeeping: pruned orphan series');
+      expect(sweepCalls).toHaveLength(1);
+      const [payload, message] = sweepCalls[0]!;
+      expect(message).toBe('Housekeeping: pruned orphan series');
+      const typed = payload as { count: number; names: string[] };
+      expect(typed.count).toBe(12);
+      expect(typed.names).toHaveLength(10);
+      // Every logged name corresponds to an actual seeded orphan — no foreign rows
+      // sneak into the forensic sample.
+      const seededNames = new Set(rows.map((r) => r.name));
+      for (const name of typed.names) {
+        expect(seededNames.has(name)).toBe(true);
+      }
+    });
+
+    it('emits no info log when there are zero deletions', async () => {
+      // Seed a single survivor so we exercise the predicate but match zero orphans.
+      const fiveDaysAgo = new Date(Date.now() - 5 * ONE_DAY_MS);
+      await db.insert(series).values({
+        provider: 'audible',
+        providerSeriesId: 'STILL_FRESH',
+        name: 'Still Fresh',
+        normalizedName: 'still fresh',
+        lastFetchedAt: fiveDaysAgo,
+      });
+
+      const service = makeService(db, log);
+      const result = await service.sweepOrphanSeries(30);
+
+      expect(result).toEqual({ deleted: 0 });
+      const infoMock = log.info as unknown as { mock: { calls: Array<[unknown, string]> } };
+      const sweepCalls = infoMock.mock.calls.filter(([, msg]) => msg === 'Housekeeping: pruned orphan series');
+      expect(sweepCalls).toHaveLength(0);
+    });
+  });
+
   it('chunks deletions to stay under SQLite\'s 999-bind-parameter limit (1200 orphans)', async () => {
     const sixtyDaysAgo = new Date(Date.now() - 60 * ONE_DAY_MS);
     const rows = Array.from({ length: 1200 }, (_, i) => ({
