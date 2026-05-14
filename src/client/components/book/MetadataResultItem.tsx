@@ -60,11 +60,17 @@ function MetadataDetails({ meta, showNarrators, showSeries, showDuration }: {
           {meta.narrators.join(', ')}
         </p>
       )}
-      {showSeries && meta.series && meta.series.length > 0 && (
-        <p className="text-[10px] text-muted-foreground/40 truncate">
-          {meta.series[0]!.name}{meta.series[0]!.position != null ? ` #${meta.series[0]!.position}` : ''}
-        </p>
-      )}
+      {showSeries && (() => {
+        // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) for display —
+        // `series[0]` on Audible can be a broader universe entry rather than the real series.
+        const primary = meta.seriesPrimary ?? meta.series?.[0];
+        if (!primary?.name) return null;
+        return (
+          <p className="text-[10px] text-muted-foreground/40 truncate">
+            {primary.name}{primary.position != null ? ` #${primary.position}` : ''}
+          </p>
+        );
+      })()}
       {showDuration && meta.duration != null && meta.duration > 0 && (
         <p className="text-[10px] text-muted-foreground/40">
           {formatDurationMinutes(meta.duration)}

@@ -36,13 +36,22 @@ function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknow
   return updates;
 }
 
-/** Fill series fields independently (matching library-scan.service.ts:432-433). */
+/**
+ * Fill series fields independently (matching library-scan.service.ts:432-433).
+ * Prefers the Audnexus-derived `seriesPrimary` canonical ref, falling back to
+ * `series[0]` only when `seriesPrimary` is absent — `series[0]` on Audible can
+ * be a broader universe ref (e.g. Cosmere) rather than the real book series
+ * (Stormlight Archive). (#1088 / #1097)
+ */
 function fillSeriesFields(
   book: ExistingBookFields,
-  series: Array<{ name?: string | undefined; position?: number | undefined }> | undefined,
+  result: {
+    seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined;
+    series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined;
+  },
 ): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
-  const primary = series && series[0];
+  const primary = result.seriesPrimary ?? result.series?.[0];
   if (!primary) return updates;
   if (primary.name && !book.seriesName) updates.seriesName = primary.name;
   if (primary.position != null && book.seriesPosition == null) updates.seriesPosition = primary.position;
@@ -52,7 +61,7 @@ function fillSeriesFields(
 /** Build the scalar updates and return fill counts for batch logging. */
 function buildMetadataUpdates(
   book: ExistingBookFields,
-  result: { title?: string | null | undefined; description?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
+  result: { title?: string | null | undefined; description?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
 ) {
   const updates: Record<string, unknown> = {};
   let filledDuration = 0;
@@ -73,7 +82,7 @@ function buildMetadataUpdates(
   if (scalarFills.description) filledDescription++;
   Object.assign(updates, scalarFills);
 
-  Object.assign(updates, fillSeriesFields(book, result.series));
+  Object.assign(updates, fillSeriesFields(book, result));
 
   return { updates, filledDuration, filledTitle, filledDescription };
 }

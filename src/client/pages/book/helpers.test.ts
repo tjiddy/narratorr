@@ -153,4 +153,28 @@ describe('mergeBookData', () => {
       expect(result.metaDots).toEqual(['28h 28m', '2007', 'Little, Brown & Company']);
     });
   });
+
+  // #1097 — metadata fallback prefers seriesPrimary over series[0]
+  describe('canonical primary-series preference (#1097)', () => {
+    it('prefers metadataBook.seriesPrimary over metadataBook.series[0] when library has no series', () => {
+      const book = createMockBook({ seriesName: null, seriesPosition: null });
+      const result = mergeBookData(book, {
+        seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+        series: [
+          { name: 'Cosmere', position: 5 },
+          { name: 'The Stormlight Archive', position: 2 },
+        ],
+      });
+      expect(result.metaDots).toContain('The Stormlight Archive #2');
+      expect(result.metaDots.some((d) => /Cosmere/.test(d))).toBe(false);
+    });
+
+    it('falls back to metadataBook.series[0] when seriesPrimary is absent', () => {
+      const book = createMockBook({ seriesName: null, seriesPosition: null });
+      const result = mergeBookData(book, {
+        series: [{ name: 'Discworld', position: 9 }],
+      });
+      expect(result.metaDots).toContain('Discworld #9');
+    });
+  });
 });

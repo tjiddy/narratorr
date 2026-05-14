@@ -82,6 +82,35 @@ describe('mapBookMetadataToPayload', () => {
     const payload = mapBookMetadataToPayload(book);
     expect(payload.searchImmediately).toBeUndefined();
   });
+
+  // #1097 — canonical primary-series preference
+  it('prefers seriesPrimary over series[0] when both are present (#1097)', () => {
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      authors: [{ name: 'Brandon Sanderson' }],
+      seriesPrimary: { name: 'The Stormlight Archive', position: 1, asin: 'B009NF6YPM' },
+      series: [
+        { name: 'Cosmere', position: 4, asin: 'B07CWP1KCD' },
+        { name: 'The Stormlight Archive', position: 1, asin: 'B009NF6YPM' },
+      ],
+    };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.seriesName).toBe('The Stormlight Archive');
+    expect(payload.seriesPosition).toBe(1);
+    expect(payload.seriesAsin).toBe('B009NF6YPM');
+    expect(payload.seriesProvider).toBe('audible');
+  });
+
+  it('falls back to series[0] when seriesPrimary is absent (#1097)', () => {
+    const book: BookMetadata = {
+      title: 'Eric',
+      authors: [{ name: 'Terry Pratchett' }],
+      series: [{ name: 'Discworld', position: 9 }],
+    };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.seriesName).toBe('Discworld');
+    expect(payload.seriesPosition).toBe(9);
+  });
 });
 
 describe('isBookInLibrary', () => {

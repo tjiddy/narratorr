@@ -88,13 +88,14 @@ const TAG_AUTHOR_WEIGHT = 0.4;
 
 /**
  * Multi-form title score for a tag-derived input against a book-metadata
- * candidate. Composes 1-6 candidate strings from `result.title` and
- * `result.series[0]` and returns the max dice across them.
+ * candidate. Composes 1-6 candidate strings from `result.title` and the
+ * canonical primary-series ref (`seriesPrimary`, falling back to `series[0]`)
+ * and returns the max dice across them.
  *
  * Two distinct concerns, both load-bearing:
  *
  * 1. Symmetric cleaning (#1011) — `cleanTagTitle` runs on `result.title` AND
- *    `result.series[0].name` so publisher decoration like "(Full Audiobook)"
+ *    the primary-series name so publisher decoration like "(Full Audiobook)"
  *    or "[Bonus]" doesn't poison dice. The input is already cleaned upstream
  *    by `deriveTagQuery`, so cleaning the result side restores symmetry.
  *
@@ -107,15 +108,22 @@ const TAG_AUTHOR_WEIGHT = 0.4;
  *    Eric-shape (`title="Eric"`, `series=[{name:"Discworld"}]`,
  *    input="Eric: Discworld") scores 1.0.
  *
+ * Canonical-series source (#1088 / #1097): `seriesPrimary` is the Audnexus-
+ * derived canonical ref. When present it is preferred over `series[0]`, which
+ * on Audible can be a broader universe/meta-series (e.g. Cosmere) rather than
+ * the real book series (Stormlight Archive). Fallback to `series[0]` only
+ * when `seriesPrimary` is absent (Audible-only candidates).
+ *
  * Empty-array guard: `Math.max(...[])` returns `-Infinity`. Without the guard,
- * a result with `title === undefined` and missing/empty `series[].name` would
+ * a result with `title === undefined` and missing/empty series name would
  * silently return `-Infinity` and pass any floor check downstream. The
  * `scores.length > 0 ? Math.max(...scores) : 0` form returns `0` instead.
  */
 export function tagTitleScore(input: string, result: BookMetadata): number {
   const title = cleanTagTitle(result.title ?? '');
-  const seriesName = cleanTagTitle(result.series?.[0]?.name ?? '');
-  const seriesPos = result.series?.[0]?.position;
+  const primary = result.seriesPrimary ?? result.series?.[0];
+  const seriesName = cleanTagTitle(primary?.name ?? '');
+  const seriesPos = primary?.position;
   const candidates: string[] = [title];
   if (seriesName) {
     candidates.push(
@@ -134,8 +142,8 @@ export function tagTitleScore(input: string, result: BookMetadata): number {
 
 /**
  * Tag-pass scoring: composes the result-side title from `result.title` +
- * `result.series[0]` via `tagTitleScore`, removing the cleanName-derived
- * symmetry assumption from #984. Author side is preserved exactly from #995 —
+ * the canonical primary-series ref via `tagTitleScore`, removing the
+ * cleanName-derived symmetry assumption from #984. Author side is preserved exactly from #995 —
  * normalizeNarrator on both sides so dice scores reflect semantic similarity,
  * not punctuation noise.
  *

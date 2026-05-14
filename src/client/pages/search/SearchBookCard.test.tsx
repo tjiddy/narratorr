@@ -84,6 +84,25 @@ describe('SearchBookCard', () => {
     expect(screen.queryByText(/\d+[hm]/)).not.toBeInTheDocument();
   });
 
+  // #1097 — series display prefers seriesPrimary over series[0]
+  it('renders seriesPrimary instead of series[0] when both are present (#1097)', () => {
+    renderCard({
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+      series: [
+        { name: 'Cosmere', position: 5 },
+        { name: 'The Stormlight Archive', position: 2 },
+      ],
+    });
+    expect(screen.getByText(/The Stormlight Archive/)).toBeInTheDocument();
+    expect(screen.getByText(/#2/)).toBeInTheDocument();
+    expect(screen.queryByText(/Cosmere/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to series[0] when seriesPrimary is absent (#1097)', () => {
+    renderCard({ seriesPrimary: undefined, series: [{ name: 'Discworld', position: 9 }] });
+    expect(screen.getByText(/Discworld/)).toBeInTheDocument();
+  });
+
   it('shows Add button when not in library', () => {
     renderCard();
     expect(screen.getByRole('button')).toBeInTheDocument();

@@ -383,6 +383,28 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     );
     expect(path).toBe(targetPath);
   });
+
+  // #1097 F1 — copyToLibrary uses canonical seriesPrimary over series[0] for {series} / {seriesPosition} tokens
+  it('uses meta.seriesPrimary for {series}/{seriesPosition} tokens when seriesPrimary differs from series[0] (#1097)', async () => {
+    const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
+    // Pre-#1097 behavior would have used series[0] (Cosmere #5) and filed the book in the wrong folder.
+    const targetPath = '/library/Author/The Stormlight Archive #2/Title';
+    const path = await copyToLibrary(
+      { path: targetPath, title: 'Title', authorName: 'Author' },
+      {
+        title: 'Title',
+        authors: [{ name: 'Author' }],
+        seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+        series: [
+          { name: 'The Cosmere', position: 5 },
+          { name: 'The Stormlight Archive', position: 2 },
+        ],
+      },
+      'copy',
+      deps,
+    );
+    expect(path).toBe(targetPath);
+  });
 });
 
 describe('confirmImport — async series refresh enqueue (#1071 F8)', () => {
@@ -446,6 +468,42 @@ describe('confirmImport — async series refresh enqueue (#1071 F8)', () => {
       bookId: 42,
       seriesName: 'The Band',
       providerSeriesId: 'B07DHQY7DX',
+    }));
+  });
+
+  // #1097 F2 — enqueueImportSeriesRefresh reads providerSeriesId from canonical seriesPrimary, not series[0]
+  it('uses metadata.seriesPrimary.asin for providerSeriesId when it differs from series[0].asin (#1097)', async () => {
+    mockBookService.create.mockResolvedValueOnce({ id: 99, title: 'The Way of Kings', asin: 'B0041JKFJW', seriesName: 'The Stormlight Archive', status: 'importing' });
+
+    await confirmImport(
+      [{
+        path: '/a',
+        title: 'The Way of Kings',
+        authorName: 'Brandon Sanderson',
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 1,
+        asin: 'B0041JKFJW',
+        metadata: {
+          title: 'The Way of Kings',
+          authors: [{ name: 'Brandon Sanderson' }],
+          asin: 'B0041JKFJW',
+          // Pre-#1097: providerSeriesId would be the Cosmere ASIN, not the Stormlight ASIN.
+          seriesPrimary: { name: 'The Stormlight Archive', position: 1, asin: 'B009NF6YPM' },
+          series: [
+            { name: 'The Cosmere', position: 4, asin: 'B07CWP1KCD' },
+            { name: 'The Stormlight Archive', position: 1, asin: 'B009NF6YPM' },
+          ],
+        },
+      }],
+      deps,
+      'copy',
+    );
+
+    expect(mockSeriesRefresh.enqueueRefresh).toHaveBeenCalledTimes(1);
+    expect(mockSeriesRefresh.enqueueRefresh).toHaveBeenCalledWith('B0041JKFJW', expect.objectContaining({
+      bookId: 99,
+      seriesName: 'The Stormlight Archive',
+      providerSeriesId: 'B009NF6YPM',
     }));
   });
 

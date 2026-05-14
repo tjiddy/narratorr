@@ -50,14 +50,17 @@ export async function copyToLibrary(
   const librarySettings = await settingsService.get('library');
   const namingOptions = toNamingOptions(librarySettings);
   // Provider-truth precedence: accepted provider metadata wins over raw item/tag fields.
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
+  // on Audible can be a broader universe entry rather than the real book series.
   // When `meta` is null (no provider match accepted), fall back to item-derived values.
+  const metaPrimarySeries = meta?.seriesPrimary ?? meta?.series?.[0];
   const targetPath = buildTargetPath(
     librarySettings.path,
     librarySettings.folderFormat,
     {
       title: item.title,
-      seriesName: meta?.series?.[0]?.name ?? item.seriesName ?? undefined,
-      seriesPosition: meta?.series?.[0]?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
+      seriesName: metaPrimarySeries?.name ?? item.seriesName ?? undefined,
+      seriesPosition: metaPrimarySeries?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
       narrators: item.narrators?.length
         ? item.narrators.map(name => ({ name }))
         : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
@@ -112,7 +115,9 @@ function enqueueImportSeriesRefresh(
 ): void {
   if (!deps.seriesRefreshService) return;
   if (!book.asin || !book.seriesName) return;
-  const providerSeriesId = item.metadata?.series?.[0]?.asin;
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
+  // on Audible can be a broader universe entry rather than the real book series.
+  const providerSeriesId = (item.metadata?.seriesPrimary ?? item.metadata?.series?.[0])?.asin;
   deps.seriesRefreshService.enqueueRefresh(book.asin, {
     bookId: book.id,
     seriesName: book.seriesName,

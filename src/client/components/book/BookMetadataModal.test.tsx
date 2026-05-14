@@ -647,6 +647,37 @@ describe('BookMetadataModal', () => {
         expect(screen.getByLabelText(/narrator/i)).toHaveValue('');
       });
     });
+
+    // #1097 — applyMetadata prefers seriesPrimary over series[0]
+    it('prefers seriesPrimary over series[0] when populating edit fields (#1097)', async () => {
+      const { api } = await import('@/lib/api');
+      const searchMock = vi.mocked(api.searchMetadata);
+      searchMock.mockResolvedValue({
+        books: [createMockBookMetadata({
+          title: 'Stormlight Book',
+          seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+          series: [
+            { name: 'Cosmere', position: 5 },
+            { name: 'The Stormlight Archive', position: 2 },
+          ],
+        })],
+        authors: [],
+        series: [],
+      });
+
+      const user = userEvent.setup();
+      renderModal();
+
+      await user.click(screen.getByText('Search for metadata'));
+      await user.click(screen.getByRole('button', { name: 'Search' }));
+      await screen.findByText('Stormlight Book');
+      await user.click(screen.getByText('Stormlight Book'));
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
+        expect(screen.getByLabelText(/position/i)).toHaveValue('2');
+      });
+    });
   });
 
   it('does not call onClose when the backdrop is clicked (closeOnBackdropClick={false})', async () => {

@@ -55,3 +55,30 @@ describe('buildEditedFromBestMatch — seriesPosition fallback (#1042)', () => {
     expect(result.seriesPosition).toBe(0);
   });
 });
+
+describe('buildEditedFromBestMatch — #1097 canonical primary-series preference', () => {
+  it('prefers seriesPrimary over series[0] for series and seriesPosition', () => {
+    const result = buildEditedFromBestMatch(
+      {
+        ...baseBestMatch,
+        seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+        series: [
+          { name: 'Cosmere', position: 5 },
+          { name: 'The Stormlight Archive', position: 2 },
+        ],
+      },
+      baseFallback,
+    );
+    expect(result.series).toBe('The Stormlight Archive');
+    expect(result.seriesPosition).toBe(2);
+  });
+
+  it('falls back to series[0] when seriesPrimary is absent', () => {
+    const result = buildEditedFromBestMatch(
+      { ...baseBestMatch, series: [{ name: 'Discworld', position: 9 }] },
+      baseFallback,
+    );
+    expect(result.series).toBe('Discworld');
+    expect(result.seriesPosition).toBe(9);
+  });
+});

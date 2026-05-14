@@ -18,8 +18,12 @@ export function groupBooksBySeries(books: BookMetadata[]): { series: SeriesGroup
   const seriesMap = new Map<string, BookMetadata[]>();
   const standalone: BookMetadata[] = [];
 
+  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) so books
+  // are grouped under their real series, not a broader universe entry.
+  const primaryRef = (b: BookMetadata) => b.seriesPrimary ?? b.series?.[0];
+
   for (const book of books) {
-    const s = book.series?.[0];
+    const s = primaryRef(book);
     if (s?.name) {
       const existing = seriesMap.get(s.name) ?? [];
       existing.push(book);
@@ -33,8 +37,8 @@ export function groupBooksBySeries(books: BookMetadata[]): { series: SeriesGroup
     .map(([name, seriesBooks]) => ({
       name,
       books: seriesBooks.sort((a, b) => {
-        const posA = a.series?.[0]?.position ?? Infinity;
-        const posB = b.series?.[0]?.position ?? Infinity;
+        const posA = primaryRef(a)?.position ?? Infinity;
+        const posB = primaryRef(b)?.position ?? Infinity;
         return posA - posB;
       }),
     }))

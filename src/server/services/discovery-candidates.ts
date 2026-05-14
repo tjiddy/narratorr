@@ -216,14 +216,29 @@ function isTitleAuthorDuplicate(title: string, authorName: string, existing: Arr
 }
 
 export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, reasonContext: string, score: number): ScoredCandidate {
+  // `seriesPrimary` is the canonical primary-series ref (Audnexus-derived, #1088).
+  // Fall back to `series?.[0]` for books whose enrichment didn't populate it.
+  const primary = book.seriesPrimary ?? book.series?.[0];
   return {
     asin: book.asin!, title: book.title, authorName: book.authors?.[0]?.name ?? 'Unknown',
     authorAsin: book.authors?.[0]?.asin,
     narratorName: book.narrators?.[0], coverUrl: book.coverUrl, duration: book.duration,
     publishedDate: book.publishedDate, language: book.language, genres: book.genres,
-    seriesName: book.series?.[0]?.name, seriesPosition: book.series?.[0]?.position,
+    seriesName: primary?.name, seriesPosition: primary?.position,
     reason, reasonContext, score,
   };
+}
+
+/**
+ * Series-gap bonus against the canonical primary-series ref so a universe
+ * entry in `series[0]` (e.g. Cosmere) doesn't shadow the real next-in-series
+ * gap (Stormlight). (#1097)
+ */
+function seriesGapBonus(book: BookMetadata, signals: LibrarySignals): number {
+  const primary = book.seriesPrimary ?? book.series?.[0];
+  if (!primary?.name || primary.position == null) return 0;
+  const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === primary.name!.toLowerCase());
+  return gap && nearlyEqual(primary.position, gap.nextPosition) ? 20 : 0;
 }
 
 export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, strength: number, signals: LibrarySignals, multipliers: WeightMultipliers = DEFAULT_MULTIPLIERS): number {
@@ -237,10 +252,7 @@ export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, str
     twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
     if (new Date(book.publishedDate) >= twoYearsAgo) score += 10;
   }
-  if (reason === 'series' && book.series?.[0]?.name && book.series[0].position != null) {
-    const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === book.series![0]!.name!.toLowerCase());
-    if (gap && nearlyEqual(book.series[0].position!, gap.nextPosition)) score += 20;
-  }
+  if (reason === 'series') score += seriesGapBonus(book, signals);
 
   return Math.min(Math.max(score, 0), 100);
 }
