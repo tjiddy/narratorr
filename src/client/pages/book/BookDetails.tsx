@@ -216,7 +216,7 @@ function BookDetailsModals({
           bookId={libraryBook.id}
           isOpen={modals.confirmRetag}
           onClose={() => close('confirmRetag')}
-          onConfirm={(excludeFields) => retagMutation.mutate({ excludeFields })}
+          onConfirm={(payload) => retagMutation.mutate(payload)}
         />
       )}
 

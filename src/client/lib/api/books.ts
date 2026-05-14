@@ -154,7 +154,7 @@ export type RetagExcludableField =
   | 'track';
 
 export interface RetagPlanFileDiff {
-  field: string;
+  field: RetagExcludableField;
   current: string | null;
   next: string | null;
 }
@@ -166,21 +166,28 @@ export interface RetagPlanFile {
   coverPending?: boolean;
 }
 
+export type RetagMode = 'overwrite' | 'populate_missing';
+
 export interface RetagPlan {
-  mode: 'overwrite' | 'populate_missing';
+  mode: RetagMode;
   embedCover: boolean;
   hasCoverFile: boolean;
   isSingleFile: boolean;
   canonical: {
+    album: string;
+    title: string;
     artist?: string;
     albumArtist?: string;
-    album?: string;
-    title?: string;
     composer?: string;
     grouping?: string;
   };
   files: RetagPlanFile[];
   warnings: string[];
+}
+
+export interface RetagOverrides {
+  mode?: RetagMode;
+  embedCover?: boolean;
 }
 
 /** Thrown when GET /books/:id/retag/preview returns the ffmpeg-not-configured error. */
@@ -304,22 +311,32 @@ export const booksApi = {
       throw error;
     }
   },
-  retagBook: (id: number, options?: { excludeFields?: RetagExcludableField[] }) => {
-    const hasBody = options && options.excludeFields && options.excludeFields.length > 0;
+  retagBook: (
+    id: number,
+    options?: { excludeFields?: RetagExcludableField[]; mode?: RetagMode; embedCover?: boolean },
+  ) => {
+    const body: Record<string, unknown> = {};
+    if (options?.excludeFields && options.excludeFields.length > 0) body.excludeFields = options.excludeFields;
+    if (options?.mode !== undefined) body.mode = options.mode;
+    if (options?.embedCover !== undefined) body.embedCover = options.embedCover;
+    const hasBody = Object.keys(body).length > 0;
     return fetchApi<RetagResult>(`/books/${id}/retag`, {
       method: 'POST',
-      ...(hasBody && { body: JSON.stringify({ excludeFields: options.excludeFields }) }),
+      ...(hasBody && { body: JSON.stringify(body) }),
     });
   },
-  getBookRetagPreview: async (id: number): Promise<RetagPlan> => {
+  getBookRetagPreview: async (id: number, overrides?: RetagOverrides): Promise<RetagPlan> => {
+    const qs = new URLSearchParams();
+    if (overrides?.mode !== undefined) qs.set('mode', overrides.mode);
+    if (overrides?.embedCover !== undefined) qs.set('embedCover', String(overrides.embedCover));
+    const suffix = qs.toString() ? `?${qs}` : '';
     try {
-      return await fetchApi<RetagPlan>(`/books/${id}/retag/preview`);
+      return await fetchApi<RetagPlan>(`/books/${id}/retag/preview${suffix}`);
     } catch (error: unknown) {
       if (
         error instanceof ApiError &&
-        error.status === 400 &&
-        typeof (error.body as { error?: string })?.error === 'string' &&
-        (error.body as { error: string }).error.toLowerCase().includes('ffmpeg is not configured')
+        error.status === 503 &&
+        typeof (error.body as { error?: string })?.error === 'string'
       ) {
         throw new RetagFfmpegNotConfiguredError((error.body as { error: string }).error);
       }

@@ -1,4 +1,4 @@
-import type { BookListParams } from './api/books.js';
+import type { BookListParams, RetagOverrides } from './api/books.js';
 import type { ActivityListParams } from './api/activity.js';
 import type { EventHistoryParams } from './api/event-history.js';
 import type { BlacklistListParams } from './api/blacklist.js';
@@ -10,7 +10,10 @@ export const queryKeys = {
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
-  bookRetagPreview: (id: number) => ['books', id, 'retag-preview'] as const,
+  bookRetagPreview: (id: number, overrides?: RetagOverrides) =>
+    overrides && (overrides.mode !== undefined || overrides.embedCover !== undefined)
+      ? ['books', id, 'retag-preview', overrides] as const
+      : ['books', id, 'retag-preview'] as const,
   activity: (params?: ActivityListParams) => params ? ['activity', params] as const : ['activity'] as const,
   activityCounts: () => ['activity', 'counts'] as const,
   metadata: {

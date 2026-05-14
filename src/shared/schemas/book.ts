@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tagModeSchema } from './settings/tagging.js';
 
 // ============================================================================
 // Book schemas
@@ -86,8 +87,21 @@ export type RetagExcludableField = z.infer<typeof retagExcludableFieldSchema>;
 
 export const retagBodySchema = z.object({
   excludeFields: z.array(retagExcludableFieldSchema).optional(),
-}).nullish();
+  mode: tagModeSchema.optional(),
+  embedCover: z.boolean().optional(),
+}).strict().nullish();
 export type RetagBody = z.infer<typeof retagBodySchema>;
+
+/**
+ * Query parameters for `GET /api/books/:id/retag/preview`. `embedCover` is
+ * coerced from string (`'true'`/`'false'`) to boolean because URL query strings
+ * carry no native boolean — undefined query params fall back to settings.
+ */
+export const retagPreviewQuerySchema = z.object({
+  mode: tagModeSchema.optional(),
+  embedCover: z.enum(['true', 'false']).optional().transform(v => v === undefined ? undefined : v === 'true'),
+}).strict();
+export type RetagPreviewQuery = z.infer<typeof retagPreviewQuerySchema>;
 
 export type BookAuthorInput = z.infer<typeof bookAuthorInputSchema>;
 export type BookListQuery = z.infer<typeof bookListQuerySchema>;

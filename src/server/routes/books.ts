@@ -38,11 +38,13 @@ import {
   updateBookBodySchema,
   deleteBookQuerySchema,
   retagBodySchema,
+  retagPreviewQuerySchema,
   DEFAULT_LIMITS,
   type CreateBookBody,
   type UpdateBookBody,
   type DeleteBookQuery,
   type RetagBody,
+  type RetagPreviewQuery,
 } from '../../shared/schemas.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
@@ -249,6 +251,17 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
   );
 }
 
+/** Build the overrides object the tagging service expects, omitting unset fields
+ *  so the resulting object satisfies `exactOptionalPropertyTypes`. */
+function pickRetagOverrides(
+  source: { mode?: 'populate_missing' | 'overwrite' | undefined; embedCover?: boolean | undefined } | undefined,
+): { mode?: 'populate_missing' | 'overwrite'; embedCover?: boolean } {
+  const out: { mode?: 'populate_missing' | 'overwrite'; embedCover?: boolean } = {};
+  if (source?.mode !== undefined) out.mode = source.mode;
+  if (source?.embedCover !== undefined) out.embedCover = source.embedCover;
+  return out;
+}
+
 export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   const { bookService, bookListService, renameService, mergeService, taggingService, indexerSearchService } = deps;
   // GET /api/books
@@ -350,12 +363,12 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   }
 
   // GET /api/books/:id/retag/preview — dry-run plan for the re-tag action
-  app.get<{ Params: IdParam }>(
+  app.get<{ Params: IdParam; Querystring: RetagPreviewQuery }>(
     '/api/books/:id/retag/preview',
-    { schema: { params: idParamSchema } },
+    { schema: { params: idParamSchema, querystring: retagPreviewQuerySchema } },
     async (request) => {
       const { id } = request.params;
-      return taggingService.planRetag(id);
+      return taggingService.planRetag(id, pickRetagOverrides(request.query));
     },
   );
 
@@ -366,7 +379,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     async (request) => {
       const { id } = request.params;
       const excludeFields = new Set(request.body?.excludeFields ?? []);
-      const result = await taggingService.retagBook(id, excludeFields);
+      const result = await taggingService.retagBook(id, excludeFields, pickRetagOverrides(request.body ?? undefined));
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
       return result;
     },

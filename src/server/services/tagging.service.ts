@@ -206,6 +206,14 @@ async function warnUnsupportedFormats(
   return { skipped: unsupported.length, warnings, entries: unsupported };
 }
 
+function bookAuthorString(book: { authors: { name: string }[] }): string | null {
+  return book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
+}
+
+function bookNarratorString(book: { narrators: { name: string }[] }): string | null {
+  return book.narrators.length > 0 ? book.narrators.map(n => n.name).join(', ') : null;
+}
+
 export class TaggingService {
   constructor(
     _db: Db,
@@ -308,26 +316,26 @@ export class TaggingService {
   async retagBook(
     bookId: number,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
+    overrides: { mode?: TagMode; embedCover?: boolean } = {},
   ): Promise<RetagResult> {
     const { book, ffmpegPath, taggingSettings } = await this.resolveRetagInputs(bookId);
-
-    const authorStr = book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
-    const narratorStr = book.narrators.length > 0 ? book.narrators.map(n => n.name).join(', ') : null;
+    const mode = overrides.mode ?? taggingSettings.mode;
+    const embedCover = overrides.embedCover ?? taggingSettings.embedCover;
 
     return this.tagBook(
       bookId,
       book.path!,
       {
         title: book.title,
-        authorName: authorStr,
-        narrator: narratorStr,
+        authorName: bookAuthorString(book),
+        narrator: bookNarratorString(book),
         seriesName: book.seriesName,
         seriesPosition: book.seriesPosition,
         coverUrl: book.coverUrl,
       },
       ffmpegPath,
-      taggingSettings.mode,
-      taggingSettings.embedCover,
+      mode,
+      embedCover,
       excludeFields,
     );
   }
@@ -338,19 +346,19 @@ export class TaggingService {
    * `GET /api/books/:id/retag/preview` so the user can review and opt out
    * of specific tag fields before committing.
    */
-  async planRetag(bookId: number): Promise<RetagPlan> {
+  async planRetag(
+    bookId: number,
+    overrides: { mode?: TagMode; embedCover?: boolean } = {},
+  ): Promise<RetagPlan> {
     const { book, taggingSettings } = await this.resolveRetagInputs(bookId);
-    const mode = taggingSettings.mode;
-    const embedCover = taggingSettings.embedCover;
+    const mode = overrides.mode ?? taggingSettings.mode;
+    const embedCover = overrides.embedCover ?? taggingSettings.embedCover;
     const warnings: string[] = [];
-
-    const authorStr = book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
-    const narratorStr = book.narrators.length > 0 ? book.narrators.map(n => n.name).join(', ') : null;
 
     const canonicalTags = buildCanonicalTags({
       title: book.title,
-      authorName: authorStr,
-      narrator: narratorStr,
+      authorName: bookAuthorString(book),
+      narrator: bookNarratorString(book),
       seriesName: book.seriesName,
     });
 
@@ -358,13 +366,13 @@ export class TaggingService {
     const unsupported = await warnUnsupportedFormats(book.path!, this.log);
     warnings.push(...unsupported.warnings);
 
-    let coverPath: string | undefined;
-    if (embedCover) {
-      coverPath = await findCoverFile(book.path!);
-      if (!coverPath) {
-        warnings.push('Cover art embedding enabled but no cover image found in book directory');
-      }
+    // Always probe for cover file so the modal can disable the embedCover checkbox
+    // when no cover is on disk — independent of whether embedCover is currently on.
+    const coverPath = await findCoverFile(book.path!);
+    if (embedCover && !coverPath) {
+      warnings.push('Cover art embedding enabled but no cover image found in book directory');
     }
+    const planCoverPath = embedCover ? coverPath : undefined;
 
     if (audioFiles.length === 0) {
       warnings.push('No taggable audio files found');
@@ -382,39 +390,14 @@ export class TaggingService {
     }
 
     const isSingleFile = audioFiles.length === 1;
-    const files: RetagPlanFile[] = [];
-
-    // Unsupported files reported by warnUnsupportedFormats — surface in the per-file table
-    // alongside the taggable ones so the UI can show the full folder picture.
-    const supportedFileNames = new Set(audioFiles.map(p => basename(p)));
-    for (const entry of unsupported.entries) {
-      if (!supportedFileNames.has(entry)) {
-        files.push({ file: entry, outcome: 'skip-unsupported' });
-      }
-    }
-
-    for (let i = 0; i < audioFiles.length; i++) {
-      const filePath = audioFiles[i]!;
-      // Mirror tagBook: pre-read existing tags for multi-file overwrite so the
-      // per-file title decision is shared, and pass them to planFile so the
-      // diff-side read isn't repeated.
-      const existingTags = !isSingleFile && mode === 'overwrite'
-        ? await readExistingTags(filePath)
-        : undefined;
-
-      const fullTags = buildTagsForFile({
-        canonicalTags,
-        filePath,
-        isSingleFile,
-        index: i,
-        total: audioFiles.length,
-        mode,
-        existingTags: existingTags ?? {},
-      });
-
-      const file = await planFile(filePath, fullTags, mode, coverPath, existingTags);
-      files.push(file);
-    }
+    const files = await this.buildPlanFiles({
+      audioFiles,
+      unsupported: unsupported.entries,
+      isSingleFile,
+      mode,
+      canonicalTags,
+      planCoverPath,
+    });
 
     return {
       mode,
@@ -425,6 +408,47 @@ export class TaggingService {
       files,
       warnings,
     };
+  }
+
+  /** Build the per-file plan rows: unsupported entries + planFile() output for each taggable file. */
+  private async buildPlanFiles(args: {
+    audioFiles: string[];
+    unsupported: string[];
+    isSingleFile: boolean;
+    mode: TagMode;
+    canonicalTags: TagMetadata;
+    planCoverPath: string | undefined;
+  }): Promise<RetagPlanFile[]> {
+    const files: RetagPlanFile[] = [];
+    const supportedFileNames = new Set(args.audioFiles.map(p => basename(p)));
+    for (const entry of args.unsupported) {
+      if (!supportedFileNames.has(entry)) {
+        files.push({ file: entry, outcome: 'skip-unsupported' });
+      }
+    }
+
+    for (let i = 0; i < args.audioFiles.length; i++) {
+      const filePath = args.audioFiles[i]!;
+      // Mirror tagBook: pre-read existing tags for multi-file overwrite so the
+      // per-file title decision is shared, and pass them to planFile so the
+      // diff-side read isn't repeated.
+      const existingTags = !args.isSingleFile && args.mode === 'overwrite'
+        ? await readExistingTags(filePath)
+        : undefined;
+
+      const fullTags = buildTagsForFile({
+        canonicalTags: args.canonicalTags,
+        filePath,
+        isSingleFile: args.isSingleFile,
+        index: i,
+        total: args.audioFiles.length,
+        mode: args.mode,
+        existingTags: existingTags ?? {},
+      });
+
+      files.push(await planFile(filePath, fullTags, args.mode, args.planCoverPath, existingTags));
+    }
+    return files;
   }
 
   /** Shared validation for both `retagBook` and `planRetag`. */

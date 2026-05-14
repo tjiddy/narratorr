@@ -1,5 +1,40 @@
 import type { RetagPlan, RetagPlanFile, RetagPlanFileDiff, RetagExcludableField } from '@/lib/api';
 
+export const FIELD_LABELS: Record<RetagExcludableField, string> = {
+  artist: 'Artist',
+  albumArtist: 'Album Artist',
+  album: 'Album',
+  title: 'Title',
+  composer: 'Composer',
+  grouping: 'Grouping',
+  track: 'Track',
+};
+
+/** Display order for the canonical card AND per-file diff rows. */
+export const FIELD_ORDER: RetagExcludableField[] = [
+  'artist',
+  'albumArtist',
+  'album',
+  'title',
+  'composer',
+  'grouping',
+  'track',
+];
+
+export function canonicalRows(plan: RetagPlan): { field: RetagExcludableField; value: string }[] {
+  const rows: { field: RetagExcludableField; value: string }[] = [];
+  for (const field of FIELD_ORDER) {
+    if (field === 'track') {
+      if (plan.isSingleFile) continue;
+      rows.push({ field, value: 'sequential per file' });
+      continue;
+    }
+    const value = plan.canonical[field];
+    if (value !== undefined) rows.push({ field, value });
+  }
+  return rows;
+}
+
 /**
  * Given a plan file and the user's exclude selection, compute what the apply
  * path WOULD do — the file's "effective outcome". For a server `will-tag`

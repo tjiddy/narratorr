@@ -4,6 +4,7 @@ import {
   api,
   RetagFfmpegNotConfiguredError,
   type RetagExcludableField,
+  type RetagMode,
   type RetagPlan,
   type RetagPlanFile,
   type RetagPlanFileDiff,
@@ -14,51 +15,77 @@ import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/icons';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { countApplyFiles, effectiveOutcome, visibleDiffOf } from './RetagPreviewModal.utils';
+import { FIELD_LABELS, canonicalRows, countApplyFiles, effectiveOutcome, visibleDiffOf } from './RetagPreviewModal.utils';
+import { ContextBanner, EmptyState, WarningsSection } from './RetagPreviewModal.parts';
+
+export interface RetagConfirmPayload {
+  excludeFields: RetagExcludableField[];
+  mode?: RetagMode;
+  embedCover?: boolean;
+}
 
 interface RetagPreviewModalProps {
   bookId: number;
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (excludeFields: RetagExcludableField[]) => void;
+  onConfirm: (payload: RetagConfirmPayload) => void;
 }
 
-const FIELD_LABELS: Record<RetagExcludableField, string> = {
-  artist: 'Artist',
-  albumArtist: 'Album Artist',
-  album: 'Album',
-  title: 'Title',
-  composer: 'Composer',
-  grouping: 'Grouping',
-  track: 'Track',
-};
+type SettingsDefaults = { mode: RetagMode; embedCover: boolean };
+type ActiveOverrides = { mode?: RetagMode; embedCover?: boolean };
 
-/** Display order for the canonical card AND per-file diff rows. */
-const FIELD_ORDER: RetagExcludableField[] = [
-  'artist',
-  'albumArtist',
-  'album',
-  'title',
-  'composer',
-  'grouping',
-  'track',
-];
+/** Build the override object emitted to fetch + apply: only fields where the
+ *  user's selection differs from the captured settings defaults. */
+function deriveActiveOverrides(
+  defaults: SettingsDefaults | null,
+  userMode: RetagMode | null,
+  userEmbedCover: boolean | null,
+): ActiveOverrides {
+  if (!defaults) return {};
+  const out: ActiveOverrides = {};
+  if (userMode !== null && userMode !== defaults.mode) out.mode = userMode;
+  if (userEmbedCover !== null && userEmbedCover !== defaults.embedCover) out.embedCover = userEmbedCover;
+  return out;
+}
+
+function buildConfirmPayload(excludeSet: Set<RetagExcludableField>, overrides: ActiveOverrides): RetagConfirmPayload {
+  const payload: RetagConfirmPayload = { excludeFields: Array.from(excludeSet) };
+  if (overrides.mode !== undefined) payload.mode = overrides.mode;
+  if (overrides.embedCover !== undefined) payload.embedCover = overrides.embedCover;
+  return payload;
+}
 
 export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagPreviewModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useEscapeKey(isOpen, onClose, modalRef);
 
   const [excludeSet, setExcludeSet] = useState<Set<RetagExcludableField>>(() => new Set());
+  // `null` = user has not touched the control. `userMode`/`userEmbedCover` hold
+  // the user's selection regardless of whether it matches the settings default;
+  // the AC requires the apply payload to compare against the captured defaults,
+  // not against whether the control was touched (#1098 F2).
+  const [userMode, setUserMode] = useState<RetagMode | null>(null);
+  const [userEmbedCover, setUserEmbedCover] = useState<boolean | null>(null);
+  const [settingsDefaults, setSettingsDefaults] = useState<SettingsDefaults | null>(null);
+
+  const activeOverrides = deriveActiveOverrides(settingsDefaults, userMode, userEmbedCover);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.bookRetagPreview(bookId),
-    queryFn: () => api.getBookRetagPreview(bookId),
+    queryKey: queryKeys.bookRetagPreview(bookId, activeOverrides),
+    queryFn: () => api.getBookRetagPreview(bookId, activeOverrides),
     enabled: isOpen,
     staleTime: 0,
     gcTime: 0,
     refetchOnMount: 'always',
     retry: false,
   });
+
+  // Capture settings defaults from the first preview response — that response
+  // was fetched with no overrides applied, so it reflects the user's settings.
+  // Render-time guarded setState mirrors React's "derive state from props" pattern.
+  if (data && settingsDefaults === null && userMode === null && userEmbedCover === null) {
+    setSettingsDefaults({ mode: data.mode, embedCover: data.embedCover });
+  }
 
   if (!isOpen) return null;
 
@@ -76,7 +103,7 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
 
   const handleConfirm = () => {
     onClose();
-    onConfirm(Array.from(excludeSet));
+    onConfirm(buildConfirmPayload(excludeSet, activeOverrides));
   };
 
   return (
@@ -121,7 +148,15 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
             </p>
           )}
 
-          {data && <PreviewBody plan={data} excludeSet={excludeSet} onToggle={toggle} />}
+          {data && (
+            <PreviewBody
+              plan={data}
+              excludeSet={excludeSet}
+              onToggle={toggle}
+              onModeChange={setUserMode}
+              onEmbedCoverChange={setUserEmbedCover}
+            />
+          )}
         </div>
 
         <ModalFooter
@@ -176,16 +211,20 @@ function PreviewBody({
   plan,
   excludeSet,
   onToggle,
+  onModeChange,
+  onEmbedCoverChange,
 }: {
   plan: RetagPlan;
   excludeSet: Set<RetagExcludableField>;
   onToggle: (f: RetagExcludableField) => void;
+  onModeChange: (m: RetagMode) => void;
+  onEmbedCoverChange: (v: boolean) => void;
 }) {
   const isEmpty = countApplyFiles(plan, excludeSet) === 0;
 
   return (
     <div className="space-y-5">
-      <ContextBanner plan={plan} />
+      <ContextBanner plan={plan} onModeChange={onModeChange} onEmbedCoverChange={onEmbedCoverChange} />
       {plan.warnings.length > 0 && <WarningsSection warnings={plan.warnings} />}
       <CanonicalCard plan={plan} excludeSet={excludeSet} onToggle={onToggle} />
       {isEmpty ? (
@@ -193,39 +232,6 @@ function PreviewBody({
       ) : (
         <FilesSection plan={plan} excludeSet={excludeSet} />
       )}
-    </div>
-  );
-}
-
-function ContextBanner({ plan }: { plan: RetagPlan }) {
-  return (
-    <div className="text-xs space-y-1 text-muted-foreground bg-muted/40 rounded-lg px-4 py-3">
-      <p>
-        <span className="font-medium text-foreground">Mode:</span>{' '}
-        <code className="font-mono">{plan.mode}</code>{' '}
-        <span>
-          ({plan.mode === 'overwrite'
-            ? 'replace existing tags with new values'
-            : 'only fill in tags that are currently empty'})
-        </span>
-      </p>
-      <p>
-        <span className="font-medium text-foreground">Embed cover art:</span>{' '}
-        {plan.embedCover ? (plan.hasCoverFile ? 'yes' : 'yes — but no cover image found') : 'no'}
-      </p>
-    </div>
-  );
-}
-
-function WarningsSection({ warnings }: { warnings: string[] }) {
-  return (
-    <div
-      role="alert"
-      className="text-xs space-y-1 text-amber-700 dark:text-amber-400 bg-amber-500/10 rounded-lg px-4 py-3"
-    >
-      {warnings.map((w, i) => (
-        <p key={`${w}-${i}`}>{w}</p>
-      ))}
     </div>
   );
 }
@@ -263,20 +269,6 @@ function CanonicalCard({
       </ul>
     </section>
   );
-}
-
-function canonicalRows(plan: RetagPlan): { field: RetagExcludableField; value: string }[] {
-  const rows: { field: RetagExcludableField; value: string }[] = [];
-  for (const field of FIELD_ORDER) {
-    if (field === 'track') {
-      if (plan.isSingleFile) continue;
-      rows.push({ field, value: 'sequential per file' });
-      continue;
-    }
-    const value = plan.canonical[field];
-    if (value !== undefined) rows.push({ field, value });
-  }
-  return rows;
 }
 
 function FilesSection({
@@ -321,7 +313,7 @@ function FileRow({
   const outcome = effectiveOutcome(file, excludeSet);
   const outcomeLabel = formatOutcome(outcome);
   const visibleDiff = visibleDiffOf(file, excludeSet);
-  const dimmedDiff = (file.diff ?? []).filter(d => excludeSet.has(d.field as RetagExcludableField));
+  const dimmedDiff = (file.diff ?? []).filter(d => excludeSet.has(d.field));
   const isCoverOnly = outcome === 'will-tag' && visibleDiff.length === 0 && file.coverPending;
 
   return (
@@ -344,12 +336,14 @@ function FileRow({
 }
 
 function DiffRow({ diff, dimmed }: { diff: RetagPlanFileDiff; dimmed: boolean }) {
+  // minmax(0,1fr) lets the value cells shrink past min-content so truncation works
+  // at modal width — `1fr` alone expanded to fit content, which forced row wrap.
   return (
-    <li className={`text-xs grid grid-cols-[7rem,1fr,auto,1fr] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`}>
-      <span className="text-muted-foreground">{FIELD_LABELS[diff.field as RetagExcludableField] ?? diff.field}</span>
-      <span className="text-destructive break-all">{diff.current ?? '∅'}</span>
+    <li className={`text-xs grid grid-cols-[5rem_minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`}>
+      <span className="text-muted-foreground truncate">{FIELD_LABELS[diff.field]}</span>
+      <span className="text-destructive truncate" title={diff.current ?? undefined}>{diff.current ?? '(empty)'}</span>
       <span aria-hidden="true" className="text-muted-foreground">→</span>
-      <span className="text-success break-all">{diff.next ?? '∅'}</span>
+      <span className="text-success truncate" title={diff.next ?? undefined}>{diff.next ?? '(empty)'}</span>
     </li>
   );
 }
@@ -361,32 +355,3 @@ function formatOutcome(outcome: RetagPlanFile['outcome']): string {
     case 'skip-unsupported': return 'Skip — unsupported format';
   }
 }
-
-function EmptyState({ plan, excludeSet }: { plan: RetagPlan; excludeSet: Set<RetagExcludableField> }) {
-  const hasAudioFiles = plan.files.length > 0;
-  // Only fields that actually have a checkbox in the canonical card count toward "all excluded".
-  const checkboxFields = canonicalRows(plan).map(r => r.field);
-  const allExcluded = checkboxFields.length > 0 && checkboxFields.every(f => excludeSet.has(f));
-  const unsupportedFiles = plan.files.filter(f => f.outcome === 'skip-unsupported');
-  const allUnsupported = hasAudioFiles && unsupportedFiles.length === plan.files.length;
-
-  if (!hasAudioFiles) {
-    return <p className="text-sm text-muted-foreground text-center py-4">No taggable audio files were found in this book’s folder.</p>;
-  }
-  if (allUnsupported) {
-    // Tailored message + name the files so the user knows which formats are in the way.
-    return (
-      <div className="text-sm text-muted-foreground py-4 space-y-2 text-center">
-        <p>None of the audio files in this folder are in a taggable format. Re-tagging supports <code className="font-mono">.mp3</code>, <code className="font-mono">.m4a</code>, and <code className="font-mono">.m4b</code>.</p>
-        <ul className="font-mono text-xs space-y-0.5">
-          {unsupportedFiles.map(f => <li key={f.file}>{f.file}</li>)}
-        </ul>
-      </div>
-    );
-  }
-  const message = allExcluded
-    ? 'You’ve unchecked every field. Include at least one field to re-tag.'
-    : 'All included fields are already populated. Switch to overwrite mode in Settings, or include a field that has differing values.';
-  return <p className="text-sm text-muted-foreground text-center py-4">{message}</p>;
-}
-
