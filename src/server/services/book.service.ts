@@ -443,9 +443,30 @@ export class BookService {
         args.asin,
       );
       if (existingId !== null) {
+        // Fold the newly-added book's ASIN into the canonical row's
+        // alternate_asins so the alternate-ASIN preservation contract holds
+        // for the BookService path: no-op when the ASIN matches the canonical
+        // providerBookId or is already an alternate; otherwise add it.
+        // (#1116 F1, #1117 review F1)
+        const existingRow = (await tx
+          .select({
+            providerBookId: seriesMembers.providerBookId,
+            alternateAsins: seriesMembers.alternateAsins,
+          })
+          .from(seriesMembers)
+          .where(eq(seriesMembers.id, existingId))
+          .limit(1))[0];
+        const update: Partial<typeof seriesMembers.$inferInsert> = { bookId, updatedAt: new Date() };
+        if (existingRow && args.asin && args.asin !== existingRow.providerBookId) {
+          const merged = new Set<string>(existingRow.alternateAsins ?? []);
+          if (!merged.has(args.asin)) {
+            merged.add(args.asin);
+            update.alternateAsins = [...merged].sort();
+          }
+        }
         await tx
           .update(seriesMembers)
-          .set({ bookId, updatedAt: new Date() })
+          .set(update)
           .where(eq(seriesMembers.id, existingId));
         return;
       }

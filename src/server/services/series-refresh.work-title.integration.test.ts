@@ -195,6 +195,81 @@ describe('series refresh — work-title collapse (#1116)', () => {
     expect(members).toHaveLength(1);
     expect(members[0]!.id).toBe(canonical!.id);
     expect(members[0]!.bookId).toBe(created.id);
+    // The new book's ASIN must be folded into alternate_asins so reachability
+    // via the dramatized/split ASIN is preserved. (#1117 review F1)
+    expect(members[0]!.alternateAsins).toContain('GS_D1');
+    expect(members[0]!.providerBookId).toBe('GS_BASE');
+  });
+
+  it('BookService.upsertSeriesLink does NOT duplicate the canonical ASIN into alternate_asins (#1117 review F1)', async () => {
+    // When the added book's ASIN matches the canonical providerBookId, the
+    // canonical reuse path must NOT add the ASIN as its own alternate.
+    const [seriesRow] = await db
+      .insert(series)
+      .values({ provider: 'audible', providerSeriesId: PROVIDER_SERIES_ID, name: SERIES_NAME, normalizedName: 'red rising' })
+      .returning();
+    await db.insert(seriesMembers).values({
+      seriesId: seriesRow!.id,
+      providerBookId: 'GS_BASE',
+      title: 'Golden Son',
+      normalizedTitle: 'golden son',
+      authorName: 'Pierce Brown',
+      positionRaw: '2',
+      position: 2,
+      alternateAsins: [],
+    });
+
+    const bookService = new BookService(db, log);
+    await bookService.create({
+      title: 'Golden Son',
+      authors: [{ name: 'Pierce Brown' }],
+      asin: 'GS_BASE',
+      seriesName: SERIES_NAME,
+      seriesPosition: 2,
+      seriesAsin: PROVIDER_SERIES_ID,
+      seriesProvider: 'audible',
+    });
+
+    const members = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id));
+    expect(members).toHaveLength(1);
+    expect(members[0]!.providerBookId).toBe('GS_BASE');
+    expect(members[0]!.alternateAsins).not.toContain('GS_BASE');
+    expect(members[0]!.alternateAsins).toEqual([]);
+  });
+
+  it('BookService.upsertSeriesLink does NOT re-add an ASIN already in alternate_asins (#1117 review F1)', async () => {
+    // Pre-seeded canonical row already has the new book's ASIN as an alternate
+    // (e.g. from a prior refresh). The reuse path must be idempotent.
+    const [seriesRow] = await db
+      .insert(series)
+      .values({ provider: 'audible', providerSeriesId: PROVIDER_SERIES_ID, name: SERIES_NAME, normalizedName: 'red rising' })
+      .returning();
+    await db.insert(seriesMembers).values({
+      seriesId: seriesRow!.id,
+      providerBookId: 'GS_BASE',
+      title: 'Golden Son',
+      normalizedTitle: 'golden son',
+      authorName: 'Pierce Brown',
+      positionRaw: '2',
+      position: 2,
+      alternateAsins: ['GS_D1'],
+    });
+
+    const bookService = new BookService(db, log);
+    await bookService.create({
+      title: 'Golden Son (Part 1 of 2) (Dramatized Adaptation)',
+      authors: [{ name: 'Pierce Brown' }],
+      asin: 'GS_D1',
+      seriesName: SERIES_NAME,
+      seriesPosition: 2,
+      seriesAsin: PROVIDER_SERIES_ID,
+      seriesProvider: 'audible',
+    });
+
+    const members = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesRow!.id));
+    expect(members).toHaveLength(1);
+    // Stays a single 'GS_D1' entry, not duplicated.
+    expect(members[0]!.alternateAsins).toEqual(['GS_D1']);
   });
 
   it('preserves alternates across refreshes when a later response omits them (F3 monotonic)', async () => {
