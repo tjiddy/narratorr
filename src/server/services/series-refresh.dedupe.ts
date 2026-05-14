@@ -3,6 +3,12 @@ import type { DbOrTx } from '../../db/index.js';
 import { books, seriesMembers } from '../../db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+// `pickCanonical`, the scoring helpers, and `filterRadioFormatType` live in
+// `series-refresh.canonical.ts` to keep this file under the project max-lines
+// budget. Re-exported below so existing imports of `filterRadioFormatType` from
+// the dedupe module keep working. (#1116)
+import { filterRadioFormatType, pickCanonical } from './series-refresh.canonical.js';
+export { filterRadioFormatType };
 
 /**
  * Single source of truth for primary-author normalization used by both
@@ -16,6 +22,29 @@ export function normalizePrimaryAuthor(name: string | null | undefined): string 
   const trimmed = name.trim();
   if (trimmed === '') return null;
   return normalizeSeriesName(trimmed);
+}
+
+/**
+ * Strip well-known Audible edition / split-part / adaptation suffixes from a
+ * product title before normalization so noisy variants collapse into the same
+ * logical-work slot on the Series card. Conservative: only parens matching the
+ * explicit descriptor patterns are dropped — real subtitles like `(A Novel)`
+ * are preserved. (#1116)
+ */
+const EDITION_SUFFIX_PATTERNS: RegExp[] = [
+  /\(\s*(?:part\s+)?\d+\s+of\s+\d+\s*\)/gi,
+  /\(\s*dramatized[^)]*\)/gi,
+  /\(\s*unabridged\s*\)/gi,
+  /\(\s*abridged\s*\)/gi,
+  /\(\s*original\s+recording\s*\)/gi,
+];
+
+export function normalizeSeriesMemberWorkTitle(title: string): string {
+  let stripped = title;
+  for (const pattern of EDITION_SUFFIX_PATTERNS) {
+    stripped = stripped.replace(pattern, ' ');
+  }
+  return normalizeSeriesName(stripped);
 }
 
 /**
@@ -125,7 +154,7 @@ export function buildMemberValues(
     providerBookId: product.asin ?? null,
     alternateAsins: [...alternateAsins].sort(),
     title: product.title,
-    normalizedTitle: normalizeSeriesName(product.title),
+    normalizedTitle: normalizeSeriesMemberWorkTitle(product.title),
     authorName: product.authors[0]?.name ?? null,
     positionRaw: position !== null ? String(position) : null,
     position,
@@ -151,7 +180,7 @@ export function buildMemberValues(
 export async function findMemberByLogicalIdentity(
   db: DbOrTx,
   seriesId: number,
-  normalizedTitle: string,
+  normalizedWorkTitle: string,
   positionRaw: string | null,
   normalizedAuthor: string | null,
   candidateAsin: string | null,
@@ -176,21 +205,22 @@ export async function findMemberByLogicalIdentity(
   const positionFilter = positionRaw !== null
     ? eq(seriesMembers.positionRaw, positionRaw)
     : isNull(seriesMembers.positionRaw);
-  // Author comparison happens in-memory via the shared `normalizePrimaryAuthor`
-  // helper. Don't prefilter with `lower(author_name)` — that would exclude
-  // rows whose stored display author needs trim/punctuation/space-run
-  // normalization to match (e.g. `'  Nicholas Eames  '`, `'J. R. R. Tolkien'`).
-  // The (seriesId + normalizedTitle + positionRaw) prefilter keeps the row set
-  // bounded (single-digit rows per series entry). (F12, #1075 F1)
+  // Work-title equality is computed in-memory against the stored `title` column,
+  // not via a SQL `eq(normalizedTitle, ...)` clause — otherwise pre-#1116 stale
+  // rows whose stored `normalizedTitle` was the noisy `normalizeSeriesName(title)`
+  // form would fall outside the SQL filter even when their title's work-title
+  // form matches the candidate. Author comparison is also in-memory; the
+  // (seriesId + positionRaw) prefilter keeps the row set bounded (single-digit
+  // rows per series-position). (#1116 F1, F12, #1075 F1)
   const rows = await db
-    .select({ id: seriesMembers.id, authorName: seriesMembers.authorName })
+    .select({ id: seriesMembers.id, title: seriesMembers.title, authorName: seriesMembers.authorName })
     .from(seriesMembers)
     .where(and(
       eq(seriesMembers.seriesId, seriesId),
-      eq(seriesMembers.normalizedTitle, normalizedTitle),
       positionFilter,
     ));
   for (const row of rows) {
+    if (normalizeSeriesMemberWorkTitle(row.title) !== normalizedWorkTitle) continue;
     if (normalizePrimaryAuthor(row.authorName) === normalizedAuthor) return row.id;
   }
   return null;
@@ -214,6 +244,29 @@ export async function upsertCanonicalMember(
     product.asin ?? null,
   );
   if (existingId !== null) {
+    // Monotonic union: never let the persisted alternate_asins shrink across
+    // refreshes. Fold in the existing row's alternates AND, when the canonical
+    // ASIN has flipped, capture the displaced providerBookId as an alternate so
+    // reachability via the old ASIN doesn't regress. The new canonical's own
+    // ASIN is removed from the set — it must never appear as its own
+    // alternate. (#1116 F3, F4)
+    const existing = await db
+      .select({
+        providerBookId: seriesMembers.providerBookId,
+        alternateAsins: seriesMembers.alternateAsins,
+      })
+      .from(seriesMembers)
+      .where(eq(seriesMembers.id, existingId))
+      .limit(1);
+    const existingRow = existing[0];
+    const merged = new Set<string>(existingRow?.alternateAsins ?? []);
+    for (const a of alternateAsins) merged.add(a);
+    const newCanonicalAsin = product.asin ?? null;
+    if (existingRow?.providerBookId && existingRow.providerBookId !== newCanonicalAsin) {
+      merged.add(existingRow.providerBookId);
+    }
+    if (newCanonicalAsin) merged.delete(newCanonicalAsin);
+    values.alternateAsins = [...merged].sort();
     await db.update(seriesMembers).set({ ...values, seriesId }).where(eq(seriesMembers.id, existingId));
     return existingId;
   }
@@ -253,7 +306,7 @@ export async function linkLocalBooksByAsin(db: DbOrTx, seriesId: number): Promis
   }
 }
 
-interface CandidateInfo {
+export interface CandidateInfo {
   product: BookMetadata;
   matchedRef: MatchedSeriesRef;
   normalizedTitle: string;
@@ -270,92 +323,10 @@ function describeCandidate(product: BookMetadata, matchedRef: MatchedSeriesRef):
   return {
     product,
     matchedRef,
-    normalizedTitle: normalizeSeriesName(product.title),
+    normalizedTitle: normalizeSeriesMemberWorkTitle(product.title),
     positionRaw: position !== null ? String(position) : null,
     normalizedAuthor: normalizePrimaryAuthor(product.authors[0]?.name ?? null),
   };
-}
-
-function metadataRichness(product: BookMetadata): number {
-  let score = 0;
-  if (product.coverUrl) score += 1;
-  if (product.duration != null) score += 1;
-  if (product.publishedDate) score += 1;
-  if (product.publisher) score += 1;
-  return score;
-}
-
-/** Format-type tie-breaker keys (case-insensitive). Lower = preferred. (#1088 F3) */
-const RADIO_FORMAT_TYPES = new Set(['radio', 'original_recording']);
-
-function formatTypeOf(product: BookMetadata): string | null {
-  return product.formatType ? product.formatType.toLowerCase() : null;
-}
-
-function contentDeliveryTypeOf(product: BookMetadata): string | null {
-  return product.contentDeliveryType ? product.contentDeliveryType.toLowerCase() : null;
-}
-
-/**
- * Score where lower wins. `unabridged` beats `abridged`; absent or any other
- * value sits between them so it never causes a hard drop. (#1088 F3)
- */
-function formatTypePreference(product: BookMetadata): number {
-  const ft = formatTypeOf(product);
-  if (ft === 'unabridged') return 0;
-  if (ft === 'abridged') return 2;
-  return 1;
-}
-
-function contentDeliveryPreference(product: BookMetadata): number {
-  const cdt = contentDeliveryTypeOf(product);
-  if (cdt === 'singlepartbook') return 0;
-  if (cdt === 'multipartbook') return 2;
-  return 1;
-}
-
-async function pickCanonical(db: DbOrTx, group: CandidateInfo[], seedAsin: string): Promise<CandidateInfo> {
-  // 1. Seed/current book ASIN
-  const seedMatch = group.find((c) => c.product.asin === seedAsin);
-  if (seedMatch) return seedMatch;
-  // 2. ASIN already matches a local library book
-  for (const c of group) {
-    if (!c.product.asin) continue;
-    const rows = await db.select({ id: books.id }).from(books).where(eq(books.asin, c.product.asin)).limit(1);
-    if (rows.length > 0) return c;
-  }
-  // 3. Format-type / content-delivery preferences, then metadata richness, then
-  // lexically-smallest-ASIN. (#1088 F3, F7)
-  return [...group].sort((a, b) => {
-    const ftDiff = formatTypePreference(a.product) - formatTypePreference(b.product);
-    if (ftDiff !== 0) return ftDiff;
-    const cdtDiff = contentDeliveryPreference(a.product) - contentDeliveryPreference(b.product);
-    if (cdtDiff !== 0) return cdtDiff;
-    const richDiff = metadataRichness(b.product) - metadataRichness(a.product);
-    if (richDiff !== 0) return richDiff;
-    const aAsin = a.product.asin ?? '￿';
-    const bAsin = b.product.asin ?? '￿';
-    return aAsin.localeCompare(bAsin);
-  })[0]!;
-}
-
-/**
- * Drop candidates whose `formatType` is `radio` or `original_recording` —
- * Audible commonly returns radio-play editions alongside the audiobook series
- * (Hitchhiker's, Doctor Who). Exception: when the seed book itself carries the
- * same format, the user intentionally seeded with a radio-play ASIN, so the
- * exception keeps that series buildable. Case-insensitive; absent `formatType`
- * is never dropped. (#1088 F3)
- */
-export function filterRadioFormatType(products: BookMetadata[], seedAsin: string): BookMetadata[] {
-  const seed = products.find((p) => p.asin === seedAsin);
-  const seedFormat = seed ? formatTypeOf(seed) : null;
-  return products.filter((p) => {
-    const ft = formatTypeOf(p);
-    if (ft === null) return true;
-    if (!RADIO_FORMAT_TYPES.has(ft)) return true;
-    return seedFormat === ft;
-  });
 }
 
 /**
@@ -379,17 +350,20 @@ async function cleanupLogicalDuplicates(
       id: seriesMembers.id,
       bookId: seriesMembers.bookId,
       providerBookId: seriesMembers.providerBookId,
+      title: seriesMembers.title,
       authorName: seriesMembers.authorName,
       alternateAsins: seriesMembers.alternateAsins,
     })
     .from(seriesMembers)
     .where(and(
       eq(seriesMembers.seriesId, seriesId),
-      eq(seriesMembers.normalizedTitle, c.normalizedTitle),
       positionFilter,
       ne(seriesMembers.id, canonicalId),
     ));
-  const stale = candidates.filter((row) => normalizePrimaryAuthor(row.authorName) === c.normalizedAuthor);
+  const stale = candidates.filter((row) =>
+    normalizeSeriesMemberWorkTitle(row.title) === c.normalizedTitle
+    && normalizePrimaryAuthor(row.authorName) === c.normalizedAuthor,
+  );
   if (stale.length === 0) return;
   const canonicalRow = await db
     .select({

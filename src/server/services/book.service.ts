@@ -8,7 +8,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists, series, seriesMembers } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
-import { findMemberByLogicalIdentity, normalizePrimaryAuthor } from './series-refresh.helpers.js';
+import {
+  findMemberByLogicalIdentity,
+  normalizePrimaryAuthor,
+  normalizeSeriesMemberWorkTitle,
+} from './series-refresh.helpers.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -424,7 +428,11 @@ export class BookService {
       // normalized author) when no ASIN match exists. Keeps add-book in lockstep
       // with refresh-time dedupe. (F12)
       const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
-      const normalizedTitle = normalizeSeriesName(args.title);
+      // Use work-title normalization so adding a book whose ASIN belongs to a
+      // dramatized/split-part variant reuses the existing clean canonical row
+      // rather than inserting a new noisy member. Stays in lockstep with the
+      // refresh-time dedupe identity. (#1116 F1)
+      const normalizedTitle = normalizeSeriesMemberWorkTitle(args.title);
       const normalizedAuthor = normalizePrimaryAuthor(args.authorName);
       const existingId = await findMemberByLogicalIdentity(
         tx,

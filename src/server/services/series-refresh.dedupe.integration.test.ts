@@ -541,18 +541,22 @@ describe('series refresh — alternate-edition dedupe (#1073)', () => {
       expect(rows[0]!.providerBookId).toBe('SP');
     });
 
-    it('seed-first wins over format-type preference (seed pick is highest priority)', async () => {
+    it('format-type wins over seed when seed is abridged and another candidate is unabridged (#1116)', async () => {
+      // Before #1116, seed was tier-1 of pickCanonical. The new tier order moves
+      // seed below clean-title, dramatized, and edition preferences, so the
+      // unabridged non-seed wins canonical even when the seed is abridged. The
+      // seed ASIN survives as an alternate.
       await refresh(
         [
           { asin: 'AB_SEED', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'abridged' },
           { asin: 'UN_OTHER', title: 'WOK', authors: [{ name: 'Sanderson' }], series: [{ name: SERIES_NAME, position: 1, asin: PROVIDER_SERIES_ID }], formatType: 'unabridged' },
         ],
-        'AB_SEED', // seed is the abridged edition — must still win
+        'AB_SEED',
       );
       const rows = await db.select().from(seriesMembers);
       expect(rows).toHaveLength(1);
-      expect(rows[0]!.providerBookId).toBe('AB_SEED');
-      expect(rows[0]!.alternateAsins).toContain('UN_OTHER');
+      expect(rows[0]!.providerBookId).toBe('UN_OTHER');
+      expect(rows[0]!.alternateAsins).toContain('AB_SEED');
     });
 
     it('local-library link survives when seed-first pick is not the local edition (F7)', async () => {

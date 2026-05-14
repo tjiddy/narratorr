@@ -15,7 +15,11 @@ import {
 } from './series-refresh.dedupe.js';
 
 // Re-exported for callers that need them (BookService.upsertSeriesLink, tests).
-export { findMemberByLogicalIdentity, normalizePrimaryAuthor } from './series-refresh.dedupe.js';
+export {
+  findMemberByLogicalIdentity,
+  normalizePrimaryAuthor,
+  normalizeSeriesMemberWorkTitle,
+} from './series-refresh.dedupe.js';
 
 /** Default backoff (ms) when a non-rate-limit refresh fails. */
 export const DEFAULT_FAILURE_BACKOFF_MS = 60 * 60 * 1000; // 1h
