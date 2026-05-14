@@ -38,7 +38,7 @@ import {
   verifyCopy,
   embedTagsForImport,
   runImportPostProcessing,
-  emitImportSuccess,
+  emitImportStatusSuccess,
   emitDownloadImporting,
   emitBookImporting,
   emitImportFailure,
@@ -317,29 +317,37 @@ describe('runImportPostProcessing', () => {
   });
 });
 
-// ── emitImportSuccess ───────────────────────────────────────────────────
+// ── emitImportStatusSuccess ─────────────────────────────────────────────
 
-describe('emitImportSuccess', () => {
-  it('emits download_status_change, book_status_change, and import_complete events', () => {
+describe('emitImportStatusSuccess', () => {
+  it('emits download_status_change and book_status_change events', () => {
     const log = createMockLog();
     const broadcaster = { emit: vi.fn() };
-    emitImportSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, bookTitle: 'Book', log });
+    emitImportStatusSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, log });
     expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({ download_id: 1, new_status: 'imported' }));
     expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({ book_id: 2, new_status: 'imported' }));
-    expect(broadcaster.emit).toHaveBeenCalledWith('import_complete', expect.objectContaining({ download_id: 1, book_id: 2, book_title: 'Book' }));
+  });
+
+  // #1108 — job-lifecycle completion is owned by ImportQueueWorker, not this helper.
+  it('does NOT emit import_complete (job-lifecycle event owned by the queue worker)', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn() };
+    emitImportStatusSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, log });
+    const completeCalls = broadcaster.emit.mock.calls.filter(([eventName]) => eventName === 'import_complete');
+    expect(completeCalls).toHaveLength(0);
   });
 
   it('skips when broadcaster is undefined', () => {
     const log = createMockLog();
     // Should not throw
-    emitImportSuccess({ broadcaster: undefined, downloadId: 1, bookId: 2, bookTitle: 'Book', log });
+    emitImportStatusSuccess({ broadcaster: undefined, downloadId: 1, bookId: 2, log });
     expect(log.debug).not.toHaveBeenCalled();
   });
 
   it('catches and logs at debug level when emit throws', () => {
     const log = createMockLog();
     const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('emit fail'); }) };
-    emitImportSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, bookTitle: 'Book', log });
+    emitImportStatusSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, log });
     expect(log.debug).toHaveBeenCalled();
   });
 
@@ -348,13 +356,11 @@ describe('emitImportSuccess', () => {
     const broadcaster = {
       emit: vi.fn()
         .mockImplementationOnce(() => { throw new Error('first fails'); })
-        .mockImplementationOnce(() => {}) // book_status_change succeeds
-        .mockImplementationOnce(() => {}), // import_complete succeeds
+        .mockImplementationOnce(() => {}), // book_status_change succeeds
     };
-    emitImportSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, bookTitle: 'Book', log });
-    expect(broadcaster.emit).toHaveBeenCalledTimes(3);
+    emitImportStatusSuccess({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, log });
+    expect(broadcaster.emit).toHaveBeenCalledTimes(2);
     expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({ book_id: 2 }));
-    expect(broadcaster.emit).toHaveBeenCalledWith('import_complete', expect.objectContaining({ download_id: 1 }));
   });
 });
 
