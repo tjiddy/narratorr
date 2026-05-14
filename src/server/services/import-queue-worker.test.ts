@@ -1790,10 +1790,10 @@ describe('ImportQueueWorker', () => {
       bookPath: null,
       authorName: 'Test Author',
       narratorStr: null,
-      book: {
+      book: inject<ImportContext['book']>({
         id: 601, title: 'Test Book', status: 'wanted', path: null,
         narrators: [], seriesName: null, seriesPosition: null, coverUrl: null,
-      } as ImportContext['book'],
+      }),
       infoHash: 'abc',
       guid: null,
     };

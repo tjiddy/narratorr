@@ -183,7 +183,7 @@ describe('ImportOrchestrator', () => {
         downloadId: 1, bookId: 1,
       }));
       // #1108 — bookTitle is no longer part of the status-success helper's contract.
-      const callArg = vi.mocked(emitImportStatusSuccess).mock.calls[0]![0] as Record<string, unknown>;
+      const callArg = vi.mocked(emitImportStatusSuccess).mock.calls[0]![0] as unknown as Record<string, unknown>;
       expect(callArg).not.toHaveProperty('bookTitle');
     });
 
