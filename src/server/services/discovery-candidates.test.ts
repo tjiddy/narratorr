@@ -174,6 +174,26 @@ describe('querySeriesCandidates — #1099 primary-first admission + article-equi
     expect(map.get('B002')?.reasonContext).toContain('The Stormlight Archive');
   });
 
+  // Deletion-proof regression guard for the reason-position source: if the reason
+  // callback regressed to read from `series[]` (the pre-#1099 shape), it would
+  // find the secondary at position 2, which equals `nextPosition` and renders no
+  // parenthetical. Forcing the matched-primary position to a value that differs
+  // from `nextPosition` makes the position observable in the rendered string.
+  it("reads the matched canonical primary position (not a secondary series[] entry) into the reason text", async () => {
+    const book = makeBook({
+      asin: 'B009', language: 'english',
+      // Primary at position 3 — in missingPositions but ≠ nextPosition, so the
+      // callback should append "(position 3)" to the reason text.
+      seriesPrimary: { name: 'The Stormlight Archive', position: 3 },
+      // Secondary at position 2 — equal to nextPosition, so a regressed callback
+      // reading the secondary would render NO parenthetical.
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
+    });
+    const gap = { seriesName: 'Stormlight Archive', authorName: 'Sanderson', missingPositions: [2, 3], nextPosition: 2, maxOwned: 1 };
+    const map = await runQuery([book], [gap]);
+    expect(map.get('B009')?.reasonContext).toBe('Next in Stormlight Archive — you have books 1-1 (position 3)');
+  });
+
   it('falls back to series[] when seriesPrimary is absent (Audible-only candidate)', async () => {
     const book = makeBook({
       asin: 'B003', language: 'english',
