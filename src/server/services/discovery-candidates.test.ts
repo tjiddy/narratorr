@@ -132,6 +132,165 @@ describe('scoreCandidate — #1097 canonical primary-series scoring', () => {
   });
 });
 
+describe('querySeriesCandidates — #1099 primary-first admission + article-equivalence', () => {
+  const stormlightGap = { seriesName: 'The Stormlight Archive', authorName: 'Sanderson', missingPositions: [2], nextPosition: 2, maxOwned: 1 };
+
+  function makeSignals(gaps = [stormlightGap]): LibrarySignals {
+    return { authorAffinity: new Map(), genreDistribution: new Map(), seriesGaps: gaps, narratorAffinity: new Map(), durationStats: null };
+  }
+
+  function makeDeps(books: BookMetadata[]) {
+    const log = createMockLogger();
+    const metadataService = inject<MetadataService>({
+      searchBooksForDiscovery: vi.fn().mockResolvedValue({ books, warnings: [] }),
+    });
+    return { metadataService, log: inject<FastifyBaseLogger>(log) };
+  }
+
+  async function runQuery(books: BookMetadata[], gaps = [stormlightGap]) {
+    const map = new Map<string, ScoredCandidate>();
+    await querySeriesCandidates(makeDeps(books), makeSignals(gaps), makeCtx(), map);
+    return map;
+  }
+
+  it('excludes candidate when seriesPrimary disagrees, even if a secondary series[] entry matches the gap', async () => {
+    const book = makeBook({
+      asin: 'B001', language: 'english',
+      seriesPrimary: { name: 'The Cosmere', position: 5 },
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
+    });
+    const map = await runQuery([book]);
+    expect(map.has('B001')).toBe(false);
+  });
+
+  it('admits candidate when seriesPrimary matches the gap and surfaces the primary position in the reason', async () => {
+    const book = makeBook({
+      asin: 'B002', language: 'english',
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
+    });
+    const map = await runQuery([book]);
+    expect(map.has('B002')).toBe(true);
+    expect(map.get('B002')?.reasonContext).toContain('The Stormlight Archive');
+  });
+
+  it('falls back to series[] when seriesPrimary is absent (Audible-only candidate)', async () => {
+    const book = makeBook({
+      asin: 'B003', language: 'english',
+      series: [{ name: 'The Stormlight Archive', position: 2 }],
+    });
+    const map = await runQuery([book]);
+    expect(map.has('B003')).toBe(true);
+  });
+
+  it('admits via leading-article equivalence (gap without article, primary with article)', async () => {
+    const book = makeBook({
+      asin: 'B004', language: 'english',
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+    });
+    const articleStrippedGap = { ...stormlightGap, seriesName: 'Stormlight Archive' };
+    const map = await runQuery([book], [articleStrippedGap]);
+    expect(map.has('B004')).toBe(true);
+  });
+
+  it('admits via leading-article equivalence in fallback branch (no seriesPrimary)', async () => {
+    const book = makeBook({
+      asin: 'B005', language: 'english',
+      series: [{ name: 'The Stormlight Archive', position: 2 }],
+    });
+    const articleStrippedGap = { ...stormlightGap, seriesName: 'Stormlight Archive' };
+    const map = await runQuery([book], [articleStrippedGap]);
+    expect(map.has('B005')).toBe(true);
+  });
+
+  it('admits via punctuation normalization (Kingkiller-Chronicle vs The Kingkiller Chronicle)', async () => {
+    const book = makeBook({
+      asin: 'B006', language: 'english',
+      seriesPrimary: { name: 'The Kingkiller Chronicle', position: 1 },
+    });
+    const kingkillerGap = { seriesName: 'Kingkiller-Chronicle', authorName: 'Rothfuss', missingPositions: [1], nextPosition: 1, maxOwned: 0 };
+    const map = await runQuery([book], [kingkillerGap]);
+    expect(map.has('B006')).toBe(true);
+  });
+
+  it('excludes a true cross-series mismatch even under loose normalization', async () => {
+    const book = makeBook({
+      asin: 'B007', language: 'english',
+      seriesPrimary: { name: 'The Cosmere', position: 5 },
+    });
+    const articleStrippedGap = { ...stormlightGap, seriesName: 'Stormlight Archive' };
+    const map = await runQuery([book], [articleStrippedGap]);
+    expect(map.has('B007')).toBe(false);
+  });
+});
+
+describe('seriesGapBonus (via scoreCandidate) — #1099 primary-first scoring', () => {
+  function makeSignalsLocal(overrides: Partial<LibrarySignals> = {}): LibrarySignals {
+    return {
+      authorAffinity: new Map(),
+      genreDistribution: new Map(),
+      seriesGaps: [],
+      narratorAffinity: new Map(),
+      durationStats: null,
+      ...overrides,
+    };
+  }
+
+  it('does NOT award the bonus when seriesPrimary disagrees with the gap (secondary series[] entry would-have matched)', () => {
+    const book = makeBook({
+      asin: 'B001',
+      seriesPrimary: { name: 'The Cosmere', position: 5 },
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
+    });
+    const signals = makeSignalsLocal({
+      seriesGaps: [{ seriesName: 'The Stormlight Archive', authorName: 'Sanderson', missingPositions: [2], nextPosition: 2, maxOwned: 1 }],
+    });
+    const score = scoreCandidate(book, 'series', 1.0, signals);
+    const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
+    expect(score).toBeLessThan(baseline + 20);
+  });
+
+  it('awards the bonus when the gap matches seriesPrimary via leading-article equivalence', () => {
+    const book = makeBook({
+      asin: 'B001',
+      seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
+    });
+    const signals = makeSignalsLocal({
+      seriesGaps: [{ seriesName: 'Stormlight Archive', authorName: 'Sanderson', missingPositions: [2], nextPosition: 2, maxOwned: 1 }],
+    });
+    const score = scoreCandidate(book, 'series', 1.0, signals);
+    const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
+    expect(score).toBeGreaterThanOrEqual(baseline + 20);
+  });
+
+  it('awards the bonus in the fallback branch (no seriesPrimary, series[] carries the target)', () => {
+    const book = makeBook({
+      asin: 'B001',
+      series: [{ name: 'The Stormlight Archive', position: 2 }],
+    });
+    const signals = makeSignalsLocal({
+      seriesGaps: [{ seriesName: 'Stormlight Archive', authorName: 'Sanderson', missingPositions: [2], nextPosition: 2, maxOwned: 1 }],
+    });
+    const score = scoreCandidate(book, 'series', 1.0, signals);
+    const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
+    expect(score).toBeGreaterThanOrEqual(baseline + 20);
+  });
+
+  it('does NOT award the bonus when a secondary series[] entry matches the gap but seriesPrimary disagrees', () => {
+    const book = makeBook({
+      asin: 'B001',
+      seriesPrimary: { name: 'The Cosmere', position: 5 },
+      series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
+    });
+    const signals = makeSignalsLocal({
+      seriesGaps: [{ seriesName: 'Stormlight Archive', authorName: 'Sanderson', missingPositions: [2], nextPosition: 2, maxOwned: 1 }],
+    });
+    const score = scoreCandidate(book, 'series', 1.0, signals);
+    const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
+    expect(score).toBeLessThan(baseline + 20);
+  });
+});
+
 describe('isEligibleCandidate — language filtering', () => {
   it('accepts book whose language matches one of configured languages', () => {
     const book = makeBook({ asin: 'B001', language: 'english' });
