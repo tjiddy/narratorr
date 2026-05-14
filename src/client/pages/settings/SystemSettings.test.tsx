@@ -468,7 +468,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: { logLevel: 'debug', housekeepingRetentionDays: 30 },
+        general: { logLevel: 'debug', housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 },
       });
     });
   });

@@ -14,10 +14,12 @@ export function GeneralSettingsForm() {
     defaultValues: {
       logLevel: DEFAULT_SETTINGS.general.logLevel,
       housekeepingRetentionDays: DEFAULT_SETTINGS.general.housekeepingRetentionDays,
+      seriesCacheRetentionDays: DEFAULT_SETTINGS.general.seriesCacheRetentionDays,
     },
     select: (s: AppSettings) => ({
       logLevel: s.general.logLevel,
       housekeepingRetentionDays: s.general.housekeepingRetentionDays,
+      seriesCacheRetentionDays: s.general.seriesCacheRetentionDays,
     }),
     toPayload: (d) => ({ general: d }),
     successMessage: 'General settings saved',
@@ -48,6 +50,25 @@ export function GeneralSettingsForm() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             Events older than this many days are automatically pruned during the weekly housekeeping job. Valid range: 1–365 days.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="seriesCacheRetentionDays" className="block text-sm font-medium mb-2">Series Cache Retention (days)</label>
+          <input
+            id="seriesCacheRetentionDays"
+            type="number"
+            min={1}
+            max={365}
+            step={1}
+            {...register('seriesCacheRetentionDays', { valueAsNumber: true })}
+            className={errorInputClass(!!errors.seriesCacheRetentionDays)}
+          />
+          {errors.seriesCacheRetentionDays && (
+            <p className="text-sm text-destructive mt-1">{errors.seriesCacheRetentionDays.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Cached series rows whose books have all been removed from your library are pruned after this many days. Valid range: 1–365 days.
           </p>
         </div>
       </SettingsSection>

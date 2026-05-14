@@ -93,8 +93,8 @@ describe('settingsRegistry', () => {
       expect(parsed.redownloadFailed).toBe(true);
     });
 
-    it('general defaults have logLevel info, housekeepingRetentionDays 90, and welcomeSeen false', () => {
-      expect(DEFAULT_SETTINGS.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false });
+    it('general defaults have logLevel info, housekeepingRetentionDays 90, seriesCacheRetentionDays 30, and welcomeSeen false', () => {
+      expect(DEFAULT_SETTINGS.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false });
     });
 
     it('metadata defaults have audibleRegion us', () => {
@@ -629,6 +629,7 @@ describe('settingsRegistry', () => {
       const result = generalFormSchema.safeParse({
         logLevel: 'info',
         housekeepingRetentionDays: 90,
+        seriesCacheRetentionDays: 30,
         welcomeSeen: true,
       });
       expect(result.success).toBe(true);
@@ -641,6 +642,7 @@ describe('settingsRegistry', () => {
       const result = generalFormSchema.safeParse({
         logLevel: 'debug',
         housekeepingRetentionDays: 30,
+        seriesCacheRetentionDays: 14,
       });
       expect(result.success).toBe(true);
     });

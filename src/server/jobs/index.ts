@@ -59,6 +59,11 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
         await services.eventHistory.pruneOlderThan(retentionDays);
       } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: retention prune failed'); }
       try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: blacklist cleanup failed'); }
+      try {
+        const generalSettings = await services.settings.get('general');
+        const retentionDays = generalSettings.seriesCacheRetentionDays ?? 30;
+        await services.seriesRefresh.sweepOrphanSeries(retentionDays);
+      } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: orphan series cleanup failed'); }
     } },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },

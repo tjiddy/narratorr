@@ -1,5 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
+import { and, eq, inArray, isNotNull, lt, notExists } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
+import { series, seriesMembers } from '../../db/schema.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { normalizeSeriesName as sharedNormalizeSeriesName } from '../utils/series-normalize.js';
 import { RateLimitError } from '../../core/metadata/errors.js';
@@ -155,6 +157,44 @@ export class SeriesRefreshService {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Housekeeping sweep: delete series rows whose members all have `book_id IS NULL`
+   * and were last fetched more than `retentionDays` ago. Series with
+   * `last_fetched_at IS NULL` are excluded (NULL not less than anything in
+   * SQLite) — they're picked up on the next refresh cycle. The
+   * `seriesMembers.seriesId` FK cascades, so child rows are deleted automatically.
+   */
+  async sweepOrphanSeries(retentionDays: number): Promise<{ deleted: number }> {
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+    const orphans = await this.db
+      .select({ id: series.id, name: series.name })
+      .from(series)
+      .where(and(
+        lt(series.lastFetchedAt, cutoff),
+        notExists(
+          this.db.select({ id: seriesMembers.id })
+            .from(seriesMembers)
+            .where(and(
+              eq(seriesMembers.seriesId, series.id),
+              isNotNull(seriesMembers.bookId),
+            )),
+        ),
+      ));
+    if (orphans.length === 0) return { deleted: 0 };
+
+    const ids = orphans.map((o) => o.id);
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      await this.db.delete(series).where(inArray(series.id, ids.slice(i, i + CHUNK_SIZE)));
+    }
+
+    this.log.info(
+      { count: orphans.length, names: orphans.slice(0, 10).map((o) => o.name) },
+      'Housekeeping: pruned orphan series',
+    );
+    return { deleted: orphans.length };
   }
 
   /** Scheduled job: pick stale series, refresh one at a time with jitter delay. */

@@ -105,6 +105,7 @@ describe('GeneralSettingsForm', () => {
         general: {
           logLevel: 'debug',
           housekeepingRetentionDays: 60,
+          seriesCacheRetentionDays: 30,
         },
       });
     });
@@ -130,6 +131,7 @@ describe('GeneralSettingsForm', () => {
         general: {
           logLevel: 'warn',
           housekeepingRetentionDays: 30,
+          seriesCacheRetentionDays: 30,
         },
       });
     });
