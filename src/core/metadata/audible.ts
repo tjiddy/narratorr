@@ -9,6 +9,7 @@ import { getErrorMessage } from '../../shared/error-message.js';
 import type {
   MetadataSearchProvider,
   BookMetadata,
+  ProviderLookupResult,
   SeriesMetadata,
   SearchBooksOptions,
   SearchBooksResult,
@@ -156,17 +157,49 @@ export class AudibleProvider implements MetadataSearchProvider {
   }
 
   async getBook(asin: string): Promise<BookMetadata | null> {
+    const r = await this.getBookDetailed(asin);
+    switch (r.kind) {
+      case 'ok': return r.book;
+      case 'not_found': return null;
+      case 'invalid_record':
+        if (r.source === 'raw') {
+          throw new MetadataError(
+            this.name,
+            'Audible returned unexpected response',
+            r.cause !== undefined ? { cause: r.cause } : undefined,
+          );
+        }
+        return null;
+      case 'rate_limited': throw new RateLimitError(r.retryAfterMs, this.name);
+      case 'transient_failure': throw new TransientError(this.name, r.message);
+    }
+  }
+
+  /**
+   * Typed lookup that never throws — every failure becomes a discriminated kind.
+   * `invalid_record.source` distinguishes raw wrapper-schema failures (HTML
+   * interstitial, API shape change) from mapped-schema failures (required
+   * BookMetadata field missing), so the legacy `getBook` wrapper can preserve
+   * its existing throw-vs-null contract for each.
+   */
+  async getBookDetailed(asin: string): Promise<ProviderLookupResult> {
     const params = new URLSearchParams({
       response_groups: RESPONSE_GROUPS,
       image_sizes: IMAGE_SIZES,
     });
+    const url = `${this.baseUrl}/1.0/catalog/products/${asin}?${params}`;
+    const raw = await this.requestDetailed(url, audibleProductDetailResponseSchema);
+    if (raw.kind !== 'ok') return raw;
 
-    const product = await this.fetchProduct(asin, params);
-    if (!product) return null;
+    const product = raw.data?.product ?? null;
+    if (!product) return { kind: 'not_found' };
 
     const mapped = mapProduct(product);
-    const result = BookMetadataSchema.safeParse(mapped);
-    return result.success ? result.data : null;
+    const parsed = BookMetadataSchema.safeParse(mapped);
+    if (!parsed.success) {
+      return { kind: 'invalid_record', source: 'mapped', cause: parsed.error, issues: parsed.error.issues };
+    }
+    return { kind: 'ok', book: parsed.data };
   }
 
   /**
@@ -222,12 +255,6 @@ export class AudibleProvider implements MetadataSearchProvider {
     return data?.products ?? [];
   }
 
-  private async fetchProduct(asin: string, params: URLSearchParams): Promise<AudibleProduct | null> {
-    const url = `${this.baseUrl}/1.0/catalog/products/${asin}?${params}`;
-    const data = await this.request(url, audibleProductDetailResponseSchema);
-    return data?.product ?? null;
-  }
-
   private async request<S extends z.ZodTypeAny>(url: string, schema: S): Promise<z.infer<S> | null> {
     try {
       const res = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
@@ -256,6 +283,49 @@ export class AudibleProvider implements MetadataSearchProvider {
       if (error instanceof MetadataError) throw error;
       throw new TransientError(this.name, getErrorMessage(error));
     }
+  }
+
+  /**
+   * Like `request`, but returns a discriminated outcome instead of throwing.
+   * Used by `getBookDetailed` to preserve full failure-mode fidelity for the
+   * Fix Match route.
+   */
+  private async requestDetailed<S extends z.ZodTypeAny>(
+    url: string,
+    schema: S,
+  ): Promise<
+    | { kind: 'ok'; data: z.infer<S> | null }
+    | { kind: 'not_found' }
+    | { kind: 'rate_limited'; retryAfterMs: number }
+    | { kind: 'invalid_record'; source: 'raw'; cause: z.ZodError; issues: z.ZodIssue[] }
+    | { kind: 'transient_failure'; message: string }
+  > {
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      return { kind: 'transient_failure', message: getErrorMessage(error) };
+    }
+    if (res.status === 429) {
+      const retryAfter = res.headers.get('Retry-After');
+      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
+      return { kind: 'rate_limited', retryAfterMs };
+    }
+    if (res.status >= 500) {
+      return { kind: 'transient_failure', message: `HTTP ${res.status} ${res.statusText}` };
+    }
+    if (!res.ok) return { kind: 'not_found' };
+    let raw: unknown;
+    try {
+      raw = await res.json();
+    } catch (error: unknown) {
+      return { kind: 'transient_failure', message: getErrorMessage(error) };
+    }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      return { kind: 'invalid_record', source: 'raw', cause: parsed.error, issues: parsed.error.issues };
+    }
+    return { kind: 'ok', data: parsed.data };
   }
 }
 

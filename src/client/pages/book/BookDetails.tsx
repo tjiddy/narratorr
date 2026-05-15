@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
+import { BookFixMatchModal } from '@/components/book/BookFixMatchModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
 import { RenamePreviewModal } from '@/components/RenamePreviewModal.js';
@@ -81,6 +82,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onBackClick={() => navigate(-1)}
         onSearchClick={() => open('search')}
         onEditClick={() => open('edit')}
+        onFixMatchClick={() => open('fixMatch')}
         onRenameClick={() => open('confirmRename')}
         isRenaming={renameMutation.isPending}
         onRetagClick={() => open('confirmRetag')}
@@ -199,6 +201,13 @@ function BookDetailsModals({
           onSave={(data, renameFiles) => handleSave(data, renameFiles, () => close('edit'))}
           onClose={() => close('edit')}
           isSaving={isSaving}
+        />
+      )}
+
+      {modals.fixMatch && (
+        <BookFixMatchModal
+          book={libraryBook}
+          onClose={() => close('fixMatch')}
         />
       )}
 

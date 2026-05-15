@@ -41,6 +41,7 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   merge_failed: { icon: XCircleIcon, label: 'Merge Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
   wrong_release: { icon: XCircleIcon, label: 'Wrong Release', color: 'text-destructive', bgColor: 'bg-destructive/10' },
   book_added: { icon: BookOpenIcon, label: 'Book Added', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10' },
+  metadata_fixed: { icon: AlertTriangleIcon, label: 'Metadata Fixed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };

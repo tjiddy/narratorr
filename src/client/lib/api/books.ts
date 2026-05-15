@@ -366,7 +366,18 @@ export const booksApi = {
     fetchApi<{ series: BookSeriesCardData | null }>(`/books/${id}/series`),
   refreshBookSeries: (id: number) =>
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/refresh`, { method: 'POST' }),
+  fixMatchBook: (id: number, payload: FixMatchPayload) =>
+    fetchApi<BookWithAuthor>(`/books/${id}/fix-match`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
+
+export interface FixMatchPayload {
+  asin: string;
+  renameFiles?: boolean;
+  retagFiles?: boolean;
+}
 
 export interface BookSeriesMemberCard {
   id: number;

@@ -36,6 +36,13 @@
       "when": 1778714813250,
       "tag": "0004_colossal_george_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1778883959557,
+      "tag": "0005_add_metadata_fixed_event_enum",
+      "breakpoints": true
     }
   ]
 }

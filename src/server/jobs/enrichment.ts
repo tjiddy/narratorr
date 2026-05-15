@@ -26,6 +26,22 @@ function isAllCaps(title: string): boolean {
   return title === title.toUpperCase() && title !== title.toLowerCase();
 }
 
+/**
+ * Re-check the book row's ASIN against the value captured at enrichment-job
+ * start. Drops writebacks whose target book has been re-identified mid-flight
+ * (the Fix Match path swaps `books.asin` so the original enrichment payload no
+ * longer applies to the row).
+ */
+async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string): Promise<boolean> {
+  const rows = await db
+    .select({ asin: books.asin })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .limit(1);
+  const current = rows[0]?.asin ?? null;
+  return current === capturedAsin;
+}
+
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
 function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknown>): Record<string, unknown> {
   const fields: Array<keyof ExistingBookFields> = ['description', 'coverUrl', 'publishedDate'];
@@ -185,14 +201,23 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         filledTitle += filled.filledTitle;
         filledDescription += filled.filledDescription;
 
-        // Fill genres via bookService.update() when existing genres are null or empty
+        // Fill genres via bookService.update() when existing genres are null or empty.
+        // Re-check the row's ASIN before mutating to drop writes for books whose
+        // identity was swapped under us (Fix Match). The genres path commits
+        // through bookService.update(), which has no capturedAsin scope.
         if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
-          await bookService.update(candidate.id, { genres: result.genres });
-          filledGenres++;
+          if (await isStillSameAsin(db, candidate.id, asin)) {
+            await bookService.update(candidate.id, { genres: result.genres });
+            filledGenres++;
+          } else {
+            log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (genres)');
+          }
         }
       }
 
-      // Fill in narrators from metadata if none in junction table yet
+      // Fill in narrators from metadata if none in junction table yet.
+      // Re-check ASIN at the loop boundary so a Fix Match that swapped the
+      // book's identity prevents the loop from inserting stale junction rows.
       if (result.narrators?.length) {
         const existingNarrators = await db
           .select({ id: bookNarrators.narratorId })
@@ -200,27 +225,38 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           .where(eq(bookNarrators.bookId, candidate.id))
           .limit(1);
         if (existingNarrators.length === 0) {
-          filledNarrators++;
-          for (let i = 0; i < result.narrators.length; i++) {
-            const name = result.narrators[i]!.trim();
-            if (!name) continue;
-            let narratorId: number | undefined;
-            try {
-              narratorId = await findOrCreateNarrator(db, name);
-            } catch (_error: unknown) {
-              // Skip this narrator — batch processing continues
-            }
-            if (narratorId !== undefined) {
-              await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId, position: i }).onConflictDoNothing();
+          if (!(await isStillSameAsin(db, candidate.id, asin))) {
+            log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (narrators)');
+          } else {
+            filledNarrators++;
+            for (let i = 0; i < result.narrators.length; i++) {
+              const name = result.narrators[i]!.trim();
+              if (!name) continue;
+              let narratorId: number | undefined;
+              try {
+                narratorId = await findOrCreateNarrator(db, name);
+              } catch (_error: unknown) {
+                // Skip this narrator — batch processing continues
+              }
+              if (narratorId !== undefined) {
+                await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId, position: i }).onConflictDoNothing();
+              }
             }
           }
         }
       }
 
-      await db
+      // Scalar UPDATE: scope `WHERE id = ? AND asin = capturedAsin` so a Fix
+      // Match that swapped the row's identity between fetch and writeback drops
+      // the stale write atomically.
+      const scalarResult = await db
         .update(books)
         .set(updates)
-        .where(eq(books.id, candidate.id));
+        .where(and(eq(books.id, candidate.id), eq(books.asin, asin)))
+        .returning({ id: books.id });
+      if (scalarResult.length === 0) {
+        log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (scalar update)');
+      }
 
       enrichedCount++;
       log.info({ bookId: candidate.id, asin }, 'Book enriched successfully');

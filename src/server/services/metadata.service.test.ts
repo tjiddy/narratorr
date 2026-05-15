@@ -12,6 +12,7 @@ const mockAudibleProvider = {
   searchBooks: vi.fn().mockResolvedValue({ books: [] }),
   searchSeries: vi.fn().mockResolvedValue([]),
   getBook: vi.fn().mockResolvedValue(null),
+  getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getSeriesRelationships: vi.fn().mockResolvedValue([]),
   test: vi.fn().mockResolvedValue({ success: true }),
 };
@@ -20,6 +21,7 @@ const mockAudnexus = {
   name: 'Audnexus',
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
+  getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
 };
 
@@ -46,17 +48,21 @@ describe('MetadataService', () => {
     mockAudibleProvider.searchBooks.mockReset();
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
+    mockAudibleProvider.getBookDetailed.mockReset();
     mockAudibleProvider.getSeriesRelationships.mockReset();
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
+    mockAudnexus.getBookDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
     // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
+    mockAudibleProvider.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudibleProvider.getSeriesRelationships.mockResolvedValue([]);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
+    mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
     mockAudnexus.getAuthor.mockResolvedValue(null);
 
     mockLog = createMockLogger();
@@ -2123,6 +2129,132 @@ describe('MetadataService', () => {
       new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
 
       expect(audnexusCtor).toHaveBeenCalledWith({ region: 'uk' });
+    });
+  });
+
+  describe('lookupForFixMatch (#1129)', () => {
+    const audibleBook = {
+      asin: 'B_NEW',
+      title: 'New Title',
+      authors: [{ name: 'Author' }],
+      narrators: ['Narrator 1'],
+      description: 'desc',
+      coverUrl: 'https://example.com/cover.jpg',
+      duration: 600,
+      publishedDate: '2024-01-01',
+      series: [{ name: 'Series', position: 2 }],
+    };
+    const audnexusBook = {
+      asin: 'B_NEW',
+      title: 'New Title (Audnexus)',
+      authors: [{ name: 'Author' }],
+      narrators: ['Narrator 1', 'Narrator 2'],
+      seriesPrimary: { name: 'Series', position: 2, asin: 'SERIES_ID' },
+      genres: ['Fantasy'],
+      isbn: '9781234567890',
+    };
+
+    it('both providers ok → merged record with Audnexus seriesPrimary/genres/isbn/richer narrators', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'ok', book: audibleBook });
+      mockAudnexus.getBookDetailed.mockResolvedValueOnce({ kind: 'ok', book: audnexusBook });
+
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') {
+        expect(result.book.title).toBe('New Title'); // Audible authoritative
+        expect(result.book.seriesPrimary?.asin).toBe('SERIES_ID');
+        expect(result.book.genres).toEqual(['Fantasy']);
+        expect(result.book.isbn).toBe('9781234567890');
+        expect(result.book.narrators).toEqual(['Narrator 1', 'Narrator 2']);
+      }
+    });
+
+    it('Audible not_found → propagates verbatim', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'not_found' });
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('not_found');
+      expect(mockAudnexus.getBookDetailed).not.toHaveBeenCalled();
+    });
+
+    it('Audible rate_limited → sets backoff and propagates retryAfterMs', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 5_000 });
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('rate_limited');
+      if (result.kind === 'rate_limited') {
+        expect(result.retryAfterMs).toBe(5_000);
+      }
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'Audible.com', retryAfterMs: 5_000 }),
+        'Provider rate limited',
+      );
+      expect(mockAudnexus.getBookDetailed).not.toHaveBeenCalled();
+    });
+
+    it('Audible invalid_record (mapped or raw) → propagates as invalid_record', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'invalid_record', source: 'mapped' });
+      const r1 = await service.lookupForFixMatch('B1');
+      expect(r1.kind).toBe('invalid_record');
+
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'invalid_record', source: 'raw' });
+      const r2 = await service.lookupForFixMatch('B2');
+      expect(r2.kind).toBe('invalid_record');
+    });
+
+    it('Audible transient_failure → propagates message', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'transient_failure', message: 'HTTP 500' });
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('transient_failure');
+      if (result.kind === 'transient_failure') {
+        expect(result.message).toBe('HTTP 500');
+      }
+    });
+
+    it('Audible ok + Audnexus rate_limited → ok, sets Audnexus backoff, WARN logged', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'ok', book: audibleBook });
+      mockAudnexus.getBookDetailed.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 10_000 });
+
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') {
+        expect(result.book.genres).toBeUndefined();
+        expect(result.book.isbn).toBeUndefined();
+      }
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'Audnexus', retryAfterMs: 10_000 }),
+        'Provider rate limited',
+      );
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_NEW', audnexusKind: 'rate_limited' }),
+        expect.stringContaining('Audnexus failed'),
+      );
+    });
+
+    it('Audible ok + Audnexus transient_failure → ok with Audible-only fields, WARN logged', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'ok', book: audibleBook });
+      mockAudnexus.getBookDetailed.mockResolvedValueOnce({ kind: 'transient_failure', message: 'HTTP 503' });
+
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('ok');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_NEW', audnexusKind: 'transient_failure' }),
+        expect.stringContaining('Audnexus failed'),
+      );
+    });
+
+    it('Audible ok + Audnexus not_found → ok with Audible-only fields', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'ok', book: audibleBook });
+      mockAudnexus.getBookDetailed.mockResolvedValueOnce({ kind: 'not_found' });
+
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('ok');
+    });
+
+    it('Audible ok + Audnexus invalid_record → ok with Audible-only fields', async () => {
+      mockAudibleProvider.getBookDetailed.mockResolvedValueOnce({ kind: 'ok', book: audibleBook });
+      mockAudnexus.getBookDetailed.mockResolvedValueOnce({ kind: 'invalid_record', source: 'mapped' });
+
+      const result = await service.lookupForFixMatch('B_NEW');
+      expect(result.kind).toBe('ok');
     });
   });
 });

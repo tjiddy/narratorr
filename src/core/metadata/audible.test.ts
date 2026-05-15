@@ -1311,4 +1311,120 @@ describe('AudibleProvider', () => {
       expect(book).toBeNull();
     });
   });
+
+  describe('getBookDetailed — typed outcomes (#1129)', () => {
+    it('200 + valid record → { kind: "ok", book }', async () => {
+      const result = await provider.getBookDetailed('B017V4IWVG');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') {
+        expect(result.book.asin).toBeDefined();
+      }
+    });
+
+    it('mapped-invalid (empty title) → invalid_record source=mapped', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({ product: { asin: 'B_EMPTY', title: '', authors: [] } });
+        }),
+      );
+      const result = await provider.getBookDetailed('B_EMPTY');
+      expect(result.kind).toBe('invalid_record');
+      if (result.kind === 'invalid_record') expect(result.source).toBe('mapped');
+    });
+
+    it('raw wrapper-schema failure → invalid_record source=raw', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          // The wrapper schema requires `product` to be object|null|undefined and to passthrough.
+          // Returning an entirely wrong root shape (a top-level array) violates the wrapper.
+          return HttpResponse.json([{ not: 'an object' }]);
+        }),
+      );
+      const result = await provider.getBookDetailed('B_BAD');
+      expect(result.kind).toBe('invalid_record');
+      if (result.kind === 'invalid_record') expect(result.source).toBe('raw');
+    });
+
+    it('HTTP 404 → not_found', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => new HttpResponse(null, { status: 404 })),
+      );
+      const result = await provider.getBookDetailed('B_404');
+      expect(result.kind).toBe('not_found');
+    });
+
+    it('HTTP 429 → rate_limited with retryAfterMs', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '30' } })),
+      );
+      const result = await provider.getBookDetailed('B_429');
+      expect(result.kind).toBe('rate_limited');
+      if (result.kind === 'rate_limited') expect(result.retryAfterMs).toBe(30_000);
+    });
+
+    it('HTTP 5xx → transient_failure', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => new HttpResponse(null, { status: 500 })),
+      );
+      const result = await provider.getBookDetailed('B_5xx');
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('network error → transient_failure', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => HttpResponse.error()),
+      );
+      const result = await provider.getBookDetailed('B_NET');
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('does NOT throw under any error path', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => new HttpResponse(null, { status: 500 })),
+      );
+      await expect(provider.getBookDetailed('B_5xx')).resolves.toBeDefined();
+    });
+  });
+
+  describe('legacy getBook wrapper — compatibility matrix (#1129)', () => {
+    it('HTTP 429 → throws RateLimitError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '10' } })),
+      );
+      await expect(provider.getBook('B_429')).rejects.toBeInstanceOf(RateLimitError);
+    });
+
+    it('HTTP 5xx → throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => new HttpResponse(null, { status: 502 })),
+      );
+      await expect(provider.getBook('B_5xx')).rejects.toBeInstanceOf(TransientError);
+    });
+
+    it('network error → throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => HttpResponse.error()),
+      );
+      await expect(provider.getBook('B_NET')).rejects.toBeInstanceOf(TransientError);
+    });
+
+    it('raw schema failure → throws MetadataError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json([{ not: 'an object' }]);
+        }),
+      );
+      await expect(provider.getBook('B_BAD')).rejects.toBeInstanceOf(MetadataError);
+    });
+
+    it('mapped-invalid → returns null', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({ product: { asin: 'B_EMPTY', title: '', authors: [] } });
+        }),
+      );
+      const result = await provider.getBook('B_EMPTY');
+      expect(result).toBeNull();
+    });
+  });
 });

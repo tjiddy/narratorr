@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService, MetadataService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -26,6 +26,7 @@ export interface BookRouteDeps {
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
   seriesRefreshService?: SeriesRefreshService;
+  metadataService?: MetadataService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { type z } from 'zod';
@@ -46,6 +47,7 @@ import {
   type RetagBody,
   type RetagPreviewQuery,
 } from '../../shared/schemas.js';
+import { registerFixMatchRoute } from './books-fix-match.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
@@ -251,6 +253,36 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
   );
 }
 
+function registerMergeRoutes(app: FastifyInstance, mergeService: MergeService) {
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/merge-to-m4b',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const result = await mergeService.enqueueMerge(id);
+      request.log.info({ id, status: result.status }, 'Merge request acknowledged');
+      return reply.status(202).send(result);
+    },
+  );
+
+  app.delete<{ Params: IdParam }>(
+    '/api/books/:id/merge-to-m4b',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const result = await mergeService.cancelMerge(id);
+      if (result.status === 'cancelled') {
+        request.log.info({ id }, 'Merge cancelled');
+        return reply.status(200).send({ success: true });
+      }
+      if (result.status === 'committing') {
+        return reply.status(409).send({ error: 'Merge is past the point of no return' });
+      }
+      return reply.status(404).send({ error: 'No active merge for this book' });
+    },
+  );
+}
+
 /** Build the overrides object the tagging service expects, omitting unset fields
  *  so the resulting object satisfies `exactOptionalPropertyTypes`. */
 function pickRetagOverrides(
@@ -400,35 +432,12 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     registerSeriesRoutes(app, deps.bookService, deps.seriesRefreshService);
   }
 
-  // POST /api/books/:id/merge-to-m4b
-  app.post<{ Params: IdParam }>(
-    '/api/books/:id/merge-to-m4b',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      const result = await mergeService.enqueueMerge(id);
-      request.log.info({ id, status: result.status }, 'Merge request acknowledged');
-      return reply.status(202).send(result);
-    },
-  );
+  registerMergeRoutes(app, mergeService);
 
-  // DELETE /api/books/:id/merge-to-m4b (cancel merge)
-  app.delete<{ Params: IdParam }>(
-    '/api/books/:id/merge-to-m4b',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      const result = await mergeService.cancelMerge(id);
-      if (result.status === 'cancelled') {
-        request.log.info({ id }, 'Merge cancelled');
-        return reply.status(200).send({ success: true });
-      }
-      if (result.status === 'committing') {
-        return reply.status(409).send({ error: 'Merge is past the point of no return' });
-      }
-      return reply.status(404).send({ error: 'No active merge for this book' });
-    },
-  );
+  // POST /api/books/:id/fix-match
+  if (deps.metadataService) {
+    registerFixMatchRoute(app, deps);
+  }
 
   // POST /api/books/:id/wrong-release
   if (deps.bookRejectionService) {

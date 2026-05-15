@@ -21,6 +21,8 @@ import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.j
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
+export type { FixMatchLookupResult } from './metadata-fix-match.js';
 
 
 const DEFAULT_THROTTLE_MS = 200;
@@ -360,6 +362,18 @@ export class MetadataService {
     );
   }
 
+  lookupForFixMatch(asin: string): Promise<FixMatchLookupResult> {
+    return runFixMatchLookup({
+      audible: this.providers[0],
+      audnexus: this.audnexus,
+      log: this.log,
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name) => this.isRateLimited(name),
+      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
+      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+    }, asin);
+  }
+
   async enrichBook(asin: string): Promise<BookMetadata | null> {
     if (this.isRateLimited('Audnexus')) {
       this.log.warn({ asin }, 'Enrichment skipped — Audnexus rate limited');
@@ -413,6 +427,12 @@ export class MetadataService {
     const until = this.rateLimitUntil.get(providerName);
     if (!until) return 0;
     return Math.ceil(Math.max(0, until - Date.now()) / 1000);
+  }
+
+  private getRateLimitRemainingMs(providerName: string): number {
+    const until = this.rateLimitUntil.get(providerName);
+    if (!until) return 0;
+    return Math.max(0, until - Date.now());
   }
 
   private setRateLimited(providerName: string, durationMs: number): void {

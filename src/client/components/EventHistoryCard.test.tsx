@@ -486,4 +486,29 @@ describe('#537 retry button on download_failed events', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'download_failed', downloadId: 5, bookId: 2 })} onRetry={onRetry} isRetrying />);
     expect(screen.getByRole('button', { name: /retry/i })).toBeDisabled();
   });
+
+  describe('metadata_fixed event (#1129 F5)', () => {
+    it('renders user-facing "Metadata Fixed" label for metadata_fixed events', () => {
+      const event = createMockEvent({
+        eventType: 'metadata_fixed',
+        downloadId: null,
+        reason: { oldAsin: 'B_OLD', newAsin: 'B_NEW', oldTitle: 'Old Title', newTitle: 'New Title' },
+      });
+      renderWithProviders(<EventHistoryCard event={event} />);
+
+      expect(screen.getByText('Metadata Fixed')).toBeInTheDocument();
+      // Falls back through the registry — not the placeholder 'Unknown' label.
+      expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+      // Raw event type string must not leak through as a label.
+      expect(screen.queryByText('metadata_fixed')).not.toBeInTheDocument();
+    });
+
+    it('does not surface Mark Failed for metadata_fixed (not in the actionable set)', () => {
+      const onMarkFailed = vi.fn();
+      const event = createMockEvent({ eventType: 'metadata_fixed', downloadId: null });
+      renderWithProviders(<EventHistoryCard event={event} onMarkFailed={onMarkFailed} />);
+
+      expect(screen.queryByText('Mark Failed')).not.toBeInTheDocument();
+    });
+  });
 });

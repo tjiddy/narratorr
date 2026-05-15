@@ -280,6 +280,7 @@ const routeRegistry: RouteFactory[] = [
     blacklistService: s.blacklist,
     eventBroadcaster: s.eventBroadcaster,
     seriesRefreshService: s.seriesRefresh,
+    metadataService: s.metadata,
   }),
   (app, s) => bookFilesRoute(app, s.book),
   (app, s) => bookPreviewRoute(app, s.book),

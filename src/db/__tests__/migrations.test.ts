@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PROD_DRIZZLE = join(__dirname, '..', '..', '..', 'drizzle');
 const NEW_MIGRATION_TAG = '0004_colossal_george_stacy';
+const NEW_MIGRATION_IDX = 4;
 
 interface JournalEntry {
   idx: number;
@@ -53,27 +54,36 @@ function setupSplitMigrationsFolder(): {
   mkdirSync(migrationsFolder, { recursive: true });
   mkdirSync(join(migrationsFolder, 'meta'), { recursive: true });
 
-  // Copy all SQL files EXCEPT the new migration. Copy all snapshot files.
+  // Copy SQL files for migrations strictly before NEW_MIGRATION_IDX. Drizzle's
+  // migrator tracks the highest applied idx; staging anything at-or-after the
+  // target tag would short-circuit re-applying the target itself.
+  const numericPrefix = /^(\d+)_/;
+  const fileIdx = (name: string): number | null => {
+    const m = name.match(numericPrefix);
+    return m ? parseInt(m[1]!, 10) : null;
+  };
   const files = readdirSync(PROD_DRIZZLE);
   for (const file of files) {
     if (file === 'meta') continue;
-    if (file.startsWith(NEW_MIGRATION_TAG)) continue;
+    const idx = fileIdx(file);
+    if (idx !== null && idx >= NEW_MIGRATION_IDX) continue;
     copyFileSync(join(PROD_DRIZZLE, file), join(migrationsFolder, file));
   }
   const metaFiles = readdirSync(join(PROD_DRIZZLE, 'meta'));
   for (const file of metaFiles) {
     if (file === '_journal.json') continue;
-    // Skip the new migration's snapshot file (it's the highest-numbered one).
-    // Drizzle snapshots are named "<idx>_snapshot.json" — the new one is 0004_snapshot.json.
-    if (file.startsWith('0004_')) continue;
+    const idx = fileIdx(file);
+    if (idx !== null && idx >= NEW_MIGRATION_IDX) continue;
     copyFileSync(join(PROD_DRIZZLE, 'meta', file), join(migrationsFolder, 'meta', file));
   }
 
-  // Write a truncated journal that omits the new migration's entry.
+  // Write a truncated journal that omits the new migration's entry AND any
+  // entry with idx >= NEW_MIGRATION_IDX so the pre-migration phase stages
+  // strictly the pre-target schema.
   const realJournal = readJournal(join(PROD_DRIZZLE, 'meta', '_journal.json'));
   const truncatedJournal: Journal = {
     ...realJournal,
-    entries: realJournal.entries.filter((e) => e.tag !== NEW_MIGRATION_TAG),
+    entries: realJournal.entries.filter((e) => e.idx < NEW_MIGRATION_IDX),
   };
   writeJournal(join(migrationsFolder, 'meta', '_journal.json'), truncatedJournal);
 

@@ -3,6 +3,7 @@ import { useState, useCallback } from 'react';
 const MODAL_KEYS = [
   'search',
   'edit',
+  'fixMatch',
   'confirmRename',
   'confirmRetag',
   'confirmMerge',

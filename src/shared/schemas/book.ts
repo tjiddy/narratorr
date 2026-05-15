@@ -65,6 +65,18 @@ export const updateBookBodySchema = z.object({
   seriesPosition: z.number().nullable().optional(),
 }).strict();
 
+/**
+ * Narrow request schema for `POST /api/books/:id/fix-match`. Replacement
+ * metadata is NOT client-supplied — the server fetches the canonical record
+ * itself via `MetadataService.lookupForFixMatch(asin)`.
+ */
+export const fixMatchRequestSchema = z.object({
+  asin: z.string().trim().min(1, 'ASIN is required'),
+  renameFiles: z.boolean().optional(),
+  retagFiles: z.boolean().optional(),
+}).strict();
+export type FixMatchRequest = z.infer<typeof fixMatchRequestSchema>;
+
 export const deleteBookQuerySchema = z.object({
   deleteFiles: z.string().optional(),
 });
