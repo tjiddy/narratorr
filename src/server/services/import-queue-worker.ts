@@ -27,6 +27,8 @@ export class ImportQueueWorker {
   private stopping = false;
   private currentJobPromise: Promise<void> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private drainInProgress = false;
+  private drainRequested = false;
 
   constructor(db: Db, log: FastifyBaseLogger, broadcaster?: EventBroadcasterService) {
     this.db = db;
@@ -118,29 +120,48 @@ export class ImportQueueWorker {
     this.log.info({ count: orphans.length, recovered, failed }, 'Boot recovery complete');
   }
 
-  /** Main drain loop: wait for nudge or poll, then drain all pending jobs. */
+  /**
+   * Wire nudges and the safety poll. Drain is gated through `requestDrain()`
+   * so overlapping triggers coalesce into one active drain runner — the worker
+   * processes one import at a time per process.
+   */
   private drainLoop(): void {
-    const drain = async () => {
-      if (!this.running) return;
+    this.emitter.on('nudge', () => this.requestDrain());
 
-      let processed = true;
-      while (processed && this.running && !this.stopping) {
-        processed = await this.drainOne();
-      }
-    };
+    this.pollTimer = setInterval(() => this.requestDrain(), SAFETY_POLL_INTERVAL_MS);
 
-    // Listen for nudges
-    this.emitter.on('nudge', () => {
-      void drain();
-    });
+    this.requestDrain();
+  }
 
-    // Safety-net poll
-    this.pollTimer = setInterval(() => {
-      void drain();
-    }, SAFETY_POLL_INTERVAL_MS);
+  /**
+   * Re-entrancy guard. If a drain is already running, set the "needs another
+   * pass" flag so the active runner repeats after reaching idle. Otherwise,
+   * spin up a single drain runner.
+   */
+  private requestDrain(): void {
+    if (!this.running || this.stopping) return;
+    if (this.drainInProgress) {
+      this.drainRequested = true;
+      return;
+    }
+    this.drainInProgress = true;
+    void this.runDrain();
+  }
 
-    // Initial drain
-    void drain();
+  private async runDrain(): Promise<void> {
+    try {
+      do {
+        this.drainRequested = false;
+        let processed = true;
+        while (processed && this.running && !this.stopping) {
+          processed = await this.drainOne();
+        }
+      } while (this.drainRequested && this.running && !this.stopping);
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error) }, 'Drain runner failed unexpectedly');
+    } finally {
+      this.drainInProgress = false;
+    }
   }
 
   /**
