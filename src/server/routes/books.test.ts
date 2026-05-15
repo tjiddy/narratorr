@@ -1280,9 +1280,17 @@ describe('books routes', () => {
   describe('GET /api/books/:id/files', () => {
     const bookWithPath = { ...mockBook, path: '/library/book1', status: 'imported' };
 
+    // `collectAudioFilePaths` calls `readdir(dir, { withFileTypes: true })`,
+    // so the mock must return Dirent-shaped entries. These helpers keep each
+    // test's intent legible without repeating the `isFile`/`isDirectory` shape.
+    const asFile = (name: string) => ({ name, isFile: () => true, isDirectory: () => false });
+    const asDir = (name: string) => ({ name, isFile: () => false, isDirectory: () => true });
+
     it('returns audio files with sizes, filtering non-audio files', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['Chapter 01.m4b', 'Chapter 02.m4b', 'cover.jpg', 'metadata.nfo']);
+      (readdir as Mock).mockResolvedValue(
+        ['Chapter 01.m4b', 'Chapter 02.m4b', 'cover.jpg', 'metadata.nfo'].map(asFile),
+      );
       (stat as Mock).mockImplementation((filePath: string) => {
         if (filePath.includes('Chapter 01')) return Promise.resolve({ size: 52428800 });
         return Promise.resolve({ size: 48234496 });
@@ -1299,7 +1307,9 @@ describe('books routes', () => {
 
     it('sorts files numerically (ch2 before ch10)', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['Chapter 10.m4b', 'Chapter 2.m4b', 'Chapter 1.m4b']);
+      (readdir as Mock).mockResolvedValue(
+        ['Chapter 10.m4b', 'Chapter 2.m4b', 'Chapter 1.m4b'].map(asFile),
+      );
       (stat as Mock).mockResolvedValue({ size: 1000 });
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
@@ -1309,6 +1319,32 @@ describe('books routes', () => {
         'Chapter 1.m4b',
         'Chapter 2.m4b',
         'Chapter 10.m4b',
+      ]);
+    });
+
+    // Surfaced 2026-05-15: a Finders Keepers rip with 100 mp3s spread across
+    // 10 disc subfolders reported "FILES (0)" because the route used a flat
+    // readdir against the book root. Switching to `collectAudioFilePaths`
+    // with `recursive: true` makes nested disc folders enumerate correctly,
+    // and the relative-path display lets multi-disc names disambiguate.
+    it('recurses into subdirectories (multi-disc layout) and returns POSIX relative paths', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockImplementation((dir: string) => {
+        if (dir === '/library/book1') return Promise.resolve([asDir('Disc 01'), asDir('Disc 02')]);
+        if (dir.endsWith('Disc 01')) return Promise.resolve([asFile('Track 01.mp3'), asFile('Track 02.mp3')]);
+        if (dir.endsWith('Disc 02')) return Promise.resolve([asFile('Track 01.mp3')]);
+        return Promise.resolve([]);
+      });
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload) as { name: string; size: number }[];
+      expect(body.map(f => f.name)).toEqual([
+        'Disc 01/Track 01.mp3',
+        'Disc 01/Track 02.mp3',
+        'Disc 02/Track 01.mp3',
       ]);
     });
 
@@ -1333,7 +1369,7 @@ describe('books routes', () => {
 
     it('returns empty array when directory has no audio files', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(['cover.jpg', 'metadata.nfo']);
+      (readdir as Mock).mockResolvedValue(['cover.jpg', 'metadata.nfo'].map(asFile));
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
 

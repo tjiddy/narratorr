@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, relative } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { serveCoverFromCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
@@ -7,7 +7,7 @@ import { MAX_COVER_SIZE } from '../../shared/constants.js';
 import type { BookService } from '../services/index.js';
 import { type z } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -92,18 +92,24 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
         return reply.status(404).send({ error: 'Book not found' });
       }
 
-      let entries: string[];
+      let audioPaths: string[];
       try {
-        entries = await readdir(book.path);
+        audioPaths = await collectAudioFilePaths(book.path, { recursive: true });
       } catch {
         request.log.warn({ bookId: id, path: book.path }, 'Could not read book directory');
         return [];
       }
 
-      const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+      const bookPath = book.path;
       const files = await Promise.all(
-        audioFiles.map(async (name) => {
-          const info = await stat(join(book.path!, name));
+        audioPaths.map(async (fullPath) => {
+          const info = await stat(fullPath);
+          // Display path is relative to the book folder so multi-disc rips show
+          // `Disc 01/Track 03.mp3` instead of repeating `Track 03.mp3` 10 times.
+          // Normalize to POSIX separators for consistent rendering — the app
+          // runs in Docker, but local-Windows dev produces backslashes from
+          // `path.relative()`.
+          const name = relative(bookPath, fullPath).split('\\').join('/');
           return { name, size: info.size };
         })
       );
