@@ -443,15 +443,13 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // #635 spec asked for a "concurrent claim race" test. No dedicated test was
-  // added because the contract it cared about is already covered. Production
-  // wires one ImportQueueWorker, so cross-worker races are not possible today.
-  // Within the worker, drain() can be invoked concurrently from initial-start,
-  // the nudge listener, and the safety-net poll (no reentrancy guard) — but
-  // the atomic CAS UPDATE in drainOne() reduces the contract to a lost-race
-  // retry, which is exercised by the "drainOne CAS claim — returns true on
-  // lost race" test above. If multi-worker support or a reentrancy guard for
-  // drain() is added later, this assumption needs to be revisited.
+  // #1122 — Within the worker, `requestDrain()` coalesces nudges and safety-poll
+  // ticks behind a `drainInProgress` guard so only one drain runner is active at
+  // a time. The atomic CAS UPDATE in drainOne() still backs row ownership, but
+  // the in-process serialization is the load-bearing guarantee: imports run
+  // exactly one at a time per Narratorr process. The "single-active enforcement"
+  // and "nudge during in-flight job" tests below exercise that guarantee and
+  // would fail against the pre-#1122 unguarded drain.
   describe('drain loop', () => {
     it('failure of one job does NOT stop drain of subsequent jobs', async () => {
       const processedIds: number[] = [];
@@ -589,6 +587,397 @@ describe('ImportQueueWorker', () => {
 
       const failedBook = updateSets.filter(s => s.status === 'failed' && !('phase' in s));
       expect(failedBook.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ===========================================================================
+  // #1122 — Re-entrancy guard: at most one active drain runner per process
+  // ===========================================================================
+
+  describe('#1122 drain re-entrancy guard', () => {
+    /**
+     * Stages two pending jobs with a single shared "gate" the test resolves
+     * to release the first job's adapter. Tracks active concurrency inside
+     * the adapter so the test can assert maxActive===1 across the sequence.
+     */
+    function setupTwoPendingJobs() {
+      let gateResolve: () => void = () => {};
+      const gate = new Promise<void>((resolve) => { gateResolve = resolve; });
+      let activeCount = 0;
+      let maxActive = 0;
+      const processedIds: number[] = [];
+      let entered1Resolve: () => void = () => {};
+      const entered1 = new Promise<void>((resolve) => { entered1Resolve = resolve; });
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(job: ImportJob) {
+          activeCount++;
+          if (activeCount > maxActive) maxActive = activeCount;
+          try {
+            if (job.id === 1) {
+              entered1Resolve();
+              await gate;
+            }
+            processedIds.push(job.id);
+          } finally {
+            activeCount--;
+          }
+        },
+      };
+      registerImportAdapter(adapter);
+
+      // selectCallCount walks: boot recovery, candidate-1, fetch-1,
+      // resolveBookTitle-1 (post-completion books lookup), candidate-2,
+      // fetch-2, resolveBookTitle-2, idle…
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        }
+        if (selectCallCount === 2) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1 }]) };
+        }
+        if (selectCallCount === 3) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' }]) };
+        }
+        if (selectCallCount === 4) {
+          // resolveBookTitle for job 1 — falls back to 'Unknown'.
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+        }
+        if (selectCallCount === 5) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 2 }]) };
+        }
+        if (selectCallCount === 6) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 2, bookId: 20, type: 'manual', status: 'processing', metadata: '{}' }]) };
+        }
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        }),
+      }));
+
+      return {
+        getMaxActive: () => maxActive,
+        getActiveCount: () => activeCount,
+        getProcessedIds: () => processedIds,
+        releaseGate: () => gateResolve(),
+        awaitEntered1: () => entered1,
+      };
+    }
+
+    it('repeated nudges during an in-flight job do not start a second concurrent runner — maxActive stays at 1', async () => {
+      const harness = setupTwoPendingJobs();
+
+      await worker.start();
+      await harness.awaitEntered1();
+
+      // Job 1 is parked at the gate. Pile on nudges.
+      worker.nudge();
+      worker.nudge();
+      worker.nudge();
+      worker.nudge();
+
+      // Yield enough turns for any leaked drain runners to claim job 2.
+      await new Promise(r => setTimeout(r, 20));
+
+      // Job 2 must NOT have entered while job 1 is still running.
+      expect(harness.getActiveCount()).toBe(1);
+      expect(harness.getMaxActive()).toBe(1);
+      expect(harness.getProcessedIds()).toEqual([]);
+
+      // Release the gate; the in-flight runner should then pick up job 2.
+      harness.releaseGate();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(harness.getProcessedIds()).toEqual([1, 2]);
+      expect(harness.getMaxActive()).toBe(1);
+    });
+
+    it('nudge fired between drainOne() calls coalesces into the active runner instead of spawning a second', async () => {
+      // F: setupTwoPendingJobs() stages a select chain that returns job 1, then
+      // job 2, then idle. After job 1 finishes, job 2 is still pending. A nudge
+      // fired now (while the runner is between drainOne() calls) MUST be
+      // serviced by the same runner, not by a fresh concurrent one — otherwise
+      // the maxActive guarantee breaks.
+      const harness = setupTwoPendingJobs();
+
+      await worker.start();
+      await harness.awaitEntered1();
+
+      // Pile a nudge on top of the in-flight runner.
+      worker.nudge();
+
+      // Now release the gate — runner finishes job 1, the queued drainRequested
+      // forces another pass, runner picks up and finishes job 2.
+      harness.releaseGate();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(harness.getProcessedIds()).toEqual([1, 2]);
+      expect(harness.getMaxActive()).toBe(1);
+    });
+
+    it('nudge after the runner has cleared starts a fresh drain — no missed wake-up', async () => {
+      // Stage: boot recovery empty, then drain candidate select returns nothing
+      // (no pending jobs at boot). After the runner exits, fire a nudge with
+      // a single pending job staged. The new drain runner must pick it up.
+      const processedIds: number[] = [];
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(job: ImportJob) {
+          processedIds.push(job.id);
+        },
+      };
+      registerImportAdapter(adapter);
+
+      // Walk through the select-call sequence with an index. Boot recovery
+      // resolves via from().where(); candidate selects walk from().where()
+      // .orderBy().limit(); full-row fetch walks from().where().limit().
+      let pendingJobReady = false;
+      let candidateDelivered = false;
+      let fullRowDelivered = false;
+
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        // Single chain object reused for both shapes; the awaited terminal
+        // (where for boot recovery, limit for drainOne) is what matters.
+        const chain = {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockImplementation(() => {
+            // For boot recovery this is awaited directly → resolve to [].
+            // For drainOne candidate/full-row paths, this returns `this`
+            // so .orderBy()/.limit() chain further. The default resolve to
+            // [] supports the boot-recovery shape.
+            return Object.assign(Promise.resolve([]), {
+              orderBy: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockImplementation(() => {
+                if (!pendingJobReady) return Promise.resolve([]);
+                // Candidate select → return id once; subsequent passes idle.
+                // Full-row select → return row once after candidate delivered.
+                if (!candidateDelivered) {
+                  candidateDelivered = true;
+                  return Promise.resolve([{ id: 9 }]);
+                }
+                if (!fullRowDelivered) {
+                  fullRowDelivered = true;
+                  return Promise.resolve([{ id: 9, bookId: 90, type: 'manual', status: 'processing', metadata: '{}' }]);
+                }
+                return Promise.resolve([]);
+              }),
+            });
+          }),
+        };
+        return chain;
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        }),
+      }));
+
+      await worker.start();
+      // Initial drain runs with pendingJobReady=false → exits cleanly.
+      await new Promise(r => setTimeout(r, 30));
+      expect(processedIds).toEqual([]);
+
+      // Drain runner has cleared (drainInProgress === false). Arm a pending
+      // job and nudge — a fresh runner must spawn and pick up job 9.
+      pendingJobReady = true;
+      worker.nudge();
+      await new Promise(r => setTimeout(r, 30));
+
+      expect(processedIds).toEqual([9]);
+    });
+
+    it('stop() while a drain is in progress: in-flight job completes, no new drain starts, test does not hang', async () => {
+      const harness = setupTwoPendingJobs();
+
+      await worker.start();
+      await harness.awaitEntered1();
+
+      // Issue stop() while job 1 is still parked at the gate. stop() must
+      // await the current job. We don't await stop() here — we resolve the
+      // gate first, then await stop(), to assert it returns once job 1 finishes.
+      const stopPromise = worker.stop();
+
+      // A stale runner would pick up job 2 between gate-release and stop's
+      // completion. The guard + stopping flag should prevent that.
+      worker.nudge();
+      harness.releaseGate();
+
+      await stopPromise;
+
+      expect(harness.getProcessedIds()).toEqual([1]);
+      expect(harness.getMaxActive()).toBe(1);
+    });
+
+    it('safety-poll interval routes through the guard — leaked poll runners would claim job 2; the guard must prevent it', async () => {
+      // F1 (round 2): An unguarded poll callback would spawn a fresh drain
+      // runner whose drainOne() must be able to ACTUALLY claim and process
+      // job 2 — otherwise the test passes for the wrong reason (e.g. a
+      // call-count mock that has no .orderBy() at the 4th call would make
+      // a leaked runner throw before it could enter job 2, leaving the
+      // maxActive===1 assertion accidentally true).
+      //
+      // Solution: structure the mock by chain SHAPE, not call count. Any
+      // candidate-shaped select (.from().where().orderBy().limit()) drains
+      // a FIFO of pending ids; any full-row-shaped select (.from().where()
+      // .limit() without .orderBy()) returns the row paired with the most
+      // recent candidate. Under the guard-intact path the runner walks
+      // job 1 → resolveBookTitle → job 2 in order; under regression the
+      // leaked poll runner can claim job 2 concurrently and maxActive flips
+      // to 2, failing the test for the intended reason.
+      const candidateQueue: number[] = [1, 2];
+      type JobRow = { id: number; bookId: number; type: string; status: string; metadata: string };
+      const rowsById: Record<number, JobRow> = {
+        1: { id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' },
+        2: { id: 2, bookId: 20, type: 'manual', status: 'processing', metadata: '{}' },
+      };
+      let pendingFullRow: JobRow | null = null;
+      let bootRecoveryDone = false;
+
+      let gateResolve: () => void = () => {};
+      const gate = new Promise<void>((resolve) => { gateResolve = resolve; });
+      let activeCount = 0;
+      let maxActive = 0;
+      const processedIds: number[] = [];
+      let entered1Resolve: () => void = () => {};
+      const entered1 = new Promise<void>((resolve) => { entered1Resolve = resolve; });
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(job: ImportJob) {
+          activeCount++;
+          if (activeCount > maxActive) maxActive = activeCount;
+          try {
+            if (job.id === 1) {
+              entered1Resolve();
+              await gate;
+            }
+            processedIds.push(job.id);
+          } finally {
+            activeCount--;
+          }
+        },
+      };
+      registerImportAdapter(adapter);
+
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        let didOrderBy = false;
+        const inner = Object.assign(Promise.resolve([]), {
+          orderBy: vi.fn().mockImplementation(() => { didOrderBy = true; return inner; }),
+          limit: vi.fn().mockImplementation(() => {
+            if (didOrderBy) {
+              const id = candidateQueue.shift();
+              if (id === undefined) return Promise.resolve([]);
+              pendingFullRow = rowsById[id] ?? null;
+              return Promise.resolve([{ id }]);
+            }
+            if (pendingFullRow) {
+              const row = pendingFullRow;
+              pendingFullRow = null;
+              return Promise.resolve([row]);
+            }
+            return Promise.resolve([]);
+          }),
+        });
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockImplementation(() => {
+            // Boot recovery's first select awaits where() directly with no
+            // limit/orderBy chaining. Mark it done so it can't accidentally
+            // re-enter; subsequent where() calls feed the drainOne chain.
+            if (!bootRecoveryDone) {
+              bootRecoveryDone = true;
+              return Promise.resolve([]);
+            }
+            return inner;
+          }),
+        };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        }),
+      }));
+
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        await worker.start();
+        await entered1;
+
+        // Job 1 is parked at the gate. Fire several safety-poll ticks. Under
+        // the guard, each callback merely sets drainRequested. Under regression
+        // (e.g. `void drain()` in the interval), each tick spawns a fresh
+        // runner whose drainOne would shift '2' off the queue and run the
+        // adapter for job 2 concurrently with job 1 → maxActive becomes 2.
+        vi.advanceTimersByTime(120_000); // 4 × SAFETY_POLL_INTERVAL_MS
+
+        vi.useRealTimers();
+        await new Promise(r => setTimeout(r, 20));
+
+        // The load-bearing assertions: maxActive===1 AND processedIds===[]
+        // AND the candidate queue still contains job 2. If any of those flip,
+        // a leaked runner got through.
+        expect(activeCount).toBe(1);
+        expect(maxActive).toBe(1);
+        expect(processedIds).toEqual([]);
+        expect(candidateQueue).toEqual([2]);
+
+        // Release the gate. The drainRequested set by the poll callbacks
+        // should drive the same runner to claim and process job 2.
+        gateResolve();
+        await new Promise(r => setTimeout(r, 50));
+
+        expect(processedIds).toEqual([1, 2]);
+        expect(maxActive).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('unexpected drain-runner error is caught and logged via serializeError() with the canonical "Drain runner failed unexpectedly" message', async () => {
+      // F2: runDrain() now catches drain-level rejections so the guard does
+      // not latch on. Without a test, deleting the catch/log or logging the
+      // raw error (skipping serializeError) would not fail any other test.
+      // We force drainOne() to throw by rejecting the candidate-select limit()
+      // — this propagates through drainOne → runDrain's catch.
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        // First call is boot recovery (from().where()), which we resolve to
+        // an empty orphan list. After that, every candidate select must throw.
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockImplementation(() => {
+            return Object.assign(Promise.resolve([]), {
+              orderBy: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockRejectedValue(new Error('candidate select blew up')),
+            });
+          }),
+        };
+      });
+
+      await worker.start();
+      // Allow the scheduled drain runner to spin up, throw, and reach the catch.
+      await new Promise(r => setTimeout(r, 30));
+
+      const logErrMock = log as unknown as { error: ReturnType<typeof vi.fn> };
+      const runnerErrCalls = logErrMock.error.mock.calls.filter((call: unknown[]) => {
+        return call[1] === 'Drain runner failed unexpectedly';
+      });
+      expect(runnerErrCalls).toHaveLength(1);
+
+      // The error payload must carry serializeError()'s shape — a plain object
+      // with `message` and `type`, NOT a raw Error (which Pino would dump as {}).
+      const errCtx = runnerErrCalls[0]![0] as { error: Record<string, unknown> };
+      expect(errCtx.error).toBeTypeOf('object');
+      expect(errCtx.error).not.toBeInstanceOf(Error);
+      expect(errCtx.error.message).toBe('candidate select blew up');
+      expect(errCtx.error.type).toBe('Error');
     });
   });
 
