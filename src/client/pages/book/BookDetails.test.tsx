@@ -341,6 +341,24 @@ describe('BookDetails', () => {
       expect(screen.getByRole('dialog', { name: /edit metadata/i })).toBeInTheDocument();
     });
 
+    it('opens Fix Match modal when the Fix Match menu item is clicked (#1129 F4)', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+
+      // Before opening: neither the menu item nor the modal should be visible.
+      expect(screen.queryByRole('menuitem', { name: /Fix Match/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog', { name: /fix match/i })).not.toBeInTheDocument();
+
+      await openOverflowMenu(user);
+      const fixMatchItem = screen.getByRole('menuitem', { name: /Fix Match/ });
+      expect(fixMatchItem).toBeInTheDocument();
+      await user.click(fixMatchItem);
+
+      // The Fix Match modal renders with the dedicated heading 'Fix Match'.
+      const dialog = await screen.findByRole('dialog', { name: /fix match/i });
+      expect(dialog).toBeInTheDocument();
+    });
+
     it('shows Rename menu item when book has path', async () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
