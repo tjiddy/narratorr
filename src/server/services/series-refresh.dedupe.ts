@@ -482,6 +482,39 @@ async function deleteContaminatedMembers(
 }
 
 /**
+ * Fold null-position candidate groups into a numbered group whose normalized
+ * work-title + author matches. The numbered position is authoritative — the
+ * container's ASIN becomes an alternate on the numbered canonical via the
+ * downstream alternateAsins computation in `reconcileCandidates`. Without this
+ * merge the null-position group would canonicalize as its own row, and the
+ * widened cleanup pass would then treat the numbered clean row as stale and
+ * delete it — violating the null-position contract that title-pattern
+ * detection cannot promote a null-position candidate past the numberless
+ * filter. (#1126 PR #1127 F1)
+ */
+function mergeNullPositionGroupsIntoNumbered(groups: Map<string, CandidateInfo[]>): void {
+  const numberedKeyByTitleAuthor = new Map<string, string>();
+  for (const [key, group] of groups) {
+    const sample = group[0]!;
+    if (sample.positionRaw === null) continue;
+    const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
+    if (!numberedKeyByTitleAuthor.has(titleAuthor)) {
+      numberedKeyByTitleAuthor.set(titleAuthor, key);
+    }
+  }
+  for (const [key, group] of [...groups]) {
+    const sample = group[0]!;
+    if (sample.positionRaw !== null) continue;
+    const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
+    const numberedKey = numberedKeyByTitleAuthor.get(titleAuthor);
+    if (numberedKey && numberedKey !== key) {
+      groups.get(numberedKey)!.push(...group);
+      groups.delete(key);
+    }
+  }
+}
+
+/**
  * Logical-identity dedupe: filter candidates to the target series, group by
  * (position + normalized title + normalized author), pick a canonical product
  * per group, persist non-canonical ASINs as alternate_asins on the canonical
@@ -517,35 +550,7 @@ export async function reconcileCandidates(
     if (existing) existing.push(c);
     else groups.set(key, [c]);
   }
-  // When a null-position group shares its normalized work title + author with
-  // a numbered group in the SAME refresh, fold the null-position candidates
-  // into the numbered group BEFORE canonical selection. Without this merge the
-  // null-position group would upsert as its own canonical, and the widened
-  // cleanup scan would then treat the numbered clean row as stale and delete
-  // it — violating the null-position contract (#1126 PR #1127 F1). The
-  // numbered position is authoritative; the null-position container's ASIN
-  // becomes an alternate on the numbered canonical, preserving local-import
-  // linkability.
-  const numberedKeyByTitleAuthor = new Map<string, string>();
-  for (const [key, group] of groups) {
-    const sample = group[0]!;
-    if (sample.positionRaw !== null) {
-      const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
-      if (!numberedKeyByTitleAuthor.has(titleAuthor)) {
-        numberedKeyByTitleAuthor.set(titleAuthor, key);
-      }
-    }
-  }
-  for (const [key, group] of [...groups]) {
-    const sample = group[0]!;
-    if (sample.positionRaw !== null) continue;
-    const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
-    const numberedKey = numberedKeyByTitleAuthor.get(titleAuthor);
-    if (numberedKey && numberedKey !== key) {
-      groups.get(numberedKey)!.push(...group);
-      groups.delete(key);
-    }
-  }
+  mergeNullPositionGroupsIntoNumbered(groups);
   for (const group of groups.values()) {
     // Defensive ASIN-only dedupe inside each logical group (#1073).
     const seenAsin = new Set<string>();
