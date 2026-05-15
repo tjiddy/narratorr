@@ -25,13 +25,14 @@ export function normalizePrimaryAuthor(name: string | null | undefined): string 
 }
 
 /**
- * Strip well-known Audible edition / split-part / adaptation suffixes from a
- * product title before normalization so noisy variants collapse into the same
- * logical-work slot on the Series card. Conservative: only parens/brackets
- * matching the explicit descriptor patterns are dropped — real subtitles like
- * `(A Novel)` are preserved. Bracket variants cover Audible products that
- * surface descriptors as `[Dramatized Adaptation]` instead of parenthesized.
- * (#1116)
+ * Strip well-known Audible edition / split-part / adaptation / omnibus suffixes
+ * from a product title before normalization so noisy variants collapse into the
+ * same logical-work slot on the Series card. Conservative: parens/brackets must
+ * match the explicit descriptor patterns; new omnibus/edition/collection/bundle
+ * /complete/box-set keywords are anchored to end-of-title (suffix) so real work
+ * titles whose stem contains the keyword (e.g. `The Complete Sherlock Holmes`,
+ * `Box of Bones`, `Edition Wars`) are preserved. Operates on product title only
+ * — subtitle is intentionally out of scope (#1126). (#1116, #1126)
  */
 const EDITION_SUFFIX_PATTERNS: RegExp[] = [
   /\(\s*(?:part\s+)?\d+\s+of\s+\d+\s*\)/gi,
@@ -44,13 +45,32 @@ const EDITION_SUFFIX_PATTERNS: RegExp[] = [
   /\[\s*unabridged\s*\]/gi,
   /\[\s*abridged\s*\]/gi,
   /\[\s*original\s+recording\s*\]/gi,
+  // Trailing parenthetical/bracket containing an integer range like
+  // `(Wool 1 - 5)` or `[Books 1 - 3]`. Anchored to end-of-title to avoid
+  // chewing through legitimate parentheticals earlier in the string. (#1126)
+  /\s*\(\s*[^)]*?\d+\s*[-–]\s*\d+[^)]*?\)\s*$/i,
+  /\s*\[\s*[^\]]*?\d+\s*[-–]\s*\d+[^\]]*?\]\s*$/i,
+  // Trailing edition/container/bundle keywords. Anchored to end so the
+  // negative cases (`The Complete Sherlock Holmes`, `Box of Bones`,
+  // `Edition Wars`) never strip. Optional leading `the` matches the
+  // `: The Complete Collection` shape after a colon/dash. (#1126)
+  /[\s:,\-–]+(?:the\s+)?(?:omnibus|edition|collection|bundle|complete)\s*$/i,
+  /[\s:,\-–]+(?:the\s+)?box\s+set\s*$/i,
 ];
 
 export function normalizeSeriesMemberWorkTitle(title: string): string {
+  // Iterate so stacked suffixes like `Wool Omnibus Edition` collapse fully:
+  // pass 1 strips ` Edition`, pass 2 strips ` Omnibus`. Capped by string-shrink
+  // monotonicity — every successful match shortens `stripped`, so termination
+  // is guaranteed within O(title.length) iterations. (#1126)
   let stripped = title;
-  for (const pattern of EDITION_SUFFIX_PATTERNS) {
-    stripped = stripped.replace(pattern, ' ');
-  }
+  let prev: string;
+  do {
+    prev = stripped;
+    for (const pattern of EDITION_SUFFIX_PATTERNS) {
+      stripped = stripped.replace(pattern, ' ');
+    }
+  } while (stripped !== prev);
   return normalizeSeriesName(stripped);
 }
 
@@ -349,9 +369,11 @@ async function cleanupLogicalDuplicates(
   seriesId: number,
   c: CandidateInfo,
 ): Promise<void> {
-  const positionFilter = c.positionRaw !== null
-    ? eq(seriesMembers.positionRaw, c.positionRaw)
-    : isNull(seriesMembers.positionRaw);
+  // Scan the whole series rather than narrowing by position, so an orphaned
+  // omnibus/container row that landed at `position: null` is also caught and
+  // folded into the numbered canonical with the same normalized work title.
+  // The in-memory work-title + author equality below is the load-bearing
+  // identity check. (#1126)
   const candidates = await db
     .select({
       id: seriesMembers.id,
@@ -364,7 +386,6 @@ async function cleanupLogicalDuplicates(
     .from(seriesMembers)
     .where(and(
       eq(seriesMembers.seriesId, seriesId),
-      positionFilter,
       ne(seriesMembers.id, canonicalId),
     ));
   const stale = candidates.filter((row) =>

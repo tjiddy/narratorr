@@ -69,7 +69,18 @@ export async function buildCardFromRow(
     .from(seriesMembers)
     .where(eq(seriesMembers.seriesId, row.id))
     .orderBy(seriesMembers.position, seriesMembers.id);
-  const members: SeriesMemberCard[] = (memberRows as SeriesMemberRow[]).map((m) => ({
+  // Numberless-members filter (display-only, #1126): when the series has at
+  // least one numbered member, hide unnumbered provider rows from the card.
+  // Collection-style series (every member null-position, e.g. WoW universe
+  // bucket) keep all rows. Current-book exception: the row that matches the
+  // viewed book is always visible — guarantees the user can see their own
+  // book even when it's a null-position side product.
+  const typedRows = memberRows as SeriesMemberRow[];
+  const seriesHasNumbered = typedRows.some((m) => m.position !== null);
+  const visibleRows = seriesHasNumbered
+    ? typedRows.filter((m) => m.position !== null || isMemberCurrent(m, currentBook))
+    : typedRows;
+  const members: SeriesMemberCard[] = visibleRows.map((m) => ({
     id: m.id,
     providerBookId: m.providerBookId,
     title: m.title,
