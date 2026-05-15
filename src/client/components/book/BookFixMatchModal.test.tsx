@@ -205,4 +205,64 @@ describe('BookFixMatchModal (#1129)', () => {
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Incomplete provider record'));
   });
+
+  describe('rename/retag checkbox payload wiring (F3)', () => {
+    async function selectMatchAndOpenConfirm() {
+      const user = userEvent.setup();
+      (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        books: [createMockBookMetadata({ asin: 'B_NEW', title: 'New Title', authors: [{ name: 'New Author' }] })],
+        authors: [],
+        series: [],
+      });
+      (api.fixMatchBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...mockBook, asin: 'B_NEW', title: 'New Title' });
+      renderModal();
+      await user.click(screen.getByRole('button', { name: /search/i }));
+      await waitFor(() => expect(screen.getByText('New Title')).toBeInTheDocument());
+      await user.click(screen.getByText('New Title'));
+      return user;
+    }
+
+    it('default (unchecked) payload omits renameFiles and retagFiles', async () => {
+      const user = await selectMatchAndOpenConfirm();
+      await user.click(screen.getByRole('button', { name: /replace match/i }));
+
+      await waitFor(() => expect(api.fixMatchBook).toHaveBeenCalled());
+      expect(api.fixMatchBook).toHaveBeenCalledWith(7, { asin: 'B_NEW' });
+      const payload = (api.fixMatchBook as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+      expect(payload).not.toHaveProperty('renameFiles');
+      expect(payload).not.toHaveProperty('retagFiles');
+    });
+
+    it('checking "Rename files after rematch" adds renameFiles: true to the payload', async () => {
+      const user = await selectMatchAndOpenConfirm();
+      await user.click(screen.getByLabelText(/rename files after rematch/i));
+      await user.click(screen.getByRole('button', { name: /replace match/i }));
+
+      await waitFor(() => expect(api.fixMatchBook).toHaveBeenCalled());
+      expect(api.fixMatchBook).toHaveBeenCalledWith(7, { asin: 'B_NEW', renameFiles: true });
+    });
+
+    it('checking "Re-tag audio files after rematch" adds retagFiles: true to the payload', async () => {
+      const user = await selectMatchAndOpenConfirm();
+      await user.click(screen.getByLabelText(/re-tag audio files after rematch/i));
+      await user.click(screen.getByRole('button', { name: /replace match/i }));
+
+      await waitFor(() => expect(api.fixMatchBook).toHaveBeenCalled());
+      expect(api.fixMatchBook).toHaveBeenCalledWith(7, { asin: 'B_NEW', retagFiles: true });
+    });
+
+    it('checking both adds both flags to the payload', async () => {
+      const user = await selectMatchAndOpenConfirm();
+      await user.click(screen.getByLabelText(/rename files after rematch/i));
+      await user.click(screen.getByLabelText(/re-tag audio files after rematch/i));
+      await user.click(screen.getByRole('button', { name: /replace match/i }));
+
+      await waitFor(() => expect(api.fixMatchBook).toHaveBeenCalled());
+      expect(api.fixMatchBook).toHaveBeenCalledWith(7, {
+        asin: 'B_NEW',
+        renameFiles: true,
+        retagFiles: true,
+      });
+    });
+  });
 });

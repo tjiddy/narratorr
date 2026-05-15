@@ -3292,5 +3292,154 @@ describe('#1071 series routes', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+
+    describe('post-commit rename/retag follow-up (F3)', () => {
+      const sourceBookWithPath = { ...sourceBook, path: '/library/book-7' };
+      const updatedWithPath = {
+        ...sourceBookWithPath,
+        asin: 'B_NEW',
+        title: 'New Title',
+      };
+
+      function primeSuccessfulFixMatch() {
+        (services.book.getById as Mock).mockResolvedValueOnce(sourceBookWithPath);
+        (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+        (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaSeriesBearing });
+        (services.book.fixMatch as Mock).mockResolvedValueOnce(updatedWithPath);
+        (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
+        (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(() => undefined);
+      }
+
+      it('renameFiles=true: invokes renameService.renameBook(bookId) after metadata commit', async () => {
+        primeSuccessfulFixMatch();
+        (services.rename.renameBook as Mock).mockResolvedValueOnce({ oldPath: '/a', newPath: '/b', message: 'ok', filesRenamed: 1 });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', renameFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.rename.renameBook).toHaveBeenCalledTimes(1);
+        expect(services.rename.renameBook).toHaveBeenCalledWith(7);
+        expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      it('retagFiles=true: invokes taggingService.retagBook(bookId, Set, {}) after metadata commit', async () => {
+        primeSuccessfulFixMatch();
+        (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 7, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.tagging.retagBook).toHaveBeenCalledTimes(1);
+        const [bookIdArg, excludeFieldsArg, overridesArg] = (services.tagging.retagBook as Mock).mock.calls[0]!;
+        expect(bookIdArg).toBe(7);
+        expect(excludeFieldsArg).toBeInstanceOf(Set);
+        expect((excludeFieldsArg as Set<string>).size).toBe(0);
+        expect(overridesArg).toEqual({});
+        expect(services.rename.renameBook).not.toHaveBeenCalled();
+      });
+
+      it('both flags: invokes both rename and retag, returns 200', async () => {
+        primeSuccessfulFixMatch();
+        (services.rename.renameBook as Mock).mockResolvedValueOnce({ oldPath: '/a', newPath: '/b', message: 'ok', filesRenamed: 1 });
+        (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 7, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', renameFiles: true, retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.rename.renameBook).toHaveBeenCalledWith(7);
+        expect(services.tagging.retagBook).toHaveBeenCalledWith(7, expect.any(Set), {});
+      });
+
+      it('flags omitted: neither rename nor retag is called', async () => {
+        primeSuccessfulFixMatch();
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.rename.renameBook).not.toHaveBeenCalled();
+        expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      it('renameFiles=true on book without path: skips renameService call', async () => {
+        const noPathBook = { ...sourceBook, path: null };
+        const updatedNoPath = { ...noPathBook, asin: 'B_NEW', title: 'New Title' };
+        (services.book.getById as Mock).mockResolvedValueOnce(noPathBook);
+        (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+        (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaSeriesBearing });
+        (services.book.fixMatch as Mock).mockResolvedValueOnce(updatedNoPath);
+        (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
+        (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(() => undefined);
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', renameFiles: true, retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.rename.renameBook).not.toHaveBeenCalled();
+        expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      it('rename failure is isolated: response still 200, no exception propagates', async () => {
+        primeSuccessfulFixMatch();
+        (services.rename.renameBook as Mock).mockRejectedValueOnce(new Error('Disk full'));
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', renameFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.rename.renameBook).toHaveBeenCalledWith(7);
+      });
+
+      it('retag failure is isolated: response still 200, no exception propagates', async () => {
+        primeSuccessfulFixMatch();
+        (services.tagging.retagBook as Mock).mockRejectedValueOnce(new Error('ffmpeg missing'));
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.tagging.retagBook).toHaveBeenCalledWith(7, expect.any(Set), {});
+      });
+
+      it('rename failure does NOT skip the retag step (failures are independent)', async () => {
+        primeSuccessfulFixMatch();
+        (services.rename.renameBook as Mock).mockRejectedValueOnce(new Error('rename boom'));
+        (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 7, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', renameFiles: true, retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.rename.renameBook).toHaveBeenCalledWith(7);
+        expect(services.tagging.retagBook).toHaveBeenCalledWith(7, expect.any(Set), {});
+      });
+    });
   });
 });
