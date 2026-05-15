@@ -80,14 +80,14 @@ describe('AudioPreview — book source (#320)', () => {
     expect(mockPause).toHaveBeenCalled();
   });
 
-  it('syncs header button to Pause when native controls trigger play event', () => {
+  it('syncs header button to Pause when audio fires playing event', () => {
     renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
 
     const audio = document.querySelector('audio')!;
     act(() => {
-      audio.dispatchEvent(new Event('play'));
+      audio.dispatchEvent(new Event('playing'));
     });
 
     expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
@@ -97,24 +97,102 @@ describe('AudioPreview — book source (#320)', () => {
     renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     const audio = document.querySelector('audio')!;
-    act(() => { audio.dispatchEvent(new Event('play')); });
+    act(() => { audio.dispatchEvent(new Event('playing')); });
     expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
 
     act(() => { audio.dispatchEvent(new Event('ended')); });
     expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
   });
 
-  it('shows "Playing..." label while audio is playing', async () => {
+  it('shows "Buffering..." label immediately after click, before playing event fires', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
 
     expect(screen.getByText('Preview')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /play/i }));
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+
+    expect(screen.getByText('Buffering...')).toBeInTheDocument();
+    expect(screen.queryByText('Playing...')).toBeNull();
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+  });
+
+  it('flips label from Buffering... to Playing... on playing event', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    expect(screen.getByText('Buffering...')).toBeInTheDocument();
+
+    const audio = document.querySelector('audio')!;
+    act(() => {
+      audio.dispatchEvent(new Event('playing'));
+    });
+
+    expect(screen.getByText('Playing...')).toBeInTheDocument();
+    expect(screen.queryByText('Buffering...')).toBeNull();
+  });
+
+  it('flips back to Buffering... on a mid-playback waiting event', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    const audio = document.querySelector('audio')!;
+    act(() => { audio.dispatchEvent(new Event('playing')); });
     expect(screen.getByText('Playing...')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /pause/i }));
+    act(() => { audio.dispatchEvent(new Event('waiting')); });
+
+    expect(screen.getByText('Buffering...')).toBeInTheDocument();
+    expect(screen.queryByText('Playing...')).toBeNull();
+    expect(screen.getByRole('button', { name: /pause preview/i })).toBeInTheDocument();
+  });
+
+  it('recovers from rebuffer back to Playing... on a follow-up playing event', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    const audio = document.querySelector('audio')!;
+    act(() => { audio.dispatchEvent(new Event('playing')); });
+    act(() => { audio.dispatchEvent(new Event('waiting')); });
+    expect(screen.getByText('Buffering...')).toBeInTheDocument();
+
+    act(() => { audio.dispatchEvent(new Event('playing')); });
+
+    expect(screen.getByText('Playing...')).toBeInTheDocument();
+  });
+
+  it('returns to idle when user clicks pause while still buffering', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+    expect(screen.getByText('Buffering...')).toBeInTheDocument();
+
+    const pauseCallsBefore = mockPause.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /pause preview/i }));
+
+    expect(mockPause.mock.calls.length).toBeGreaterThan(pauseCallsBefore);
     expect(screen.getByText('Preview')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
+  });
+
+  it('resets to idle when audio.play() rejects (autoplay blocked)', async () => {
+    mockPlay.mockImplementationOnce(function (this: HTMLAudioElement) {
+      return Promise.reject(new DOMException('autoplay blocked', 'NotAllowedError'));
+    });
+
+    const user = userEvent.setup();
+    renderWithProviders(<AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />);
+
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+
+    expect(screen.getByText('Preview')).toBeInTheDocument();
+    expect(screen.queryByText('Buffering...')).toBeNull();
+    expect(screen.queryByText('Playing...')).toBeNull();
+    expect(screen.getByRole('button', { name: /play preview/i })).toBeInTheDocument();
   });
 
   it('pauses audio and detaches source on unmount', () => {
@@ -180,7 +258,7 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
     expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
   });
 
-  it('a programmatic/native play event (no click) on a sibling pauses the currently playing preview', async () => {
+  it('a programmatic/native playing event (no click) on a sibling pauses the currently playing preview', async () => {
     const user = userEvent.setup();
     renderWithProviders(
       <>
@@ -202,11 +280,34 @@ describe('AudioPreview — single-active coordination (#1059)', () => {
     const pauseCallsBefore = mockPause.mock.calls.length;
     act(() => {
       Object.defineProperty(secondAudio, 'paused', { value: false, configurable: true });
-      secondAudio.dispatchEvent(new Event('play'));
+      secondAudio.dispatchEvent(new Event('playing'));
     });
 
     expect(mockPause.mock.calls.length).toBeGreaterThan(pauseCallsBefore);
     expect(firstAudio.paused).toBe(true);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
+  });
+
+  it('starting a second preview pauses a sibling that is still buffering (not yet playing)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <AudioPreview source={{ kind: 'book', bookId: 1, enabled: true }} />
+        <AudioPreview source={{ kind: 'book', bookId: 2, enabled: true }} />
+      </>,
+    );
+
+    const [firstPlay, secondPlay] = screen.getAllByRole('button', { name: /play preview/i });
+    expect(secondPlay).toBeDefined();
+
+    await user.click(firstPlay!);
+    expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
+
+    const pauseCallsBefore = mockPause.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: /play preview/i }));
+
+    expect(mockPause.mock.calls.length).toBeGreaterThan(pauseCallsBefore);
     expect(screen.getAllByRole('button', { name: /pause preview/i })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: /play preview/i })).toHaveLength(1);
   });
