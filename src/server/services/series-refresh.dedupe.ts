@@ -563,7 +563,20 @@ export async function reconcileCandidates(
       }
       uniqueByAsin.push(c);
     }
-    const canonical = await pickCanonical(tx, uniqueByAsin, seedAsin);
+    // After mergeNullPositionGroupsIntoNumbered() folds null-position
+    // candidates into a numbered group, those null candidates MUST NOT
+    // compete for canonical selection — otherwise a clean-titled null
+    // candidate would beat the numbered container on cleanTitleScore (tier 0)
+    // and persist the row at position null, dropping the numbered fallback.
+    // The numbered position is authoritative; restrict pickCanonical's pool
+    // to numbered candidates whenever any numbered candidate is present, and
+    // fold the null-position ASINs as alternates on the chosen numbered
+    // canonical. Pure null-position groups (collection-style series) have
+    // no numbered candidates and use the full pool as before.
+    // (#1126 PR #1127 F2)
+    const numberedCandidates = uniqueByAsin.filter((c) => c.positionRaw !== null);
+    const canonicalPool = numberedCandidates.length > 0 ? numberedCandidates : uniqueByAsin;
+    const canonical = await pickCanonical(tx, canonicalPool, seedAsin);
     const alternateAsins = uniqueByAsin
       .filter((c) => c !== canonical && c.product.asin && c.product.asin !== canonical.product.asin)
       .map((c) => c.product.asin as string);

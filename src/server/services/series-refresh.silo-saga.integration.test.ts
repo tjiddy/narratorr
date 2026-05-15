@@ -349,6 +349,41 @@ describe('only-container-at-numbered-position fallback (#1126)', () => {
     expect(pos4.providerBookId).toBe('OMNI4');
     expect(pos4.title).toBe('Saga Omnibus Edition (Books 4 - 6)');
   });
+
+  it('PR #1127 F2: a null-position clean candidate merged into a numbered container-only group must NOT replace the container at its numbered position', async () => {
+    // Refresh contains BOTH a numbered container at position 4 AND a
+    // null-position clean candidate sharing its normalized work title.
+    // The clean candidate's tier-0 cleanTitleScore would otherwise beat the
+    // container in pickCanonical, persisting the row at null position.
+    const SERIES = 'Test Saga';
+    const SID = 'TS_SID_F2';
+    const products: BookMetadata[] = [
+      product({ asin: 'CLEAN1', title: 'Book One', position: 1 }),
+      product({ asin: 'OMNI4', title: 'Saga Omnibus Edition (Books 4 - 6)', position: 4 }),
+      product({ asin: 'NULL_SAGA', title: 'Saga', position: null }),
+    ].map((p) => ({
+      ...p,
+      series: [{ name: SERIES, asin: SID, ...(p.seriesPrimary!.position != null ? { position: p.seriesPrimary!.position } : {}) }],
+      seriesPrimary: { name: SERIES, asin: SID, ...(p.seriesPrimary!.position != null ? { position: p.seriesPrimary!.position } : {}) },
+    }));
+    const existing = await findExistingSeriesRow(db, { providerSeriesId: SID, seriesName: SERIES, seedAsin: 'CLEAN1' });
+    await applySuccessOutcome(db, log, existing, products, 'CLEAN1', { seriesName: SERIES, providerSeriesId: SID });
+
+    // The container row at position 4 must survive; the null-position clean
+    // candidate's ASIN must be folded as an alternate on it (so local-import
+    // linking via that ASIN still resolves), not become its own row.
+    const pos4Rows = await db.select().from(seriesMembers).where(eq(seriesMembers.position, 4));
+    expect(pos4Rows).toHaveLength(1);
+    expect(pos4Rows[0]!.providerBookId).toBe('OMNI4');
+    expect(pos4Rows[0]!.title).toBe('Saga Omnibus Edition (Books 4 - 6)');
+    expect(pos4Rows[0]!.alternateAsins).toContain('NULL_SAGA');
+
+    // No null-position row persists for the merged work — title-pattern
+    // detection did not promote the null candidate past the numberless filter.
+    const allRows = await db.select().from(seriesMembers);
+    expect(allRows.find((r) => r.providerBookId === 'NULL_SAGA')).toBeUndefined();
+    expect(allRows.filter((r) => r.position === null)).toHaveLength(0);
+  });
 });
 
 describe('seed-is-container with clean siblings — F8 visible-title contract (#1126)', () => {
