@@ -5,14 +5,9 @@ import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { eq, and, sql, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists, series, seriesMembers } from '../../db/schema.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
-import { normalizeSeriesName } from '../utils/series-normalize.js';
-import {
-  findMemberByLogicalIdentity,
-  normalizePrimaryAuthor,
-  normalizeSeriesMemberWorkTitle,
-} from './series-refresh.helpers.js';
+import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -24,6 +19,59 @@ export { CoverUploadError } from './cover-upload.js';
 type NewBook = typeof books.$inferInsert;
 type AuthorRow = typeof authors.$inferSelect;
 type NarratorRow = typeof narrators.$inferSelect;
+
+/**
+ * Replacement metadata payload for `BookService.fixMatch`. Every optional
+ * field that is undefined is persisted as NULL — the operation replaces the
+ * book's bibliographic identity wholesale, it is not a partial update.
+ */
+export interface FixMatchReplacement {
+  asin?: string | undefined;
+  title: string;
+  subtitle?: string | undefined;
+  authors: { name: string; asin?: string | undefined }[];
+  narrators?: string[] | undefined;
+  description?: string | undefined;
+  coverUrl?: string | undefined;
+  duration?: number | undefined;
+  publishedDate?: string | undefined;
+  seriesName?: string | undefined;
+  seriesPosition?: number | undefined;
+  seriesAsin?: string | undefined;
+  genres?: string[] | undefined;
+  isbn?: string | undefined;
+  seriesProvider?: string | undefined;
+}
+
+function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof books.$inferInsert> {
+  return {
+    title: r.title,
+    description: r.description ?? null,
+    coverUrl: r.coverUrl ?? null,
+    asin: r.asin ?? null,
+    isbn: r.isbn ?? null,
+    seriesName: r.seriesName ?? null,
+    seriesPosition: r.seriesPosition ?? null,
+    duration: r.duration ?? null,
+    publishedDate: r.publishedDate ?? null,
+    genres: r.genres ?? null,
+    enrichmentStatus: 'pending',
+    updatedAt: new Date(),
+  };
+}
+
+function buildReplaceSeriesLinkArgs(r: FixMatchReplacement): ReplaceSeriesLinkArgs | null {
+  if (!r.seriesName) return null;
+  return {
+    name: r.seriesName,
+    position: r.seriesPosition ?? null,
+    asin: r.asin ?? null,
+    seriesAsin: r.seriesAsin ?? null,
+    provider: r.seriesProvider ?? 'audible',
+    title: r.title,
+    authorName: r.authors[0]?.name ?? null,
+  };
+}
 
 export interface BookWithAuthor extends BookRow {
   authors: AuthorRow[];
@@ -242,7 +290,7 @@ export class BookService {
       // immediately. `seriesAsin` is optional — upsertSeriesLink falls back to a
       // normalized-name lookup when provider series identity isn't known yet.
       if (data.seriesName) {
-        await this.upsertSeriesLink(tx, id, {
+        await upsertSeriesLink(tx, this.log, id, {
           name: data.seriesName,
           position: data.seriesPosition ?? null,
           asin: enrichedAsin ?? null,
@@ -328,62 +376,16 @@ export class BookService {
    * `findAsinCollision`. Any non-collision DB failure bubbles up and rolls
    * back the entire transaction.
    */
-  async fixMatch(id: number, replacement: {
-    asin?: string | undefined;
-    title: string;
-    subtitle?: string | undefined;
-    authors: { name: string; asin?: string | undefined }[];
-    narrators?: string[] | undefined;
-    description?: string | undefined;
-    coverUrl?: string | undefined;
-    duration?: number | undefined;
-    publishedDate?: string | undefined;
-    seriesName?: string | undefined;
-    seriesPosition?: number | undefined;
-    seriesAsin?: string | undefined;
-    genres?: string[] | undefined;
-    isbn?: string | undefined;
-    seriesProvider?: string | undefined;
-  }): Promise<BookWithAuthor | null> {
+  async fixMatch(id: number, replacement: FixMatchReplacement): Promise<BookWithAuthor | null> {
+    const scalarUpdates = buildFixMatchScalarUpdates(replacement);
+    const seriesArgs = buildReplaceSeriesLinkArgs(replacement);
+
     const updated = await this.db.transaction(async (tx) => {
-      const scalarUpdates: Partial<typeof books.$inferInsert> = {
-        title: replacement.title,
-        description: replacement.description ?? null,
-        coverUrl: replacement.coverUrl ?? null,
-        asin: replacement.asin ?? null,
-        isbn: replacement.isbn ?? null,
-        seriesName: replacement.seriesName ?? null,
-        seriesPosition: replacement.seriesPosition ?? null,
-        duration: replacement.duration ?? null,
-        publishedDate: replacement.publishedDate ?? null,
-        genres: replacement.genres ?? null,
-        enrichmentStatus: 'pending',
-        updatedAt: new Date(),
-      };
-
-      const result = await tx
-        .update(books)
-        .set(scalarUpdates)
-        .where(eq(books.id, id))
-        .returning();
+      const result = await tx.update(books).set(scalarUpdates).where(eq(books.id, id)).returning();
       if (result.length === 0) return false;
-
       await this.syncAuthors(tx, id, replacement.authors);
       await this.syncNarrators(tx, id, replacement.narrators ?? []);
-
-      if (replacement.seriesName) {
-        await this.replaceSeriesLink(tx, id, {
-          name: replacement.seriesName,
-          position: replacement.seriesPosition ?? null,
-          asin: replacement.asin ?? null,
-          seriesAsin: replacement.seriesAsin ?? null,
-          provider: replacement.seriesProvider ?? 'audible',
-          title: replacement.title,
-          authorName: replacement.authors[0]?.name ?? null,
-        });
-      } else {
-        await this.replaceSeriesLink(tx, id, null);
-      }
+      await replaceSeriesLink(tx, id, seriesArgs);
       return true;
     });
 
@@ -461,203 +463,6 @@ export class BookService {
 
     await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
     return this.getById(bookId) as Promise<BookWithAuthor>;
-  }
-
-  /**
-   * Reuse-path for `upsertSeriesLink`: link `bookId` to the existing canonical
-   * `seriesMembers` row and fold `candidateAsin` into `alternate_asins` so the
-   * alternate-ASIN preservation contract holds for the BookService path. No-op
-   * when the ASIN matches the canonical providerBookId or is already an
-   * alternate. (#1116 F1, #1117 review F1)
-   */
-  private async linkExistingMember(tx: DbOrTx, existingId: number, bookId: number, candidateAsin: string | null): Promise<void> {
-    const rows = await tx
-      .select({ providerBookId: seriesMembers.providerBookId, alternateAsins: seriesMembers.alternateAsins })
-      .from(seriesMembers)
-      .where(eq(seriesMembers.id, existingId))
-      .limit(1);
-    const existing = rows[0];
-    const update: Partial<typeof seriesMembers.$inferInsert> = { bookId, updatedAt: new Date() };
-    const shouldFold = existing != null && candidateAsin != null && candidateAsin !== existing.providerBookId && !(existing.alternateAsins ?? []).includes(candidateAsin);
-    if (shouldFold) {
-      update.alternateAsins = [...new Set([...(existing!.alternateAsins ?? []), candidateAsin!])].sort();
-    }
-    await tx.update(seriesMembers).set(update).where(eq(seriesMembers.id, existingId));
-  }
-
-  /**
-   * Replace series membership for a rematched book. Always deletes any prior
-   * `series_members` rows for the book; inserts exactly one fresh row when
-   * `args` is non-null. Errors propagate — caller's transaction rolls back.
-   *
-   * Diverges intentionally from `upsertSeriesLink` (which is best-effort
-   * catch-and-log for the add-book path): rematch series correctness is a
-   * core acceptance criterion, so failures must abort the Fix Match.
-   */
-  async replaceSeriesLink(
-    tx: DbOrTx,
-    bookId: number,
-    args:
-      | null
-      | {
-          name: string;
-          position: number | null;
-          asin: string | null;
-          seriesAsin: string | null;
-          provider: string;
-          title: string;
-          authorName: string | null;
-        },
-  ): Promise<void> {
-    await tx.delete(seriesMembers).where(eq(seriesMembers.bookId, bookId));
-    if (!args) return;
-
-    const normalized = normalizeSeriesName(args.name);
-    let seriesId: number | null = null;
-    if (args.seriesAsin) {
-      const found = await tx
-        .select({ id: series.id })
-        .from(series)
-        .where(and(eq(series.provider, args.provider), eq(series.providerSeriesId, args.seriesAsin)))
-        .limit(1);
-      if (found.length > 0) seriesId = found[0]!.id;
-    }
-    if (seriesId === null) {
-      const found = await tx
-        .select({ id: series.id })
-        .from(series)
-        .where(and(eq(series.provider, args.provider), eq(series.normalizedName, normalized)))
-        .limit(1);
-      if (found.length > 0) seriesId = found[0]!.id;
-    }
-    if (seriesId === null) {
-      const inserted = await tx
-        .insert(series)
-        .values({
-          provider: args.provider,
-          providerSeriesId: args.seriesAsin,
-          name: args.name,
-          normalizedName: normalized,
-        })
-        .returning({ id: series.id });
-      seriesId = inserted[0]!.id;
-    } else if (args.seriesAsin) {
-      await tx
-        .update(series)
-        .set({ providerSeriesId: args.seriesAsin, updatedAt: new Date() })
-        .where(and(eq(series.id, seriesId), sql`provider_series_id IS NULL`));
-    }
-
-    const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
-    const normalizedTitle = normalizeSeriesMemberWorkTitle(args.title);
-    await tx.insert(seriesMembers).values({
-      seriesId,
-      bookId,
-      providerBookId: args.asin,
-      title: args.title,
-      normalizedTitle,
-      authorName: args.authorName,
-      positionRaw,
-      position: args.position,
-      source: 'provider',
-    });
-  }
-
-  /**
-   * Upsert the (series + series_member) cache rows for a freshly-created book
-   * when the create payload carries provider-known series identity.
-   * Best-effort: failures are caught + logged so book create stays the success path.
-   */
-  private async upsertSeriesLink(
-    tx: DbOrTx,
-    bookId: number,
-    args: {
-      name: string;
-      position: number | null;
-      asin: string | null;
-      seriesAsin: string | null;
-      provider: string;
-      title: string;
-      authorName: string | null;
-    },
-  ): Promise<void> {
-    try {
-      const normalized = normalizeSeriesName(args.name);
-      // Find an existing series row (provider+providerSeriesId, then provider+normalizedName)
-      let seriesId: number | null = null;
-      if (args.seriesAsin) {
-        const found = await tx
-          .select({ id: series.id })
-          .from(series)
-          .where(and(eq(series.provider, args.provider), eq(series.providerSeriesId, args.seriesAsin)))
-          .limit(1);
-        if (found.length > 0) seriesId = found[0]!.id;
-      }
-      if (seriesId === null) {
-        const found = await tx
-          .select({ id: series.id })
-          .from(series)
-          .where(and(eq(series.provider, args.provider), eq(series.normalizedName, normalized)))
-          .limit(1);
-        if (found.length > 0) seriesId = found[0]!.id;
-      }
-      if (seriesId === null) {
-        const inserted = await tx
-          .insert(series)
-          .values({
-            provider: args.provider,
-            providerSeriesId: args.seriesAsin,
-            name: args.name,
-            normalizedName: normalized,
-          })
-          .returning({ id: series.id });
-        seriesId = inserted[0]!.id;
-      } else if (args.seriesAsin) {
-        // Backfill providerSeriesId if it was missing
-        await tx
-          .update(series)
-          .set({ providerSeriesId: args.seriesAsin, updatedAt: new Date() })
-          .where(and(eq(series.id, seriesId), sql`provider_series_id IS NULL`));
-      }
-
-      // Link a series_members row to this book. Use the shared logical-identity
-      // lookup so we also match canonical rows where this book's ASIN was
-      // collapsed into alternate_asins, AND fall back to (title + position +
-      // normalized author) when no ASIN match exists. Keeps add-book in lockstep
-      // with refresh-time dedupe. (F12)
-      const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
-      // Use work-title normalization so adding a book whose ASIN belongs to a
-      // dramatized/split-part variant reuses the existing clean canonical row
-      // rather than inserting a new noisy member. Stays in lockstep with the
-      // refresh-time dedupe identity. (#1116 F1)
-      const normalizedTitle = normalizeSeriesMemberWorkTitle(args.title);
-      const normalizedAuthor = normalizePrimaryAuthor(args.authorName);
-      const existingId = await findMemberByLogicalIdentity(
-        tx,
-        seriesId,
-        normalizedTitle,
-        positionRaw,
-        normalizedAuthor,
-        args.asin,
-      );
-      if (existingId !== null) {
-        await this.linkExistingMember(tx, existingId, bookId, args.asin);
-        return;
-      }
-      await tx.insert(seriesMembers).values({
-        seriesId,
-        bookId,
-        providerBookId: args.asin,
-        title: args.title,
-        normalizedTitle,
-        authorName: args.authorName,
-        positionRaw,
-        position: args.position,
-        source: 'provider',
-      });
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error), bookId, seriesName: args.name }, 'Series link upsert failed during book create');
-    }
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */

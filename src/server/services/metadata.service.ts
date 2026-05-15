@@ -14,7 +14,6 @@ import {
   type SeriesMetadata,
   type SearchBooksOptions,
   type SearchBooksResult,
-  type ProviderLookupResult,
 } from '../../core/index.js';
 import { resolveSeriesMembers, type SeriesMembersResult } from './metadata-series-members.js';
 import { filterByLanguage } from '../../core/utils/index.js';
@@ -22,6 +21,8 @@ import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.j
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
+export type { FixMatchLookupResult } from './metadata-fix-match.js';
 
 
 const DEFAULT_THROTTLE_MS = 200;
@@ -43,37 +44,6 @@ class RequestThrottle {
 
 export interface MetadataServiceConfig {
   audibleRegion?: string;
-}
-
-/**
- * Outcome of `MetadataService.lookupForFixMatch`. Audible failure modes
- * surface directly; Audnexus failures are absorbed (the merged record falls
- * back to Audible-only fields) and never reach this union.
- */
-export type FixMatchLookupResult =
-  | { kind: 'ok'; book: BookMetadata }
-  | { kind: 'not_found' }
-  | { kind: 'rate_limited'; retryAfterMs: number }
-  | { kind: 'invalid_record' }
-  | { kind: 'transient_failure'; message: string };
-
-/**
- * Overlay Audnexus's richer-than-Audible fields onto Audible's canonical
- * record. Audnexus contributes `seriesPrimary`, `genres`, `isbn`, and (when
- * non-empty and richer than Audible's) `narrators`. Audible is authoritative
- * for all other fields.
- */
-function mergeAudnexusOntoAudible(audible: BookMetadata, audnexus: BookMetadata): BookMetadata {
-  const merged: BookMetadata = { ...audible };
-  if (audnexus.seriesPrimary && !merged.seriesPrimary) merged.seriesPrimary = audnexus.seriesPrimary;
-  if (audnexus.genres && audnexus.genres.length > 0 && (!merged.genres || merged.genres.length === 0)) {
-    merged.genres = audnexus.genres;
-  }
-  if (audnexus.isbn && !merged.isbn) merged.isbn = audnexus.isbn;
-  if (audnexus.narrators && audnexus.narrators.length > (merged.narrators?.length ?? 0)) {
-    merged.narrators = audnexus.narrators;
-  }
-  return merged;
 }
 
 export class MetadataService {
@@ -392,61 +362,16 @@ export class MetadataService {
     );
   }
 
-  /**
-   * Fix Match canonical lookup. Audible is required; Audnexus is best-effort.
-   * - Bypasses `withThrottle` so typed kinds survive (no fallback erasure).
-   * - Manually acquires the throttle slot before each provider call.
-   * - On `rate_limited` from either provider, mirrors the `withThrottle`
-   *   backoff bookkeeping via `setRateLimited(...)`.
-   * - Returns Audnexus's `seriesPrimary`, `genres`, `isbn`, and richer-than-
-   *   Audible `narrators` merged onto Audible's record when Audnexus is `ok`.
-   *   Otherwise returns Audible-only fields and logs the Audnexus kind at WARN.
-   */
-  async lookupForFixMatch(asin: string): Promise<FixMatchLookupResult> {
-    const audible = this.providers[0];
-    if (!audible) {
-      return { kind: 'not_found' };
-    }
-
-    if (this.isRateLimited(audible.name)) {
-      const retryAfterMs = this.getRateLimitRemainingMs(audible.name);
-      return { kind: 'rate_limited', retryAfterMs };
-    }
-
-    await this.throttle.acquire();
-    const audibleResult = await audible.getBookDetailed(asin);
-
-    if (audibleResult.kind === 'rate_limited') {
-      this.setRateLimited(audible.name, audibleResult.retryAfterMs);
-      return { kind: 'rate_limited', retryAfterMs: audibleResult.retryAfterMs };
-    }
-    if (audibleResult.kind === 'not_found') return { kind: 'not_found' };
-    if (audibleResult.kind === 'invalid_record') return { kind: 'invalid_record' };
-    if (audibleResult.kind === 'transient_failure') {
-      return { kind: 'transient_failure', message: audibleResult.message };
-    }
-
-    const audibleBook = audibleResult.book;
-
-    let audnexusResult: ProviderLookupResult | null = null;
-    if (!this.isRateLimited(this.audnexus.name)) {
-      await this.throttle.acquire();
-      audnexusResult = await this.audnexus.getBookDetailed(asin);
-      if (audnexusResult.kind === 'rate_limited') {
-        this.setRateLimited(this.audnexus.name, audnexusResult.retryAfterMs);
-      }
-    } else {
-      this.log.warn({ asin }, 'Fix Match: Audnexus skipped (rate limited) — using Audible-only fields');
-    }
-
-    if (audnexusResult && audnexusResult.kind === 'ok') {
-      const merged = mergeAudnexusOntoAudible(audibleBook, audnexusResult.book);
-      return { kind: 'ok', book: merged };
-    }
-    if (audnexusResult) {
-      this.log.warn({ asin, audnexusKind: audnexusResult.kind }, 'Fix Match: Audnexus failed — committing Audible-only record');
-    }
-    return { kind: 'ok', book: audibleBook };
+  lookupForFixMatch(asin: string): Promise<FixMatchLookupResult> {
+    return runFixMatchLookup({
+      audible: this.providers[0],
+      audnexus: this.audnexus,
+      log: this.log,
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name) => this.isRateLimited(name),
+      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
+      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+    }, asin);
   }
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {

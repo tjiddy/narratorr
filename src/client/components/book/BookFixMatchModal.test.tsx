@@ -7,7 +7,7 @@ import { createMockBook, createMockBookMetadata } from '@/__tests__/factories';
 import { ApiError } from '@/lib/api';
 
 vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  const actual = await vi.importActual('@/lib/api') as Record<string, unknown>;
   return {
     ...actual,
     api: {

@@ -189,71 +189,101 @@ export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatch
             onApplyMetadata={handleSelect}
           />
         ) : selected ? (
-          <div className="p-6 space-y-4 overflow-y-auto">
-            <div className="flex gap-4">
-              <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden bg-muted flex items-center justify-center ring-1 ring-white/[0.08]">
-                {selected.coverUrl ? (
-                  <img src={resolveCoverUrl(selected.coverUrl, undefined)} alt={`Cover of ${selected.title}`} className="w-full h-full object-cover" />
-                ) : (
-                  <BookOpenIcon className="w-10 h-10 text-muted-foreground/30" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-display font-semibold text-base truncate">{selected.title}</p>
-                {selected.subtitle && (
-                  <p className="text-xs text-muted-foreground italic truncate">{selected.subtitle}</p>
-                )}
-                <p className="text-xs text-muted-foreground mt-1">{formatAuthor(selected)}</p>
-              </div>
-            </div>
-
-            <div className="space-y-2 glass-card rounded-xl p-3">
-              <IdentityComparisonRow label="Title" oldValue={book.title} newValue={selected.title} />
-              <IdentityComparisonRow label="Author" oldValue={formatAuthor(book)} newValue={formatAuthor(selected)} />
-              <IdentityComparisonRow label="Narrator" oldValue={formatNarrator(book)} newValue={formatNarrator(selected)} />
-              <IdentityComparisonRow label="Series" oldValue={formatSeriesLabel(book)} newValue={formatSeriesLabel(selected)} />
-              <IdentityComparisonRow label="Year" oldValue={formatYear(book)} newValue={formatYear(selected)} />
-            </div>
-
-            {book.path && (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <input type="checkbox" checked={renameFiles} onChange={(e) => setRenameFiles(e.target.checked)} className="rounded" />
-                  Rename files after rematch
-                </label>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <input type="checkbox" checked={retagFiles} onChange={(e) => setRetagFiles(e.target.checked)} className="rounded" />
-                  Re-tag audio files after rematch
-                </label>
-              </div>
-            )}
-
-            {errorMessage && (
-              <div role="alert" className="text-xs text-red-400 bg-destructive/10 rounded-lg px-3 py-2">
-                {errorMessage}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 transition-all focus-ring"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirm}
-                disabled={fixMatch.isPending}
-                className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
-              >
-                {fixMatch.isPending ? 'Replacing...' : 'Replace match'}
-              </button>
-            </div>
-          </div>
+          <FixMatchConfirmView
+            book={book}
+            selected={selected}
+            renameFiles={renameFiles}
+            onRenameFilesChange={setRenameFiles}
+            retagFiles={retagFiles}
+            onRetagFilesChange={setRetagFiles}
+            errorMessage={errorMessage}
+            isPending={fixMatch.isPending}
+            onCancel={onClose}
+            onConfirm={handleConfirm}
+          />
         ) : null}
       </div>
     </Modal>
+  );
+}
+
+interface FixMatchConfirmViewProps {
+  book: BookWithAuthor;
+  selected: BookMetadata;
+  renameFiles: boolean;
+  onRenameFilesChange: (v: boolean) => void;
+  retagFiles: boolean;
+  onRetagFilesChange: (v: boolean) => void;
+  errorMessage: string | null;
+  isPending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function FixMatchConfirmView({ book, selected, renameFiles, onRenameFilesChange, retagFiles, onRetagFilesChange, errorMessage, isPending, onCancel, onConfirm }: FixMatchConfirmViewProps) {
+  return (
+    <div className="p-6 space-y-4 overflow-y-auto">
+      <div className="flex gap-4">
+        <div className="shrink-0 w-24 h-24 rounded-xl overflow-hidden bg-muted flex items-center justify-center ring-1 ring-white/[0.08]">
+          {selected.coverUrl ? (
+            <img src={resolveCoverUrl(selected.coverUrl, undefined)} alt={`Cover of ${selected.title}`} className="w-full h-full object-cover" />
+          ) : (
+            <BookOpenIcon className="w-10 h-10 text-muted-foreground/30" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-display font-semibold text-base truncate">{selected.title}</p>
+          {selected.subtitle && (
+            <p className="text-xs text-muted-foreground italic truncate">{selected.subtitle}</p>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">{formatAuthor(selected)}</p>
+        </div>
+      </div>
+
+      <div className="space-y-2 glass-card rounded-xl p-3">
+        <IdentityComparisonRow label="Title" oldValue={book.title} newValue={selected.title} />
+        <IdentityComparisonRow label="Author" oldValue={formatAuthor(book)} newValue={formatAuthor(selected)} />
+        <IdentityComparisonRow label="Narrator" oldValue={formatNarrator(book)} newValue={formatNarrator(selected)} />
+        <IdentityComparisonRow label="Series" oldValue={formatSeriesLabel(book)} newValue={formatSeriesLabel(selected)} />
+        <IdentityComparisonRow label="Year" oldValue={formatYear(book)} newValue={formatYear(selected)} />
+      </div>
+
+      {book.path && (
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={renameFiles} onChange={(e) => onRenameFilesChange(e.target.checked)} className="rounded" />
+            Rename files after rematch
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={retagFiles} onChange={(e) => onRetagFilesChange(e.target.checked)} className="rounded" />
+            Re-tag audio files after rematch
+          </label>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div role="alert" className="text-xs text-red-400 bg-destructive/10 rounded-lg px-3 py-2">
+          {errorMessage}
+        </div>
+      )}
+
+      <div className="flex justify-end gap-3 pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 transition-all focus-ring"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={isPending}
+          className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
+        >
+          {isPending ? 'Replacing...' : 'Replace match'}
+        </button>
+      </div>
+    </div>
   );
 }
