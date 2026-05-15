@@ -25,13 +25,14 @@ export function normalizePrimaryAuthor(name: string | null | undefined): string 
 }
 
 /**
- * Strip well-known Audible edition / split-part / adaptation suffixes from a
- * product title before normalization so noisy variants collapse into the same
- * logical-work slot on the Series card. Conservative: only parens/brackets
- * matching the explicit descriptor patterns are dropped — real subtitles like
- * `(A Novel)` are preserved. Bracket variants cover Audible products that
- * surface descriptors as `[Dramatized Adaptation]` instead of parenthesized.
- * (#1116)
+ * Strip well-known Audible edition / split-part / adaptation / omnibus suffixes
+ * from a product title before normalization so noisy variants collapse into the
+ * same logical-work slot on the Series card. Conservative: parens/brackets must
+ * match the explicit descriptor patterns; new omnibus/edition/collection/bundle
+ * /complete/box-set keywords are anchored to end-of-title (suffix) so real work
+ * titles whose stem contains the keyword (e.g. `The Complete Sherlock Holmes`,
+ * `Box of Bones`, `Edition Wars`) are preserved. Operates on product title only
+ * — subtitle is intentionally out of scope (#1126). (#1116, #1126)
  */
 const EDITION_SUFFIX_PATTERNS: RegExp[] = [
   /\(\s*(?:part\s+)?\d+\s+of\s+\d+\s*\)/gi,
@@ -44,13 +45,32 @@ const EDITION_SUFFIX_PATTERNS: RegExp[] = [
   /\[\s*unabridged\s*\]/gi,
   /\[\s*abridged\s*\]/gi,
   /\[\s*original\s+recording\s*\]/gi,
+  // Trailing parenthetical/bracket containing an integer range like
+  // `(Wool 1 - 5)` or `[Books 1 - 3]`. Anchored to end-of-title to avoid
+  // chewing through legitimate parentheticals earlier in the string. (#1126)
+  /\s*\(\s*[^)]*?\d+\s*[-–]\s*\d+[^)]*?\)\s*$/i,
+  /\s*\[\s*[^\]]*?\d+\s*[-–]\s*\d+[^\]]*?\]\s*$/i,
+  // Trailing edition/container/bundle keywords. Anchored to end so the
+  // negative cases (`The Complete Sherlock Holmes`, `Box of Bones`,
+  // `Edition Wars`) never strip. Optional leading `the` matches the
+  // `: The Complete Collection` shape after a colon/dash. (#1126)
+  /[\s:,\-–]+(?:the\s+)?(?:omnibus|edition|collection|bundle|complete)\s*$/i,
+  /[\s:,\-–]+(?:the\s+)?box\s+set\s*$/i,
 ];
 
 export function normalizeSeriesMemberWorkTitle(title: string): string {
+  // Iterate so stacked suffixes like `Wool Omnibus Edition` collapse fully:
+  // pass 1 strips ` Edition`, pass 2 strips ` Omnibus`. Capped by string-shrink
+  // monotonicity — every successful match shortens `stripped`, so termination
+  // is guaranteed within O(title.length) iterations. (#1126)
   let stripped = title;
-  for (const pattern of EDITION_SUFFIX_PATTERNS) {
-    stripped = stripped.replace(pattern, ' ');
-  }
+  let prev: string;
+  do {
+    prev = stripped;
+    for (const pattern of EDITION_SUFFIX_PATTERNS) {
+      stripped = stripped.replace(pattern, ' ');
+    }
+  } while (stripped !== prev);
   return normalizeSeriesName(stripped);
 }
 
@@ -349,9 +369,11 @@ async function cleanupLogicalDuplicates(
   seriesId: number,
   c: CandidateInfo,
 ): Promise<void> {
-  const positionFilter = c.positionRaw !== null
-    ? eq(seriesMembers.positionRaw, c.positionRaw)
-    : isNull(seriesMembers.positionRaw);
+  // Scan the whole series rather than narrowing by position, so an orphaned
+  // omnibus/container row that landed at `position: null` is also caught and
+  // folded into the numbered canonical with the same normalized work title.
+  // The in-memory work-title + author equality below is the load-bearing
+  // identity check. (#1126)
   const candidates = await db
     .select({
       id: seriesMembers.id,
@@ -359,18 +381,26 @@ async function cleanupLogicalDuplicates(
       providerBookId: seriesMembers.providerBookId,
       title: seriesMembers.title,
       authorName: seriesMembers.authorName,
+      positionRaw: seriesMembers.positionRaw,
       alternateAsins: seriesMembers.alternateAsins,
     })
     .from(seriesMembers)
     .where(and(
       eq(seriesMembers.seriesId, seriesId),
-      positionFilter,
       ne(seriesMembers.id, canonicalId),
     ));
-  const stale = candidates.filter((row) =>
-    normalizeSeriesMemberWorkTitle(row.title) === c.normalizedTitle
-    && normalizePrimaryAuthor(row.authorName) === c.normalizedAuthor,
-  );
+  // Cleanup direction is asymmetric: a null-position canonical never outranks
+  // a numbered row, so we MUST NOT delete a numbered row when the current
+  // canonical is null-position. Otherwise a refresh whose response carries
+  // only a null-position container would promote that container past the
+  // numberless filter by displacing a healthy numbered row from a prior
+  // refresh. (#1126 PR #1127 F1)
+  const stale = candidates.filter((row) => {
+    if (normalizeSeriesMemberWorkTitle(row.title) !== c.normalizedTitle) return false;
+    if (normalizePrimaryAuthor(row.authorName) !== c.normalizedAuthor) return false;
+    if (c.positionRaw === null && row.positionRaw !== null) return false;
+    return true;
+  });
   if (stale.length === 0) return;
   const canonicalRow = await db
     .select({
@@ -452,6 +482,39 @@ async function deleteContaminatedMembers(
 }
 
 /**
+ * Fold null-position candidate groups into a numbered group whose normalized
+ * work-title + author matches. The numbered position is authoritative — the
+ * container's ASIN becomes an alternate on the numbered canonical via the
+ * downstream alternateAsins computation in `reconcileCandidates`. Without this
+ * merge the null-position group would canonicalize as its own row, and the
+ * widened cleanup pass would then treat the numbered clean row as stale and
+ * delete it — violating the null-position contract that title-pattern
+ * detection cannot promote a null-position candidate past the numberless
+ * filter. (#1126 PR #1127 F1)
+ */
+function mergeNullPositionGroupsIntoNumbered(groups: Map<string, CandidateInfo[]>): void {
+  const numberedKeyByTitleAuthor = new Map<string, string>();
+  for (const [key, group] of groups) {
+    const sample = group[0]!;
+    if (sample.positionRaw === null) continue;
+    const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
+    if (!numberedKeyByTitleAuthor.has(titleAuthor)) {
+      numberedKeyByTitleAuthor.set(titleAuthor, key);
+    }
+  }
+  for (const [key, group] of [...groups]) {
+    const sample = group[0]!;
+    if (sample.positionRaw !== null) continue;
+    const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
+    const numberedKey = numberedKeyByTitleAuthor.get(titleAuthor);
+    if (numberedKey && numberedKey !== key) {
+      groups.get(numberedKey)!.push(...group);
+      groups.delete(key);
+    }
+  }
+}
+
+/**
  * Logical-identity dedupe: filter candidates to the target series, group by
  * (position + normalized title + normalized author), pick a canonical product
  * per group, persist non-canonical ASINs as alternate_asins on the canonical
@@ -487,6 +550,7 @@ export async function reconcileCandidates(
     if (existing) existing.push(c);
     else groups.set(key, [c]);
   }
+  mergeNullPositionGroupsIntoNumbered(groups);
   for (const group of groups.values()) {
     // Defensive ASIN-only dedupe inside each logical group (#1073).
     const seenAsin = new Set<string>();
@@ -499,7 +563,20 @@ export async function reconcileCandidates(
       }
       uniqueByAsin.push(c);
     }
-    const canonical = await pickCanonical(tx, uniqueByAsin, seedAsin);
+    // After mergeNullPositionGroupsIntoNumbered() folds null-position
+    // candidates into a numbered group, those null candidates MUST NOT
+    // compete for canonical selection — otherwise a clean-titled null
+    // candidate would beat the numbered container on cleanTitleScore (tier 0)
+    // and persist the row at position null, dropping the numbered fallback.
+    // The numbered position is authoritative; restrict pickCanonical's pool
+    // to numbered candidates whenever any numbered candidate is present, and
+    // fold the null-position ASINs as alternates on the chosen numbered
+    // canonical. Pure null-position groups (collection-style series) have
+    // no numbered candidates and use the full pool as before.
+    // (#1126 PR #1127 F2)
+    const numberedCandidates = uniqueByAsin.filter((c) => c.positionRaw !== null);
+    const canonicalPool = numberedCandidates.length > 0 ? numberedCandidates : uniqueByAsin;
+    const canonical = await pickCanonical(tx, canonicalPool, seedAsin);
     const alternateAsins = uniqueByAsin
       .filter((c) => c !== canonical && c.product.asin && c.product.asin !== canonical.product.asin)
       .map((c) => c.product.asin as string);

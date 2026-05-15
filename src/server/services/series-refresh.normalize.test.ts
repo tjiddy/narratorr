@@ -80,4 +80,35 @@ describe('normalizeSeriesMemberWorkTitle (#1116)', () => {
     expect(normalizeSeriesMemberWorkTitle('Foo [Audible Studios]')).toBe('foo audible studios');
     expect(normalizeSeriesMemberWorkTitle('Foo [Audible Original]')).toBe('foo audible original');
   });
+
+  it('strips omnibus/edition/collection/bundle/complete/box-set container suffixes (#1126)', () => {
+    expect(normalizeSeriesMemberWorkTitle('Wool Omnibus Edition (Wool 1 - 5)')).toBe('wool');
+    expect(normalizeSeriesMemberWorkTitle('Shift Omnibus Edition')).toBe('shift');
+    expect(normalizeSeriesMemberWorkTitle('The Wheel of Time: The Complete Collection')).toBe('the wheel of time');
+    expect(normalizeSeriesMemberWorkTitle('The Stormlight Archive Box Set')).toBe('the stormlight archive');
+    expect(normalizeSeriesMemberWorkTitle('Foundation Bundle')).toBe('foundation');
+  });
+
+  it('strips trailing parenthetical position ranges (#1126)', () => {
+    expect(normalizeSeriesMemberWorkTitle('Mistborn: The Original Trilogy (Books 1 - 3)')).toBe('mistborn the original trilogy');
+    expect(normalizeSeriesMemberWorkTitle('Foo (Wool 1 - 5)')).toBe('foo');
+    expect(normalizeSeriesMemberWorkTitle('Foo (1-5)')).toBe('foo');
+    expect(normalizeSeriesMemberWorkTitle('Foo [Books 1 - 3]')).toBe('foo');
+  });
+
+  it('is case-insensitive on container/edition keywords (#1126)', () => {
+    expect(normalizeSeriesMemberWorkTitle('Wool OMNIBUS EDITION')).toBe('wool');
+    expect(normalizeSeriesMemberWorkTitle('Foundation BUNDLE')).toBe('foundation');
+    expect(normalizeSeriesMemberWorkTitle('Stormlight BOX SET')).toBe('stormlight');
+  });
+
+  it('does NOT over-strip when keywords appear at the head/middle of legitimate work titles (#1126)', () => {
+    // Conservative anchoring: detection only fires on suffix or trailing
+    // parenthetical — never on the bare work-title stem.
+    expect(normalizeSeriesMemberWorkTitle('The Complete Sherlock Holmes')).toBe('the complete sherlock holmes');
+    expect(normalizeSeriesMemberWorkTitle('Box of Bones')).toBe('box of bones');
+    expect(normalizeSeriesMemberWorkTitle('Edition Wars')).toBe('edition wars');
+    expect(normalizeSeriesMemberWorkTitle('Bundle of Joy')).toBe('bundle of joy');
+    expect(normalizeSeriesMemberWorkTitle('A Novel (A Novel)')).toBe('a novel a novel');
+  });
 });
