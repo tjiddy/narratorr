@@ -815,43 +815,128 @@ describe('ImportQueueWorker', () => {
       expect(harness.getMaxActive()).toBe(1);
     });
 
-    it('safety-poll interval routes through the guard — repeated ticks while a job is in flight do not start a second runner', async () => {
-      // F1: The PR moved the safety-poll setInterval callback to call
-      // requestDrain() instead of an unguarded drain. Without this test, if
-      // the interval callback regressed back to `void drain()`, the nudge
-      // coverage above would still pass. Use scoped fake timers (per CLAUDE.md,
-      // full vi.useFakeTimers() can deadlock TanStack Query elsewhere — we
-      // only need setInterval here) so we can advance the 30s poll deterministically.
+    it('safety-poll interval routes through the guard — leaked poll runners would claim job 2; the guard must prevent it', async () => {
+      // F1 (round 2): An unguarded poll callback would spawn a fresh drain
+      // runner whose drainOne() must be able to ACTUALLY claim and process
+      // job 2 — otherwise the test passes for the wrong reason (e.g. a
+      // call-count mock that has no .orderBy() at the 4th call would make
+      // a leaked runner throw before it could enter job 2, leaving the
+      // maxActive===1 assertion accidentally true).
+      //
+      // Solution: structure the mock by chain SHAPE, not call count. Any
+      // candidate-shaped select (.from().where().orderBy().limit()) drains
+      // a FIFO of pending ids; any full-row-shaped select (.from().where()
+      // .limit() without .orderBy()) returns the row paired with the most
+      // recent candidate. Under the guard-intact path the runner walks
+      // job 1 → resolveBookTitle → job 2 in order; under regression the
+      // leaked poll runner can claim job 2 concurrently and maxActive flips
+      // to 2, failing the test for the intended reason.
+      const candidateQueue: number[] = [1, 2];
+      type JobRow = { id: number; bookId: number; type: string; status: string; metadata: string };
+      const rowsById: Record<number, JobRow> = {
+        1: { id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' },
+        2: { id: 2, bookId: 20, type: 'manual', status: 'processing', metadata: '{}' },
+      };
+      let pendingFullRow: JobRow | null = null;
+      let bootRecoveryDone = false;
+
+      let gateResolve: () => void = () => {};
+      const gate = new Promise<void>((resolve) => { gateResolve = resolve; });
+      let activeCount = 0;
+      let maxActive = 0;
+      const processedIds: number[] = [];
+      let entered1Resolve: () => void = () => {};
+      const entered1 = new Promise<void>((resolve) => { entered1Resolve = resolve; });
+
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process(job: ImportJob) {
+          activeCount++;
+          if (activeCount > maxActive) maxActive = activeCount;
+          try {
+            if (job.id === 1) {
+              entered1Resolve();
+              await gate;
+            }
+            processedIds.push(job.id);
+          } finally {
+            activeCount--;
+          }
+        },
+      };
+      registerImportAdapter(adapter);
+
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        let didOrderBy = false;
+        const inner = Object.assign(Promise.resolve([]), {
+          orderBy: vi.fn().mockImplementation(() => { didOrderBy = true; return inner; }),
+          limit: vi.fn().mockImplementation(() => {
+            if (didOrderBy) {
+              const id = candidateQueue.shift();
+              if (id === undefined) return Promise.resolve([]);
+              pendingFullRow = rowsById[id] ?? null;
+              return Promise.resolve([{ id }]);
+            }
+            if (pendingFullRow) {
+              const row = pendingFullRow;
+              pendingFullRow = null;
+              return Promise.resolve([row]);
+            }
+            return Promise.resolve([]);
+          }),
+        });
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockImplementation(() => {
+            // Boot recovery's first select awaits where() directly with no
+            // limit/orderBy chaining. Mark it done so it can't accidentally
+            // re-enter; subsequent where() calls feed the drainOne chain.
+            if (!bootRecoveryDone) {
+              bootRecoveryDone = true;
+              return Promise.resolve([]);
+            }
+            return inner;
+          }),
+        };
+      });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        }),
+      }));
+
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
-        const harness = setupTwoPendingJobs();
-
         await worker.start();
-        await harness.awaitEntered1();
+        await entered1;
 
-        // Job 1 is parked at the gate. Fire several safety-poll ticks. Each
-        // tick invokes the interval callback synchronously; if it regressed
-        // back to an unguarded drain runner, job 2 would race to claim.
+        // Job 1 is parked at the gate. Fire several safety-poll ticks. Under
+        // the guard, each callback merely sets drainRequested. Under regression
+        // (e.g. `void drain()` in the interval), each tick spawns a fresh
+        // runner whose drainOne would shift '2' off the queue and run the
+        // adapter for job 2 concurrently with job 1 → maxActive becomes 2.
         vi.advanceTimersByTime(120_000); // 4 × SAFETY_POLL_INTERVAL_MS
 
-        // Yield real microtasks/macrotasks so any leaked drain runner can claim.
         vi.useRealTimers();
         await new Promise(r => setTimeout(r, 20));
 
-        expect(harness.getActiveCount()).toBe(1);
-        expect(harness.getMaxActive()).toBe(1);
-        expect(harness.getProcessedIds()).toEqual([]);
+        // The load-bearing assertions: maxActive===1 AND processedIds===[]
+        // AND the candidate queue still contains job 2. If any of those flip,
+        // a leaked runner got through.
+        expect(activeCount).toBe(1);
+        expect(maxActive).toBe(1);
+        expect(processedIds).toEqual([]);
+        expect(candidateQueue).toEqual([2]);
 
         // Release the gate. The drainRequested set by the poll callbacks
-        // should drive the runner to pick up job 2 after job 1 completes.
-        harness.releaseGate();
+        // should drive the same runner to claim and process job 2.
+        gateResolve();
         await new Promise(r => setTimeout(r, 50));
 
-        expect(harness.getProcessedIds()).toEqual([1, 2]);
-        expect(harness.getMaxActive()).toBe(1);
+        expect(processedIds).toEqual([1, 2]);
+        expect(maxActive).toBe(1);
       } finally {
-        // Ensure real timers are restored even on assertion failure so
-        // afterEach's worker.stop() doesn't hang waiting for fake intervals.
         vi.useRealTimers();
       }
     });
