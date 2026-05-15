@@ -814,6 +814,86 @@ describe('ImportQueueWorker', () => {
       expect(harness.getProcessedIds()).toEqual([1]);
       expect(harness.getMaxActive()).toBe(1);
     });
+
+    it('safety-poll interval routes through the guard — repeated ticks while a job is in flight do not start a second runner', async () => {
+      // F1: The PR moved the safety-poll setInterval callback to call
+      // requestDrain() instead of an unguarded drain. Without this test, if
+      // the interval callback regressed back to `void drain()`, the nudge
+      // coverage above would still pass. Use scoped fake timers (per CLAUDE.md,
+      // full vi.useFakeTimers() can deadlock TanStack Query elsewhere — we
+      // only need setInterval here) so we can advance the 30s poll deterministically.
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        const harness = setupTwoPendingJobs();
+
+        await worker.start();
+        await harness.awaitEntered1();
+
+        // Job 1 is parked at the gate. Fire several safety-poll ticks. Each
+        // tick invokes the interval callback synchronously; if it regressed
+        // back to an unguarded drain runner, job 2 would race to claim.
+        vi.advanceTimersByTime(120_000); // 4 × SAFETY_POLL_INTERVAL_MS
+
+        // Yield real microtasks/macrotasks so any leaked drain runner can claim.
+        vi.useRealTimers();
+        await new Promise(r => setTimeout(r, 20));
+
+        expect(harness.getActiveCount()).toBe(1);
+        expect(harness.getMaxActive()).toBe(1);
+        expect(harness.getProcessedIds()).toEqual([]);
+
+        // Release the gate. The drainRequested set by the poll callbacks
+        // should drive the runner to pick up job 2 after job 1 completes.
+        harness.releaseGate();
+        await new Promise(r => setTimeout(r, 50));
+
+        expect(harness.getProcessedIds()).toEqual([1, 2]);
+        expect(harness.getMaxActive()).toBe(1);
+      } finally {
+        // Ensure real timers are restored even on assertion failure so
+        // afterEach's worker.stop() doesn't hang waiting for fake intervals.
+        vi.useRealTimers();
+      }
+    });
+
+    it('unexpected drain-runner error is caught and logged via serializeError() with the canonical "Drain runner failed unexpectedly" message', async () => {
+      // F2: runDrain() now catches drain-level rejections so the guard does
+      // not latch on. Without a test, deleting the catch/log or logging the
+      // raw error (skipping serializeError) would not fail any other test.
+      // We force drainOne() to throw by rejecting the candidate-select limit()
+      // — this propagates through drainOne → runDrain's catch.
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        // First call is boot recovery (from().where()), which we resolve to
+        // an empty orphan list. After that, every candidate select must throw.
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockImplementation(() => {
+            return Object.assign(Promise.resolve([]), {
+              orderBy: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockRejectedValue(new Error('candidate select blew up')),
+            });
+          }),
+        };
+      });
+
+      await worker.start();
+      // Allow the scheduled drain runner to spin up, throw, and reach the catch.
+      await new Promise(r => setTimeout(r, 30));
+
+      const logErrMock = log as unknown as { error: ReturnType<typeof vi.fn> };
+      const runnerErrCalls = logErrMock.error.mock.calls.filter((call: unknown[]) => {
+        return call[1] === 'Drain runner failed unexpectedly';
+      });
+      expect(runnerErrCalls).toHaveLength(1);
+
+      // The error payload must carry serializeError()'s shape — a plain object
+      // with `message` and `type`, NOT a raw Error (which Pino would dump as {}).
+      const errCtx = runnerErrCalls[0]![0] as { error: Record<string, unknown> };
+      expect(errCtx.error).toBeTypeOf('object');
+      expect(errCtx.error).not.toBeInstanceOf(Error);
+      expect(errCtx.error.message).toBe('candidate select blew up');
+      expect(errCtx.error.type).toBe('Error');
+    });
   });
 
   // ===========================================================================
