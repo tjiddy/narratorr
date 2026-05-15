@@ -7,12 +7,13 @@ describe('useBookModals', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns all 7 modal keys with initial false state', () => {
+  it('returns all 8 modal keys with initial false state', () => {
     const { result } = renderHook(() => useBookModals());
 
     expect(result.current.modals).toEqual({
       search: false,
       edit: false,
+      fixMatch: false,
       confirmRename: false,
       confirmRetag: false,
       confirmMerge: false,
@@ -28,6 +29,7 @@ describe('useBookModals', () => {
 
     expect(result.current.modals.search).toBe(true);
     expect(result.current.modals.edit).toBe(false);
+    expect(result.current.modals.fixMatch).toBe(false);
     expect(result.current.modals.confirmRename).toBe(false);
     expect(result.current.modals.confirmRetag).toBe(false);
     expect(result.current.modals.confirmMerge).toBe(false);

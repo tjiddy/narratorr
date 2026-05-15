@@ -79,6 +79,21 @@ describe('eventTypeSchema', () => {
   it('rejects typo book_addedd', () => {
     expect(() => eventTypeSchema.parse('book_addedd')).toThrow();
   });
+
+  it('accepts metadata_fixed event type (#1129)', () => {
+    expect(eventTypeSchema.parse('metadata_fixed')).toBe('metadata_fixed');
+  });
+});
+
+describe('eventTypeSchema ↔ DB enum alignment (#1129)', () => {
+  it('every Zod enum member is also a DB schema enum member, and vice versa', async () => {
+    const { bookEvents } = await import('../../db/schema.js');
+    // Drizzle stores the enum on the column config as `enumValues`. This is
+    // the same list passed to `text(name, { enum: [...] })` at definition.
+    const dbEnum = (bookEvents.eventType as unknown as { enumValues: readonly string[] }).enumValues;
+    expect(dbEnum).toBeDefined();
+    expect(new Set(dbEnum)).toEqual(new Set(eventTypeSchema.options));
+  });
 });
 
 describe('eventSourceSchema', () => {

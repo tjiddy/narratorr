@@ -695,4 +695,132 @@ describe('AudnexusProvider', () => {
       expect(author!.imageUrl).toBeUndefined();
     });
   });
+
+  describe('mapBook isbn (#1129)', () => {
+    it('surfaces isbn on the mapped BookMetadata when present in raw response', async () => {
+      const book = await provider.getBook('B0030DL4GK');
+      expect(book!.isbn).toBe('9780765365286');
+    });
+  });
+
+  describe('getBookDetailed — typed outcomes (#1129)', () => {
+    it('200 + valid record → { kind: "ok", book }', async () => {
+      const result = await provider.getBookDetailed('B0030DL4GK');
+      expect(result.kind).toBe('ok');
+      if (result.kind === 'ok') {
+        expect(result.book.title).toBe('The Way of Kings');
+      }
+    });
+
+    it('mapped-invalid (missing title/authors) → invalid_record source=mapped', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({ asin: 'B_NO_TITLE', title: '', authors: [] });
+        }),
+      );
+      const result = await provider.getBookDetailed('B_NO_TITLE');
+      expect(result.kind).toBe('invalid_record');
+      if (result.kind === 'invalid_record') {
+        expect(result.source).toBe('mapped');
+        expect(Array.isArray(result.issues)).toBe(true);
+      }
+    });
+
+    it('raw wrapper-schema failure → invalid_record source=raw', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({ asin: 'B0030DL4GK', runtimeLengthMin: 'oops' });
+        }),
+      );
+      const result = await provider.getBookDetailed('B0030DL4GK');
+      expect(result.kind).toBe('invalid_record');
+      if (result.kind === 'invalid_record') {
+        expect(result.source).toBe('raw');
+      }
+    });
+
+    it('HTTP 404 → not_found', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => new HttpResponse(null, { status: 404 })),
+      );
+      const result = await provider.getBookDetailed('B_404');
+      expect(result.kind).toBe('not_found');
+    });
+
+    it('HTTP 429 with Retry-After → rate_limited with retryAfterMs', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '15' } })),
+      );
+      const result = await provider.getBookDetailed('B_429');
+      expect(result.kind).toBe('rate_limited');
+      if (result.kind === 'rate_limited') {
+        expect(result.retryAfterMs).toBe(15_000);
+      }
+    });
+
+    it('HTTP 503 → transient_failure', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => new HttpResponse(null, { status: 503 })),
+      );
+      const result = await provider.getBookDetailed('B_503');
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('network error → transient_failure', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => HttpResponse.error()),
+      );
+      const result = await provider.getBookDetailed('B_NET');
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('does NOT throw under any error path', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => new HttpResponse(null, { status: 500 })),
+      );
+      await expect(provider.getBookDetailed('B_5xx')).resolves.toBeDefined();
+    });
+  });
+
+  describe('legacy getBook wrapper — compatibility matrix (#1129)', () => {
+    it('HTTP 429 → wrapper throws RateLimitError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => new HttpResponse(null, { status: 429, headers: { 'Retry-After': '5' } })),
+      );
+      await expect(provider.getBook('B_429')).rejects.toBeInstanceOf(RateLimitError);
+    });
+
+    it('HTTP 5xx → wrapper throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => new HttpResponse(null, { status: 502 })),
+      );
+      await expect(provider.getBook('B_5xx')).rejects.toBeInstanceOf(TransientError);
+    });
+
+    it('network error → wrapper throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => HttpResponse.error()),
+      );
+      await expect(provider.getBook('B_NET')).rejects.toBeInstanceOf(TransientError);
+    });
+
+    it('raw wrapper-schema failure → wrapper throws MetadataError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({ asin: 'B0030DL4GK', runtimeLengthMin: 'oops' });
+        }),
+      );
+      await expect(provider.getBook('B0030DL4GK')).rejects.toBeInstanceOf(MetadataError);
+    });
+
+    it('mapped-invalid record → wrapper returns null', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({ asin: 'B_NO_TITLE', title: '', authors: [] });
+        }),
+      );
+      const result = await provider.getBook('B_NO_TITLE');
+      expect(result).toBeNull();
+    });
+  });
 });

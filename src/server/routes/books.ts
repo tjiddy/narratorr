@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService, MetadataService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -26,6 +26,7 @@ export interface BookRouteDeps {
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
   seriesRefreshService?: SeriesRefreshService;
+  metadataService?: MetadataService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { type z } from 'zod';
@@ -39,12 +40,14 @@ import {
   deleteBookQuerySchema,
   retagBodySchema,
   retagPreviewQuerySchema,
+  fixMatchRequestSchema,
   DEFAULT_LIMITS,
   type CreateBookBody,
   type UpdateBookBody,
   type DeleteBookQuery,
   type RetagBody,
   type RetagPreviewQuery,
+  type FixMatchRequest,
 } from '../../shared/schemas.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
@@ -251,6 +254,120 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
   );
 }
 
+function fixMatchHttpStatus(kind: 'not_found' | 'rate_limited' | 'invalid_record' | 'transient_failure'): number {
+  switch (kind) {
+    case 'not_found': return 404;
+    case 'rate_limited': return 503;
+    case 'invalid_record': return 422;
+    case 'transient_failure': return 502;
+  }
+}
+
+function fixMatchErrorMessage(kind: 'not_found' | 'rate_limited' | 'invalid_record' | 'transient_failure'): string {
+  switch (kind) {
+    case 'not_found': return 'ASIN not resolved';
+    case 'rate_limited': return 'Provider rate limited';
+    case 'invalid_record': return 'Incomplete provider record';
+    case 'transient_failure': return 'Provider lookup failed';
+  }
+}
+
+// eslint-disable-next-line complexity, max-lines-per-function -- linear failure mapping + event/series-refresh wiring
+function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps) {
+  const metadataService = deps.metadataService!;
+  app.post<{ Params: IdParam; Body: FixMatchRequest }>(
+    '/api/books/:id/fix-match',
+    { schema: { params: idParamSchema, body: fixMatchRequestSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const body = request.body;
+
+      const sourceBook = await deps.bookService.getById(id);
+      if (!sourceBook) return reply.status(404).send({ error: 'Book not found' });
+
+      const collision = await deps.bookService.findAsinCollision(id, body.asin);
+      if (collision) {
+        return reply.status(409).send({ error: 'ASIN already in library', ...collision });
+      }
+
+      const lookup = await metadataService.lookupForFixMatch(body.asin);
+      if (lookup.kind !== 'ok') {
+        const status = fixMatchHttpStatus(lookup.kind);
+        const payload: Record<string, unknown> = { error: fixMatchErrorMessage(lookup.kind) };
+        if (lookup.kind === 'rate_limited') payload.retryAfterMs = lookup.retryAfterMs;
+        return reply.status(status).send(payload);
+      }
+
+      const meta = lookup.book;
+      const primarySeries = meta.seriesPrimary ?? meta.series?.[0];
+      const oldAsin = sourceBook.asin ?? null;
+      const oldTitle = sourceBook.title;
+
+      const updated = await deps.bookService.fixMatch(id, {
+        asin: meta.asin,
+        title: meta.title,
+        ...(meta.subtitle !== undefined && { subtitle: meta.subtitle }),
+        authors: meta.authors,
+        ...(meta.narrators !== undefined && { narrators: meta.narrators }),
+        ...(meta.description !== undefined && { description: meta.description }),
+        ...(meta.coverUrl !== undefined && { coverUrl: meta.coverUrl }),
+        ...(meta.duration !== undefined && { duration: meta.duration }),
+        ...(meta.publishedDate !== undefined && { publishedDate: meta.publishedDate }),
+        ...(primarySeries?.name !== undefined && { seriesName: primarySeries.name }),
+        ...(primarySeries?.position !== undefined && { seriesPosition: primarySeries.position }),
+        ...(meta.seriesPrimary?.asin !== undefined && { seriesAsin: meta.seriesPrimary.asin }),
+        ...(meta.genres !== undefined && { genres: meta.genres }),
+        ...(meta.isbn !== undefined && { isbn: meta.isbn }),
+        seriesProvider: 'audible',
+      });
+      if (!updated) return reply.status(404).send({ error: 'Book not found' });
+
+      if (deps.seriesRefreshService && meta.asin && primarySeries?.name) {
+        try {
+          deps.seriesRefreshService.enqueueRefresh(meta.asin, {
+            bookId: id,
+            seriesName: primarySeries.name,
+            ...(meta.seriesPrimary?.asin !== undefined && { providerSeriesId: meta.seriesPrimary.asin }),
+            bookTitle: meta.title,
+            ...(primarySeries.position !== undefined && { seriesPosition: primarySeries.position }),
+          });
+        } catch (error: unknown) {
+          request.log.warn({ id, error: serializeError(error) }, 'Fix Match: series refresh enqueue failed');
+        }
+      }
+
+      if (deps.eventHistory) {
+        deps.eventHistory.create({
+          bookId: id,
+          ...snapshotBookForEvent(updated),
+          eventType: 'metadata_fixed',
+          source: 'manual',
+          reason: { oldAsin, newAsin: meta.asin ?? null, oldTitle, newTitle: meta.title },
+        }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record metadata_fixed event'));
+      }
+
+      // Best-effort post-commit rename/retag — surface failures separately,
+      // never block the identity swap on filesystem operations.
+      if (body.renameFiles && updated.path) {
+        try {
+          await deps.renameService.renameBook(id);
+        } catch (error: unknown) {
+          request.log.warn({ id, error: serializeError(error) }, 'Fix Match: post-commit rename failed');
+        }
+      }
+      if (body.retagFiles && updated.path) {
+        try {
+          await deps.taggingService.retagBook(id, new Set(), {});
+        } catch (error: unknown) {
+          request.log.warn({ id, error: serializeError(error) }, 'Fix Match: post-commit retag failed');
+        }
+      }
+
+      return reply.status(200).send(updated);
+    },
+  );
+}
+
 /** Build the overrides object the tagging service expects, omitting unset fields
  *  so the resulting object satisfies `exactOptionalPropertyTypes`. */
 function pickRetagOverrides(
@@ -429,6 +546,11 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       return reply.status(404).send({ error: 'No active merge for this book' });
     },
   );
+
+  // POST /api/books/:id/fix-match
+  if (deps.metadataService) {
+    registerFixMatchRoute(app, deps);
+  }
 
   // POST /api/books/:id/wrong-release
   if (deps.bookRejectionService) {

@@ -306,6 +306,7 @@ export const bookEvents = sqliteTable('book_events', {
       'merge_started', 'merge_failed',
       'wrong_release',
       'book_added',
+      'metadata_fixed',
     ],
   }).notNull(),
   source: text('source', {

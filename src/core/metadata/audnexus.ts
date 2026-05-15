@@ -9,6 +9,7 @@ import type {
   MetadataEnrichmentProvider,
   BookMetadata,
   AuthorMetadata,
+  ProviderLookupResult,
 } from './types.js';
 
 export interface AudnexusConfig {
@@ -67,16 +68,43 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {
-    const data = await this.fetchJson(
+    const r = await this.getBookDetailed(id);
+    switch (r.kind) {
+      case 'ok': return r.book;
+      case 'not_found': return null;
+      case 'invalid_record':
+        if (r.source === 'raw') {
+          throw new MetadataError(
+            'Audnexus',
+            'Audnexus returned unexpected response',
+            r.cause !== undefined ? { cause: r.cause } : undefined,
+          );
+        }
+        return null;
+      case 'rate_limited': throw new RateLimitError(r.retryAfterMs, 'Audnexus');
+      case 'transient_failure': throw new TransientError('Audnexus', r.message);
+    }
+  }
+
+  /**
+   * Typed lookup that never throws — every failure becomes a discriminated kind.
+   * See `MetadataSearchProvider.getBookDetailed` for the wrapper-contract.
+   */
+  async getBookDetailed(id: string): Promise<ProviderLookupResult> {
+    const raw = await this.fetchJsonDetailed(
       `/books/${encodeURIComponent(id)}?region=${this.region}`,
       audnexusBookSchema,
     );
+    if (raw.kind !== 'ok') return raw;
 
-    if (!data) return null;
+    if (!raw.data) return { kind: 'not_found' };
 
-    const mapped = mapBook(data);
-    const result = BookMetadataSchema.safeParse(mapped);
-    return result.success ? result.data : null;
+    const mapped = mapBook(raw.data);
+    const parsed = BookMetadataSchema.safeParse(mapped);
+    if (!parsed.success) {
+      return { kind: 'invalid_record', source: 'mapped', cause: parsed.error, issues: parsed.error.issues };
+    }
+    return { kind: 'ok', book: parsed.data };
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
@@ -120,6 +148,45 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       if (error instanceof MetadataError) throw error;
       throw new TransientError('Audnexus', getErrorMessage(error));
     }
+  }
+
+  /** Like `fetchJson`, but returns a discriminated outcome instead of throwing. */
+  private async fetchJsonDetailed<S extends z.ZodTypeAny>(
+    path: string,
+    schema: S,
+  ): Promise<
+    | { kind: 'ok'; data: z.infer<S> | null }
+    | { kind: 'not_found' }
+    | { kind: 'rate_limited'; retryAfterMs: number }
+    | { kind: 'invalid_record'; source: 'raw'; cause: z.ZodError; issues: z.ZodIssue[] }
+    | { kind: 'transient_failure'; message: string }
+  > {
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(`${BASE_URL}${path}`, {}, REQUEST_TIMEOUT_MS);
+    } catch (error: unknown) {
+      return { kind: 'transient_failure', message: getErrorMessage(error) };
+    }
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('Retry-After');
+      const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
+      return { kind: 'rate_limited', retryAfterMs };
+    }
+    if (response.status >= 500) {
+      return { kind: 'transient_failure', message: `HTTP ${response.status} ${response.statusText}` };
+    }
+    if (!response.ok) return { kind: 'not_found' };
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch (error: unknown) {
+      return { kind: 'transient_failure', message: getErrorMessage(error) };
+    }
+    const parsed = schema.safeParse(raw);
+    if (!parsed.success) {
+      return { kind: 'invalid_record', source: 'raw', cause: parsed.error, issues: parsed.error.issues };
+    }
+    return { kind: 'ok', data: parsed.data };
   }
 }
 
@@ -171,6 +238,7 @@ function mapBookAuthors(d: AudnexusBookDetail): Array<{ name: string; asin?: str
 function mapBook(d: AudnexusBookDetail): Record<string, unknown> {
   return {
     asin: d.asin ?? undefined,
+    isbn: d.isbn ?? undefined,
     title: d.title ?? '',
     subtitle: d.subtitle ?? undefined,
     authors: mapBookAuthors(d),

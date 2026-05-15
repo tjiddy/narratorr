@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveCoverUrl } from '@/lib/url-utils';
 import { SUPPORTED_COVER_ACCEPT } from '../../../shared/mime.js';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon, AlertTriangleIcon } from '@/components/icons';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 
 interface BookHeroProps {
@@ -20,6 +20,7 @@ interface BookHeroProps {
   onBackClick: () => void;
   onSearchClick: () => void;
   onEditClick: () => void;
+  onFixMatchClick?: (() => void) | undefined;
   onRenameClick: () => void;
   isRenaming: boolean;
   onRetagClick: () => void;
@@ -60,7 +61,7 @@ interface BookHeroProps {
 export function BookHero({
   title, subtitle, authorName, authorAsin, narratorNames,
   coverUrl, updatedAt, metaDots, statusLabel, statusDotClass,
-  hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
+  hasPath, onBackClick, onSearchClick, onEditClick, onFixMatchClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
   onRefreshScanClick, isRefreshingScanning, showRefreshScan,
   onMergeClick, isMerging, mergePhase, canMerge, mergeDisabled, mergeTooltip,
@@ -260,6 +261,12 @@ export function BookHero({
                     <PencilIcon className="w-3.5 h-3.5" />
                     Edit
                   </button>
+                  {onFixMatchClick && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onFixMatchClick)} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors focus:bg-muted/50 focus-ring">
+                      <AlertTriangleIcon className="w-3.5 h-3.5" />
+                      Fix Match
+                    </button>
+                  )}
                   {hasPath && (
                     <button role="menuitem" type="button" onClick={() => handleMenuAction(onRenameClick)} disabled={isRenaming} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
                       <RefreshIcon className={`w-3.5 h-3.5 ${isRenaming ? 'animate-spin' : ''}`} />

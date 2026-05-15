@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import type { z, ZodIssue } from 'zod';
 import type {
   BookMetadataSchema,
   AuthorMetadataSchema,
@@ -28,6 +28,19 @@ export interface SearchBooksResult {
   rawCount?: number;
 }
 
+/**
+ * Typed outcome union for `getBookDetailed`. Distinguishes raw-schema failures
+ * (HTML interstitial / API shape change) from mapped-schema failures (record
+ * missing a required field) so the Fix Match route can preserve the existing
+ * `getBook` throw/null contract while still routing 422 for both cases.
+ */
+export type ProviderLookupResult =
+  | { kind: 'ok'; book: BookMetadata }
+  | { kind: 'not_found' }
+  | { kind: 'rate_limited'; retryAfterMs: number }
+  | { kind: 'invalid_record'; source: 'mapped' | 'raw'; cause?: unknown; issues?: ZodIssue[] }
+  | { kind: 'transient_failure'; message: string };
+
 /** Shared fields for all metadata providers. */
 export interface MetadataProviderBase {
   readonly name: string;
@@ -39,11 +52,13 @@ export interface MetadataSearchProvider extends MetadataProviderBase {
   searchBooks(query: string, options?: SearchBooksOptions): Promise<SearchBooksResult>;
   searchSeries(query: string): Promise<SeriesMetadata[]>;
   getBook(id: string): Promise<BookMetadata | null>;
+  getBookDetailed(id: string): Promise<ProviderLookupResult>;
   test(): Promise<{ success: boolean; message?: string }>;
 }
 
 /** Enrichment provider — book enrichment data and author detail lookups. */
 export interface MetadataEnrichmentProvider extends MetadataProviderBase {
   getBook(id: string): Promise<BookMetadata | null>;
+  getBookDetailed(id: string): Promise<ProviderLookupResult>;
   getAuthor(id: string): Promise<AuthorMetadata | null>;
 }

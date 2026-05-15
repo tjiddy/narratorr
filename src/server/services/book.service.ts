@@ -300,6 +300,104 @@ export class BookService {
     return this.getById(id);
   }
 
+  /**
+   * Detect ASIN collision with another book in the library. Returns the
+   * conflicting book's id/title when present, or null when the ASIN is free.
+   * Excludes the source book itself (a self-match is not a conflict).
+   */
+  async findAsinCollision(sourceBookId: number, asin: string): Promise<{ conflictBookId: number; conflictTitle: string } | null> {
+    const rows = await this.db
+      .select({ id: books.id, title: books.title })
+      .from(books)
+      .where(eq(books.asin, asin))
+      .limit(2);
+    for (const r of rows) {
+      if (r.id !== sourceBookId) return { conflictBookId: r.id, conflictTitle: r.title };
+    }
+    return null;
+  }
+
+  /**
+   * Replace the book's bibliographic/provider identity with the given metadata
+   * record. Authors, narrators, scalar fields, and series membership are
+   * updated atomically; local state (path, size, status, audio fields, grab
+   * identifiers, on-disk files) is preserved. `enrichmentStatus` is reset to
+   * 'pending' so the next enrichment cycle re-runs against the new ASIN.
+   *
+   * The caller is expected to have already validated ASIN collision via
+   * `findAsinCollision`. Any non-collision DB failure bubbles up and rolls
+   * back the entire transaction.
+   */
+  async fixMatch(id: number, replacement: {
+    asin?: string | undefined;
+    title: string;
+    subtitle?: string | undefined;
+    authors: { name: string; asin?: string | undefined }[];
+    narrators?: string[] | undefined;
+    description?: string | undefined;
+    coverUrl?: string | undefined;
+    duration?: number | undefined;
+    publishedDate?: string | undefined;
+    seriesName?: string | undefined;
+    seriesPosition?: number | undefined;
+    seriesAsin?: string | undefined;
+    genres?: string[] | undefined;
+    isbn?: string | undefined;
+    seriesProvider?: string | undefined;
+  }): Promise<BookWithAuthor | null> {
+    const updated = await this.db.transaction(async (tx) => {
+      const scalarUpdates: Partial<typeof books.$inferInsert> = {
+        title: replacement.title,
+        description: replacement.description ?? null,
+        coverUrl: replacement.coverUrl ?? null,
+        asin: replacement.asin ?? null,
+        isbn: replacement.isbn ?? null,
+        seriesName: replacement.seriesName ?? null,
+        seriesPosition: replacement.seriesPosition ?? null,
+        duration: replacement.duration ?? null,
+        publishedDate: replacement.publishedDate ?? null,
+        genres: replacement.genres ?? null,
+        enrichmentStatus: 'pending',
+        updatedAt: new Date(),
+      };
+
+      const result = await tx
+        .update(books)
+        .set(scalarUpdates)
+        .where(eq(books.id, id))
+        .returning();
+      if (result.length === 0) return false;
+
+      await this.syncAuthors(tx, id, replacement.authors);
+      await this.syncNarrators(tx, id, replacement.narrators ?? []);
+
+      if (replacement.seriesName) {
+        await this.replaceSeriesLink(tx, id, {
+          name: replacement.seriesName,
+          position: replacement.seriesPosition ?? null,
+          asin: replacement.asin ?? null,
+          seriesAsin: replacement.seriesAsin ?? null,
+          provider: replacement.seriesProvider ?? 'audible',
+          title: replacement.title,
+          authorName: replacement.authors[0]?.name ?? null,
+        });
+      } else {
+        await this.replaceSeriesLink(tx, id, null);
+      }
+      return true;
+    });
+
+    if (!updated) return null;
+    this.log.info({ id, asin: replacement.asin }, 'Book metadata identity replaced (Fix Match)');
+
+    if (replacement.genres) {
+      this.trackUnmatchedGenres(replacement.genres).catch((error: unknown) => {
+        this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
+      });
+    }
+    return this.getById(id);
+  }
+
   async updateStatus(id: number, status: BookRow['status']): Promise<BookWithAuthor | null> {
     this.log.info({ id, status }, 'Book status changed');
     return this.update(id, { status });
@@ -385,6 +483,84 @@ export class BookService {
       update.alternateAsins = [...new Set([...(existing!.alternateAsins ?? []), candidateAsin!])].sort();
     }
     await tx.update(seriesMembers).set(update).where(eq(seriesMembers.id, existingId));
+  }
+
+  /**
+   * Replace series membership for a rematched book. Always deletes any prior
+   * `series_members` rows for the book; inserts exactly one fresh row when
+   * `args` is non-null. Errors propagate — caller's transaction rolls back.
+   *
+   * Diverges intentionally from `upsertSeriesLink` (which is best-effort
+   * catch-and-log for the add-book path): rematch series correctness is a
+   * core acceptance criterion, so failures must abort the Fix Match.
+   */
+  async replaceSeriesLink(
+    tx: DbOrTx,
+    bookId: number,
+    args:
+      | null
+      | {
+          name: string;
+          position: number | null;
+          asin: string | null;
+          seriesAsin: string | null;
+          provider: string;
+          title: string;
+          authorName: string | null;
+        },
+  ): Promise<void> {
+    await tx.delete(seriesMembers).where(eq(seriesMembers.bookId, bookId));
+    if (!args) return;
+
+    const normalized = normalizeSeriesName(args.name);
+    let seriesId: number | null = null;
+    if (args.seriesAsin) {
+      const found = await tx
+        .select({ id: series.id })
+        .from(series)
+        .where(and(eq(series.provider, args.provider), eq(series.providerSeriesId, args.seriesAsin)))
+        .limit(1);
+      if (found.length > 0) seriesId = found[0]!.id;
+    }
+    if (seriesId === null) {
+      const found = await tx
+        .select({ id: series.id })
+        .from(series)
+        .where(and(eq(series.provider, args.provider), eq(series.normalizedName, normalized)))
+        .limit(1);
+      if (found.length > 0) seriesId = found[0]!.id;
+    }
+    if (seriesId === null) {
+      const inserted = await tx
+        .insert(series)
+        .values({
+          provider: args.provider,
+          providerSeriesId: args.seriesAsin,
+          name: args.name,
+          normalizedName: normalized,
+        })
+        .returning({ id: series.id });
+      seriesId = inserted[0]!.id;
+    } else if (args.seriesAsin) {
+      await tx
+        .update(series)
+        .set({ providerSeriesId: args.seriesAsin, updatedAt: new Date() })
+        .where(and(eq(series.id, seriesId), sql`provider_series_id IS NULL`));
+    }
+
+    const positionRaw = args.position != null && Number.isFinite(args.position) ? String(args.position) : null;
+    const normalizedTitle = normalizeSeriesMemberWorkTitle(args.title);
+    await tx.insert(seriesMembers).values({
+      seriesId,
+      bookId,
+      providerBookId: args.asin,
+      title: args.title,
+      normalizedTitle,
+      authorName: args.authorName,
+      positionRaw,
+      position: args.position,
+      source: 'provider',
+    });
   }
 
   /**

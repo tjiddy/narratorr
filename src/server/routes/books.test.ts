@@ -3118,4 +3118,179 @@ describe('#1071 series routes', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(enqueueRefresh).not.toHaveBeenCalled();
   });
+
+  describe('POST /api/books/:id/fix-match (#1129)', () => {
+    const sourceBook = {
+      ...mockBook,
+      id: 7,
+      asin: 'B_OLD',
+      title: 'Old Title',
+      seriesName: 'Old Series',
+      seriesPosition: 1,
+    };
+    const newMetaSeriesBearing = {
+      asin: 'B_NEW',
+      title: 'New Title',
+      authors: [{ name: 'New Author' }],
+      narrators: ['New Narrator'],
+      description: 'New description',
+      coverUrl: 'https://example.com/new.jpg',
+      duration: 1200,
+      publishedDate: '2024-05-01',
+      seriesPrimary: { name: 'New Series', position: 2, asin: 'SERIES_NEW' },
+      series: [{ name: 'New Series', position: 2, asin: 'SERIES_NEW' }],
+      genres: ['Fantasy'],
+      isbn: '9781111111111',
+    };
+    const newMetaStandalone = {
+      asin: 'B_STANDALONE',
+      title: 'Standalone Title',
+      authors: [{ name: 'Solo Author' }],
+      narrators: ['Solo Narrator'],
+      description: 'desc',
+      coverUrl: 'https://example.com/solo.jpg',
+      duration: 500,
+      publishedDate: '2024-05-02',
+    };
+
+    it('series-bearing fix match: returns 200, updates row, emits event, enqueues series refresh', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+      (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaSeriesBearing });
+      const updated = { ...sourceBook, asin: 'B_NEW', title: 'New Title', seriesName: 'New Series', seriesPosition: 2 };
+      (services.book.fixMatch as Mock).mockResolvedValueOnce(updated);
+      const enqueueRefresh = vi.fn();
+      (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+      (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/7/fix-match',
+        payload: { asin: 'B_NEW' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.fixMatch).toHaveBeenCalledWith(7, expect.objectContaining({
+        asin: 'B_NEW',
+        title: 'New Title',
+        seriesName: 'New Series',
+        seriesPosition: 2,
+        seriesAsin: 'SERIES_NEW',
+        genres: ['Fantasy'],
+        isbn: '9781111111111',
+      }));
+      expect(enqueueRefresh).toHaveBeenCalledWith('B_NEW', expect.objectContaining({
+        bookId: 7,
+        seriesName: 'New Series',
+        providerSeriesId: 'SERIES_NEW',
+        bookTitle: 'New Title',
+        seriesPosition: 2,
+      }));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(services.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        bookId: 7,
+        eventType: 'metadata_fixed',
+        reason: expect.objectContaining({ oldAsin: 'B_OLD', newAsin: 'B_NEW', oldTitle: 'Old Title', newTitle: 'New Title' }),
+      }));
+    });
+
+    it('no-series fix match: returns 200, skips series-refresh enqueue, still emits event (F15)', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+      (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaStandalone });
+      const updated = { ...sourceBook, asin: 'B_STANDALONE', title: 'Standalone Title', seriesName: null, seriesPosition: null };
+      (services.book.fixMatch as Mock).mockResolvedValueOnce(updated);
+      const enqueueRefresh = vi.fn();
+      (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+      (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/7/fix-match',
+        payload: { asin: 'B_STANDALONE' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(enqueueRefresh).not.toHaveBeenCalled();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(services.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'metadata_fixed',
+      }));
+    });
+
+    it('ASIN collision: returns 409 with conflictBookId/conflictTitle, does NOT call fixMatch', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce({ conflictBookId: 99, conflictTitle: 'Other Book' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/7/fix-match',
+        payload: { asin: 'B_DUP' },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toMatchObject({ conflictBookId: 99, conflictTitle: 'Other Book' });
+      expect(services.book.fixMatch).not.toHaveBeenCalled();
+      expect(services.metadata.lookupForFixMatch).not.toHaveBeenCalled();
+    });
+
+    it('lookup not_found → 404 with "ASIN not resolved"', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+      (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'not_found' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_404' } });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('ASIN not resolved');
+      expect(services.book.fixMatch).not.toHaveBeenCalled();
+    });
+
+    it('lookup rate_limited → 503 with retryAfterMs', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+      (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_429' } });
+      expect(res.statusCode).toBe(503);
+      const body = JSON.parse(res.payload);
+      expect(body.retryAfterMs).toBe(60_000);
+    });
+
+    it('lookup invalid_record → 422 (covers both mapped and raw)', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+      (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'invalid_record' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_INV' } });
+      expect(res.statusCode).toBe(422);
+      expect(JSON.parse(res.payload).error).toBe('Incomplete provider record');
+    });
+
+    it('lookup transient_failure → 502 "Provider lookup failed"', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+      (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+      (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'transient_failure', message: 'HTTP 503' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_5xx' } });
+      expect(res.statusCode).toBe(502);
+      expect(JSON.parse(res.payload).error).toBe('Provider lookup failed');
+    });
+
+    it('book not found → 404 before any lookup', async () => {
+      (services.book.getById as Mock).mockResolvedValueOnce(null);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/9999/fix-match', payload: { asin: 'B_X' } });
+      expect(res.statusCode).toBe(404);
+      expect(services.metadata.lookupForFixMatch).not.toHaveBeenCalled();
+    });
+
+    it('strict schema: rejects unknown top-level keys', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books/7/fix-match',
+        payload: { asin: 'B_X', provider: 'audible' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });
