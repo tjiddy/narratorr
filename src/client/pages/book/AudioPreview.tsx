@@ -12,6 +12,8 @@ interface AudioPreviewProps {
   size?: 'default' | 'compact';
 }
 
+type PreviewState = 'idle' | 'buffering' | 'playing';
+
 const activePreviews = new Map<string, () => void>();
 
 function pauseOtherPreviews(activeId: string) {
@@ -29,9 +31,15 @@ function resolveSourceUrl(source: AudioPreviewSource): { canPreview: boolean; ur
   return { canPreview: true, url: resolveUrl(source.previewUrl) };
 }
 
+function labelFor(state: PreviewState): string {
+  if (state === 'playing') return 'Playing...';
+  if (state === 'buffering') return 'Buffering...';
+  return 'Preview';
+}
+
 export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [previewState, setPreviewState] = useState<PreviewState>('idle');
   const previewId = useId();
 
   const { canPreview, url } = resolveSourceUrl(source);
@@ -42,34 +50,37 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
 
   const handleError = useCallback(() => {
     toast.error(errorMessage);
-    setIsPlaying(false);
+    setPreviewState('idle');
   }, [errorMessage]);
 
-  const handlePlay = useCallback(() => {
+  const handlePlaying = useCallback(() => {
     pauseOtherPreviews(previewId);
-    setIsPlaying(true);
+    setPreviewState('playing');
   }, [previewId]);
-  const handlePause = useCallback(() => setIsPlaying(false), []);
+  const handleWaiting = useCallback(() => setPreviewState('buffering'), []);
+  const handleIdle = useCallback(() => setPreviewState('idle'), []);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
     audio.addEventListener('error', handleError);
-    audio.addEventListener('play', handlePlay);
-    audio.addEventListener('pause', handlePause);
-    audio.addEventListener('ended', handlePause);
+    audio.addEventListener('playing', handlePlaying);
+    audio.addEventListener('waiting', handleWaiting);
+    audio.addEventListener('pause', handleIdle);
+    audio.addEventListener('ended', handleIdle);
     activePreviews.set(previewId, () => audio.pause());
     return () => {
       activePreviews.delete(previewId);
       audio.removeEventListener('error', handleError);
-      audio.removeEventListener('play', handlePlay);
-      audio.removeEventListener('pause', handlePause);
-      audio.removeEventListener('ended', handlePause);
+      audio.removeEventListener('playing', handlePlaying);
+      audio.removeEventListener('waiting', handleWaiting);
+      audio.removeEventListener('pause', handleIdle);
+      audio.removeEventListener('ended', handleIdle);
       audio.pause();
       audio.src = '';
     };
-  }, [previewId, handleError, handlePlay, handlePause]);
+  }, [previewId, handleError, handlePlaying, handleWaiting, handleIdle]);
 
   if (!canPreview) return null;
 
@@ -81,13 +92,18 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
     if (!audio.paused) {
       audio.pause();
     } else {
+      pauseOtherPreviews(previewId);
+      setPreviewState('buffering');
       try {
         await audio.play();
       } catch {
-        // Browser may block autoplay; error event handles API failures
+        setPreviewState('idle');
       }
     }
   }
+
+  const isActive = previewState !== 'idle';
+  const ariaLabel = isActive ? 'Pause preview' : 'Play preview';
 
   if (size === 'compact') {
     return (
@@ -95,10 +111,10 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
         <button
           type="button"
           onClick={handlePlayPause}
-          aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
+          aria-label={ariaLabel}
           className="p-1.5 rounded-lg text-muted-foreground hover:text-primary transition-colors focus-ring"
         >
-          {isPlaying
+          {isActive
             ? <PauseIcon className="w-3.5 h-3.5" />
             : <PlayIcon className="w-3.5 h-3.5" />}
         </button>
@@ -112,15 +128,15 @@ export function AudioPreview({ source, size = 'default' }: AudioPreviewProps) {
       <button
         type="button"
         onClick={handlePlayPause}
-        aria-label={isPlaying ? 'Pause preview' : 'Play preview'}
+        aria-label={ariaLabel}
         className="flex items-center justify-center w-10 h-10 rounded-full text-muted-foreground hover:text-primary glass-card hover:border-primary/30 transition-all duration-200 focus-ring"
       >
-        {isPlaying
+        {isActive
           ? <PauseIcon className="w-4 h-4" />
           : <PlayIcon className="w-4 h-4 ml-0.5" />}
       </button>
       <span className="text-xs text-muted-foreground/50 select-none">
-        {isPlaying ? 'Playing...' : 'Preview'}
+        {labelFor(previewState)}
       </span>
       <audio ref={audioRef} src={url} preload="none" hidden />
     </div>
