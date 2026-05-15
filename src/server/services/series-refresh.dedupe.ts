@@ -381,6 +381,7 @@ async function cleanupLogicalDuplicates(
       providerBookId: seriesMembers.providerBookId,
       title: seriesMembers.title,
       authorName: seriesMembers.authorName,
+      positionRaw: seriesMembers.positionRaw,
       alternateAsins: seriesMembers.alternateAsins,
     })
     .from(seriesMembers)
@@ -388,10 +389,18 @@ async function cleanupLogicalDuplicates(
       eq(seriesMembers.seriesId, seriesId),
       ne(seriesMembers.id, canonicalId),
     ));
-  const stale = candidates.filter((row) =>
-    normalizeSeriesMemberWorkTitle(row.title) === c.normalizedTitle
-    && normalizePrimaryAuthor(row.authorName) === c.normalizedAuthor,
-  );
+  // Cleanup direction is asymmetric: a null-position canonical never outranks
+  // a numbered row, so we MUST NOT delete a numbered row when the current
+  // canonical is null-position. Otherwise a refresh whose response carries
+  // only a null-position container would promote that container past the
+  // numberless filter by displacing a healthy numbered row from a prior
+  // refresh. (#1126 PR #1127 F1)
+  const stale = candidates.filter((row) => {
+    if (normalizeSeriesMemberWorkTitle(row.title) !== c.normalizedTitle) return false;
+    if (normalizePrimaryAuthor(row.authorName) !== c.normalizedAuthor) return false;
+    if (c.positionRaw === null && row.positionRaw !== null) return false;
+    return true;
+  });
   if (stale.length === 0) return;
   const canonicalRow = await db
     .select({
@@ -507,6 +516,35 @@ export async function reconcileCandidates(
     const existing = groups.get(key);
     if (existing) existing.push(c);
     else groups.set(key, [c]);
+  }
+  // When a null-position group shares its normalized work title + author with
+  // a numbered group in the SAME refresh, fold the null-position candidates
+  // into the numbered group BEFORE canonical selection. Without this merge the
+  // null-position group would upsert as its own canonical, and the widened
+  // cleanup scan would then treat the numbered clean row as stale and delete
+  // it — violating the null-position contract (#1126 PR #1127 F1). The
+  // numbered position is authoritative; the null-position container's ASIN
+  // becomes an alternate on the numbered canonical, preserving local-import
+  // linkability.
+  const numberedKeyByTitleAuthor = new Map<string, string>();
+  for (const [key, group] of groups) {
+    const sample = group[0]!;
+    if (sample.positionRaw !== null) {
+      const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
+      if (!numberedKeyByTitleAuthor.has(titleAuthor)) {
+        numberedKeyByTitleAuthor.set(titleAuthor, key);
+      }
+    }
+  }
+  for (const [key, group] of [...groups]) {
+    const sample = group[0]!;
+    if (sample.positionRaw !== null) continue;
+    const titleAuthor = `${sample.normalizedTitle}|${sample.normalizedAuthor ?? '∅'}`;
+    const numberedKey = numberedKeyByTitleAuthor.get(titleAuthor);
+    if (numberedKey && numberedKey !== key) {
+      groups.get(numberedKey)!.push(...group);
+      groups.delete(key);
+    }
   }
   for (const group of groups.values()) {
     // Defensive ASIN-only dedupe inside each logical group (#1073).

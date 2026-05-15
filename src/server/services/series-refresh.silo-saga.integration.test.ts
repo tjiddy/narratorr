@@ -170,6 +170,65 @@ describe('series refresh — Silo Saga edition/container collapse (#1126)', () =
     expect(cardML.members.find((m) => m.providerBookId === 'B07623H4SX')).toBeDefined();
   });
 
+  it('PR #1127 F1: in-refresh null-position container is folded into numbered counterpart, not promoted past the numberless filter', async () => {
+    // A response containing BOTH a clean numbered candidate AND a null-position
+    // container variant of the same work must NOT canonicalize the container
+    // as its own row. Without the pre-merge fix the cleanup pass for the
+    // null-position group would delete the numbered clean row.
+    const products: BookMetadata[] = [
+      product({ asin: 'CLEAN_WOOL', title: 'Wool', position: 1, formatType: 'unabridged', contentDeliveryType: 'SinglePartBook' }),
+      product({ asin: 'NULL_OMNI', title: 'Wool Omnibus Edition (Wool 1 - 5)', position: null }),
+    ];
+    await refresh(products, 'CLEAN_WOOL');
+
+    // Numbered canonical Wool survives at position 1.
+    const pos1Rows = await db.select().from(seriesMembers).where(eq(seriesMembers.position, 1));
+    expect(pos1Rows).toHaveLength(1);
+    expect(pos1Rows[0]!.providerBookId).toBe('CLEAN_WOOL');
+    expect(pos1Rows[0]!.title).toBe('Wool');
+
+    // The null-position container's ASIN was folded as an alternate, NOT
+    // upserted as a separate null-position row.
+    expect(pos1Rows[0]!.alternateAsins).toContain('NULL_OMNI');
+
+    // No null-position row for the work persists — title-pattern detection
+    // did not promote the container past the numberless filter.
+    const allRows = await db.select().from(seriesMembers);
+    expect(allRows.find((r) => r.providerBookId === 'NULL_OMNI')).toBeUndefined();
+    expect(allRows.filter((r) => r.position === null)).toHaveLength(0);
+  });
+
+  it('PR #1127 F1: cross-refresh null-position-only response does NOT delete a healthy numbered row from a prior refresh', async () => {
+    // Seed a healthy numbered Wool row from a prior refresh.
+    const [seriesRow] = await db
+      .insert(series)
+      .values({ provider: 'audible', providerSeriesId: PROVIDER_SERIES_ID, name: SERIES_NAME, normalizedName: 'silo saga' })
+      .returning();
+    await db.insert(seriesMembers).values({
+      seriesId: seriesRow!.id,
+      providerBookId: 'B0BKR3Y6SP',
+      title: 'Wool',
+      normalizedTitle: 'wool',
+      authorName: 'Hugh Howey',
+      positionRaw: '1',
+      position: 1,
+      alternateAsins: [],
+    });
+
+    // New refresh response only carries the null-position omnibus.
+    await refresh(
+      [product({ asin: 'NULL_OMNI', title: 'Wool Omnibus Edition (Wool 1 - 5)', position: null })],
+      'NULL_OMNI',
+    );
+
+    // The numbered Wool row must still exist — null-position canonical does
+    // NOT outrank a numbered row in cleanup.
+    const numbered = await db.select().from(seriesMembers).where(eq(seriesMembers.position, 1));
+    expect(numbered).toHaveLength(1);
+    expect(numbered[0]!.providerBookId).toBe('B0BKR3Y6SP');
+    expect(numbered[0]!.title).toBe('Wool');
+  });
+
   it('regression: no null-position row exists for a work that also has a numbered row with the same normalized work title', async () => {
     // Seed a stale null-position omnibus row before the refresh runs — the
     // cleanup sweep must fold it into the numbered canonical.
