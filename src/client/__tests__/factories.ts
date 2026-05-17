@@ -1,4 +1,4 @@
-import type { Author, Narrator, BookWithAuthor, BookMetadata, AuthorMetadata } from '../lib/api/books.js';
+import type { Author, Narrator, BookWithAuthor, BookMetadata, AuthorMetadata, LibraryBookListItem } from '../lib/api/books.js';
 import type { Download } from '../lib/api/activity.js';
 import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
@@ -58,6 +58,32 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
     audioFileCount: null,
     audioTotalSize: null,
     audioDuration: null,
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function createMockLibraryBook(overrides?: Partial<LibraryBookListItem>): LibraryBookListItem {
+  const id = overrides?.id ?? nextId++;
+  return {
+    id,
+    title: 'The Way of Kings',
+    authors: [{ name: 'Brandon Sanderson' }],
+    narrators: [{ name: 'Michael Kramer' }],
+    coverUrl: 'https://example.com/cover.jpg',
+    status: 'wanted',
+    seriesName: 'The Stormlight Archive',
+    seriesPosition: 1,
+    duration: 52320,
+    audioTotalSize: null,
+    size: null,
+    audioFileFormat: null,
+    audioDuration: null,
+    path: null,
+    audioFileCount: null,
+    lastGrabGuid: null,
+    lastGrabInfoHash: null,
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,

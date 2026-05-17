@@ -1,37 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import { sortBooks, collapseSeries, matchesStatusFilter, getStatusCount, extractNarrators, computeMbPerHour, filterTabs } from './helpers';
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 
-function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
+function makeBook(overrides: Partial<LibraryBookListItem> = {}): LibraryBookListItem {
   return {
     id: 1,
     title: 'Test Book',
     status: 'wanted',
-    enrichmentStatus: 'pending',
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     authors: [],
     narrators: [],
-    description: null,
     coverUrl: null,
-    asin: null,
-    isbn: null,
     seriesName: null,
     seriesPosition: null,
     duration: null,
-    publishedDate: null,
-    genres: null,
     path: null,
     size: null,
-    audioCodec: null,
-    audioBitrate: null,
-    audioSampleRate: null,
-    audioChannels: null,
-    audioBitrateMode: null,
     audioFileFormat: null,
     audioFileCount: null,
     audioTotalSize: null,
     audioDuration: null,
+    lastGrabGuid: null,
+    lastGrabInfoHash: null,
     ...overrides,
   };
 }
@@ -52,8 +43,8 @@ describe('sortBooks', () => {
 
   it('sorts by author alphabetically', () => {
     const books = [
-      makeBook({ id: 1, authors: [{ id: 1, name: 'Sanderson', slug: 's' }] }),
-      makeBook({ id: 2, authors: [{ id: 2, name: 'Abercrombie', slug: 'a' }] }),
+      makeBook({ id: 1, authors: [{ name: 'Sanderson' }] }),
+      makeBook({ id: 2, authors: [{ name: 'Abercrombie' }] }),
     ];
 
     const sorted = sortBooks(books, 'author', 'asc');
@@ -236,9 +227,9 @@ describe('getStatusCount', () => {
 describe('sortBooks — extended sort fields (#282)', () => {
   it('sorts by narrator alphabetically, nulls last', () => {
     const books = [
-      makeBook({ id: 1, narrators: [{ id: 1, name: 'Zelda', slug: 'zelda' }] }),
+      makeBook({ id: 1, narrators: [{ name: 'Zelda' }] }),
       makeBook({ id: 2, narrators: [] }),
-      makeBook({ id: 3, narrators: [{ id: 2, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 3, narrators: [{ name: 'Alice' }] }),
     ];
 
     const sorted = sortBooks(books, 'narrator', 'asc');
@@ -293,8 +284,8 @@ describe('sortBooks — extended sort fields (#282)', () => {
 
   it('reverses sort direction for all extended fields', () => {
     const narratorBooks = [
-      makeBook({ id: 1, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
-      makeBook({ id: 2, narrators: [{ id: 2, name: 'Zelda', slug: 'zelda' }] }),
+      makeBook({ id: 1, narrators: [{ name: 'Alice' }] }),
+      makeBook({ id: 2, narrators: [{ name: 'Zelda' }] }),
     ];
     const sortedNarrator = sortBooks(narratorBooks, 'narrator', 'desc');
     expect(sortedNarrator.map((b) => b.id)).toEqual([2, 1]);
@@ -530,9 +521,9 @@ describe('computeMbPerHour (#282)', () => {
 describe('sortBooks — descending nulls-last (#287)', () => {
   it('sorts nullable field (narrator) descending with nulls last', () => {
     const books = [
-      makeBook({ id: 1, narrators: [{ id: 1, name: 'Zelda', slug: 'zelda' }] }),
+      makeBook({ id: 1, narrators: [{ name: 'Zelda' }] }),
       makeBook({ id: 2, narrators: [] }),
-      makeBook({ id: 3, narrators: [{ id: 2, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 3, narrators: [{ name: 'Alice' }] }),
     ];
 
     const sorted = sortBooks(books, 'narrator', 'desc');
@@ -568,9 +559,9 @@ describe('sortBooks — descending nulls-last (#287)', () => {
   it('mixed null/non-null descending: non-null values in descending order, nulls at end', () => {
     const books = [
       makeBook({ id: 1, narrators: [] }),
-      makeBook({ id: 2, narrators: [{ id: 1, name: 'Charlie', slug: 'charlie' }] }),
+      makeBook({ id: 2, narrators: [{ name: 'Charlie' }] }),
       makeBook({ id: 3, narrators: [] }),
-      makeBook({ id: 4, narrators: [{ id: 2, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 4, narrators: [{ name: 'Alice' }] }),
     ];
 
     const sorted = sortBooks(books, 'narrator', 'desc');
@@ -636,10 +627,10 @@ describe('collapseSeries — title-sort uses seriesName key (#365)', () => {
 
   it('with author asc: collapsed series groups sort by representative author interleaved with standalones', () => {
     const books = [
-      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, authors: [{ id: 1, name: 'Zelazny', slug: 'zelazny' }] }),
-      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, authors: [{ id: 1, name: 'Zelazny', slug: 'zelazny' }] }),
-      makeBook({ id: 3, title: 'Book C', seriesName: null, authors: [{ id: 2, name: 'Asimov', slug: 'asimov' }] }),
-      makeBook({ id: 4, title: 'Book D', seriesName: null, authors: [{ id: 3, name: 'Martin', slug: 'martin' }] }),
+      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, authors: [{ name: 'Zelazny' }] }),
+      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, authors: [{ name: 'Zelazny' }] }),
+      makeBook({ id: 3, title: 'Book C', seriesName: null, authors: [{ name: 'Asimov' }] }),
+      makeBook({ id: 4, title: 'Book D', seriesName: null, authors: [{ name: 'Martin' }] }),
     ];
 
     // Author order asc: Asimov (Book C), Martin (Book D), Zelazny (SeriesX rep: Book A)
@@ -701,8 +692,8 @@ describe('collapseSeries — equal-key tiebreaker (#365)', () => {
 describe('collapseSeries — nullable field re-sort (#365)', () => {
   it('with narrator asc: null-narrator standalones sort after non-null collapsed groups', () => {
     const books = [
-      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
-      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 1, title: 'Book A', seriesName: 'SeriesX', seriesPosition: 1, narrators: [{ name: 'Alice' }] }),
+      makeBook({ id: 2, title: 'Book B', seriesName: 'SeriesX', seriesPosition: 2, narrators: [{ name: 'Alice' }] }),
       makeBook({ id: 3, title: 'Book C', seriesName: null, narrators: [] }),
     ];
 
@@ -718,7 +709,7 @@ describe('collapseSeries — descending nullable fallback (#287)', () => {
   it('fallback representative with descending nullable sort does not pick null-field book', () => {
     const books = [
       makeBook({ id: 1, seriesName: 'WoT', seriesPosition: null, narrators: [] }),
-      makeBook({ id: 2, seriesName: 'WoT', seriesPosition: null, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 2, seriesName: 'WoT', seriesPosition: null, narrators: [{ name: 'Alice' }] }),
     ];
 
     // No positions → fallback to sortBooks(group, 'narrator', 'desc')

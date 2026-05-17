@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { BulkActionToolbar } from './BulkActionToolbar';
 import { useLibraryBulkActions } from './useLibraryBulkActions';
-import { createMockBook } from '@/__tests__/factories';
+import { createMockLibraryBook } from '@/__tests__/factories';
 import type { BookWithAuthor, SingleBookSearchResult } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
@@ -109,9 +109,9 @@ describe('bulk delete', () => {
     vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
-      createMockBook({ id: 2, status: 'wanted' }),
-      createMockBook({ id: 3, status: 'wanted' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 2, status: 'wanted' }),
+      createMockLibraryBook({ id: 3, status: 'wanted' }),
     ];
 
     const { result } = renderHook(
@@ -142,8 +142,8 @@ describe('bulk delete', () => {
     vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
 
     const books = [
-      createMockBook({ id: 1 }),
-      createMockBook({ id: 2 }),
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
     ];
 
     const { result } = renderHook(
@@ -174,9 +174,9 @@ describe('bulk delete', () => {
       .mockResolvedValueOnce({ success: true });
 
     const books = [
-      createMockBook({ id: 1 }),
-      createMockBook({ id: 2 }),
-      createMockBook({ id: 3 }),
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
+      createMockLibraryBook({ id: 3 }),
     ];
 
     const { result } = renderHook(
@@ -204,8 +204,8 @@ describe('bulk delete', () => {
       .mockRejectedValueOnce(new Error('Server error'));
 
     const books = [
-      createMockBook({ id: 1 }),
-      createMockBook({ id: 2 }),
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
     ];
 
     const { result } = renderHook(
@@ -231,7 +231,7 @@ describe('bulk delete', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
 
-    const books = [createMockBook({ id: 1 })];
+    const books = [createMockLibraryBook({ id: 1 })];
 
     const { result } = renderHook(
       () => useLibraryBulkActions(books),
@@ -258,8 +258,8 @@ describe('bulk search', () => {
     vi.mocked(api.searchBook).mockResolvedValue({ result: 'grabbed', title: 'Test' });
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
-      createMockBook({ id: 2, status: 'wanted' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 2, status: 'wanted' }),
     ];
 
     const { result } = renderHook(
@@ -288,9 +288,9 @@ describe('bulk search', () => {
     vi.mocked(api.searchBook).mockResolvedValue({ result: 'grabbed', title: 'Test' });
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
-      createMockBook({ id: 2, status: 'imported' }),
-      createMockBook({ id: 3, status: 'imported' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 2, status: 'imported' }),
+      createMockLibraryBook({ id: 3, status: 'imported' }),
     ];
 
     const { result } = renderHook(
@@ -321,8 +321,8 @@ describe('bulk search', () => {
     const queryClient = createQueryClient();
 
     const books = [
-      createMockBook({ id: 1, status: 'imported' }),
-      createMockBook({ id: 2, status: 'imported' }),
+      createMockLibraryBook({ id: 1, status: 'imported' }),
+      createMockLibraryBook({ id: 2, status: 'imported' }),
     ];
 
     const { result } = renderHook(
@@ -352,8 +352,8 @@ describe('bulk search', () => {
       .mockResolvedValueOnce({ result: 'grabbed', title: 'Book 2' });
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
-      createMockBook({ id: 2, status: 'wanted' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 2, status: 'wanted' }),
     ];
 
     const { result } = renderHook(
@@ -381,8 +381,8 @@ describe('bulk search', () => {
       .mockResolvedValueOnce({ result: 'skipped', reason: 'quality cutoff met' });
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
-      createMockBook({ id: 2, status: 'wanted' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 2, status: 'wanted' }),
     ];
 
     const { result } = renderHook(
@@ -409,7 +409,7 @@ describe('bulk search', () => {
       .mockResolvedValueOnce({ result: 'no_results' } as SingleBookSearchResult);
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
     ];
 
     const { result } = renderHook(
@@ -438,9 +438,9 @@ describe('bulk search', () => {
       .mockResolvedValueOnce({ result: 'no_results' } as SingleBookSearchResult);
 
     const books = [
-      createMockBook({ id: 1, status: 'wanted' }),
-      createMockBook({ id: 2, status: 'wanted' }),
-      createMockBook({ id: 3, status: 'wanted' }),
+      createMockLibraryBook({ id: 1, status: 'wanted' }),
+      createMockLibraryBook({ id: 2, status: 'wanted' }),
+      createMockLibraryBook({ id: 3, status: 'wanted' }),
     ];
 
     const { result } = renderHook(
@@ -466,7 +466,7 @@ describe('bulk search', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     vi.mocked(api.searchBook).mockResolvedValue({ result: 'grabbed', title: 'Test' });
 
-    const books = [createMockBook({ id: 1, status: 'wanted' })];
+    const books = [createMockLibraryBook({ id: 1, status: 'wanted' })];
 
     const { result } = renderHook(
       () => useLibraryBulkActions(books),
@@ -532,9 +532,9 @@ describe('bulk set status', () => {
     vi.mocked(api.updateBook).mockResolvedValue({} as BookWithAuthor);
 
     const books = [
-      createMockBook({ id: 1 }),
-      createMockBook({ id: 2 }),
-      createMockBook({ id: 3 }),
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
+      createMockLibraryBook({ id: 3 }),
     ];
 
     const { result } = renderHook(
@@ -567,9 +567,9 @@ describe('bulk set status', () => {
       .mockRejectedValueOnce(new Error('fail'));
 
     const books = [
-      createMockBook({ id: 1 }),
-      createMockBook({ id: 2 }),
-      createMockBook({ id: 3 }),
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
+      createMockLibraryBook({ id: 3 }),
     ];
 
     const { result } = renderHook(
@@ -595,8 +595,8 @@ describe('bulk set status', () => {
     vi.mocked(api.updateBook).mockResolvedValue({} as BookWithAuthor);
 
     const books = [
-      createMockBook({ id: 1 }),
-      createMockBook({ id: 2 }),
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
     ];
 
     const { result } = renderHook(

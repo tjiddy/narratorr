@@ -3,8 +3,8 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useLibraryBulkActions } from './useLibraryBulkActions';
-import type { BookWithAuthor } from '@/lib/api';
-import { createMockBook } from '@/__tests__/factories';
+import type { LibraryBookListItem } from '@/lib/api';
+import { createMockLibraryBook } from '@/__tests__/factories';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -33,9 +33,9 @@ function createWrapper() {
     createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-const book1 = createMockBook({ id: 1, status: 'wanted' });
-const book2 = createMockBook({ id: 2, status: 'wanted' });
-const book3 = createMockBook({ id: 3, status: 'wanted' });
+const book1 = createMockLibraryBook({ id: 1, status: 'wanted' });
+const book2 = createMockLibraryBook({ id: 2, status: 'wanted' });
+const book3 = createMockLibraryBook({ id: 3, status: 'wanted' });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,7 +77,7 @@ describe('useLibraryBulkActions — selection state', () => {
   });
 
   it('when visibleBooks changes (rerender with fewer books), returned selectedIds updates to exclude the removed books', () => {
-    let visibleBooks: BookWithAuthor[] = [book1, book2, book3];
+    let visibleBooks: LibraryBookListItem[] = [book1, book2, book3];
     const { result, rerender } = renderHook(() => useLibraryBulkActions(visibleBooks), {
       wrapper: createWrapper(),
     });

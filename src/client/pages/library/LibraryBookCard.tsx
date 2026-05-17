@@ -1,7 +1,7 @@
 import { memo, useRef } from 'react';
 import { useImageError } from '@/hooks/useImageError';
 import { useClickOutside } from '@/hooks/useClickOutside';
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
 import { resolveCoverUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
@@ -22,16 +22,16 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   onRemove,
   onRetryImport,
 }: {
-  book: BookWithAuthor;
+  book: LibraryBookListItem;
   index: number;
   collapsedCount?: number | undefined;
   isMenuOpen: boolean;
   onMenuToggle: (bookId: number, e: React.MouseEvent) => void;
   onMenuClose: () => void;
   onClick: (bookId: number) => void;
-  onSearchReleases: (book: BookWithAuthor) => void;
-  onRemove: (book: BookWithAuthor) => void;
-  onRetryImport?: ((book: BookWithAuthor) => void) | undefined;
+  onSearchReleases: (book: LibraryBookListItem) => void;
+  onRemove: (book: LibraryBookListItem) => void;
+  onRetryImport?: ((book: LibraryBookListItem) => void) | undefined;
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
   const menuAreaRef = useRef<HTMLDivElement>(null);

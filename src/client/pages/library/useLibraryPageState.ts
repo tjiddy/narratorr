@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
-import { api, type BookWithAuthor } from '@/lib/api';
+import { api, type LibraryBookListItem } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { DisplayBook, SortField } from './helpers.js';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
@@ -107,8 +107,8 @@ export function useLibraryPageState() {
   const bulk = useLibraryBulkActions(displayBooks);
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
   const { data: indexers = [] } = useQuery({ queryKey: queryKeys.indexers(), queryFn: api.getIndexers });
-  const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
-  const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
+  const deleteConfirm = useDeleteConfirmation<LibraryBookListItem>();
+  const [searchBook, setSearchBook] = useState<LibraryBookListItem | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [showRemoveMissingModal, setShowRemoveMissingModal] = useState(false);
   const [showSearchAllWantedModal, setShowSearchAllWantedModal] = useState(false);
@@ -136,18 +136,18 @@ export function useLibraryPageState() {
     navigate(`/books/${bookId}`);
   }, [navigate]);
 
-  const handleCardSearchReleases = useCallback((book: BookWithAuthor) => {
+  const handleCardSearchReleases = useCallback((book: LibraryBookListItem) => {
     setSearchBook(book);
     setOpenMenuId(null);
   }, []);
 
-  const handleCardRemove = useCallback((book: BookWithAuthor) => {
+  const handleCardRemove = useCallback((book: LibraryBookListItem) => {
     deleteConfirm.requestDelete(book);
     setOpenMenuId(null);
   }, [deleteConfirm]);
 
   const queryClient = useQueryClient();
-  const handleRetryImport = useCallback((book: BookWithAuthor) => {
+  const handleRetryImport = useCallback((book: LibraryBookListItem) => {
     setOpenMenuId(null);
     api.retryBookImport(book.id).then(() => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });

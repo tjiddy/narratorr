@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryBookCard } from './LibraryBookCard';
-import { createMockBook } from '@/__tests__/factories';
+import { createMockLibraryBook } from '@/__tests__/factories';
 import * as ImageErrorModule from '@/hooks/useImageError';
 import { api } from '@/lib/api';
 import type { BookStatus } from '../../../shared/schemas.js';
@@ -27,7 +27,7 @@ function withProviders(ui: React.ReactElement, queryClient: QueryClient) {
 
 function defaultProps(overrides = {}) {
   return {
-    book: createMockBook(),
+    book: createMockLibraryBook(),
     index: 0,
     isMenuOpen: false,
     onMenuToggle: vi.fn(),
@@ -68,7 +68,7 @@ describe('LibraryBookCard', () => {
     });
 
     it('renders fallback icon when no coverUrl', () => {
-      const book = createMockBook({ coverUrl: null });
+      const book = createMockLibraryBook({ coverUrl: null });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByAltText('The Way of Kings')).not.toBeInTheDocument();
     });
@@ -84,37 +84,37 @@ describe('LibraryBookCard', () => {
 
   describe('missing indicator', () => {
     it('renders frosted chip with broken-link icon for missing status', () => {
-      const book = createMockBook({ status: 'missing' });
+      const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
 
     it('renders frosted chip with broken-link icon for failed status', () => {
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
 
     it('does not render chip for imported status', () => {
-      const book = createMockBook({ status: 'imported' });
+      const book = createMockLibraryBook({ status: 'imported' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
     });
 
     it('does not render chip for wanted status', () => {
-      const book = createMockBook({ status: 'wanted' });
+      const book = createMockLibraryBook({ status: 'wanted' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
     });
 
     it('does not render chip for downloading status', () => {
-      const book = createMockBook({ status: 'downloading' });
+      const book = createMockLibraryBook({ status: 'downloading' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
     });
 
     it('has tooltip text on the chip', () => {
-      const book = createMockBook({ status: 'missing' });
+      const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       const chip = screen.getByTitle('Files missing from disk');
       expect(chip).toBeInTheDocument();
@@ -128,85 +128,85 @@ describe('LibraryBookCard', () => {
     });
 
     it('has correct color class for wanted status (stone)', () => {
-      const book = createMockBook({ status: 'wanted' });
+      const book = createMockLibraryBook({ status: 'wanted' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-stone');
     });
 
     it('has correct color class for searching status (sky)', () => {
-      const book = createMockBook({ status: 'searching' });
+      const book = createMockLibraryBook({ status: 'searching' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-sky');
     });
 
     it('has correct color class for downloading status (violet)', () => {
-      const book = createMockBook({ status: 'downloading' });
+      const book = createMockLibraryBook({ status: 'downloading' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-violet');
     });
 
     it('has correct color class for importing status (amber)', () => {
-      const book = createMockBook({ status: 'importing' });
+      const book = createMockLibraryBook({ status: 'importing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-amber');
     });
 
     it('has correct color class for imported status (emerald)', () => {
-      const book = createMockBook({ status: 'imported' });
+      const book = createMockLibraryBook({ status: 'imported' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-emerald');
     });
 
     it('has correct color class for missing status (rose)', () => {
-      const book = createMockBook({ status: 'missing' });
+      const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-rose');
     });
 
     it('has correct color class for failed status (rose)', () => {
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-rose');
     });
 
     it('has shimmer class for searching status', () => {
-      const book = createMockBook({ status: 'searching' });
+      const book = createMockLibraryBook({ status: 'searching' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('status-bar-shimmer');
     });
 
     it('has shimmer class for downloading status', () => {
-      const book = createMockBook({ status: 'downloading' });
+      const book = createMockLibraryBook({ status: 'downloading' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('status-bar-shimmer');
     });
 
     it('has shimmer class for importing status', () => {
-      const book = createMockBook({ status: 'importing' });
+      const book = createMockLibraryBook({ status: 'importing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('status-bar-shimmer');
     });
 
     it('does NOT have shimmer class for wanted status', () => {
-      const book = createMockBook({ status: 'wanted' });
+      const book = createMockLibraryBook({ status: 'wanted' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
     });
 
     it('does NOT have shimmer class for imported status', () => {
-      const book = createMockBook({ status: 'imported' });
+      const book = createMockLibraryBook({ status: 'imported' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
     });
 
     it('does NOT have shimmer class for failed status', () => {
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
     });
 
     it('falls back to wanted style for unknown status', () => {
-      const book = createMockBook({ status: 'bogus_status' as unknown as BookStatus });
+      const book = createMockLibraryBook({ status: 'bogus_status' as unknown as BookStatus });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTestId('status-bar').className).toContain('bg-stone');
     });
@@ -216,7 +216,7 @@ describe('LibraryBookCard', () => {
     it('does not apply left-border accent class for any status', () => {
       const statuses: BookStatus[] = ['wanted', 'downloading', 'imported', 'missing', 'failed', 'searching', 'importing'];
       for (const status of statuses) {
-        const book = createMockBook({ status });
+        const book = createMockLibraryBook({ status });
         const { container, unmount } = renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
         const card = container.firstElementChild as HTMLElement;
         expect(card.className).not.toContain('border-l-');
@@ -308,7 +308,7 @@ describe('LibraryBookCard', () => {
         },
       );
 
-      const book = createMockBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-04-08T12:00:00Z' });
+      const book = createMockLibraryBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-04-08T12:00:00Z' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
 
       const img = screen.getByAltText('The Way of Kings');
@@ -327,20 +327,20 @@ describe('LibraryBookCard', () => {
       );
 
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      const book1 = createMockBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-01-01T00:00:00Z' });
+      const book1 = createMockLibraryBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-01-01T00:00:00Z' });
       const { rerender } = renderWithProviders(<LibraryBookCard {...defaultProps({ book: book1 })} />, { queryClient });
 
       const img = screen.getByAltText('The Way of Kings');
       expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1704067200');
 
-      const book2 = createMockBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-06-15T12:00:00Z' });
+      const book2 = createMockLibraryBook({ coverUrl: '/api/books/1/cover', updatedAt: '2024-06-15T12:00:00Z' });
       rerender(withProviders(<LibraryBookCard {...defaultProps({ book: book2 })} />, queryClient));
 
       expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover?v=1718452800');
     });
 
     it('no cover image rendered when book.coverUrl is null', () => {
-      const book = createMockBook({ coverUrl: null });
+      const book = createMockLibraryBook({ coverUrl: null });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByAltText('The Way of Kings')).not.toBeInTheDocument();
     });
@@ -356,7 +356,7 @@ describe('LibraryBookCard', () => {
         },
       );
 
-      const book = createMockBook({ coverUrl: 'https://example.com/cover.jpg', updatedAt: '2024-01-01T00:00:00Z' });
+      const book = createMockLibraryBook({ coverUrl: 'https://example.com/cover.jpg', updatedAt: '2024-01-01T00:00:00Z' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
 
       const img = screen.getByAltText('The Way of Kings');
@@ -376,22 +376,22 @@ describe('LibraryBookCard', () => {
     });
 
     it('falls back to book title when collapsedCount > 0 and seriesName is null', () => {
-      const book = createMockBook({ seriesName: null });
+      const book = createMockLibraryBook({ seriesName: null });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
       expect(screen.getByRole('heading')).toHaveTextContent('The Way of Kings');
     });
 
     it('falls back to book title when collapsedCount > 0 and seriesName is empty string', () => {
-      const book = createMockBook({ seriesName: '' });
+      const book = createMockLibraryBook({ seriesName: '' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
       expect(screen.getByRole('heading')).toHaveTextContent('The Way of Kings');
     });
 
     it('shows first author name only when collapsedCount > 0 with multiple authors', () => {
-      const book = createMockBook({
+      const book = createMockLibraryBook({
         authors: [
-          { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-          { id: 2, name: 'Co-Author', slug: 'co-author' },
+          { name: 'Brandon Sanderson' },
+          { name: 'Co-Author' },
         ],
       });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
@@ -431,7 +431,7 @@ describe('LibraryBookCard', () => {
     });
 
     it('singleton-series card (collapsedCount=0) shows book title unchanged', () => {
-      const book = createMockBook({ title: 'The Final Empire', seriesName: 'Mistborn' });
+      const book = createMockLibraryBook({ title: 'The Final Empire', seriesName: 'Mistborn' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, collapsedCount: 0 })} />);
       expect(screen.getByRole('heading')).toHaveTextContent('The Final Empire');
     });
@@ -450,7 +450,7 @@ describe('LibraryBookCard', () => {
   describe('retry import visibility', () => {
     it('shows Retry Import menu item when status is failed and API returns available: true', async () => {
       vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       const onRetryImport = vi.fn();
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true, onRetryImport })} />);
 
@@ -462,7 +462,7 @@ describe('LibraryBookCard', () => {
 
     it('hides Retry Import menu item when status is failed and API returns available: false', async () => {
       vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: false });
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       const onRetryImport = vi.fn();
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true, onRetryImport })} />);
 
@@ -476,7 +476,7 @@ describe('LibraryBookCard', () => {
 
     it('hides Retry Import menu item when status is failed and API rejects', async () => {
       vi.mocked(api.checkRetryImportAvailable).mockRejectedValue(new Error('Network error'));
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       const onRetryImport = vi.fn();
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true, onRetryImport })} />);
 
@@ -488,7 +488,7 @@ describe('LibraryBookCard', () => {
     });
 
     it('hides Retry Import menu item when status is imported (query disabled)', () => {
-      const book = createMockBook({ status: 'imported' });
+      const book = createMockLibraryBook({ status: 'imported' });
       const onRetryImport = vi.fn();
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true, onRetryImport })} />);
 
@@ -498,7 +498,7 @@ describe('LibraryBookCard', () => {
 
     it('hides Retry Import menu item when onRetryImport prop is undefined even if hook returns true', async () => {
       vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
-      const book = createMockBook({ status: 'failed' });
+      const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book, isMenuOpen: true })} />);
 
       await waitFor(() => {
@@ -520,13 +520,13 @@ describe('LibraryBookCard', () => {
     });
 
     it('renders series without position when position is null', () => {
-      const book = createMockBook({ seriesName: 'Cosmere', seriesPosition: null });
+      const book = createMockLibraryBook({ seriesName: 'Cosmere', seriesPosition: null });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByText('Cosmere')).toBeInTheDocument();
     });
 
     it('does not render narrator/series section when both are absent', () => {
-      const book = createMockBook({ narrators: [], seriesName: null });
+      const book = createMockLibraryBook({ narrators: [], seriesName: null });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByText('Michael Kramer')).not.toBeInTheDocument();
     });
@@ -535,7 +535,7 @@ describe('LibraryBookCard', () => {
 
 describe('options button callback (REACT-2 / existing test gap)', () => {
   it('clicking the options button calls onMenuToggle with bookId and the click event', async () => {
-    const book = createMockBook();
+    const book = createMockLibraryBook();
     const onMenuToggle = vi.fn();
     renderWithProviders(<LibraryBookCard {...defaultProps({ onMenuToggle, book })} />);
     const optionsButton = screen.getByRole('button', { name: /book options/i });
@@ -547,7 +547,7 @@ describe('options button callback (REACT-2 / existing test gap)', () => {
 
 describe('React.memo (REACT-2 refactor)', () => {
   it('does not re-render when parent re-renders but props are unchanged', () => {
-    const book = createMockBook();
+    const book = createMockLibraryBook();
     // Same function references for both renders — unchanged-props scenario for memo
     const stableProps = {
       book,
@@ -614,7 +614,7 @@ describe('React.memo (REACT-2 refactor)', () => {
     });
 
     it('hover-expand info section has both group-hover:opacity-100 and no-hover:opacity-100 classes', () => {
-      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
+      const book = createMockLibraryBook({ narrators: [{ name: 'Tim Gerard Reynolds' }] });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;
@@ -622,7 +622,7 @@ describe('React.memo (REACT-2 refactor)', () => {
     });
 
     it('hover-expand info section has no-hover:max-h-16 class for touch visibility', () => {
-      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
+      const book = createMockLibraryBook({ narrators: [{ name: 'Tim Gerard Reynolds' }] });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;
@@ -630,7 +630,7 @@ describe('React.memo (REACT-2 refactor)', () => {
     });
 
     it('hover-expand info section retains max-h-0 and group-hover:max-h-16 for desktop hover', () => {
-      const book = createMockBook({ narrators: [{ id: 1, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }] });
+      const book = createMockLibraryBook({ narrators: [{ name: 'Tim Gerard Reynolds' }] });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       const narratorText = screen.getByText('Tim Gerard Reynolds');
       const expandSection = narratorText.closest('.overflow-hidden')!;

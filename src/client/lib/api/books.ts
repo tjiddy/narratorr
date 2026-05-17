@@ -1,8 +1,10 @@
 import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
+import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
+export type { LibraryBookListItem, LibraryBookListResponse };
 
 export interface Author {
   id: number;
@@ -249,18 +251,23 @@ export interface BookStats {
   narrators: string[];
 }
 
+function buildBookListQuery(params?: BookListParams): string {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set('status', params.status);
+  if (params?.search) searchParams.set('search', params.search);
+  if (params?.sortField) searchParams.set('sortField', params.sortField);
+  if (params?.sortDirection) searchParams.set('sortDirection', params.sortDirection);
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
+  const qs = searchParams.toString();
+  return qs ? `?${qs}` : '';
+}
+
 export const booksApi = {
-  getBooks: (params?: BookListParams) => {
-    const searchParams = new URLSearchParams();
-    if (params?.status) searchParams.set('status', params.status);
-    if (params?.search) searchParams.set('search', params.search);
-    if (params?.sortField) searchParams.set('sortField', params.sortField);
-    if (params?.sortDirection) searchParams.set('sortDirection', params.sortDirection);
-    if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
-    if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
-    const qs = searchParams.toString();
-    return fetchApi<{ data: BookWithAuthor[]; total: number }>(`/books${qs ? `?${qs}` : ''}`);
-  },
+  getBooks: (params?: BookListParams) =>
+    fetchApi<{ data: BookWithAuthor[]; total: number }>(`/books${buildBookListQuery(params)}`),
+  listLibraryBooks: (params?: BookListParams) =>
+    fetchApi<LibraryBookListResponse>(`/library/books${buildBookListQuery(params)}`),
   getBookStats: () =>
     fetchApi<BookStats>('/books/stats'),
   getBookIdentifiers: () =>

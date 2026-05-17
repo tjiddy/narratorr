@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useImportPolling } from './useImportPolling';
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -26,36 +26,27 @@ function createWrapper() {
     createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
-function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
+function makeBook(overrides: Partial<LibraryBookListItem> = {}): LibraryBookListItem {
   return {
     id: 1,
     title: 'Test Book',
     status: 'imported',
-    enrichmentStatus: 'pending',
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     authors: [],
     narrators: [],
-    description: null,
     coverUrl: null,
-    asin: null,
-    isbn: null,
     seriesName: null,
     seriesPosition: null,
     duration: null,
-    publishedDate: null,
-    genres: null,
     path: null,
     size: null,
-    audioCodec: null,
-    audioBitrate: null,
-    audioSampleRate: null,
-    audioChannels: null,
-    audioBitrateMode: null,
     audioFileFormat: null,
     audioFileCount: null,
     audioTotalSize: null,
     audioDuration: null,
+    lastGrabGuid: null,
+    lastGrabInfoHash: null,
     ...overrides,
   };
 }

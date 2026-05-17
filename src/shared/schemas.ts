@@ -10,6 +10,7 @@ export * from './schemas/metadata.js';
 export * from './schemas/activity.js';
 export * from './schemas/discovery.js';
 export * from './schemas/book.js';
+export * from './schemas/library-book.js';
 export * from './schemas/library-scan.js';
 export * from './schemas/blacklist.js';
 export * from './schemas/event-history.js';

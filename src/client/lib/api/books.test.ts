@@ -18,6 +18,40 @@ vi.mock('./client.js', () => ({
 import { booksApi, RenameConflictError } from './books.js';
 import { fetchApi, fetchMultipart, ApiError } from './client.js';
 
+describe('booksApi.listLibraryBooks (#1132)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchApi).mockReset();
+  });
+
+  it('hits /library/books with all query params', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.listLibraryBooks({ status: 'wanted', search: 'k', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
+    expect(fetchApi).toHaveBeenCalledOnce();
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).toContain('/library/books?');
+    expect(path).toContain('status=wanted');
+    expect(path).toContain('search=k');
+    expect(path).toContain('sortField=title');
+    expect(path).toContain('sortDirection=asc');
+    expect(path).toContain('limit=10');
+    expect(path).toContain('offset=20');
+  });
+
+  it('hits /library/books with no querystring when params are omitted', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.listLibraryBooks();
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).toBe('/library/books');
+  });
+
+  it('returns the typed envelope from fetchApi', async () => {
+    const envelope = { data: [{ id: 1, title: 'X' }], total: 1 };
+    vi.mocked(fetchApi).mockResolvedValue(envelope);
+    const result = await booksApi.listLibraryBooks({ limit: 100 });
+    expect(result).toBe(envelope);
+  });
+});
+
 describe('booksApi.uploadBookCover', () => {
   beforeEach(() => {
     vi.mocked(fetchMultipart).mockReset();

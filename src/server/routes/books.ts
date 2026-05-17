@@ -308,6 +308,22 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
+  // GET /api/library/books — slim DTO for the library list view (#1132)
+  app.get<{ Querystring: BooksListQuery }>(
+    '/api/library/books',
+    { schema: { querystring: booksListQuerySchema } },
+    async (request) => {
+      const { status, search, sortField, sortDirection, limit, offset } = request.query;
+      request.log.debug({ status, search, sortField, limit, offset }, 'Fetching library books');
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
+      return bookListService.getAllForLibrary(status, pagination, {
+        ...(search !== undefined && { search }),
+        ...(sortField !== undefined && { sortField }),
+        ...(sortDirection !== undefined && { sortDirection }),
+      });
+    },
+  );
+
   // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
   app.get('/api/books/identifiers', async () => {
     return bookListService.getIdentifiers();

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { BookListParams, BookWithAuthor } from '@/lib/api';
+import type { BookListParams, LibraryBookListItem } from '@/lib/api';
 import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, collapseSeries } from './helpers.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 import { usePagination } from '@/hooks/usePagination';
@@ -173,7 +173,7 @@ export function useLibraryFilters() {
 
 /** Apply client-side author/series/narrator filters and series collapse to page data */
 export function applyClientFilters(
-  books: BookWithAuthor[],
+  books: LibraryBookListItem[],
   filters: { authorFilter: string; seriesFilter: string; narratorFilter: string; collapseSeriesEnabled: boolean; sortField: SortField; sortDirection: SortDirection },
 ): DisplayBook[] {
   let result = books;
