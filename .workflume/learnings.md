@@ -112,3 +112,42 @@ Fastify 5 defaults `routerOptions.maxParamLength` to 100 chars per dynamic path 
 **The deprecated form:** `Fastify({ maxParamLength: 2048 })` at the top level still works in Fastify 5 but emits FSTDEP022 and is removed in Fastify 6. Always use `routerOptions.maxParamLength`.
 
 **Where to keep this in mind:** any feature that encodes data into the URL path — signed tokens, hashes, encoded ids, capability strings. Reference: `src/server/index.ts` and `src/server/__tests__/helpers.ts` after #1017.
+
+## drizzle-migration-prompt-hang
+
+**source:** #1133
+**added:** 2026-05-18
+**files:** drizzle/, src/db/schema.ts
+**tags:** drizzle, migrations, db, automation, watchdog, agent-dispatch
+
+---
+
+`pnpm db:generate` (which runs `drizzle-kit generate`) is non-interactive ONLY when the schema diff is unambiguous — pure adds, pure drops, or new tables. For ambiguous diffs (column renames, table renames, or anything Drizzle's heuristic treats as rename-vs-drop+add), drizzle-kit emits a multi-choice `select` prompt asking the operator to disambiguate (e.g. "did you rename column X to Y, or drop X and add Y?"). It reads from `process.stdin`. There is no `--yes` or `--default` flag that auto-answers it.
+
+In a non-TTY context — every agent dispatch, every CI run — the prompt hangs the subprocess waiting for input that will never arrive. The workflume executor's inactivity watchdog SIGTERMs the run after 15 minutes of stdout silence, and the entire in-flight implementation (including unrelated work the agent did before generating the migration) is lost. The dispatch then comes back as a `Schema validation failed: LLM subprocess exited 143 with no extractable payload` block, which makes it look like a payload-extraction bug instead of a migration-step hang.
+
+**Workarounds that DO NOT work** — verified hung in #1133:
+
+- `script -qe -c "pnpm db:generate" /dev/null < <(yes "y")` — Drizzle's prompt is `select`, not y/n; `yes` output is not a valid choice and the prompt waits forever
+- `echo "y" | pnpm db:generate` — same issue
+- `pnpm db:generate < /dev/null` — Drizzle reads stdin and either crashes or hangs
+- Any other TTY-emulation, heredoc, or stdin-redirection trick
+
+**Correct approaches** — verified in #1103 and #1129:
+
+1. **Split the migration into two non-ambiguous runs** (preferred when you can):
+   - Stage only the drops in `src/db/schema.ts`, run `pnpm db:generate`, commit
+   - Stage the adds, run `pnpm db:generate` again, commit
+   - Each run sees an unambiguous diff and skips the prompt
+
+2. **Scaffold an empty migration and write SQL by hand** (use when the schema rewrite is structural):
+   ```
+   pnpm exec drizzle-kit generate --custom --name <descriptive_slug>
+   ```
+   This bypasses the diff engine entirely. Replace the generated placeholder (`-- Custom SQL migration file, put your code below!`) with the SQL DDL you want, using `--> statement-breakpoint` separators between statements. In `--custom` mode the `--name` flag is required because there's no schema delta to auto-derive a filename from.
+
+For data migrations (UPDATE/DELETE that go beyond pure DDL), use the `--custom` path and hand-write the statements. Drizzle does not generate non-DDL operations from schema diffs.
+
+After either path, commit the whole `drizzle/` folder — the SQL file plus `meta/_journal.json` plus `meta/<N>_snapshot.json` are co-required (CI re-runs migrations from scratch; committing only the SQL file silently skips the run there but passes locally because the dev DB already has the schema). See the existing `Drizzle migration commits` gotcha in CLAUDE.md.
+
+**How to recognize this in a stuck dispatch:** the agent's last tool call will be a Bash invocation containing `db:generate` and some TTY workaround (`script`, `yes`, redirection). Stdout from then on will be silent or contain only the `script` wrapper's noise. The subprocess exits ~15+ minutes later with code 143. The agent never gets a chance to emit the WORKFLUME_PAYLOAD block, so the failure looks like a parser bug at the workflume layer — it isn't.
