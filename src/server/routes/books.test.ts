@@ -3011,7 +3011,7 @@ describe('#1071 series routes', () => {
 
   it('GET /api/books/:id/series returns { series: null } when no cache/local data', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: null });
-    (services.seriesRefresh.getSeriesForBook as Mock).mockResolvedValue(null);
+    (services.seriesCard.getSeriesForBook as Mock).mockResolvedValue(null);
 
     const res = await app.inject({ method: 'GET', url: '/api/books/1/series' });
 
@@ -3019,28 +3019,23 @@ describe('#1071 series routes', () => {
     expect(res.json()).toEqual({ series: null });
   });
 
-  it('GET /api/books/:id/series surfaces the new authorName/publishedDate/duration member fields (#1079)', async () => {
+  it('GET /api/books/:id/series surfaces the canonical response shape (#1133)', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51', seriesName: 'The Band' });
-    (services.seriesRefresh.getSeriesForBook as Mock).mockResolvedValue({
+    (services.seriesCard.getSeriesForBook as Mock).mockResolvedValue({
       id: 1,
       name: 'The Band',
-      providerSeriesId: 'B07DHQY7DX',
+      hardcoverSeriesId: 5523,
+      seriesAuthor: 'Nicholas Eames',
       lastFetchedAt: '2026-05-11T00:00:00.000Z',
-      lastFetchStatus: 'success',
-      nextFetchAfter: null,
       members: [
         {
-          id: 1,
-          providerBookId: 'A1',
+          hardcoverBookId: 7711,
+          slug: 'kings-of-the-wyld',
           title: 'Kings of the Wyld',
-          positionRaw: '1',
           position: 1,
-          isCurrent: true,
+          imageUrl: null,
+          inLibrary: true,
           libraryBookId: 1,
-          coverUrl: null,
-          authorName: 'Nicholas Eames',
-          publishedDate: '2017-02-21',
-          duration: 1300,
         },
       ],
     });
@@ -3048,10 +3043,13 @@ describe('#1071 series routes', () => {
     const res = await app.inject({ method: 'GET', url: '/api/books/1/series' });
 
     expect(res.statusCode).toBe(200);
-    const member = res.json().series.members[0];
-    expect(member.authorName).toBe('Nicholas Eames');
-    expect(member.publishedDate).toBe('2017-02-21');
-    expect(member.duration).toBe(1300);
+    const json = res.json();
+    expect(json.series.hardcoverSeriesId).toBe(5523);
+    expect(json.series.seriesAuthor).toBe('Nicholas Eames');
+    const member = json.series.members[0];
+    expect(member.hardcoverBookId).toBe(7711);
+    expect(member.inLibrary).toBe(true);
+    expect(member.libraryBookId).toBe(1);
   });
 
   it('GET /api/books/:id/series returns 404 for missing book', async () => {
@@ -3062,60 +3060,57 @@ describe('#1071 series routes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('POST /api/books/:id/series/refresh returns the documented envelope on success', async () => {
+  it('POST /api/books/:id/series/refresh returns { series } on success', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51' });
-    (services.seriesRefresh.reconcileFromBookAsin as Mock).mockResolvedValue({
-      status: 'refreshed',
-      series: {
-        id: 1,
-        name: 'The Band',
-        providerSeriesId: 'B07DHQY7DX',
-        lastFetchedAt: '2026-05-11T00:00:00.000Z',
-        lastFetchStatus: 'success',
-        nextFetchAfter: null,
-        members: [],
-      },
+    (services.seriesCard.refreshSeriesForBook as Mock).mockResolvedValue({
+      id: 1,
+      name: 'The Band',
+      hardcoverSeriesId: 5523,
+      seriesAuthor: 'Nicholas Eames',
+      lastFetchedAt: '2026-05-11T00:00:00.000Z',
+      members: [],
     });
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().status).toBe('refreshed');
     expect(res.json().series.name).toBe('The Band');
-    expect(services.seriesRefresh.reconcileFromBookAsin).toHaveBeenCalledWith(
-      'B01NA0JA51',
-      expect.objectContaining({ manual: true, bookId: 1 }),
-    );
+    expect(services.seriesCard.refreshSeriesForBook).toHaveBeenCalledWith(1);
   });
 
-  it('POST /api/books/:id/series/refresh returns 400 when book has no ASIN', async () => {
-    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: null });
-
-    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
-
-    expect(res.statusCode).toBe(400);
-  });
-
-  it('POST /api/books/:id/series/refresh forwards rate_limited envelope verbatim', async () => {
-    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51' });
-    (services.seriesRefresh.reconcileFromBookAsin as Mock).mockResolvedValue({
-      status: 'rate_limited',
-      series: null,
-      nextFetchAfter: '2026-05-11T01:00:00.000Z',
+  it('POST /api/books/:id/series/refresh returns 200 even when book has no ASIN (#1133 — gate removed)', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: null, seriesName: 'The Band' });
+    (services.seriesCard.refreshSeriesForBook as Mock).mockResolvedValue({
+      id: null,
+      name: 'The Band',
+      hardcoverSeriesId: null,
+      seriesAuthor: null,
+      lastFetchedAt: null,
+      members: [],
     });
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'rate_limited', series: null, nextFetchAfter: '2026-05-11T01:00:00.000Z' });
+    expect(res.json().series.name).toBe('The Band');
   });
 
-  it('POST /api/books enqueues async series refresh when the created book has ASIN + seriesName (F7)', async () => {
+  it('POST /api/books/:id/series/refresh returns { series: null } when the book has no series', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, asin: 'B01NA0JA51', seriesName: null });
+    (services.seriesCard.refreshSeriesForBook as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ series: null });
+  });
+
+  it('POST /api/books no longer enqueues an async series refresh (#1133 — lazy via GET)', async () => {
     (services.book.findDuplicate as Mock).mockResolvedValue(null);
     const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: 'The Band', seriesPosition: 1, status: 'wanted' };
     (services.book.create as Mock).mockResolvedValueOnce(created);
-    const enqueueRefresh = vi.fn();
-    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
+    const refresh = vi.fn();
+    (services.seriesCard.refreshSeriesForBook as Mock).mockImplementation(refresh);
 
     const res = await app.inject({
       method: 'POST',
@@ -3126,64 +3121,12 @@ describe('#1071 series routes', () => {
         asin: 'B01NA0JA51',
         seriesName: 'The Band',
         seriesPosition: 1,
-        seriesAsin: 'B07DHQY7DX',
-        seriesProvider: 'audible',
-      },
-    });
-
-    expect(res.statusCode).toBe(201);
-    // Wait for fire-and-forget enqueue to settle
-    await new Promise((r) => setTimeout(r, 10));
-    expect(enqueueRefresh).toHaveBeenCalledTimes(1);
-    expect(enqueueRefresh).toHaveBeenCalledWith('B01NA0JA51', expect.objectContaining({
-      bookId: 42,
-      seriesName: 'The Band',
-      providerSeriesId: 'B07DHQY7DX',
-    }));
-  });
-
-  it('POST /api/books does NOT enqueue refresh when the created book lacks an ASIN (F7 guard)', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
-    const created = { ...mockBook, id: 42, asin: null, seriesName: 'The Band', status: 'wanted' };
-    (services.book.create as Mock).mockResolvedValueOnce(created);
-    const enqueueRefresh = vi.fn();
-    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/books',
-      payload: {
-        title: 'Title',
-        authors: [{ name: 'Author' }],
-        seriesName: 'The Band',
       },
     });
 
     expect(res.statusCode).toBe(201);
     await new Promise((r) => setTimeout(r, 10));
-    expect(enqueueRefresh).not.toHaveBeenCalled();
-  });
-
-  it('POST /api/books does NOT enqueue refresh when the created book has no series (F7 guard)', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
-    const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: null, status: 'wanted' };
-    (services.book.create as Mock).mockResolvedValueOnce(created);
-    const enqueueRefresh = vi.fn();
-    (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/books',
-      payload: {
-        title: 'Standalone',
-        authors: [{ name: 'Author' }],
-        asin: 'B01NA0JA51',
-      },
-    });
-
-    expect(res.statusCode).toBe(201);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(enqueueRefresh).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   describe('POST /api/books/:id/fix-match (#1129)', () => {
@@ -3220,14 +3163,12 @@ describe('#1071 series routes', () => {
       publishedDate: '2024-05-02',
     };
 
-    it('series-bearing fix match: returns 200, updates row, emits event, enqueues series refresh', async () => {
+    it('series-bearing fix match: returns 200, updates row, emits event', async () => {
       (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
       (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
       (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaSeriesBearing });
       const updated = { ...sourceBook, asin: 'B_NEW', title: 'New Title', seriesName: 'New Series', seriesPosition: 2 };
       (services.book.fixMatch as Mock).mockResolvedValueOnce(updated);
-      const enqueueRefresh = vi.fn();
-      (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
       (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
 
       const res = await app.inject({
@@ -3246,13 +3187,6 @@ describe('#1071 series routes', () => {
         genres: ['Fantasy'],
         isbn: '9781111111111',
       }));
-      expect(enqueueRefresh).toHaveBeenCalledWith('B_NEW', expect.objectContaining({
-        bookId: 7,
-        seriesName: 'New Series',
-        providerSeriesId: 'SERIES_NEW',
-        bookTitle: 'New Title',
-        seriesPosition: 2,
-      }));
       await new Promise((r) => setTimeout(r, 10));
       expect(services.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 7,
@@ -3261,14 +3195,12 @@ describe('#1071 series routes', () => {
       }));
     });
 
-    it('no-series fix match: returns 200, skips series-refresh enqueue, still emits event (F15)', async () => {
+    it('no-series fix match: returns 200, still emits event (F15)', async () => {
       (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
       (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
       (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaStandalone });
       const updated = { ...sourceBook, asin: 'B_STANDALONE', title: 'Standalone Title', seriesName: null, seriesPosition: null };
       (services.book.fixMatch as Mock).mockResolvedValueOnce(updated);
-      const enqueueRefresh = vi.fn();
-      (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(enqueueRefresh);
       (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
 
       const res = await app.inject({
@@ -3278,7 +3210,6 @@ describe('#1071 series routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(enqueueRefresh).not.toHaveBeenCalled();
       await new Promise((r) => setTimeout(r, 10));
       expect(services.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         eventType: 'metadata_fixed',
@@ -3374,7 +3305,6 @@ describe('#1071 series routes', () => {
         (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaSeriesBearing });
         (services.book.fixMatch as Mock).mockResolvedValueOnce(updatedWithPath);
         (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
-        (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(() => undefined);
       }
 
       it('renameFiles=true: invokes renameService.renameBook(bookId) after metadata commit', async () => {
@@ -3451,7 +3381,6 @@ describe('#1071 series routes', () => {
         (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaSeriesBearing });
         (services.book.fixMatch as Mock).mockResolvedValueOnce(updatedNoPath);
         (services.eventHistory.create as Mock).mockResolvedValueOnce({ id: 1 });
-        (services.seriesRefresh.enqueueRefresh as Mock).mockImplementation(() => undefined);
 
         const res = await app.inject({
           method: 'POST',

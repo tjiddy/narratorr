@@ -7,7 +7,7 @@ import type { WeightMultipliers } from './discovery-weights.js';
 import { DEFAULT_MULTIPLIERS } from './discovery-weights.js';
 import type { LibrarySignals } from './discovery.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { findMatchingSeriesRef, type TargetSeriesIdentity } from './series-refresh.dedupe.js';
+import { findMatchingSeriesRef, type TargetSeriesIdentity } from '../utils/series-match.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 
 

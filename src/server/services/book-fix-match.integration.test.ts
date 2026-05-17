@@ -137,8 +137,9 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
     expect(members).toHaveLength(1);
     const seriesRow = (await db.select().from(series).where(eq(series.id, members[0]!.seriesId)))[0]!;
-    expect(seriesRow.providerSeriesId).toBe('NEW_SERIES_ID');
+    expect(seriesRow.hardcoverSeriesId).toBeNull();
     expect(seriesRow.normalizedName).toBe('new series');
+    expect(members[0]!.source).toBe('local');
   });
 
   it('no-series rematch: nullifies seriesName/seriesPosition, clears series_members without inserting (F15)', async () => {
@@ -210,20 +211,17 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
   it('args=null: deletes all prior series_members rows for the book and inserts nothing', async () => {
     const bookId = await insertBookRow('B_NS', 'Standalone');
     const [seriesRow] = await db.insert(series).values({
-      provider: 'audible',
-      providerSeriesId: 'OLD_SID',
       name: 'Old Series',
       normalizedName: 'old series',
     }).returning();
     await db.insert(seriesMembers).values({
       seriesId: seriesRow!.id,
       bookId,
-      providerBookId: 'B_NS',
       title: 'Old Title',
       normalizedTitle: 'old title',
       authorName: 'Old Author',
-      positionRaw: '1',
       position: 1,
+      source: 'local',
     });
 
     await db.transaction(async (tx) => {
@@ -233,32 +231,26 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
     expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
   });
 
-  it('args=payload: deletes prior row(s) AND inserts exactly one new member', async () => {
+  it('args=payload: deletes prior row(s) AND inserts exactly one new local member', async () => {
     const bookId = await insertBookRow('B_RM', 'Rematched');
     const [oldSeries] = await db.insert(series).values({
-      provider: 'audible',
-      providerSeriesId: 'OLD_SID',
       name: 'Old Series',
       normalizedName: 'old series',
     }).returning();
     await db.insert(seriesMembers).values({
       seriesId: oldSeries!.id,
       bookId,
-      providerBookId: 'B_RM',
       title: 'Old Title',
       normalizedTitle: 'old title',
       authorName: 'Old Author',
-      positionRaw: '1',
       position: 1,
+      source: 'local',
     });
 
     await db.transaction(async (tx) => {
       await replaceSeriesLink(tx, bookId, {
         name: 'New Series',
         position: 3,
-        asin: 'B_RM',
-        seriesAsin: 'NEW_SID',
-        provider: 'audible',
         title: 'New Title',
         authorName: 'New Author',
       });
@@ -267,18 +259,17 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
     expect(members).toHaveLength(1);
     const linkedSeries = (await db.select().from(series).where(eq(series.id, members[0]!.seriesId)))[0]!;
-    expect(linkedSeries.providerSeriesId).toBe('NEW_SID');
+    expect(linkedSeries.hardcoverSeriesId).toBeNull();
     expect(linkedSeries.name).toBe('New Series');
     expect(members[0]!.title).toBe('New Title');
     expect(members[0]!.authorName).toBe('New Author');
     expect(members[0]!.position).toBe(3);
+    expect(members[0]!.source).toBe('local');
   });
 
-  it('reuses an existing series row when seriesAsin already matches a row', async () => {
+  it('reuses an existing series row when normalizedName matches', async () => {
     const bookId = await insertBookRow('B_REUSE', 'Reuse');
     const [seeded] = await db.insert(series).values({
-      provider: 'audible',
-      providerSeriesId: 'SEED_SID',
       name: 'Seed Series',
       normalizedName: 'seed series',
     }).returning();
@@ -287,9 +278,6 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
       await replaceSeriesLink(tx, bookId, {
         name: 'Seed Series',
         position: 2,
-        asin: 'B_REUSE',
-        seriesAsin: 'SEED_SID',
-        provider: 'audible',
         title: 'Reuse',
         authorName: 'A',
       });
@@ -348,7 +336,6 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
       narrators: ['New Narrator'],
       seriesName: 'New Series',
       seriesPosition: 5,
-      seriesAsin: 'NEW_SID',
     })).rejects.toThrow(/forced membership insert failure/);
 
     txSpy.mockRestore();

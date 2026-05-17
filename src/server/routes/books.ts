@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesRefreshService, MetadataService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -25,7 +25,7 @@ export interface BookRouteDeps {
   bookRejectionService?: BookRejectionService;
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
-  seriesRefreshService?: SeriesRefreshService;
+  seriesCardService?: SeriesCardService;
   metadataService?: MetadataService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
@@ -158,23 +158,17 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
         triggerImmediateSearch(book, { indexerSearchService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
       }
 
-      // Fire-and-forget: enqueue async series refresh so the card populates
-      // without slowing the create response. Sync upsert already happened in
-      // bookService.create. (F2)
-      if (deps.seriesRefreshService && book.asin && book.seriesName) {
-        deps.seriesRefreshService.enqueueRefresh(book.asin, {
-          bookId: book.id,
-          seriesName: book.seriesName,
-          ...(body.seriesAsin !== undefined && { providerSeriesId: body.seriesAsin }),
-        });
-      }
+      // Series card lazily populates on first GET via SeriesCardService when
+      // a Hardcover key is configured; no fire-and-forget enqueue here. The
+      // local series_members row from bookService.create.upsertSeriesLink is
+      // enough to render the card immediately.
 
       return reply.status(201).send(book);
     },
   );
 }
 
-function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, seriesRefreshService: SeriesRefreshService) {
+function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, seriesCardService: SeriesCardService) {
   app.get<{ Params: IdParam }>(
     '/api/books/:id/series',
     { schema: { params: idParamSchema } },
@@ -184,7 +178,7 @@ function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, se
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });
       }
-      const card = await seriesRefreshService.getSeriesForBook(id);
+      const card = await seriesCardService.getSeriesForBook(id);
       return { series: card };
     },
   );
@@ -198,17 +192,8 @@ function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, se
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });
       }
-      if (!book.asin) {
-        return reply.status(400).send({ error: 'Book has no ASIN — cannot refresh series from provider' });
-      }
-      const response = await seriesRefreshService.reconcileFromBookAsin(book.asin, {
-        manual: true,
-        bookId: book.id,
-        seriesName: book.seriesName ?? null,
-        bookTitle: book.title,
-        seriesPosition: book.seriesPosition ?? null,
-      });
-      return response;
+      const card = await seriesCardService.refreshSeriesForBook(id);
+      return { series: card };
     },
   );
 }
@@ -444,8 +429,8 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  if (deps.seriesRefreshService) {
-    registerSeriesRoutes(app, deps.bookService, deps.seriesRefreshService);
+  if (deps.seriesCardService) {
+    registerSeriesRoutes(app, deps.bookService, deps.seriesCardService);
   }
 
   registerMergeRoutes(app, mergeService);

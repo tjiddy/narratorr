@@ -47,11 +47,7 @@ export function BookDetailsContent({ libraryBook, merged }: {
       {hasSidebar && (
         <div className={`space-y-6 ${hasDescription ? '' : 'lg:col-span-3 lg:max-w-sm'}`}>
           {hasSeries && (
-            <SeriesCard
-              bookId={libraryBook.id}
-              fallbackSeriesName={libraryBook.seriesName}
-              fallbackSeriesPosition={libraryBook.seriesPosition}
-            />
+            <SeriesCard bookId={libraryBook.id} />
           )}
 
           <AudioInfo book={libraryBook} compact />

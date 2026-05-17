@@ -9,6 +9,7 @@ const SECRET_SETTINGS_CATEGORIES: { key: string; entity: SecretEntity }[] = [
   { key: 'prowlarr', entity: 'prowlarr' },
   { key: 'auth', entity: 'auth' },
   { key: 'network', entity: 'network' },
+  { key: 'metadata', entity: 'metadata' },
 ];
 
 /** Check if a settings object has any plaintext (non-encrypted) secret fields. */

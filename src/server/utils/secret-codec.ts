@@ -25,6 +25,7 @@ export type SecretEntity =
   | 'prowlarr'
   | 'auth'
   | 'network'
+  | 'metadata'
   | 'importList'
   | 'notifier';
 
@@ -41,6 +42,7 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   prowlarr: ['apiKey'],
   auth: ['sessionSecret', 'apiKey'],
   network: ['proxyUrl'],
+  metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
   notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'],
 };

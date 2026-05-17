@@ -109,21 +109,15 @@ export const bookNarrators = sqliteTable('book_narrators', {
 
 // ============ SERIES ============
 
-export const SERIES_FETCH_STATUSES = ['success', 'failed', 'rate_limited'] as const;
-export type SeriesFetchStatus = typeof SERIES_FETCH_STATUSES[number];
-
 export const series = sqliteTable('series', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  provider: text('provider').notNull(),
-  providerSeriesId: text('provider_series_id'),
+  hardcoverSeriesId: integer('hardcover_series_id'),
   name: text('name').notNull(),
   normalizedName: text('normalized_name').notNull(),
+  authorName: text('author_name'),
   description: text('description'),
   imageUrl: text('image_url'),
   lastFetchedAt: integer('last_fetched_at', { mode: 'timestamp' }),
-  lastFetchStatus: text('last_fetch_status', { enum: SERIES_FETCH_STATUSES }),
-  lastFetchError: text('last_fetch_error'),
-  nextFetchAfter: integer('next_fetch_after', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -131,43 +125,34 @@ export const series = sqliteTable('series', {
     .notNull()
     .default(sql`(unixepoch())`),
 }, (table) => [
-  uniqueIndex('idx_series_provider_series_id_unique')
-    .on(table.provider, table.providerSeriesId)
-    .where(sql`provider_series_id IS NOT NULL`),
-  index('idx_series_normalized_name').on(table.provider, table.normalizedName),
-  index('idx_series_next_fetch_after').on(table.nextFetchAfter),
+  uniqueIndex('idx_series_hardcover_series_id_unique')
+    .on(table.hardcoverSeriesId)
+    .where(sql`hardcover_series_id IS NOT NULL`),
+  index('idx_series_normalized_name').on(table.normalizedName),
 ]);
 
 export const seriesMembers = sqliteTable('series_members', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   seriesId: integer('series_id').notNull().references(() => series.id, { onDelete: 'cascade' }),
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
-  providerBookId: text('provider_book_id'),
-  // Non-canonical ASINs collapsed into this row by logical-identity dedupe (#1073).
-  alternateAsins: text('alternate_asins', { mode: 'json' }).$type<string[]>().notNull().default(sql`'[]'`),
+  hardcoverBookId: integer('hardcover_book_id'),
+  slug: text('slug'),
+  imageUrl: text('image_url'),
   title: text('title').notNull(),
   normalizedTitle: text('normalized_title').notNull(),
   authorName: text('author_name'),
-  positionRaw: text('position_raw'),
   position: real('position'),
-  publishedDate: text('published_date'),
-  coverUrl: text('cover_url'),
-  duration: integer('duration'),
-  publisher: text('publisher'),
-  source: text('source', { enum: ['provider', 'local'] }).notNull().default('provider'),
+  source: text('source', { enum: ['hardcover', 'local'] }).notNull().default('hardcover'),
   lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [
-  uniqueIndex('idx_series_members_provider_book_unique')
-    .on(table.seriesId, table.providerBookId)
-    .where(sql`provider_book_id IS NOT NULL`),
-  // authorName included so same-title/same-position rows with different authors
-  // can coexist; the both-null-author NULL≠NULL slip is handled by app-layer
-  // grouping in series-refresh.helpers.ts (#1073).
+  uniqueIndex('idx_series_members_hardcover_book_unique')
+    .on(table.seriesId, table.hardcoverBookId)
+    .where(sql`hardcover_book_id IS NOT NULL`),
   uniqueIndex('idx_series_members_local_unique')
-    .on(table.seriesId, table.normalizedTitle, table.positionRaw, table.authorName)
-    .where(sql`provider_book_id IS NULL`),
+    .on(table.seriesId, table.bookId)
+    .where(sql`hardcover_book_id IS NULL`),
   index('idx_series_members_series_id').on(table.seriesId),
   index('idx_series_members_book_id').on(table.bookId),
 ]);

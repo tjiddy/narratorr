@@ -387,32 +387,26 @@ export interface FixMatchPayload {
 }
 
 export interface BookSeriesMemberCard {
-  id: number;
-  providerBookId: string | null;
+  hardcoverBookId: number | null;
+  slug: string | null;
   title: string;
-  positionRaw: string | null;
   position: number | null;
-  isCurrent: boolean;
+  imageUrl: string | null;
+  inLibrary: boolean;
   libraryBookId: number | null;
-  coverUrl: string | null;
-  authorName: string | null;
-  publishedDate: string | null;
-  duration: number | null;
 }
 
 export interface BookSeriesCardData {
-  id: number;
+  /** Local `series` row id; null in no-key mode or when no cached row exists. */
+  id: number | null;
   name: string;
-  providerSeriesId: string | null;
+  hardcoverSeriesId: number | null;
+  /** Persisted Hardcover `series.author.name`; null in no-key mode. */
+  seriesAuthor: string | null;
   lastFetchedAt: string | null;
-  lastFetchStatus: 'success' | 'failed' | 'rate_limited' | null;
-  nextFetchAfter: string | null;
   members: BookSeriesMemberCard[];
 }
 
 export interface RefreshBookSeriesResponse {
-  status: 'refreshed' | 'queued' | 'rate_limited' | 'failed';
   series: BookSeriesCardData | null;
-  nextFetchAfter?: string;
-  error?: string;
 }

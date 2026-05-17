@@ -59,17 +59,12 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
         await services.eventHistory.pruneOlderThan(retentionDays);
       } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: retention prune failed'); }
       try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: blacklist cleanup failed'); }
-      try {
-        const generalSettings = await services.settings.get('general');
-        const retentionDays = generalSettings.seriesCacheRetentionDays ?? 30;
-        await services.seriesRefresh.sweepOrphanSeries(retentionDays);
-      } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: orphan series cleanup failed'); }
     } },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },
     { name: 'import-list-sync', type: 'cron', schedule: '* * * * *', callback: () => services.importList.syncDueLists() },
     { name: 'discovery', type: 'timeout', getIntervalMinutes: () => services.settings.get('discovery').then((s) => s.intervalHours * 60), callback: () => runDiscoveryJob(services.discovery, services.settings, log) },
-    { name: 'series-refresh', type: 'cron', schedule: '0 3 * * 0', callback: () => runSeriesRefreshJob(services.seriesRefresh, log) },
+    { name: 'series-refresh', type: 'cron', schedule: '0 3 * * 0', callback: () => runSeriesRefreshJob(services.seriesCard, log) },
     { name: 'library-rescan', type: 'cron', schedule: '0 */6 * * *', callback: async () => {
       try {
         await services.libraryScan.rescanLibrary();

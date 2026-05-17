@@ -27,6 +27,7 @@ const SETTINGS_SECRET_MAP: [string, SecretEntity][] = [
   ['prowlarr', 'prowlarr'],
   ['auth', 'auth'],
   ['network', 'network'],
+  ['metadata', 'metadata'],
 ];
 
 function maskSettingsResponse(all: AppSettings): AppSettings {

@@ -65,9 +65,6 @@ function buildReplaceSeriesLinkArgs(r: FixMatchReplacement): ReplaceSeriesLinkAr
   return {
     name: r.seriesName,
     position: r.seriesPosition ?? null,
-    asin: r.asin ?? null,
-    seriesAsin: r.seriesAsin ?? null,
-    provider: r.seriesProvider ?? 'audible',
     title: r.title,
     authorName: r.authors[0]?.name ?? null,
   };
@@ -286,16 +283,14 @@ export class BookService {
         await this.syncNarrators(tx, id, data.narrators);
       }
 
-      // Upsert series + member row at create time so the Series card can render
-      // immediately. `seriesAsin` is optional — upsertSeriesLink falls back to a
-      // normalized-name lookup when provider series identity isn't known yet.
+      // Upsert series + local member row at create time so the Series card
+      // can render immediately. The Hardcover lazy-populate flow at GET time
+      // replaces this local row with canonical Hardcover members when a key
+      // is configured.
       if (data.seriesName) {
         await upsertSeriesLink(tx, this.log, id, {
           name: data.seriesName,
           position: data.seriesPosition ?? null,
-          asin: enrichedAsin ?? null,
-          seriesAsin: data.seriesAsin ?? null,
-          provider: data.seriesProvider ?? 'audible',
           title: data.title,
           authorName: data.authors[0]?.name ?? null,
         });

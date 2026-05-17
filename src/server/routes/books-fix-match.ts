@@ -56,27 +56,6 @@ function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   return out;
 }
 
-function enqueueSeriesRefreshAfterFixMatch(
-  deps: BookRouteDeps,
-  bookId: number,
-  meta: BookMetadata,
-  log: { warn: (obj: unknown, msg: string) => void },
-): void {
-  const primarySeries = meta.seriesPrimary ?? meta.series?.[0];
-  if (!deps.seriesRefreshService || !meta.asin || !primarySeries?.name) return;
-  try {
-    deps.seriesRefreshService.enqueueRefresh(meta.asin, {
-      bookId,
-      seriesName: primarySeries.name,
-      ...(meta.seriesPrimary?.asin !== undefined && { providerSeriesId: meta.seriesPrimary.asin }),
-      bookTitle: meta.title,
-      ...(primarySeries.position !== undefined && { seriesPosition: primarySeries.position }),
-    });
-  } catch (error: unknown) {
-    log.warn({ id: bookId, error: serializeError(error) }, 'Fix Match: series refresh enqueue failed');
-  }
-}
-
 async function runPostCommitRenameRetag(
   deps: BookRouteDeps,
   bookId: number,
@@ -132,7 +111,8 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
       const updated = await deps.bookService.fixMatch(id, metadataToFixMatchUpdate(meta));
       if (!updated) return reply.status(404).send({ error: 'Book not found' });
 
-      enqueueSeriesRefreshAfterFixMatch(deps, id, meta, request.log);
+      // Series card refresh is now lazy via SeriesCardService on the next GET
+      // (per #1133). No imperative enqueue needed here.
 
       if (deps.eventHistory) {
         deps.eventHistory.create({
