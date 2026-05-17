@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { api, type SearchResult } from '@/lib/api';
+import type { BookStatus } from '../../shared/schemas/book.js';
 import { grabSchema, type GrabPayload } from '../../shared/schemas/search.js';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js';
@@ -17,9 +18,26 @@ import { getErrorMessage } from '@/lib/error-message.js';
 // Props
 // ============================================================================
 
+/** Structural minimum the modal reads off the book. Satisfied by both
+ *  `BookWithAuthor` (book detail page) and `LibraryBookListItem` (library
+ *  list card). The extra fields on BookWithAuthor are unused here. */
+export interface SearchReleasesBookInput {
+  id: number;
+  title: string;
+  status: BookStatus;
+  authors: ReadonlyArray<{ name: string }>;
+  narrators: ReadonlyArray<{ name: string }>;
+  audioTotalSize?: number | null;
+  audioDuration?: number | null;
+  size?: number | null;
+  duration?: number | null;
+  lastGrabGuid?: string | null;
+  lastGrabInfoHash?: string | null;
+}
+
 interface SearchReleasesModalProps {
   isOpen: boolean;
-  book: BookWithAuthor;
+  book: SearchReleasesBookInput;
   onClose: () => void;
 }
 
@@ -33,7 +51,7 @@ function SearchReleasesHeader({
   onRefresh,
   onClose,
 }: {
-  book: BookWithAuthor;
+  book: SearchReleasesBookInput;
   isSearching: boolean;
   onRefresh: () => void;
   onClose: () => void;

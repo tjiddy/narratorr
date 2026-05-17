@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
-import { createMockBook } from '@/__tests__/factories';
+import { createMockLibraryBook } from '@/__tests__/factories';
 import { LibraryModals } from './LibraryModals';
 
 const baseProps = {
@@ -24,7 +24,7 @@ const baseProps = {
 describe('LibraryModals', () => {
   describe('delete modal file count label', () => {
     it('shows "Also delete N files from disk" when deleteTarget has audioFileCount', () => {
-      const book = createMockBook({ audioFileCount: 5, path: '/lib/book' });
+      const book = createMockLibraryBook({ audioFileCount: 5, path: '/lib/book' });
       renderWithProviders(
         <LibraryModals {...baseProps} deleteTarget={book} isDeleteOpen={true} />,
       );
@@ -32,7 +32,7 @@ describe('LibraryModals', () => {
     });
 
     it('shows "Delete files from disk" when deleteTarget has no audioFileCount', () => {
-      const book = createMockBook({ audioFileCount: null, path: '/lib/book' });
+      const book = createMockLibraryBook({ audioFileCount: null, path: '/lib/book' });
       renderWithProviders(
         <LibraryModals {...baseProps} deleteTarget={book} isDeleteOpen={true} />,
       );
@@ -40,7 +40,7 @@ describe('LibraryModals', () => {
     });
 
     it('hides toggle when deleteTarget has no path', () => {
-      const book = createMockBook({ audioFileCount: 5, path: null });
+      const book = createMockLibraryBook({ audioFileCount: 5, path: null });
       renderWithProviders(
         <LibraryModals {...baseProps} deleteTarget={book} isDeleteOpen={true} />,
       );

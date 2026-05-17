@@ -1,7 +1,7 @@
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { DeleteBookModal } from '@/components/DeleteBookModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 
 export function LibraryModals({
   deleteTarget,
@@ -19,7 +19,7 @@ export function LibraryModals({
   searchBook,
   onSearchBookClose,
 }: {
-  deleteTarget: BookWithAuthor | null;
+  deleteTarget: LibraryBookListItem | null;
   isDeleteOpen: boolean;
   onDeleteConfirm: (deleteFiles: boolean) => void;
   onDeleteCancel: () => void;
@@ -31,7 +31,7 @@ export function LibraryModals({
   searchAllWantedMessage: string;
   onSearchAllWantedConfirm: () => void;
   onSearchAllWantedCancel: () => void;
-  searchBook: BookWithAuthor | null;
+  searchBook: LibraryBookListItem | null;
   onSearchBookClose: () => void;
 }) {
   return (

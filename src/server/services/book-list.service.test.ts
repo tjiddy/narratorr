@@ -365,6 +365,166 @@ describe('BookListService', () => {
     });
   });
 
+  describe('getAllForLibrary (#1132)', () => {
+    it('returns { data, total } envelope with the slim DTO shape', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{
+          id: 1, title: 'The Way of Kings', coverUrl: null, status: 'wanted',
+          seriesName: null, seriesPosition: null,
+          audioTotalSize: null, size: null, audioFileFormat: null,
+          audioDuration: null, duration: null, path: null, audioFileCount: null,
+          lastGrabGuid: null, lastGrabInfoHash: null,
+          createdAt: new Date('2024-01-01'), updatedAt: new Date('2024-01-01'),
+        }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, name: 'Brandon Sanderson', position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, name: 'Michael Kramer', position: 0 }]));
+
+      const result = await service.getAllForLibrary();
+      expect(result.total).toBe(1);
+      expect(result.data).toHaveLength(1);
+      const row = result.data[0]!;
+      // Required DTO keys present
+      const expectedKeys = new Set([
+        'id', 'title', 'coverUrl', 'status', 'seriesName', 'seriesPosition',
+        'authors', 'narrators',
+        'audioTotalSize', 'size', 'audioFileFormat', 'audioDuration', 'duration',
+        'path', 'audioFileCount', 'lastGrabGuid', 'lastGrabInfoHash',
+        'createdAt', 'updatedAt',
+      ]);
+      for (const k of expectedKeys) expect(row).toHaveProperty(k);
+      // Trimmed keys absent
+      const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'goodreadsId', 'audibleId', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
+      for (const k of trimmedKeys) expect(row).not.toHaveProperty(k);
+      // Author/narrator entries are name-only
+      expect(row.authors).toEqual([{ name: 'Brandon Sanderson' }]);
+      expect(row.narrators).toEqual([{ name: 'Michael Kramer' }]);
+    });
+
+    it('returns empty data with total 0 when no books match', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary();
+      expect(result).toEqual({ data: [], total: 0 });
+    });
+
+    it('returns empty authors/narrators arrays when a book has none', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{
+          id: 1, title: 'Solo', coverUrl: null, status: 'wanted',
+          seriesName: null, seriesPosition: null,
+          audioTotalSize: null, size: null, audioFileFormat: null,
+          audioDuration: null, duration: null, path: null, audioFileCount: null,
+          lastGrabGuid: null, lastGrabInfoHash: null,
+          createdAt: new Date(), updatedAt: new Date(),
+        }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary();
+      expect(result.data[0]!.authors).toEqual([]);
+      expect(result.data[0]!.narrators).toEqual([]);
+    });
+
+    it('preserves position order across multiple authors/narrators', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{
+          id: 1, title: 'Co-authored', coverUrl: null, status: 'wanted',
+          seriesName: null, seriesPosition: null,
+          audioTotalSize: null, size: null, audioFileFormat: null,
+          audioDuration: null, duration: null, path: null, audioFileCount: null,
+          lastGrabGuid: null, lastGrabInfoHash: null,
+          createdAt: new Date(), updatedAt: new Date(),
+        }]))
+        // Return authors in shuffled order — service must sort by position
+        .mockReturnValueOnce(mockDbChain([
+          { bookId: 1, name: 'Second Author', position: 1 },
+          { bookId: 1, name: 'Primary Author', position: 0 },
+        ]))
+        .mockReturnValueOnce(mockDbChain([
+          { bookId: 1, name: 'Narrator B', position: 1 },
+          { bookId: 1, name: 'Narrator A', position: 0 },
+        ]));
+
+      const result = await service.getAllForLibrary();
+      expect(result.data[0]!.authors.map((a) => a.name)).toEqual(['Primary Author', 'Second Author']);
+      expect(result.data[0]!.narrators.map((n) => n.name)).toEqual(['Narrator A', 'Narrator B']);
+    });
+
+    it('search WHERE excludes book_narrators subquery (parity with /api/books per #365)', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAllForLibrary(undefined, undefined, { search: 'test' });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      function containsSubstring(val: unknown, substring: string): boolean {
+        if (typeof val === 'string') return val.includes(substring);
+        if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
+        if (val && typeof val === 'object') {
+          if ('queryChunks' in val) return containsSubstring((val as { queryChunks: unknown[] }).queryChunks, substring);
+          if ('value' in val) return containsSubstring((val as { value: unknown }).value, substring);
+          if ('name' in val) return containsSubstring((val as { name: unknown }).name, substring);
+        }
+        return false;
+      }
+      expect(containsSubstring(whereArg, 'book_narrators')).toBe(false);
+      expect(containsSubstring(whereArg, 'series_name')).toBe(true);
+      expect(containsSubstring(whereArg, 'genres')).toBe(true);
+      expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
+    });
+
+    it('reuses buildOrderBy — sort fields produce ≥2 order clauses (stable pagination)', async () => {
+      const sortFields = ['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format'] as const;
+      for (const sortField of sortFields) {
+        const dataChain = mockDbChain([]);
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+          .mockReturnValueOnce(dataChain);
+        await service.getAllForLibrary(undefined, undefined, { sortField, sortDirection: 'asc' });
+        const args = (dataChain.orderBy as Mock).mock.calls[0];
+        expect(args!.length).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    it('applies limit and offset', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 100 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAllForLibrary(undefined, { limit: 10, offset: 20 });
+      expect(dataChain.limit).toHaveBeenCalledWith(10);
+      expect(dataChain.offset).toHaveBeenCalledWith(20);
+    });
+
+    it('selects only the slim column set — heavy columns are absent from the SELECT', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await service.getAllForLibrary();
+
+      const selectArg = db.select.mock.calls[1]![0];
+      const keys = Object.keys(selectArg);
+      // Required slim columns
+      for (const k of ['id', 'title', 'coverUrl', 'status', 'seriesName', 'seriesPosition', 'audioTotalSize', 'size', 'audioFileFormat', 'audioDuration', 'duration', 'path', 'audioFileCount', 'lastGrabGuid', 'lastGrabInfoHash', 'createdAt', 'updatedAt']) {
+        expect(keys).toContain(k);
+      }
+      // Trimmed columns
+      for (const k of ['description', 'genres', 'audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'goodreadsId', 'audibleId', 'isbn', 'asin', 'enrichmentStatus', 'importListId', 'publishedDate']) {
+        expect(keys).not.toContain(k);
+      }
+    });
+  });
+
   describe('getIdentifiers', () => {
     it('returns asin, title, and author name for all books', async () => {
       db.select.mockReturnValueOnce(mockDbChain([

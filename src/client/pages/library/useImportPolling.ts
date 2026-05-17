@@ -1,11 +1,11 @@
 import { useMemo, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useSSEConnected } from '@/hooks/useEventSource';
 
-export function useImportPolling(books: BookWithAuthor[]) {
+export function useImportPolling(books: LibraryBookListItem[]) {
   const queryClient = useQueryClient();
   const sseConnected = useSSEConnected();
 

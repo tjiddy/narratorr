@@ -3,7 +3,7 @@ import { screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
-import { createMockBook, createMockAuthor } from '@/__tests__/factories';
+import { createMockLibraryBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
 
 // Mock api
@@ -14,6 +14,7 @@ vi.mock('@/lib/api', async () => {
     api: {
       ...(actual as { api: object }).api,
       getBooks: vi.fn(),
+      listLibraryBooks: vi.fn(),
       getBookStats: vi.fn(),
       getSettings: vi.fn(),
       deleteBook: vi.fn(),
@@ -56,23 +57,23 @@ import { toast } from 'sonner';
 import { createMockSettings } from '@/__tests__/factories';
 
 const mockBooks = [
-  createMockBook({
+  createMockLibraryBook({
     id: 1,
     coverUrl: 'https://example.com/cover1.jpg',
   }),
-  createMockBook({
+  createMockLibraryBook({
     id: 2,
     title: 'Project Hail Mary',
-    narrators: [{ id: 1, name: 'Ray Porter', slug: 'ray-porter' }],
+    narrators: [{ name: 'Ray Porter' }],
     coverUrl: 'https://example.com/cover2.jpg',
     seriesName: null,
     seriesPosition: null,
     status: 'downloading',
     createdAt: '2024-01-02T00:00:00Z',
     updatedAt: '2024-01-02T00:00:00Z',
-    authors: [createMockAuthor({ id: 2, name: 'Andy Weir', slug: 'andy-weir' })],
+    authors: [createMockAuthor({ name: 'Andy Weir' })],
   }),
-  createMockBook({
+  createMockLibraryBook({
     id: 3,
     title: 'Recursion',
     narrators: [],
@@ -82,9 +83,9 @@ const mockBooks = [
     status: 'imported',
     createdAt: '2024-01-03T00:00:00Z',
     updatedAt: '2024-01-03T00:00:00Z',
-    authors: [createMockAuthor({ id: 3, name: 'Blake Crouch', slug: 'blake-crouch' })],
+    authors: [createMockAuthor({ name: 'Blake Crouch' })],
   }),
-  createMockBook({
+  createMockLibraryBook({
     id: 4,
     title: 'Words of Radiance',
     coverUrl: 'https://example.com/cover4.jpg',
@@ -94,14 +95,14 @@ const mockBooks = [
   }),
 ];
 
-import type { BookWithAuthor, BookListParams } from '@/lib/api';
+import type { BookWithAuthor, LibraryBookListItem, BookListParams } from '@/lib/api';
 import { matchesStatusFilter, sortBooks } from './helpers';
 import type { StatusFilter, SortField, SortDirection } from './helpers';
 
 /** Helper: mock both getBooks and getBookStats consistently.
  * getBooks filters/sorts by params to simulate server-side behavior. */
-function mockLibraryData(books: BookWithAuthor[]) {
-  vi.mocked(api.getBooks).mockImplementation((params?: BookListParams) => {
+function mockLibraryData(books: LibraryBookListItem[]) {
+  vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = books;
     if (params?.status) {
       filtered = filtered.filter(b => matchesStatusFilter(b.status, params.status as StatusFilter));
@@ -111,8 +112,7 @@ function mockLibraryData(books: BookWithAuthor[]) {
       filtered = filtered.filter(b =>
         b.title.toLowerCase().includes(q) ||
         (b.authors[0]?.name ?? '').toLowerCase().includes(q) ||
-        (b.seriesName ?? '').toLowerCase().includes(q) ||
-        (Array.isArray(b.genres) ? b.genres.join(' ') : (b.genres ?? '')).toLowerCase().includes(q),
+        (b.seriesName ?? '').toLowerCase().includes(q),
       );
     }
     if (params?.sortField) {
@@ -136,8 +136,8 @@ function mockLibraryData(books: BookWithAuthor[]) {
 
 /** Paged variant: accepts independent total so Pagination renders when total > limit (100).
  * Use total > 100 to trigger Pagination rendering. */
-function mockPagedLibraryData(books: BookWithAuthor[], opts: { total: number }) {
-  vi.mocked(api.getBooks).mockImplementation((params?: BookListParams) => {
+function mockPagedLibraryData(books: LibraryBookListItem[], opts: { total: number }) {
+  vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     const offset = params?.offset ?? 0;
     const limit = params?.limit ?? 100;
     const page = books.slice(offset, offset + limit);
@@ -414,7 +414,7 @@ describe('LibraryPage', () => {
 
   it('shows delete files checkbox for books with path and passes deleteFiles to API', async () => {
     const booksWithPath = [
-      createMockBook({
+      createMockLibraryBook({
         id: 5,
         title: 'Imported Book',
         path: '/audiobooks/Author/Imported Book',
@@ -479,7 +479,7 @@ describe('LibraryPage', () => {
 
   it('shows different success toast when files are deleted', async () => {
     const booksWithPath = [
-      createMockBook({
+      createMockLibraryBook({
         id: 5,
         title: 'Imported Book',
         path: '/audiobooks/Author/Imported Book',
@@ -687,7 +687,7 @@ describe('LibraryPage', () => {
       // from the request, not explicit undefined (eopt invariant per #939 AC4).
       // Check that at least one call had `search` omitted (typed-search call
       // still has it set in mock history; clear-search call drops the key).
-      const calls = vi.mocked(api.getBooks).mock.calls;
+      const calls = vi.mocked(api.listLibraryBooks).mock.calls;
       const omitted = calls.some(([params]) => !('search' in (params ?? {})));
       expect(omitted).toBe(true);
     }, { timeout: 2000 });
@@ -719,7 +719,7 @@ describe('LibraryPage', () => {
       expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
     }, { timeout: 2000 });
 
-    expect(vi.mocked(api.getBooks)).toHaveBeenLastCalledWith(
+    expect(vi.mocked(api.listLibraryBooks)).toHaveBeenLastCalledWith(
       expect.objectContaining({ search: 'Sanderson', status: 'wanted' }),
     );
   });
@@ -802,7 +802,7 @@ describe('LibraryPage', () => {
   });
 
   it('shows error state when getBooks API fails (#480)', async () => {
-    vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+    vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('API is down'));
     vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
     renderWithProviders(<LibraryPage />);
@@ -835,14 +835,14 @@ describe('LibraryPage', () => {
   describe('remove missing', () => {
     const booksWithMissing = [
       ...mockBooks,
-      createMockBook({
+      createMockLibraryBook({
         id: 10,
         title: 'Missing Book 1',
         status: 'missing',
         createdAt: '2024-01-10T00:00:00Z',
         updatedAt: '2024-01-10T00:00:00Z',
       }),
-      createMockBook({
+      createMockLibraryBook({
         id: 11,
         title: 'Missing Book 2',
         status: 'missing',
@@ -1468,14 +1468,14 @@ describe('LibraryPage', () => {
   describe('failed and missing status pills (#351)', () => {
     const booksWithAllStatuses = [
       ...mockBooks,
-      createMockBook({
+      createMockLibraryBook({
         id: 20,
         title: 'Failed Download',
         status: 'failed',
         createdAt: '2024-01-20T00:00:00Z',
         updatedAt: '2024-01-20T00:00:00Z',
       }),
-      createMockBook({
+      createMockLibraryBook({
         id: 21,
         title: 'Missing Audiobook',
         status: 'missing',
@@ -1673,7 +1673,7 @@ describe('LibraryPage — view mode localStorage edge cases (#183)', () => {
 describe('LibraryPage — pagination (#183)', () => {
   // Create a page of books that mockPagedLibraryData will return
   const pageBooks = Array.from({ length: 4 }, (_, i) =>
-    createMockBook({
+    createMockLibraryBook({
       id: i + 1,
       title: `Book ${i + 1}`,
       createdAt: `2024-01-0${i + 1}T00:00:00Z`,
@@ -1724,7 +1724,7 @@ describe('LibraryPage — pagination (#183)', () => {
 
     await waitFor(() => {
       // getBooks should be called with offset=100 for page 2
-      expect(vi.mocked(api.getBooks)).toHaveBeenCalledWith(
+      expect(vi.mocked(api.listLibraryBooks)).toHaveBeenCalledWith(
         expect.objectContaining({ offset: 100 }),
       );
     });
@@ -1751,10 +1751,10 @@ describe('LibraryPage — pagination (#183)', () => {
 
 describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
   const booksWithPaths = [
-    createMockBook({ id: 1, path: '/audiobooks/book1', status: 'wanted' }),
-    createMockBook({ id: 2, title: 'Book 2', path: '/audiobooks/book2', status: 'wanted',
+    createMockLibraryBook({ id: 1, path: '/audiobooks/book1', status: 'wanted' }),
+    createMockLibraryBook({ id: 2, title: 'Book 2', path: '/audiobooks/book2', status: 'wanted',
       createdAt: '2024-01-02T00:00:00Z', updatedAt: '2024-01-02T00:00:00Z' }),
-    createMockBook({ id: 3, title: 'Book 3', path: null, status: 'imported',
+    createMockLibraryBook({ id: 3, title: 'Book 3', path: null, status: 'imported',
       createdAt: '2024-01-03T00:00:00Z', updatedAt: '2024-01-03T00:00:00Z' }),
   ];
 
@@ -1865,8 +1865,8 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('hides delete-files checkbox when no selected books have a path', async () => {
     const booksNoPaths = [
-      createMockBook({ id: 1, path: null }),
-      createMockBook({ id: 2, title: 'Book 2', path: null,
+      createMockLibraryBook({ id: 1, path: null }),
+      createMockLibraryBook({ id: 2, title: 'Book 2', path: null,
         createdAt: '2024-01-02T00:00:00Z', updatedAt: '2024-01-02T00:00:00Z' }),
     ];
     mockLibraryData(booksNoPaths);
@@ -1909,7 +1909,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('bulk set status to Wanted fires updateBook and shows toast with Wanted label', async () => {
     mockLibraryData(booksWithPaths);
-    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]!);
+    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]! as BookWithAuthor);
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -1944,7 +1944,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('bulk set status to Owned fires updateBook and shows toast with Owned label', async () => {
     mockLibraryData(booksWithPaths);
-    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]!);
+    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]! as BookWithAuthor);
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -2206,8 +2206,8 @@ describe('LibraryPage — import polling smoke test (#183)', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'], shouldAdvanceTime: true });
 
     const importingBooks = [
-      createMockBook({ id: 1, status: 'importing' }),
-      createMockBook({
+      createMockLibraryBook({ id: 1, status: 'importing' }),
+      createMockLibraryBook({
         id: 2, title: 'Book 2', status: 'importing',
         createdAt: '2024-01-02T00:00:00Z', updatedAt: '2024-01-02T00:00:00Z',
       }),
@@ -2221,14 +2221,14 @@ describe('LibraryPage — import polling smoke test (#183)', () => {
     });
 
     // Record call count after initial load
-    const initialCallCount = vi.mocked(api.getBooks).mock.calls.length;
+    const initialCallCount = vi.mocked(api.listLibraryBooks).mock.calls.length;
 
     // Advance time by 3s — useImportPolling sets a 3s interval that invalidates queries
     await vi.advanceTimersByTimeAsync(3100);
 
     // getBooks should have been called again due to the polling invalidation
     await waitFor(() => {
-      expect(vi.mocked(api.getBooks).mock.calls.length).toBeGreaterThan(initialCallCount);
+      expect(vi.mocked(api.listLibraryBooks).mock.calls.length).toBeGreaterThan(initialCallCount);
     });
 
     vi.useRealTimers();
@@ -2273,7 +2273,7 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
   });
 
   it('uses singular "book" when totalAll is 1', async () => {
-    const singleBook = [createMockBook({ id: 1 })];
+    const singleBook = [createMockLibraryBook({ id: 1 })];
     mockLibraryData(singleBook);
 
     renderWithProviders(<LibraryPage />);
@@ -2324,12 +2324,12 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
 
     it('preserves card DOM nodes while sorted response is still loading (placeholder phase)', async () => {
       // First call resolves immediately (initial load); second call stays pending (sort change)
-      let resolveSortedResponse!: (v: { data: BookWithAuthor[]; total: number }) => void;
-      const pendingSortResponse = new Promise<{ data: BookWithAuthor[]; total: number }>((r) => {
+      let resolveSortedResponse!: (v: { data: LibraryBookListItem[]; total: number }) => void;
+      const pendingSortResponse = new Promise<{ data: LibraryBookListItem[]; total: number }>((r) => {
         resolveSortedResponse = r;
       });
 
-      vi.mocked(api.getBooks)
+      vi.mocked(api.listLibraryBooks)
         .mockResolvedValueOnce({ data: mockBooks, total: mockBooks.length })
         .mockReturnValueOnce(pendingSortResponse as never);
       vi.mocked(api.getBookStats).mockResolvedValue({
@@ -2460,7 +2460,7 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
 
     it('caps animation delay at 450ms for cards at index >= 10', async () => {
       const manyBooks = Array.from({ length: 15 }, (_, i) =>
-        createMockBook({
+        createMockLibraryBook({
           id: i + 1,
           title: `Book ${String.fromCharCode(65 + i)}`,
           createdAt: `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
@@ -2500,11 +2500,11 @@ describe('LibraryPage — URL param restoration (#352)', () => {
     });
 
     await waitFor(() => {
-      expect(api.getBooks).toHaveBeenCalled();
+      expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
     // The first getBooks call should use the URL-derived params
-    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
       status: 'wanted',
       sortField: 'title',
@@ -2520,11 +2520,11 @@ describe('LibraryPage — URL param restoration (#352)', () => {
     });
 
     await waitFor(() => {
-      expect(api.getBooks).toHaveBeenCalled();
+      expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
     // Page 3 with default limit of 100 → offset 200
-    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
       offset: 200,
       limit: 100,
@@ -2539,10 +2539,10 @@ describe('LibraryPage — URL param restoration (#352)', () => {
     });
 
     await waitFor(() => {
-      expect(api.getBooks).toHaveBeenCalled();
+      expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
-    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     // Producer-omit pattern: absent `status` URL param results in key omission,
     // not explicit undefined (eopt invariant per #939 AC4).
     expect(firstCallArgs).not.toHaveProperty('status');
@@ -2557,7 +2557,7 @@ describe('LibraryPage — URL param restoration (#352)', () => {
 describe('LibraryPage — error states (#480)', () => {
   describe('books query failure', () => {
     it('shows error state when getBooks rejects on initial load', async () => {
-      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('API is down'));
       vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
       renderWithProviders(<LibraryPage />);
@@ -2568,7 +2568,7 @@ describe('LibraryPage — error states (#480)', () => {
     });
 
     it('does not show EmptyLibraryState when getBooks rejects', async () => {
-      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('API is down'));
       vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
       renderWithProviders(<LibraryPage />);
@@ -2580,7 +2580,7 @@ describe('LibraryPage — error states (#480)', () => {
     });
 
     it('does not show NoMatchState or book list when getBooks rejects', async () => {
-      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('API is down'));
       vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
       renderWithProviders(<LibraryPage />);
@@ -2592,7 +2592,7 @@ describe('LibraryPage — error states (#480)', () => {
     });
 
     it('error state includes descriptive message (not "Your library is empty")', async () => {
-      vi.mocked(api.getBooks).mockRejectedValue(new Error('API is down'));
+      vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('API is down'));
       vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
       renderWithProviders(<LibraryPage />);
@@ -2610,7 +2610,7 @@ describe('LibraryPage — error states (#480)', () => {
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
       // First call succeeds with books
-      vi.mocked(api.getBooks).mockResolvedValueOnce({ data: mockBooks, total: mockBooks.length });
+      vi.mocked(api.listLibraryBooks).mockResolvedValueOnce({ data: mockBooks, total: mockBooks.length });
       vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 1, downloading: 1, imported: 1, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
       renderWithProviders(<LibraryPage />, { queryClient });
@@ -2621,7 +2621,7 @@ describe('LibraryPage — error states (#480)', () => {
       });
 
       // Second call rejects
-      vi.mocked(api.getBooks).mockRejectedValue(new Error('Server down'));
+      vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('Server down'));
 
       // Invalidate to trigger refetch
       queryClient.invalidateQueries();
@@ -2637,7 +2637,7 @@ describe('LibraryPage — error states (#480)', () => {
 
   describe('stats query failure with successful books query', () => {
     it('renders books normally when getBookStats rejects but getBooks returns books', async () => {
-      vi.mocked(api.getBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
+      vi.mocked(api.listLibraryBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
       vi.mocked(api.getBookStats).mockRejectedValue(new Error('Stats API down'));
 
       renderWithProviders(<LibraryPage />);
@@ -2650,7 +2650,7 @@ describe('LibraryPage — error states (#480)', () => {
     });
 
     it('shows EmptyLibraryState when getBookStats rejects and getBooks returns empty array', async () => {
-      vi.mocked(api.getBooks).mockResolvedValue({ data: [], total: 0 });
+      vi.mocked(api.listLibraryBooks).mockResolvedValue({ data: [], total: 0 });
       vi.mocked(api.getBookStats).mockRejectedValue(new Error('Stats API down'));
 
       renderWithProviders(<LibraryPage />);
@@ -2665,7 +2665,7 @@ describe('LibraryPage — error states (#480)', () => {
   describe('loading vs error precedence', () => {
     it('shows loading spinner while isLoading is true, not error state', () => {
       // getBooks never resolves — stays in loading state
-      vi.mocked(api.getBooks).mockReturnValue(new Promise(() => {}));
+      vi.mocked(api.listLibraryBooks).mockReturnValue(new Promise(() => {}));
       vi.mocked(api.getBookStats).mockReturnValue(new Promise(() => {}));
 
       renderWithProviders(<LibraryPage />);
@@ -2675,7 +2675,7 @@ describe('LibraryPage — error states (#480)', () => {
     });
 
     it('preserves LibraryHeader with Import Files action during loading', () => {
-      vi.mocked(api.getBooks).mockReturnValue(new Promise(() => {}));
+      vi.mocked(api.listLibraryBooks).mockReturnValue(new Promise(() => {}));
       vi.mocked(api.getBookStats).mockReturnValue(new Promise(() => {}));
 
       renderWithProviders(<LibraryPage />);
@@ -2688,7 +2688,7 @@ describe('LibraryPage — error states (#480)', () => {
   });
 
   describe('retry import from library grid (#635)', () => {
-    const failedBook = createMockBook({
+    const failedBook = createMockLibraryBook({
       id: 99,
       title: 'Failed Import Book',
       status: 'failed',
@@ -2725,7 +2725,7 @@ describe('LibraryPage — error states (#480)', () => {
       });
 
       // Cache invalidation: getBooks should be re-called after retry success
-      const getBooksCallCount = vi.mocked(api.getBooks).mock.calls.length;
+      const getBooksCallCount = vi.mocked(api.listLibraryBooks).mock.calls.length;
       expect(getBooksCallCount).toBeGreaterThanOrEqual(2); // initial load + invalidation refetch
     });
 

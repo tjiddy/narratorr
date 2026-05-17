@@ -1,4 +1,4 @@
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 import type { DisplayBook } from './helpers.js';
 import { LibraryBookCard } from './LibraryBookCard.js';
 
@@ -9,9 +9,9 @@ export interface LibraryGridViewProps {
   onMenuToggle: (bookId: number, e: React.MouseEvent) => void;
   onMenuClose: () => void;
   onClick: (bookId: number) => void;
-  onSearchReleases: (book: BookWithAuthor) => void;
-  onRemove: (book: BookWithAuthor) => void;
-  onRetryImport?: ((book: BookWithAuthor) => void) | undefined;
+  onSearchReleases: (book: LibraryBookListItem) => void;
+  onRemove: (book: LibraryBookListItem) => void;
+  onRetryImport?: ((book: LibraryBookListItem) => void) | undefined;
 }
 
 export function LibraryGridView({

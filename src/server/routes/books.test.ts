@@ -167,6 +167,73 @@ describe('books routes', () => {
     });
   });
 
+  describe('GET /api/library/books (#1132)', () => {
+    const libraryRow = {
+      id: 1, title: 'The Way of Kings', coverUrl: null, status: 'wanted' as const,
+      seriesName: null, seriesPosition: null,
+      authors: [{ name: 'Brandon Sanderson' }], narrators: [],
+      audioTotalSize: null, size: null, audioFileFormat: null,
+      audioDuration: null, duration: null, path: null, audioFileCount: null,
+      lastGrabGuid: null, lastGrabInfoHash: null,
+      createdAt: new Date('2024-01-01'), updatedAt: new Date('2024-01-01'),
+    };
+
+    it('returns slim DTO in { data, total } envelope', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [libraryRow], total: 1 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/library/books' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.total).toBe(1);
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0]).toMatchObject({
+        id: 1, title: 'The Way of Kings', status: 'wanted',
+        authors: [{ name: 'Brandon Sanderson' }], narrators: [],
+      });
+    });
+
+    it('routes status/search/sort/limit/offset params through to the service', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books?status=wanted&search=king&sortField=title&sortDirection=asc&limit=10&offset=20' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        'wanted',
+        { limit: 10, offset: 20 },
+        { search: 'king', sortField: 'title', sortDirection: 'asc' },
+      );
+    });
+
+    it('defaults to limit=100 when omitted', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, { search: undefined, sortField: undefined, sortDirection: undefined });
+    });
+
+    it('rejects ?status=monitored (invalid enum) with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=monitored' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?limit=0' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('does not invoke BookListService.getAll (the full-shape endpoint stays untouched)', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledTimes(1);
+      expect(services.bookList.getAll).not.toHaveBeenCalled();
+    });
+  });
+
   describe('GET /api/books/:id', () => {
     it('returns book when found', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);

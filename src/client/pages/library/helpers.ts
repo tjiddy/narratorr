@@ -1,13 +1,11 @@
 import { resolveBookQualityInputs, toSortTitle } from '@core/utils/index.js';
-import type { BookWithAuthor } from '@/lib/api';
+import type { LibraryBookListItem } from '@/lib/api';
 
 export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported' | 'failed' | 'missing';
 export type SortField = 'createdAt' | 'title' | 'author' | 'narrator' | 'series' | 'quality' | 'size' | 'format';
 export type SortDirection = 'asc' | 'desc';
 
-export interface DisplayBook extends BookWithAuthor {
-  collapsedCount?: number;
-}
+export type DisplayBook = LibraryBookListItem & { collapsedCount?: number };
 
 export const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -29,7 +27,7 @@ export function matchesStatusFilter(status: string, filter: StatusFilter): boole
   return false;
 }
 
-export function getStatusCount(books: BookWithAuthor[], filter: StatusFilter): number {
+export function getStatusCount(books: LibraryBookListItem[], filter: StatusFilter): number {
   return books.filter((b) => matchesStatusFilter(b.status, filter)).length;
 }
 
@@ -51,7 +49,7 @@ export function extractNarrators(narrator: string | null | undefined): string[] 
 }
 
 /** Compute MB per hour from size (bytes) and duration. Delegates unit handling to resolveBookQualityInputs (audioDuration in seconds, duration in minutes). */
-export function computeMbPerHour(book: BookWithAuthor): number | null {
+export function computeMbPerHour(book: LibraryBookListItem): number | null {
   const { sizeBytes, durationSeconds } = resolveBookQualityInputs(book);
   if (!sizeBytes || !durationSeconds) return null;
   const mb = sizeBytes / (1024 * 1024);
@@ -60,7 +58,7 @@ export function computeMbPerHour(book: BookWithAuthor): number | null {
 }
 
 /** Get the effective size for sorting — audioTotalSize with fallback to size. */
-function getEffectiveSize(book: BookWithAuthor): number | null {
+function getEffectiveSize(book: LibraryBookListItem): number | null {
   return book.audioTotalSize ?? book.size ?? null;
 }
 
@@ -77,7 +75,7 @@ function compareNullable(a: string | number | null, b: string | number | null): 
   return { valueResult: (a as number) - (b as number) };
 }
 
-const fieldExtractors: Record<SortField, (book: BookWithAuthor) => string | number | null> = {
+const fieldExtractors: Record<SortField, (book: LibraryBookListItem) => string | number | null> = {
   title: (b) => toSortTitle(b.title),
   author: (b) => b.authors?.[0]?.name ?? '',
   narrator: (b) => b.narrators?.[0]?.name ?? null,
@@ -88,14 +86,14 @@ const fieldExtractors: Record<SortField, (book: BookWithAuthor) => string | numb
   createdAt: (b) => new Date(b.createdAt).getTime(),
 };
 
-function compareByField(a: BookWithAuthor, b: BookWithAuthor, field: SortField, direction: SortDirection): number {
+function compareByField(a: LibraryBookListItem, b: LibraryBookListItem, field: SortField, direction: SortDirection): number {
   const extract = fieldExtractors[field] ?? fieldExtractors.createdAt;
   const result = compareNullable(extract(a), extract(b));
   if ('nullResult' in result) return result.nullResult;
   return direction === 'asc' ? result.valueResult : -result.valueResult;
 }
 
-export function sortBooks<T extends BookWithAuthor>(books: T[], field: SortField, direction: SortDirection): T[] {
+export function sortBooks<T extends LibraryBookListItem>(books: T[], field: SortField, direction: SortDirection): T[] {
   return [...books].sort((a, b) => {
     const cmp = compareByField(a, b, field, direction);
     if (cmp !== 0 || field !== 'series') return cmp;
@@ -112,11 +110,11 @@ export function sortBooks<T extends BookWithAuthor>(books: T[], field: SortField
 }
 
 export function collapseSeries(
-  books: BookWithAuthor[],
+  books: LibraryBookListItem[],
   sortField: SortField,
   sortDirection: SortDirection,
 ): DisplayBook[] {
-  const seriesGroups = new Map<string, BookWithAuthor[]>();
+  const seriesGroups = new Map<string, LibraryBookListItem[]>();
   const standalones: DisplayBook[] = [];
 
   for (const book of books) {
@@ -137,7 +135,7 @@ export function collapseSeries(
   for (const [, group] of seriesGroups) {
     // Pick representative: lowest seriesPosition among visible books
     const withPosition = group.filter((b) => b.seriesPosition != null);
-    let representative: BookWithAuthor;
+    let representative: LibraryBookListItem;
     if (withPosition.length > 0) {
       representative = withPosition.reduce((best, b) =>
         b.seriesPosition! < best.seriesPosition! ? b : best,

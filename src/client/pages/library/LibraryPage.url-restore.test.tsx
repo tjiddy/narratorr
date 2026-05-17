@@ -13,7 +13,7 @@ import { render } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LibraryPage } from './LibraryPage';
-import { createMockBook, createMockAuthor, createMockSettings } from '@/__tests__/factories';
+import { createMockLibraryBook, createMockAuthor, createMockSettings } from '@/__tests__/factories';
 import type { BookListParams } from '@/lib/api';
 import { matchesStatusFilter, sortBooks } from './helpers';
 import type { StatusFilter, SortField, SortDirection } from './helpers';
@@ -26,6 +26,7 @@ vi.mock('@/lib/api', async () => {
     api: {
       ...(actual as { api: object }).api,
       getBooks: vi.fn(),
+      listLibraryBooks: vi.fn(),
       getBookStats: vi.fn(),
       getSettings: vi.fn(),
       deleteBook: vi.fn(),
@@ -49,7 +50,7 @@ vi.mock('sonner', () => ({
 import { api } from '@/lib/api';
 
 const mockBooks = [
-  createMockBook({
+  createMockLibraryBook({
     id: 1,
     title: 'The Way of Kings',
     status: 'wanted',
@@ -57,7 +58,7 @@ const mockBooks = [
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
   }),
-  createMockBook({
+  createMockLibraryBook({
     id: 2,
     title: 'Project Hail Mary',
     status: 'imported',
@@ -68,7 +69,7 @@ const mockBooks = [
 ];
 
 function mockLibraryData() {
-  vi.mocked(api.getBooks).mockImplementation((params?: BookListParams) => {
+  vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = [...mockBooks];
     if (params?.status) {
       filtered = filtered.filter(b => matchesStatusFilter(b.status, params.status as StatusFilter));
@@ -129,11 +130,11 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
 
     // Wait for library to load with filtered results
     await waitFor(() => {
-      expect(api.getBooks).toHaveBeenCalled();
+      expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
     // Verify first fetch used URL-derived params
-    const firstCallArgs = vi.mocked(api.getBooks).mock.calls[0]?.[0];
+    const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
       status: 'wanted',
       sortField: 'title',

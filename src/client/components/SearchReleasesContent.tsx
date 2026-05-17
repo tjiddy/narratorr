@@ -1,6 +1,7 @@
-import type { BookWithAuthor, SearchResult } from '@/lib/api';
+import type { SearchResult } from '@/lib/api';
 import type { IndexerState } from '@/hooks/useSearchStream';
 import type { SearchResponse } from '@/lib/api/search';
+import type { SearchReleasesBookInput } from '@/components/SearchReleasesModal';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import {
   SearchIcon,
@@ -122,7 +123,7 @@ function ResultsPhase({
 }: {
   searchResponse: SearchResponse | null;
   resultKeys: string[];
-  book: BookWithAuthor;
+  book: SearchReleasesBookInput;
   isGrabbing: boolean;
   isBlacklisting: boolean;
   onGrab: (result: SearchResult) => void;
@@ -199,7 +200,7 @@ interface SearchReleasesContentProps {
   error: string | null;
   searchResponse: SearchResponse | null;
   resultKeys: string[];
-  book: BookWithAuthor;
+  book: SearchReleasesBookInput;
   isGrabbing: boolean;
   isBlacklisting: boolean;
   onCancelIndexer: (id: number) => void;

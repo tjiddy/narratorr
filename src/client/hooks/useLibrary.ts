@@ -4,8 +4,8 @@ import { queryKeys } from '@/lib/queryKeys';
 
 export function useLibrary(params?: BookListParams) {
   return useQuery({
-    queryKey: queryKeys.books(params),
-    queryFn: () => api.getBooks(params),
+    queryKey: queryKeys.libraryBooks(params),
+    queryFn: () => api.listLibraryBooks(params),
     staleTime: 30_000,
     placeholderData: (previousData) => previousData,
   });

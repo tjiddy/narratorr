@@ -3,12 +3,13 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useLibrary, useLibraryBook, useBookFiles, useBookIdentifiers, useBookStats } from './useLibrary';
-import { createMockBook } from '@/__tests__/factories';
+import { createMockBook, createMockLibraryBook } from '@/__tests__/factories';
 import type { BookFile, BookIdentifier, BookStats } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
+    listLibraryBooks: vi.fn(),
     getBookById: vi.fn(),
     getBookFiles: vi.fn(),
     getBookIdentifiers: vi.fn(),
@@ -35,10 +36,10 @@ describe('useLibrary', () => {
     vi.clearAllMocks();
   });
 
-  it('calls api.getBooks and returns data', async () => {
-    const mockBooks = [createMockBook({ id: 1, title: 'Test Book' })];
+  it('calls api.listLibraryBooks and returns data', async () => {
+    const mockBooks = [createMockLibraryBook({ id: 1, title: 'Test Book' })];
 
-    vi.mocked(api.getBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
+    vi.mocked(api.listLibraryBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
 
     const { result } = renderHook(() => useLibrary(), {
       wrapper: createWrapper(),
@@ -50,12 +51,12 @@ describe('useLibrary', () => {
       expect(result.current.isSuccess).toBe(true);
     });
 
-    expect(api.getBooks).toHaveBeenCalledTimes(1);
+    expect(api.listLibraryBooks).toHaveBeenCalledTimes(1);
     expect(result.current.data).toEqual({ data: mockBooks, total: mockBooks.length });
   });
 
   it('handles loading state', () => {
-    vi.mocked(api.getBooks).mockImplementation(
+    vi.mocked(api.listLibraryBooks).mockImplementation(
       () => new Promise(() => {}), // Never resolves
     );
 
@@ -68,14 +69,14 @@ describe('useLibrary', () => {
   });
 
   it('preserves previous page data while next params key is loading (placeholderData)', async () => {
-    const page1Books = [createMockBook({ id: 1, title: 'Page 1 Book' })];
+    const page1Books = [createMockLibraryBook({ id: 1, title: 'Page 1 Book' })];
 
-    let resolveP2!: (v: { data: ReturnType<typeof createMockBook>[]; total: number }) => void;
-    const pendingP2: Promise<{ data: ReturnType<typeof createMockBook>[]; total: number }> = new Promise((r) => {
+    let resolveP2!: (v: { data: ReturnType<typeof createMockLibraryBook>[]; total: number }) => void;
+    const pendingP2: Promise<{ data: ReturnType<typeof createMockLibraryBook>[]; total: number }> = new Promise((r) => {
       resolveP2 = r;
     });
 
-    vi.mocked(api.getBooks)
+    vi.mocked(api.listLibraryBooks)
       .mockResolvedValueOnce({ data: page1Books, total: page1Books.length })
       .mockReturnValueOnce(pendingP2 as never);
 

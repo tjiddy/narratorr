@@ -3,8 +3,8 @@ import { renderHook, act } from '@testing-library/react';
 import { useEffect } from 'react';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
-import type { BookWithAuthor } from '@/lib/api';
-import { createMockBook } from '@/__tests__/factories';
+import type { LibraryBookListItem } from '@/lib/api';
+import { createMockLibraryBook } from '@/__tests__/factories';
 
 /** Wrapper that provides Router context with optional initial URL */
 function createWrapper(route = '/library') {
@@ -160,10 +160,10 @@ describe('useLibraryFilters', () => {
 });
 
 describe('applyClientFilters', () => {
-  const books: BookWithAuthor[] = [
-    createMockBook({ id: 1, title: 'Alpha', status: 'wanted', authors: [{ id: 1, name: 'Author A', slug: 'author-a' }], seriesName: 'Series X', narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }], createdAt: '2024-01-01T00:00:00Z' }),
-    createMockBook({ id: 2, title: 'Zulu', status: 'imported', authors: [{ id: 2, name: 'Author B', slug: 'author-b' }], seriesName: 'Series Y', narrators: [{ id: 2, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }], createdAt: '2024-01-02T00:00:00Z' }),
-    createMockBook({ id: 3, title: 'Middle', status: 'downloading', authors: [{ id: 1, name: 'Author A', slug: 'author-a' }], seriesName: null, narrators: [], createdAt: '2024-01-03T00:00:00Z' }),
+  const books: LibraryBookListItem[] = [
+    createMockLibraryBook({ id: 1, title: 'Alpha', status: 'wanted', authors: [{ name: 'Author A' }], seriesName: 'Series X', narrators: [{ name: 'Michael Kramer' }], createdAt: '2024-01-01T00:00:00Z' }),
+    createMockLibraryBook({ id: 2, title: 'Zulu', status: 'imported', authors: [{ name: 'Author B' }], seriesName: 'Series Y', narrators: [{ name: 'Tim Gerard Reynolds' }], createdAt: '2024-01-02T00:00:00Z' }),
+    createMockLibraryBook({ id: 3, title: 'Middle', status: 'downloading', authors: [{ name: 'Author A' }], seriesName: null, narrators: [], createdAt: '2024-01-03T00:00:00Z' }),
   ];
 
   const defaultFilters = { authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
@@ -192,10 +192,10 @@ describe('applyClientFilters', () => {
   });
 
   it('collapse series groups books', () => {
-    const seriesBooks: BookWithAuthor[] = [
-      createMockBook({ id: 10, seriesName: 'Stormlight', seriesPosition: 1, createdAt: '2024-01-01T00:00:00Z' }),
-      createMockBook({ id: 11, seriesName: 'Stormlight', seriesPosition: 2, createdAt: '2024-01-02T00:00:00Z' }),
-      createMockBook({ id: 12, seriesName: null, createdAt: '2024-01-03T00:00:00Z' }),
+    const seriesBooks: LibraryBookListItem[] = [
+      createMockLibraryBook({ id: 10, seriesName: 'Stormlight', seriesPosition: 1, createdAt: '2024-01-01T00:00:00Z' }),
+      createMockLibraryBook({ id: 11, seriesName: 'Stormlight', seriesPosition: 2, createdAt: '2024-01-02T00:00:00Z' }),
+      createMockLibraryBook({ id: 12, seriesName: null, createdAt: '2024-01-03T00:00:00Z' }),
     ];
     const result = applyClientFilters(seriesBooks, { ...defaultFilters, collapseSeriesEnabled: true });
     expect(result).toHaveLength(2);
@@ -204,11 +204,11 @@ describe('applyClientFilters', () => {
 
 describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
   it('author filter matches when author is ANY of book.authors (not just first)', () => {
-    const multiAuthorBook = createMockBook({
+    const multiAuthorBook = createMockLibraryBook({
       id: 10,
       authors: [
-        { id: 1, name: 'Author A', slug: 'author-a' },
-        { id: 2, name: 'Author B', slug: 'author-b' },
+        { name: 'Author A' },
+        { name: 'Author B' },
       ],
       createdAt: '2024-01-01T00:00:00Z',
     });
@@ -220,11 +220,11 @@ describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
   });
 
   it('narrator filter matches when narrator is ANY of book.narrators (not just first)', () => {
-    const multiNarratorBook = createMockBook({
+    const multiNarratorBook = createMockLibraryBook({
       id: 11,
       narrators: [
-        { id: 1, name: 'Michael Kramer', slug: 'michael-kramer' },
-        { id: 2, name: 'Kate Reading', slug: 'kate-reading' },
+        { name: 'Michael Kramer' },
+        { name: 'Kate Reading' },
       ],
       createdAt: '2024-01-01T00:00:00Z',
     });
@@ -236,9 +236,9 @@ describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
   });
 
   it('author filter does not match book where no author matches', () => {
-    const book = createMockBook({
+    const book = createMockLibraryBook({
       id: 12,
-      authors: [{ id: 1, name: 'Author A', slug: 'author-a' }],
+      authors: [{ name: 'Author A' }],
       createdAt: '2024-01-01T00:00:00Z',
     });
     const result = applyClientFilters([book], {
@@ -248,9 +248,9 @@ describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
   });
 
   it('narrator filter does not match book where no narrator matches', () => {
-    const book = createMockBook({
+    const book = createMockLibraryBook({
       id: 13,
-      narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }],
+      narrators: [{ name: 'Michael Kramer' }],
       createdAt: '2024-01-01T00:00:00Z',
     });
     const result = applyClientFilters([book], {
@@ -264,16 +264,16 @@ describe('applyClientFilters case-insensitive (issue #79)', () => {
   const defaultFilters = { authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
 
   it('author filter matches book with different casing', () => {
-    const book = createMockBook({
+    const book = createMockLibraryBook({
       id: 20, createdAt: '2024-01-01T00:00:00Z',
-      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+      authors: [{ name: 'Brandon Sanderson' }],
     });
     const result = applyClientFilters([book], { ...defaultFilters, authorFilter: 'brandon sanderson' });
     expect(result).toHaveLength(1);
   });
 
   it('series filter matches book with different casing', () => {
-    const book = createMockBook({
+    const book = createMockLibraryBook({
       id: 21, createdAt: '2024-01-01T00:00:00Z',
       seriesName: 'The Stormlight Archive',
     });
@@ -282,9 +282,9 @@ describe('applyClientFilters case-insensitive (issue #79)', () => {
   });
 
   it('narrator filter regression-free after refactor (case-insensitive behavior preserved)', () => {
-    const book = createMockBook({
+    const book = createMockLibraryBook({
       id: 22, createdAt: '2024-01-01T00:00:00Z',
-      narrators: [{ id: 1, name: 'Kate Reading', slug: 'kate-reading' }],
+      narrators: [{ name: 'Kate Reading' }],
     });
     const result = applyClientFilters([book], { ...defaultFilters, narratorFilter: 'KATE READING' });
     expect(result).toHaveLength(1);

@@ -2,8 +2,22 @@ import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableC
 import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
+import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
+
+/** Server-side row shape for the library list — same fields as the wire
+ *  LibraryBookListItem but with Drizzle Date timestamps (Fastify serializes
+ *  them to ISO strings on the way out). */
+export type LibraryBookListItemRow = Omit<LibraryBookListItem, 'createdAt' | 'updatedAt'> & {
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export interface LibraryBookListResponseRow {
+  data: LibraryBookListItemRow[];
+  total: number;
+}
 
 type AuthorRow = typeof authors.$inferSelect;
 type NarratorRow = typeof narrators.$inferSelect;
@@ -45,16 +59,12 @@ export class BookListService {
     private db: Db,
   ) {}
 
-  // eslint-disable-next-line complexity -- batch-load pipeline for author/narrator/importList joins
-  async getAll(
-    status?: BookStatus,
-    pagination?: { limit?: number; offset?: number },
-    options?: BookListOptions,
-  ): Promise<{ data: BookWithAuthor[]; total: number }> {
-    // Build where conditions
+  /** Compose status + search WHERE filters shared by getAll() and
+   *  getAllForLibrary(). Search semantics match #365: title/series/genres +
+   *  author name subquery, no narrator subquery. */
+  private buildListWhere(status?: BookStatus, search?: string): SQL | undefined {
     const conditions: SQL[] = [];
 
-    // Status filter with tab-model mapping
     if (status) {
       const mapped = TAB_STATUS_MAP[status];
       if (mapped) {
@@ -64,9 +74,8 @@ export class BookListService {
       }
     }
 
-    // Search filter — SQL LIKE across title/series/genres + author name subquery
-    if (options?.search) {
-      const pattern = `%${options.search}%`;
+    if (search) {
+      const pattern = `%${search}%`;
       conditions.push(or(
         like(books.title, pattern),
         like(books.seriesName, pattern),
@@ -75,7 +84,16 @@ export class BookListService {
       )!);
     }
 
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    return conditions.length > 0 ? and(...conditions) : undefined;
+  }
+
+  // eslint-disable-next-line complexity -- batch-load pipeline for author/narrator/importList joins
+  async getAll(
+    status?: BookStatus,
+    pagination?: { limit?: number; offset?: number },
+    options?: BookListOptions,
+  ): Promise<{ data: BookWithAuthor[]; total: number }> {
+    const where = this.buildListWhere(status, options?.search);
 
     // Get total count (filters only, no pagination)
     const [{ value: total } = { value: 0 }] = await this.db
@@ -156,6 +174,129 @@ export class BookListService {
         narrators: sortedNarrators,
       };
     }) as BookWithAuthor[];
+
+    return { data, total };
+  }
+
+  /**
+   * Library list view payload. Projection includes only the fields the
+   * library page reads (LibraryBookCard, LibraryTableView, useLibraryFilters,
+   * useLibraryPageState, the delete-files affordance, and the
+   * library-launched SearchReleasesModal "In library" badge).
+   *
+   * Authors/narrators are joined with a name-only projection. Sort/search/
+   * status semantics match GET /api/books — buildOrderBy and buildListWhere
+   * are reused verbatim so server-side pagination ordering is identical.
+   */
+  async getAllForLibrary(
+    status?: BookStatus,
+    pagination?: { limit?: number; offset?: number },
+    options?: { search?: string; sortField?: BookSortField; sortDirection?: BookSortDirection },
+  ): Promise<LibraryBookListResponseRow> {
+    const where = this.buildListWhere(status, options?.search);
+
+    const [{ value: total } = { value: 0 }] = await this.db
+      .select({ value: countFn() })
+      .from(books)
+      .where(where);
+
+    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
+
+    let query = this.db
+      .select({
+        id: books.id,
+        title: books.title,
+        coverUrl: books.coverUrl,
+        status: books.status,
+        seriesName: books.seriesName,
+        seriesPosition: books.seriesPosition,
+        audioTotalSize: books.audioTotalSize,
+        size: books.size,
+        audioFileFormat: books.audioFileFormat,
+        audioDuration: books.audioDuration,
+        duration: books.duration,
+        path: books.path,
+        audioFileCount: books.audioFileCount,
+        lastGrabGuid: books.lastGrabGuid,
+        lastGrabInfoHash: books.lastGrabInfoHash,
+        createdAt: books.createdAt,
+        updatedAt: books.updatedAt,
+      })
+      .from(books)
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .where(where)
+      .orderBy(...orderClauses);
+
+    if (pagination?.limit !== undefined) {
+      query = query.limit(pagination.limit) as typeof query;
+    }
+    if (pagination?.offset !== undefined) {
+      query = query.offset(pagination.offset) as typeof query;
+    }
+
+    const rows = await query;
+
+    if (rows.length === 0) {
+      return { data: [], total };
+    }
+
+    const bookIds = rows.map((r) => r.id);
+
+    const authorResults = await this.db
+      .select({ bookId: bookAuthors.bookId, name: authors.name, position: bookAuthors.position })
+      .from(bookAuthors)
+      .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .where(inArray(bookAuthors.bookId, bookIds));
+
+    const narratorResults = await this.db
+      .select({ bookId: bookNarrators.bookId, name: narrators.name, position: bookNarrators.position })
+      .from(bookNarrators)
+      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+      .where(inArray(bookNarrators.bookId, bookIds));
+
+    const authorsMap = new Map<number, Array<{ name: string; position: number }>>();
+    for (const r of authorResults) {
+      if (!authorsMap.has(r.bookId)) authorsMap.set(r.bookId, []);
+      authorsMap.get(r.bookId)!.push({ name: r.name, position: r.position });
+    }
+
+    const narratorsMap = new Map<number, Array<{ name: string; position: number }>>();
+    for (const r of narratorResults) {
+      if (!narratorsMap.has(r.bookId)) narratorsMap.set(r.bookId, []);
+      narratorsMap.get(r.bookId)!.push({ name: r.name, position: r.position });
+    }
+
+    const data: LibraryBookListItemRow[] = rows.map((r) => {
+      const sortedAuthors = (authorsMap.get(r.id) ?? [])
+        .sort((a, b) => a.position - b.position)
+        .map((a) => ({ name: a.name }));
+      const sortedNarrators = (narratorsMap.get(r.id) ?? [])
+        .sort((a, b) => a.position - b.position)
+        .map((n) => ({ name: n.name }));
+
+      return {
+        id: r.id,
+        title: r.title,
+        coverUrl: r.coverUrl,
+        status: r.status as BookStatus,
+        seriesName: r.seriesName,
+        seriesPosition: r.seriesPosition,
+        authors: sortedAuthors,
+        narrators: sortedNarrators,
+        audioTotalSize: r.audioTotalSize,
+        size: r.size,
+        audioFileFormat: r.audioFileFormat,
+        audioDuration: r.audioDuration,
+        duration: r.duration,
+        path: r.path,
+        audioFileCount: r.audioFileCount,
+        lastGrabGuid: r.lastGrabGuid,
+        lastGrabInfoHash: r.lastGrabInfoHash,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      };
+    });
 
     return { data, total };
   }

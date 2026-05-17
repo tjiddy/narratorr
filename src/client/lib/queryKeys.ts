@@ -5,6 +5,9 @@ import type { BlacklistListParams } from './api/blacklist.js';
 
 export const queryKeys = {
   books: (params?: BookListParams) => params ? ['books', params] as const : ['books'] as const,
+  // Child of the `books` prefix so existing invalidateQueries({ queryKey: ['books'] })
+  // calls invalidate library-books too (TanStack prefix matching).
+  libraryBooks: (params?: BookListParams) => params ? ['books', 'library', params] as const : ['books', 'library'] as const,
   bookStats: () => ['books', 'stats'] as const,
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,

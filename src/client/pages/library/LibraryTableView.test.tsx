@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers.js';
-import { createMockBook } from '../../__tests__/factories.js';
+import { createMockLibraryBook } from '../../__tests__/factories.js';
 import { LibraryTableView } from './LibraryTableView.js';
 import type { SortField, SortDirection, DisplayBook } from './helpers.js';
 
@@ -24,7 +24,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 
 function defaultProps() {
   return {
-    books: [createMockBook()],
+    books: [createMockLibraryBook()],
     selectedIds: new Set<number>(),
     onSelectionChange: vi.fn(),
     sortField: 'createdAt' as SortField,
@@ -73,10 +73,10 @@ describe('LibraryTableView', () => {
     });
 
     it('renders book data in each column correctly', () => {
-      const book = createMockBook({
+      const book = createMockLibraryBook({
         id: 42,
         title: 'Mistborn',
-        narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }],
+        narrators: [{ name: 'Michael Kramer' }],
         seriesName: 'Cosmere',
         seriesPosition: 1,
         status: 'imported',
@@ -113,7 +113,7 @@ describe('LibraryTableView', () => {
     });
 
     it('shows dash for null narrator', () => {
-      const book = createMockBook({ narrators: [] });
+      const book = createMockLibraryBook({ narrators: [] });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
@@ -122,7 +122,7 @@ describe('LibraryTableView', () => {
     });
 
     it('shows dash for null series', () => {
-      const book = createMockBook({ seriesName: null, seriesPosition: null });
+      const book = createMockLibraryBook({ seriesName: null, seriesPosition: null });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
@@ -131,7 +131,7 @@ describe('LibraryTableView', () => {
     });
 
     it('shows dash for null quality (no audioDuration)', () => {
-      const book = createMockBook({ audioDuration: null, duration: null });
+      const book = createMockLibraryBook({ audioDuration: null, duration: null });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
@@ -140,7 +140,7 @@ describe('LibraryTableView', () => {
     });
 
     it('shows dash for null format', () => {
-      const book = createMockBook({ audioFileFormat: null });
+      const book = createMockLibraryBook({ audioFileFormat: null });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
@@ -149,7 +149,7 @@ describe('LibraryTableView', () => {
     });
 
     it('shows dash for null size (both audioTotalSize and size null)', () => {
-      const book = createMockBook({ audioTotalSize: null, size: null });
+      const book = createMockLibraryBook({ audioTotalSize: null, size: null });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
@@ -158,7 +158,7 @@ describe('LibraryTableView', () => {
     });
 
     it('falls back from audioTotalSize to size for size column', () => {
-      const book = createMockBook({
+      const book = createMockLibraryBook({
         audioTotalSize: null,
         size: 200 * 1024 * 1024, // 200 MB
       });
@@ -171,7 +171,7 @@ describe('LibraryTableView', () => {
 
     it('computes MB/hr from audioTotalSize and audioDuration', () => {
       // 1 GB over 5 hours = 204.8 MB/hr, rounds to 205
-      const book = createMockBook({
+      const book = createMockLibraryBook({
         audioTotalSize: 1024 * 1024 * 1024,
         audioDuration: 18000, // 5 hours in seconds
       });
@@ -183,7 +183,7 @@ describe('LibraryTableView', () => {
     });
 
     it('guards against division by zero when audioDuration is 0', () => {
-      const book = createMockBook({
+      const book = createMockLibraryBook({
         audioTotalSize: 500 * 1024 * 1024,
         audioDuration: 0,
         duration: 0,
@@ -200,9 +200,9 @@ describe('LibraryTableView', () => {
   describe('sorting', () => {
     it('renders books in the order provided (ascending)', () => {
       const books = [
-        createMockBook({ id: 1, title: 'Alpha' }),
-        createMockBook({ id: 2, title: 'Beta' }),
-        createMockBook({ id: 3, title: 'Gamma' }),
+        createMockLibraryBook({ id: 1, title: 'Alpha' }),
+        createMockLibraryBook({ id: 2, title: 'Beta' }),
+        createMockLibraryBook({ id: 3, title: 'Gamma' }),
       ];
       renderTable({ books });
 
@@ -258,8 +258,8 @@ describe('LibraryTableView', () => {
   describe('selection', () => {
     it('renders checkbox in each row', () => {
       const books = [
-        createMockBook({ id: 1, title: 'Book A' }),
-        createMockBook({ id: 2, title: 'Book B' }),
+        createMockLibraryBook({ id: 1, title: 'Book A' }),
+        createMockLibraryBook({ id: 2, title: 'Book B' }),
       ];
       renderTable({ books });
 
@@ -274,8 +274,8 @@ describe('LibraryTableView', () => {
       const user = userEvent.setup();
       const onSelectionChange = vi.fn();
       const books = [
-        createMockBook({ id: 10, title: 'Book A' }),
-        createMockBook({ id: 20, title: 'Book B' }),
+        createMockLibraryBook({ id: 10, title: 'Book A' }),
+        createMockLibraryBook({ id: 20, title: 'Book B' }),
       ];
       renderTable({ books, selectedIds: new Set(), onSelectionChange });
 
@@ -289,8 +289,8 @@ describe('LibraryTableView', () => {
       const user = userEvent.setup();
       const onSelectionChange = vi.fn();
       const books = [
-        createMockBook({ id: 10, title: 'Book A' }),
-        createMockBook({ id: 20, title: 'Book B' }),
+        createMockLibraryBook({ id: 10, title: 'Book A' }),
+        createMockLibraryBook({ id: 20, title: 'Book B' }),
       ];
       renderTable({ books, selectedIds: new Set(), onSelectionChange });
 
@@ -304,9 +304,9 @@ describe('LibraryTableView', () => {
       const user = userEvent.setup();
       const onSelectionChange = vi.fn();
       const books = [
-        createMockBook({ id: 1 }),
-        createMockBook({ id: 2 }),
-        createMockBook({ id: 3 }),
+        createMockLibraryBook({ id: 1 }),
+        createMockLibraryBook({ id: 2 }),
+        createMockLibraryBook({ id: 3 }),
       ];
       renderTable({ books, selectedIds: new Set(), onSelectionChange });
 
@@ -318,8 +318,8 @@ describe('LibraryTableView', () => {
       const user = userEvent.setup();
       const onSelectionChange = vi.fn();
       const books = [
-        createMockBook({ id: 1 }),
-        createMockBook({ id: 2 }),
+        createMockLibraryBook({ id: 1 }),
+        createMockLibraryBook({ id: 2 }),
       ];
       // Start with all selected
       renderTable({ books, selectedIds: new Set([1, 2]), onSelectionChange });
@@ -339,19 +339,19 @@ describe('LibraryTableView', () => {
 
   describe('collapsed series badge', () => {
     it('shows total book count when collapsedCount > 0', () => {
-      const book: DisplayBook = { ...createMockBook(), collapsedCount: 4 };
+      const book: DisplayBook = { ...createMockLibraryBook(), collapsedCount: 4 };
       renderTable({ books: [book] });
       expect(screen.getByText('5 books')).toBeInTheDocument();
     });
 
     it('does not render badge when collapsedCount is 0', () => {
-      const book: DisplayBook = { ...createMockBook(), collapsedCount: 0 };
+      const book: DisplayBook = { ...createMockLibraryBook(), collapsedCount: 0 };
       renderTable({ books: [book] });
       expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
     });
 
     it('does not render badge when collapsedCount is undefined', () => {
-      renderTable({ books: [createMockBook()] });
+      renderTable({ books: [createMockLibraryBook()] });
       expect(screen.queryByText(/books$/)).not.toBeInTheDocument();
     });
   });
