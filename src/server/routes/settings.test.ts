@@ -843,6 +843,23 @@ describe('settings routes', () => {
       expect(services.settings.get).not.toHaveBeenCalled();
     });
 
+    // AC9 — the cheap-query contract: must call searchSeries('test'), not a heavier
+    // query (e.g. getSeriesMembers) and not an arbitrary string. A regression to
+    // any other query would skip the AC9 contract silently if we only asserted
+    // "searchSeries was called".
+    it("invokes HardcoverClient.searchSeries with the literal 'test' query", async () => {
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key-ac9' },
+      });
+
+      expect(mockHardcoverSearchSeries).toHaveBeenCalledTimes(1);
+      expect(mockHardcoverSearchSeries).toHaveBeenCalledWith('test');
+    });
+
     it('resolves sentinel against stored key', async () => {
       (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: 'stored-key' });
       mockHardcoverSearchSeries.mockResolvedValue([]);
