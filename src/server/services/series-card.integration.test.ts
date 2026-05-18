@@ -320,30 +320,50 @@ describe('SeriesCardService — integration', () => {
     });
 
     it('null-id branch with multiple linked books: picks the lowest books.id deterministically', async () => {
-      const row = await seedStaleSeriesRow({ name: 'The Band', normalizedName: 'the band', hardcoverSeriesId: null, authorName: null });
-      // Insert in non-order: highest id first, then lowest. The query must still pick the lowest.
-      const higherBookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      const lowerBookId = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
-      // Adversarial: lower book inserted after higher → highest books.id may have a higher numeric id
-      // but the query should still order by books.id ascending. Verify via the lookupForFixMatch the
-      // resolver receives.
+      const row = await seedStaleSeriesRow({ name: 'Shared Series', normalizedName: 'shared series', hardcoverSeriesId: null, authorName: null });
+      // Give each candidate book observably distinct seriesName + author so the
+      // GraphQL request the resolver issues proves WHICH book was picked. The
+      // `lower` book is inserted first → gets the lower books.id; if
+      // orderBy(asc(books.id)) is broken, the resolver will issue the
+      // higher-id book's name/author instead and the assertions below will
+      // fail. Both books still link to the same stale series row via
+      // series_members.seriesId, so the sweep treats them as siblings.
+      const lowerBookId = await seedBookWithSeries(db, {
+        title: 'Kings of the Wyld',
+        seriesName: 'Lower Series Name',
+        seriesPosition: 1,
+        authorName: 'Lower Author',
+      });
+      const higherBookId = await seedBookWithSeries(db, {
+        title: 'Bloody Rose',
+        seriesName: 'Higher Series Name',
+        seriesPosition: 2,
+        authorName: 'Higher Author',
+      });
+      // Insert series_members rows in the OPPOSITE order from books.id to
+      // make sure the query's orderBy(asc(books.id)) is the load-bearing
+      // signal, not the insertion order of the member rows.
       await db.insert(seriesMembers).values([
-        { seriesId: row.id, bookId: higherBookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2, source: 'local' },
-        { seriesId: row.id, bookId: lowerBookId, title: 'Kings of the Wyld', normalizedTitle: 'kings of the wyld', authorName: 'Nicholas Eames', position: 1, source: 'local' },
+        { seriesId: row.id, bookId: higherBookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Higher Author', position: 2, source: 'local' },
+        { seriesId: row.id, bookId: lowerBookId, title: 'Kings of the Wyld', normalizedTitle: 'kings of the wyld', authorName: 'Lower Author', position: 1, source: 'local' },
       ]);
+      expect(lowerBookId).toBeLessThan(higherBookId);
 
       const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-        data: { series: [{ id: 5523, name: 'The Band', slug: 'the-band', author: { name: 'Nicholas Eames' }, book_series: [] }] },
+        data: { series: [{ id: 5523, name: 'Lower Series Name', slug: 'lower', author: { name: 'Lower Author' }, book_series: [] }] },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
       globalThis.fetch = fetchMock as typeof globalThis.fetch;
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
       const result = await svc.runScheduledRefresh();
+
       expect(result.refreshed).toBe(1);
-      // Whichever book has the LOWEST books.id is what was used. We can't easily assert
-      // book identity from the GraphQL payload alone (both share author + series), but
-      // the deterministic ordering is exercised via the books.id sort in the SQL.
-      expect(fetchMock).toHaveBeenCalled();
+      // The GraphQL variables MUST come from the lower-id book. Reversing the
+      // orderBy in the production code would send 'Higher Series Name' /
+      // 'Higher Author' instead and fail both assertions.
+      const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+      expect(body.variables.name).toBe('Lower Series Name');
+      expect(body.variables.author).toBe('Lower Author');
     });
 
     it('no-qualifying-book branch: logs at info and skips, does not modify the row', async () => {
