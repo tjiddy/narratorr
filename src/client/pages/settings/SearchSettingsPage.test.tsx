@@ -13,6 +13,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    testHardcoverApiKey: vi.fn(),
   },
 }));
 
@@ -58,11 +59,20 @@ describe('SearchSettingsPage', () => {
     renderWithProviders(<SearchSettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Region')).toBeInTheDocument();
+      expect(screen.getByText('Languages')).toBeInTheDocument();
     });
-    expect(screen.getByText('Languages')).toBeInTheDocument();
     expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
     expect(screen.getByLabelText('Required Words')).toBeInTheDocument();
+  });
+
+  it('renders Metadata card with all expected fields', async () => {
+    renderWithProviders(<SearchSettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Metadata')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Region')).toBeInTheDocument();
+    expect(screen.getByLabelText('Hardcover API Key')).toBeInTheDocument();
   });
 
   it('renders Quality card with all expected fields', async () => {
@@ -74,18 +84,33 @@ describe('SearchSettingsPage', () => {
     expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
   });
 
-  it('renders three separate cards with independent forms', async () => {
+  it('renders four separate cards with independent forms', async () => {
     renderWithProviders(<SearchSettingsPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Search')).toBeInTheDocument();
     });
+    expect(screen.getByText('Metadata')).toBeInTheDocument();
     expect(screen.getByText('Filtering')).toBeInTheDocument();
     expect(screen.getByText('Quality')).toBeInTheDocument();
 
-    // Each card has its own SettingsSection wrapper — check for 3 distinct section titles
     const forms = document.querySelectorAll('form');
-    expect(forms).toHaveLength(3);
+    expect(forms).toHaveLength(4);
+  });
+
+  it('Metadata card appears before Filtering card in document order', async () => {
+    renderWithProviders(<SearchSettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Metadata')).toBeInTheDocument();
+    });
+
+    const metadataHeading = screen.getByText('Metadata');
+    const filteringHeading = screen.getByText('Filtering');
+    expect(
+      metadataHeading.compareDocumentPosition(filteringHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('Region dropdown shows country names, not Audible format', async () => {

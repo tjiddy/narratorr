@@ -1,8 +1,35 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
+import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
+import type * as HardcoverModule from '../../core/metadata/hardcover.js';
 import type { Services } from './index.js';
+
+const { mockHardcoverSearchSeries, mockHardcoverClientCtor } = vi.hoisted(() => {
+  const searchSeriesFn = vi.fn();
+  const ctorFn = vi.fn();
+  return {
+    mockHardcoverSearchSeries: searchSeriesFn,
+    mockHardcoverClientCtor: ctorFn,
+  };
+});
+
+vi.mock('../../core/metadata/hardcover.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof HardcoverModule>();
+  class MockHardcoverClient {
+    constructor(apiKey: string) {
+      mockHardcoverClientCtor(apiKey);
+    }
+    searchSeries(query: string) {
+      return mockHardcoverSearchSeries(query);
+    }
+  }
+  return {
+    ...actual,
+    HardcoverClient: MockHardcoverClient,
+  };
+});
 
 const mockSettings = createMockSettings();
 
@@ -28,6 +55,8 @@ describe('settings routes', () => {
   beforeEach(() => {
     resetMockServices(services);
     for (const s of Object.values(logSpies)) s.mockClear();
+    mockHardcoverSearchSeries.mockReset();
+    mockHardcoverClientCtor.mockReset();
   });
 
   describe('GET /api/settings', () => {
@@ -795,6 +824,229 @@ describe('settings routes', () => {
       expect(updateArg).toHaveProperty('metadata');
       expect(updateArg).not.toHaveProperty('importList');
       expect(updateArg).not.toHaveProperty('importLists');
+    });
+  });
+
+  describe('POST /api/settings/metadata/hardcover/test', () => {
+    it('uses plaintext apiKey from body and does NOT touch settingsService.get', async () => {
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key-1' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: true, message: 'Connected.' });
+      expect(services.settings.get).not.toHaveBeenCalled();
+    });
+
+    it('resolves sentinel against stored key', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: 'stored-key' });
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: '********' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('metadata');
+      expect(mockHardcoverClientCtor).toHaveBeenCalledWith('stored-key');
+    });
+
+    it('empty-string apiKey falls back to stored key', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: 'stored-key' });
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: '' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('metadata');
+    });
+
+    it('whitespace-only apiKey falls back to stored key', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: 'stored-key' });
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: '   ' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('metadata');
+    });
+
+    it('omitted apiKey with no stored key returns 400', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: '' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: 'No Hardcover API key configured.' });
+      expect(mockHardcoverSearchSeries).not.toHaveBeenCalled();
+    });
+
+    it('omitted apiKey with whitespace-only stored key returns 400', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: '   ' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: 'No Hardcover API key configured.' });
+    });
+
+    it('sentinel apiKey with no stored key returns 400', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ hardcoverApiKey: '' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: '********' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: 'No Hardcover API key configured.' });
+    });
+
+    it('RateLimitError maps to rate-limit message', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(new RateLimitError(5000, 'hardcover'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({
+        success: false,
+        message: 'Hardcover is rate-limiting requests. Try again in 5s.',
+      });
+    });
+
+    it('MetadataError with 401 message maps to "Invalid API key."', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover API returned 401: Unauthorized'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: 'Invalid API key.' });
+    });
+
+    it('MetadataError with 403 message maps to "Invalid API key."', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover API returned 403: Forbidden'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: 'Invalid API key.' });
+    });
+
+    it('TransientError maps to network message', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(new TransientError('hardcover', 'network'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({
+        success: false,
+        message: "Couldn't reach Hardcover. Check your network and try again.",
+      });
+    });
+
+    it('other MetadataError surfaces error.message verbatim', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(new MetadataError('hardcover', 'Schema mismatch'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: 'Schema mismatch' });
+    });
+
+    it('route success log does not contain the plaintext apiKey', async () => {
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'super-secret-plaintext-1234' },
+      });
+
+      const routeLogCalls = logSpies.info.mock.calls.filter(
+        (call) => call[call.length - 1] === 'Hardcover API key test successful',
+      );
+      expect(routeLogCalls.length).toBeGreaterThan(0);
+      for (const call of routeLogCalls) {
+        const serialized = JSON.stringify(call);
+        expect(serialized).not.toContain('super-secret-plaintext-1234');
+      }
+    });
+
+    it('route failure log does not contain the plaintext apiKey', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover API returned 401: Unauthorized'),
+      );
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'super-secret-plaintext-9999' },
+      });
+
+      const routeLogCalls = logSpies.warn.mock.calls.filter(
+        (call) => call[call.length - 1] === 'Hardcover API key test failed',
+      );
+      expect(routeLogCalls.length).toBeGreaterThan(0);
+      for (const call of routeLogCalls) {
+        const serialized = JSON.stringify(call);
+        expect(serialized).not.toContain('super-secret-plaintext-9999');
+      }
     });
   });
 });
