@@ -85,6 +85,18 @@ export async function upsertSeriesLink(
     const normalized = normalizeSeriesName(args.name);
     const seriesId = await resolveSeriesId(tx, args.name, normalized);
 
+    // When the series is already Hardcover-canonical, skip the local-row seed:
+    // the next series-card GET's `findInLibraryMatch` will pair this book with
+    // its Hardcover member directly from the `books` table. Inserting a local
+    // row here would coexist with that match (both pass the partial unique
+    // indexes) and surface as two rows for the same book on the card.
+    const seriesRow = await tx
+      .select({ hardcoverSeriesId: series.hardcoverSeriesId })
+      .from(series)
+      .where(eq(series.id, seriesId))
+      .limit(1);
+    if (seriesRow[0]?.hardcoverSeriesId != null) return;
+
     const existing = await tx
       .select({ id: seriesMembers.id })
       .from(seriesMembers)

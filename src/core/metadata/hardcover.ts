@@ -66,6 +66,11 @@ const GET_SERIES_MEMBERS_BY_ID_QUERY = `
   }
 `;
 
+// `query_type` is Hardcover's Algolia-style hit-type filter. The documented
+// values (`books`, `authors`, `series`, `characters`, ...) are lowercase, and
+// the #1139 spec author also verified that `"Series"` (capitalized) returns
+// results — the Algolia layer appears to be casing-tolerant. Keep the
+// lowercase form to match Hardcover's docs; do not "fix" it to capitalized.
 const SEARCH_SERIES_QUERY = `
   query SearchSeries($query: String!) {
     search(query: $query, query_type: "series", per_page: 10, page: 1) {

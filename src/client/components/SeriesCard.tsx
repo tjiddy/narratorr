@@ -41,15 +41,7 @@ function MemberRow({ member, card }: MemberRowProps) {
       data-testid="series-card-member"
       data-in-library={member.inLibrary ? 'true' : 'false'}
     >
-      <span className="flex items-center gap-3 min-w-0">
-        {member.imageUrl ? (
-          <img
-            src={member.imageUrl}
-            alt=""
-            className="w-8 h-12 object-cover rounded shrink-0 bg-muted"
-            loading="lazy"
-          />
-        ) : null}
+      <span className="flex items-center gap-2 min-w-0">
         <span className="text-xs text-muted-foreground tabular-nums w-8 shrink-0 text-right">
           {formatPositionLabel(member)}
         </span>
