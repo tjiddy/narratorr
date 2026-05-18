@@ -159,12 +159,26 @@ describe('SeriesCardService — integration', () => {
       expect(bloody.inLibrary).toBe(true);
       expect(bloody.libraryBookId).toBe(bookId);
 
+      // AC5.3 regression: Hardcover `image.url` must still flow into the
+      // persisted row AND the returned card even though the component no
+      // longer renders thumbnails (#1139 Bug 5). Deleting the production
+      // assignment `imageUrl: member.imageUrl` in `persistAndBuildCard` must
+      // make these assertions fail; deleting the DB column or the read
+      // mapping must also fail them.
+      const kings = card!.members.find((m) => m.title === 'Kings of the Wyld')!;
+      expect(kings.imageUrl).toBe('https://example.test/kw.jpg');
+      expect(bloody.imageUrl).toBeNull();
+
       // Cache row persisted
       const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 5523));
       expect(persisted).toHaveLength(1);
       expect(persisted[0]!.authorName).toBe('Nicholas Eames');
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
       expect(memberRows).toHaveLength(3);
+      const kingsRow = memberRows.find((m) => m.title === 'Kings of the Wyld')!;
+      expect(kingsRow.imageUrl).toBe('https://example.test/kw.jpg');
+      const bloodyRow = memberRows.find((m) => m.title === 'Bloody Rose')!;
+      expect(bloodyRow.imageUrl).toBeNull();
     });
 
     it('cache-hit returns persisted seriesAuthor without re-fetching Hardcover', async () => {
