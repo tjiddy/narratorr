@@ -185,7 +185,7 @@ describe('SeriesCard', () => {
     expect(screen.getByText('Kings of the Wyld')).toBeInTheDocument();
   });
 
-  it('skips the cover slot when imageUrl is null', async () => {
+  it('does not render a cover image when imageUrl is null', async () => {
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
         id: 1,
@@ -205,7 +205,10 @@ describe('SeriesCard', () => {
     expect(row.querySelector('img')).toBeNull();
   });
 
-  it('renders the cover image when imageUrl is non-null', async () => {
+  it('does not render a cover image even when imageUrl is non-null', async () => {
+    // #1139 Bug 5: the card no longer renders thumbnails. The imageUrl field
+    // stays in the data model — backend still populates it from Hardcover —
+    // but the component does not consume it.
     vi.mocked(api.getBookSeries).mockResolvedValueOnce({
       series: {
         id: 1,
@@ -222,7 +225,6 @@ describe('SeriesCard', () => {
     renderCard({ bookId: 1 });
     await screen.findByText('Kings of the Wyld');
     const row = screen.getByTestId('series-card-member');
-    expect(row.querySelector('img')).not.toBeNull();
-    expect(row.querySelector('img')!.getAttribute('src')).toBe('https://example.test/kw.jpg');
+    expect(row.querySelector('img')).toBeNull();
   });
 });
