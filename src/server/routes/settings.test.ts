@@ -963,7 +963,13 @@ describe('settings routes', () => {
       });
     });
 
-    it('MetadataError with 401 message maps to "Invalid API key."', async () => {
+    // #1138 Bug 2: HTTP 401/403 from `mapHttpError` and GraphQL-envelope auth
+    // failures (Hardcover often returns HTTP 200 with the error in the body)
+    // both map to a single friendly Bearer-prefix hint.
+    const INVALID_KEY_HINT =
+      'Invalid Hardcover API key. (If you copied from the Hardcover docs, drop the "Bearer " prefix.)';
+
+    it('MetadataError with 401 message maps to the Bearer-hint text', async () => {
       mockHardcoverSearchSeries.mockRejectedValue(
         new MetadataError('hardcover', 'Hardcover API returned 401: Unauthorized'),
       );
@@ -976,10 +982,10 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body).toEqual({ success: false, message: 'Invalid API key.' });
+      expect(body).toEqual({ success: false, message: INVALID_KEY_HINT });
     });
 
-    it('MetadataError with 403 message maps to "Invalid API key."', async () => {
+    it('MetadataError with 403 message maps to the Bearer-hint text', async () => {
       mockHardcoverSearchSeries.mockRejectedValue(
         new MetadataError('hardcover', 'Hardcover API returned 403: Forbidden'),
       );
@@ -992,7 +998,89 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body).toEqual({ success: false, message: 'Invalid API key.' });
+      expect(body).toEqual({ success: false, message: INVALID_KEY_HINT });
+    });
+
+    it('MetadataError with "Malformed Authorization header" maps to the Bearer-hint text', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover search error: Malformed Authorization header'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: INVALID_KEY_HINT });
+    });
+
+    it('MetadataError with "Could not verify JWT" maps to the Bearer-hint text', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover search error: Could not verify JWT: signature mismatch'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ success: false, message: INVALID_KEY_HINT });
+    });
+
+    it('MetadataError with an unrecognized message falls through to error.message', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover search error: some unrecognized failure'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({
+        success: false,
+        message: 'Hardcover search error: some unrecognized failure',
+      });
+    });
+
+    // #1138 Bug 3: the route hands the raw body value to HardcoverClient — the
+    // constructor (verified in hardcover.test.ts) does the trim/Bearer strip.
+    // We assert the route's responsibility here: do not pre-process the key.
+    it('whitespace-wrapped apiKey reaches HardcoverClient untouched and succeeds', async () => {
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: '  eyJValidKey  \n' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true, message: 'Connected.' });
+      expect(mockHardcoverClientCtor).toHaveBeenCalledWith('  eyJValidKey  \n');
+    });
+
+    it('Bearer-prefixed apiKey reaches HardcoverClient untouched and succeeds', async () => {
+      mockHardcoverSearchSeries.mockResolvedValue([]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'Bearer eyJValidKey' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true, message: 'Connected.' });
+      expect(mockHardcoverClientCtor).toHaveBeenCalledWith('Bearer eyJValidKey');
     });
 
     it('TransientError maps to network message', async () => {

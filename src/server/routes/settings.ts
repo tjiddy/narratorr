@@ -72,8 +72,17 @@ function mapHardcoverError(error: unknown): string {
     return "Couldn't reach Hardcover. Check your network and try again.";
   }
   if (error instanceof MetadataError) {
-    if (error.message.includes('401') || error.message.includes('403')) {
-      return 'Invalid API key.';
+    // Hardcover's GraphQL endpoint typically returns HTTP 200 with the auth
+    // failure buried in the response envelope ("Malformed Authorization header",
+    // "Could not verify JWT: ..."). The HTTP 401/403 substring branch still
+    // covers the network-layer failure mode; the regex covers the GraphQL one.
+    // Both branches return the same Bearer-prefix hint — see #1138 Bug 2.
+    if (
+      error.message.includes('401') ||
+      error.message.includes('403') ||
+      /malformed authorization|could not verify jwt|invalid.+token|unauthorized/i.test(error.message)
+    ) {
+      return 'Invalid Hardcover API key. (If you copied from the Hardcover docs, drop the "Bearer " prefix.)';
     }
     return error.message;
   }

@@ -213,7 +213,16 @@ async function executeGraphQL(apiKey: string, body: { query: string; variables?:
 }
 
 export class HardcoverClient {
-  constructor(private readonly apiKey: string) {}
+  private readonly apiKey: string;
+
+  constructor(apiKey: string) {
+    // Hardcover's docs display the auth header value as `Bearer <token>`; users
+    // routinely paste the visible string verbatim, doubling the prefix. Strip a
+    // leading `Bearer ` (case-insensitive, including the bare `Bearer` boundary
+    // via `(?:\s+|$)`) and surrounding whitespace at the integration boundary
+    // so both the test endpoint and the production resolver normalize once.
+    this.apiKey = apiKey.replace(/^\s*bearer(?:\s+|$)/i, '').trim();
+  }
 
   async getSeriesMembers(name: string, author: string): Promise<HardcoverSeriesData | null> {
     const raw = await executeGraphQL(this.apiKey, {
