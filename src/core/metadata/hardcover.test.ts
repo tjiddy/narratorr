@@ -20,6 +20,57 @@ describe('HardcoverClient', () => {
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init });
   }
 
+  // Hardcover's docs surface the auth header value as `Bearer <token>`; users
+  // routinely paste the visible string verbatim. The constructor strips a
+  // leading `Bearer ` (case-insensitive) and trims surrounding whitespace so
+  // both the production resolver path and the settings test endpoint normalize
+  // before the key reaches the outbound Authorization header. See #1138 Bug 1.
+  describe('Constructor apiKey normalization', () => {
+    function getStoredKey(client: HardcoverClient): string {
+      return (client as unknown as { apiKey: string }).apiKey;
+    }
+
+    it.each([
+      ['Bearer eyJabc', 'eyJabc'],
+      ['bearer eyJabc', 'eyJabc'],
+      ['BEARER eyJabc', 'eyJabc'],
+      ['Bearer  eyJabc', 'eyJabc'],
+      ['  Bearer eyJabc  ', 'eyJabc'],
+    ])('strips a leading Bearer prefix from %j', (input, expected) => {
+      expect(getStoredKey(new HardcoverClient(input))).toBe(expected);
+    });
+
+    it('trims surrounding whitespace around a bare token', () => {
+      expect(getStoredKey(new HardcoverClient('  eyJabc  \n'))).toBe('eyJabc');
+    });
+
+    it('preserves whitespace inside the key body', () => {
+      expect(getStoredKey(new HardcoverClient('eyJ\nabc'))).toBe('eyJ\nabc');
+    });
+
+    it('reduces bare "Bearer " (with trailing space) to an empty string', () => {
+      expect(getStoredKey(new HardcoverClient('Bearer '))).toBe('');
+    });
+
+    it('reduces bare "Bearer" (no separator) to an empty string', () => {
+      expect(getStoredKey(new HardcoverClient('Bearer'))).toBe('');
+    });
+
+    it('preserves an empty input as an empty string without throwing', () => {
+      expect(() => new HardcoverClient('')).not.toThrow();
+      expect(getStoredKey(new HardcoverClient(''))).toBe('');
+    });
+
+    it('uses the normalized key in the outbound Authorization header', async () => {
+      fetchMock.mockResolvedValueOnce(buildJsonResponse({ data: { series: [] } }));
+      const client = new HardcoverClient('Bearer eyJabc');
+      await client.getSeriesMembers('A', 'X');
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer eyJabc');
+    });
+  });
+
   describe('Authorization header + $today', () => {
     it('sends the API key as a Bearer token and stamps the current date', async () => {
       fetchMock.mockResolvedValueOnce(buildJsonResponse({ data: { series: [] } }));
