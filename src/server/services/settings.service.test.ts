@@ -212,6 +212,72 @@ describe('SettingsService', () => {
     });
   });
 
+  // F2 (PR #1135 review): symmetric round-trip coverage for metadata.hardcoverApiKey.
+  describe('metadata.hardcoverApiKey encryption (#1133)', () => {
+    it('set("metadata") encrypts hardcoverApiKey before storing', async () => {
+      db.select.mockReturnValue(mockDbChain([])); // no existing row
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.set('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: 'sk-plain-1234' });
+
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value;
+      expect(isEncrypted(storedValue.hardcoverApiKey as string)).toBe(true);
+      // Non-secret fields are written as-is
+      expect(storedValue.audibleRegion).toBe('us');
+      expect(storedValue.languages).toEqual(['english']);
+    });
+
+    it('get("metadata") decrypts stored encrypted hardcoverApiKey', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const encrypted = encrypt('sk-roundtrip-7777', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: encrypted } }]));
+
+      const result = await service.get('metadata');
+
+      expect(result.hardcoverApiKey).toBe('sk-roundtrip-7777');
+    });
+
+    it('set("metadata") with sentinel hardcoverApiKey preserves existing encrypted value', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const existingEncrypted = encrypt('sk-existing-9999', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: existingEncrypted } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.set('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: '********' });
+
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value;
+      // Ciphertext preserved verbatim — the sentinel never reaches the DB
+      expect(storedValue.hardcoverApiKey).toBe(existingEncrypted);
+    });
+
+    it('set("metadata") with new plaintext key replaces the previously-stored ciphertext', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const oldEncrypted = encrypt('sk-old', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: oldEncrypted } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.set('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: 'sk-new' });
+
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value;
+      expect(isEncrypted(storedValue.hardcoverApiKey as string)).toBe(true);
+      expect(storedValue.hardcoverApiKey).not.toBe(oldEncrypted);
+    });
+
+    it('getAll() decrypts metadata.hardcoverApiKey alongside other categories', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const encrypted = encrypt('sk-getall', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([
+        { key: 'metadata', value: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: encrypted } },
+      ]));
+
+      const result = await service.getAll();
+      expect(result.metadata.hardcoverApiKey).toBe('sk-getall');
+    });
+  });
+
   describe('update deep-merge', () => {
     it('preserves other fields when updating a single field in a category', async () => {
       const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
