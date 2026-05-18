@@ -24,6 +24,7 @@ const filteringFormSchema = z.object({
   audibleRegion: audibleRegionSchema,
   languages: z.array(z.string()),
   minDurationMinutes: z.number().int().nonnegative(),
+  hardcoverApiKey: z.string(),
   rejectWords: z.string(),
   requiredWords: z.string(),
 });
@@ -35,6 +36,7 @@ function toFormData(settings: AppSettings): FilteringFormData {
     audibleRegion: settings.metadata.audibleRegion,
     languages: [...settings.metadata.languages],
     minDurationMinutes: settings.metadata.minDurationMinutes,
+    hardcoverApiKey: settings.metadata.hardcoverApiKey,
     rejectWords: settings.quality.rejectWords,
     requiredWords: settings.quality.requiredWords,
   };
@@ -46,6 +48,7 @@ function toPayload(data: FilteringFormData) {
       audibleRegion: data.audibleRegion,
       languages: data.languages as CanonicalLanguage[],
       minDurationMinutes: data.minDurationMinutes,
+      hardcoverApiKey: data.hardcoverApiKey,
     },
     quality: {
       rejectWords: data.rejectWords,
@@ -128,6 +131,21 @@ export function FilteringSettingsSection() {
           />
           <p className="text-sm text-muted-foreground mt-2">
             Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Set to 0 to disable. Recommended: 30 minutes.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="hardcoverApiKey" className="block text-sm font-medium mb-2">Hardcover API Key</label>
+          <input
+            id="hardcoverApiKey"
+            type="password"
+            autoComplete="off"
+            {...register('hardcoverApiKey')}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
+            placeholder="Paste your Hardcover API key"
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            Used to populate the Series card with Hardcover-canonical members. Leave blank to show only books from your library that share the series name.
           </p>
         </div>
 

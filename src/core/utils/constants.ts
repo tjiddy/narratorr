@@ -21,3 +21,6 @@ export const AUDNEXUS_TIMEOUT_MS = 15_000;
 
 /** Request timeout for HTTP file downloads — cover images, NZB files via blackhole (ms). */
 export const HTTP_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/** Request timeout for Hardcover series-card GraphQL requests (ms). */
+export const HARDCOVER_TIMEOUT_MS = 15_000;

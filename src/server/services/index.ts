@@ -31,13 +31,10 @@ export { DiscoveryService, type LibrarySignals } from './discovery.service.js';
 export { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
 export { refreshScanBook, RefreshScanError, type RefreshScanResult } from './refresh-scan.service.js';
 export {
-  SeriesRefreshService,
-  computeQueueIdentity,
-  normalizeSeriesName,
+  SeriesCardService,
+  STALE_AFTER_DAYS,
   type BookSeriesCardData,
-  type SeriesMemberCard,
-  type RefreshResponse,
-  type RefreshStatus,
-  type TriggerInput,
-} from './series-refresh.service.js';
+  type BookSeriesMemberCard,
+} from './series-card.service.js';
+export { normalizeSeriesName } from '../utils/series-normalize.js';
 export type { SuggestionReason } from '../../shared/schemas/discovery.js';

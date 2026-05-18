@@ -692,5 +692,110 @@ describe('settings routes', () => {
       expect(services.indexer.clearAdapterCache).not.toHaveBeenCalled();
     });
   });
+
+  // F2 (PR #1135 review): live route coverage for the metadata.hardcoverApiKey
+  // secret-handling surface. The route layer's job is to mask non-empty values
+  // and pass sentinels through to SettingsService unchanged. Encryption and
+  // sentinel-preservation are exercised at the service level in
+  // settings.service.test.ts and end-to-end by the secret-migration test below.
+  describe('metadata.hardcoverApiKey secret surface', () => {
+    it('GET /api/settings masks a configured hardcoverApiKey as the sentinel', async () => {
+      const settingsWithKey = {
+        ...mockSettings,
+        metadata: { ...mockSettings.metadata, hardcoverApiKey: 'sk-live-1234' },
+      };
+      (services.settings.getAll as Mock).mockResolvedValue(settingsWithKey);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.metadata.hardcoverApiKey).toBe('********');
+      // Adjacent non-secret metadata fields are NOT masked
+      expect(body.metadata.audibleRegion).toBe(mockSettings.metadata.audibleRegion);
+      expect(body.metadata.languages).toEqual(mockSettings.metadata.languages);
+    });
+
+    it('GET /api/settings preserves an empty hardcoverApiKey verbatim (no phantom sentinel)', async () => {
+      const settingsEmptyKey = {
+        ...mockSettings,
+        metadata: { ...mockSettings.metadata, hardcoverApiKey: '' },
+      };
+      (services.settings.getAll as Mock).mockResolvedValue(settingsEmptyKey);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.metadata.hardcoverApiKey).toBe('');
+    });
+
+    it('PUT /api/settings forwards a fresh plaintext key to SettingsService.update and masks it back in the response', async () => {
+      const updated = {
+        ...mockSettings,
+        metadata: { ...mockSettings.metadata, hardcoverApiKey: 'sk-new-9999' },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { metadata: { hardcoverApiKey: 'sk-new-9999' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      // SettingsService receives the PLAINTEXT so it can encrypt downstream
+      const updateArg = (services.settings.update as Mock).mock.calls[0]![0] as { metadata?: { hardcoverApiKey?: string } };
+      expect(updateArg.metadata?.hardcoverApiKey).toBe('sk-new-9999');
+      // Response is masked, never echoes plaintext
+      const body = JSON.parse(res.payload);
+      expect(body.metadata.hardcoverApiKey).toBe('********');
+    });
+
+    it('PUT /api/settings forwards the sentinel through unchanged so SettingsService can preserve the stored ciphertext', async () => {
+      const stored = {
+        ...mockSettings,
+        metadata: { ...mockSettings.metadata, hardcoverApiKey: 'sk-existing-2222' },
+      };
+      (services.settings.update as Mock).mockResolvedValue(stored);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { metadata: { hardcoverApiKey: '********' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      // The route does NOT replace the sentinel — it lets SettingsService.set
+      // resolve it against the existing stored value. (The route's network
+      // sentinel-normalize block is scoped to the cache-clear comparison, not
+      // to the update payload.)
+      const updateArg = (services.settings.update as Mock).mock.calls[0]![0] as { metadata?: { hardcoverApiKey?: string } };
+      expect(updateArg.metadata?.hardcoverApiKey).toBe('********');
+      const body = JSON.parse(res.payload);
+      expect(body.metadata.hardcoverApiKey).toBe('********');
+    });
+
+    it('PUT /api/settings does NOT change Hardcover Import List apiKey when saving metadata.hardcoverApiKey, and vice versa', async () => {
+      const stored = {
+        ...mockSettings,
+        metadata: { ...mockSettings.metadata, hardcoverApiKey: 'metadata-key' },
+      };
+      (services.settings.update as Mock).mockResolvedValue(stored);
+
+      await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { metadata: { hardcoverApiKey: 'metadata-key' } },
+      });
+
+      // SettingsService.update was called with ONLY metadata, never with an
+      // import-list payload — proving the two key fields don't cross-write.
+      const updateArg = (services.settings.update as Mock).mock.calls[0]![0] as Record<string, unknown>;
+      expect(updateArg).toHaveProperty('metadata');
+      expect(updateArg).not.toHaveProperty('importList');
+      expect(updateArg).not.toHaveProperty('importLists');
+    });
+  });
 });
 

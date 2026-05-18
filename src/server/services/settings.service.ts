@@ -22,6 +22,7 @@ export type { AppSettings };
 /** Categories that contain secret fields (only categories managed by SettingsService). */
 const SECRET_CATEGORIES: Partial<Record<SettingsCategory, SecretEntity>> = {
   network: 'network',
+  metadata: 'metadata',
 };
 
 function parseCategory<K extends SettingsCategory>(

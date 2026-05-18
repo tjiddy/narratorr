@@ -12,7 +12,6 @@ import type {
   seriesMembers,
   suggestions,
 } from '../../db/schema.js';
-import type { SeriesFetchStatus } from '../../db/schema.js';
 import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BlacklistReason, BlacklistType } from '../../shared/schemas/blacklist.js';
@@ -82,11 +81,8 @@ export type ImportJobRow = Omit<typeof importJobs.$inferSelect, 'type' | 'status
   phase: ImportJobPhase | null;
 };
 
-export type SeriesRow = Omit<typeof series.$inferSelect, 'lastFetchStatus'> & {
-  lastFetchStatus: SeriesFetchStatus | null;
-};
+export type SeriesRow = typeof series.$inferSelect;
 
-export type SeriesMemberRow = Omit<typeof seriesMembers.$inferSelect, 'source' | 'alternateAsins'> & {
-  source: 'provider' | 'local';
-  alternateAsins: string[];
+export type SeriesMemberRow = Omit<typeof seriesMembers.$inferSelect, 'source'> & {
+  source: 'hardcover' | 'local';
 };

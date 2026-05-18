@@ -147,6 +147,55 @@ describe('Secret Migration', () => {
       expect(db.insert).toHaveBeenCalled();
     });
 
+    // F2 (PR #1135 review): startup encryption loop covers metadata.hardcoverApiKey
+    it('#1133 encrypts plaintext metadata.hardcoverApiKey on startup', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([])); // notifiers
+      db.select.mockReturnValueOnce(mockDbChain([
+        createSettingsRow('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: 'sk-plain-1234' }),
+      ]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      // The settings upsert is the FIRST insert call (no indexer/download/notifier updates happened).
+      const insertChain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = insertChain.values.mock.calls[0]![0]!.value;
+      expect(isEncrypted(storedValue.hardcoverApiKey as string)).toBe(true);
+      // Non-secret metadata fields pass through unchanged
+      expect(storedValue.audibleRegion).toBe('us');
+      expect(storedValue.languages).toEqual(['english']);
+      expect(storedValue.minDurationMinutes).toBe(0);
+    });
+
+    it('#1133 idempotent — already-encrypted metadata.hardcoverApiKey is not re-encrypted', async () => {
+      const alreadyEncrypted = encrypt('sk-stable-2222', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([])); // notifiers
+      db.select.mockReturnValueOnce(mockDbChain([
+        createSettingsRow('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: alreadyEncrypted }),
+      ]));
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('#1133 skips the metadata row entirely when hardcoverApiKey is empty (no churn for default install)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([])); // notifiers
+      db.select.mockReturnValueOnce(mockDbChain([
+        createSettingsRow('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: '' }),
+      ]));
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
     it('skips already-encrypted values ($ENC$ prefix)', async () => {
       const alreadyEncrypted = encrypt('original-key', TEST_KEY);
       db.select.mockReturnValueOnce(mockDbChain([

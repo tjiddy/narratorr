@@ -97,6 +97,17 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
   it('renders sidebar with Series card when only seriesName is set (no audio/genres/path)', async () => {
     // Use a clean book without audioCodec — only series metadata
     const seriesOnlyBook = createMockBook({ status: 'wanted', audioCodec: null, path: null, seriesName: 'The Band', seriesPosition: 1 });
+    // Simulate the no-key library-only response so the card renders
+    getBookSeriesMock.mockResolvedValueOnce({
+      series: {
+        id: null,
+        name: 'The Band',
+        hardcoverSeriesId: null,
+        seriesAuthor: null,
+        lastFetchedAt: null,
+        members: [{ hardcoverBookId: null, slug: null, title: seriesOnlyBook.title, position: 1, imageUrl: null, inLibrary: true, libraryBookId: seriesOnlyBook.id }],
+      },
+    });
     renderWithProviders(
       <BookDetailsContent
         libraryBook={seriesOnlyBook}
@@ -116,12 +127,11 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
       series: {
         id: 7,
         name: 'The Band',
-        providerSeriesId: 'B07DHQY7DX',
+        hardcoverSeriesId: 5523,
+        seriesAuthor: 'Nicholas Eames',
         lastFetchedAt: '2026-05-11T00:00:00.000Z',
-        lastFetchStatus: 'success',
-        nextFetchAfter: null,
         members: [
-          { id: 1, providerBookId: 'B01NA0JA51', title: 'Kings of the Wyld', positionRaw: '1', position: 1, isCurrent: true, libraryBookId: 1, coverUrl: null, authorName: null, publishedDate: null, duration: null },
+          { hardcoverBookId: 1001, slug: 'kings', title: 'Kings of the Wyld', position: 1, imageUrl: null, inLibrary: true, libraryBookId: 1 },
         ],
       },
     });

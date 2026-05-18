@@ -95,7 +95,7 @@ describe('FilteringSettingsSection', () => {
   it('renders minimum-duration input with server value (#987)', async () => {
     mockApi.getSettings.mockResolvedValue(
       createMockSettings({
-        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30 },
+        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30, hardcoverApiKey: '' },
         quality: { rejectWords: 'German', requiredWords: 'M4B' },
       }),
     );
@@ -124,7 +124,7 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30 },
+        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 30, hardcoverApiKey: '' },
         quality: { rejectWords: 'German', requiredWords: 'M4B' },
       });
     });
@@ -177,7 +177,7 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0 },
+        metadata: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: '' },
         quality: { rejectWords: 'Abridged', requiredWords: 'M4B' },
       });
     });
@@ -198,7 +198,7 @@ describe('FilteringSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        metadata: { audibleRegion: 'de', languages: ['english'], minDurationMinutes: 0 },
+        metadata: { audibleRegion: 'de', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: '' },
         quality: { rejectWords: 'German', requiredWords: 'M4B' },
       });
     });
