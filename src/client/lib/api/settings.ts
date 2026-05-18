@@ -15,6 +15,11 @@ export interface ProxyTestResult {
   message?: string;
 }
 
+export interface HardcoverTestResult {
+  success: boolean;
+  message: string;
+}
+
 export const settingsApi = {
   getSettings: () => fetchApi<Settings>('/settings'),
   updateSettings: (data: UpdateSettingsInput) =>
@@ -31,5 +36,10 @@ export const settingsApi = {
     fetchApi<ProxyTestResult>('/settings/test-proxy', {
       method: 'POST',
       body: JSON.stringify({ proxyUrl }),
+    }),
+  testHardcoverApiKey: (apiKey?: string) =>
+    fetchApi<HardcoverTestResult>('/settings/metadata/hardcover/test', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey }),
     }),
 };

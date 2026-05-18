@@ -7,6 +7,8 @@ import type { HealthCheckService } from '../services/health-check.service.js';
 import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { HardcoverClient } from '../../core/metadata/hardcover.js';
+import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
 
 
 function redactProxyUrl(proxyUrl: string): string {
@@ -56,6 +58,27 @@ const testProxySchema = z.object({
     }
   }, { message: 'Must be a valid URL with http, https, or socks5 scheme' }),
 });
+
+const testHardcoverSchema = z.object({
+  apiKey: z.string().optional(),
+});
+
+function mapHardcoverError(error: unknown): string {
+  if (error instanceof RateLimitError) {
+    const seconds = Math.ceil(error.retryAfterMs / 1000);
+    return `Hardcover is rate-limiting requests. Try again in ${seconds}s.`;
+  }
+  if (error instanceof TransientError) {
+    return "Couldn't reach Hardcover. Check your network and try again.";
+  }
+  if (error instanceof MetadataError) {
+    if (error.message.includes('401') || error.message.includes('403')) {
+      return 'Invalid API key.';
+    }
+    return error.message;
+  }
+  return getErrorMessage(error);
+}
 
 export async function settingsRoutes(
   app: FastifyInstance,
@@ -167,6 +190,48 @@ export async function settingsRoutes(
       } catch (error: unknown) {
         const message = getErrorMessage(error);
         request.log.warn({ error: serializeError(error), proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test failed');
+        return reply.status(200).send({ success: false, message });
+      }
+    }
+  );
+
+  // POST /api/settings/metadata/hardcover/test
+  app.post<{ Body: z.infer<typeof testHardcoverSchema> }>(
+    '/api/settings/metadata/hardcover/test',
+    {
+      schema: {
+        body: testHardcoverSchema,
+      },
+    },
+    async (request, reply) => {
+      const inputKey = request.body.apiKey;
+      const useFallback =
+        inputKey === undefined ||
+        inputKey.trim().length === 0 ||
+        isSentinel(inputKey);
+
+      let resolvedKey: string;
+      if (useFallback) {
+        const metadata = await settingsService.get('metadata');
+        const stored = metadata && typeof metadata === 'object'
+          ? (metadata as { hardcoverApiKey?: string | null }).hardcoverApiKey ?? ''
+          : '';
+        if (stored.trim().length === 0) {
+          return reply.status(400).send({ success: false, message: 'No Hardcover API key configured.' });
+        }
+        resolvedKey = stored;
+      } else {
+        resolvedKey = inputKey;
+      }
+
+      try {
+        const client = new HardcoverClient(resolvedKey);
+        await client.searchSeries('test');
+        request.log.info('Hardcover API key test successful');
+        return { success: true, message: 'Connected.' };
+      } catch (error: unknown) {
+        const message = mapHardcoverError(error);
+        request.log.warn({ error: serializeError(error) }, 'Hardcover API key test failed');
         return reply.status(200).send({ success: false, message });
       }
     }

@@ -8,7 +8,7 @@ export type { Indexer } from './indexers.js';
 export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
 export type { BlacklistEntry } from './blacklist.js';
-export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult } from './settings.js';
+export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult, HardcoverTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig } from './auth.js';
 export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult } from './library-scan.js';
 export type { BrowseResult } from './filesystem.js';

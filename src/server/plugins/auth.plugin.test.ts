@@ -81,6 +81,7 @@ describe('auth middleware', () => {
         { method: 'POST' as const, url: '/api/system/tasks/monitor/run' },
         { method: 'GET' as const, url: '/api/system/info' },
         { method: 'POST' as const, url: '/api/library/scan-debug' },
+        { method: 'POST' as const, url: '/api/settings/metadata/hardcover/test' },
       ];
       for (const { method, url } of protectedRoutes) {
         const res = await app.inject({ method, url });

@@ -1,30 +1,14 @@
 import { useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { GlobeIcon } from '@/components/icons';
-import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '../../../shared/language-constants.js';
 import { SettingsSection } from './SettingsSection';
 
-const REGION_LABELS: Record<string, string> = {
-  us: 'United States',
-  ca: 'Canada',
-  uk: 'United Kingdom',
-  au: 'Australia',
-  fr: 'France',
-  de: 'Germany',
-  jp: 'Japan',
-  it: 'Italy',
-  in: 'India',
-  es: 'Spain',
-};
-
 const filteringFormSchema = z.object({
-  audibleRegion: audibleRegionSchema,
   languages: z.array(z.string()),
   minDurationMinutes: z.number().int().nonnegative(),
-  hardcoverApiKey: z.string(),
   rejectWords: z.string(),
   requiredWords: z.string(),
 });
@@ -33,10 +17,8 @@ type FilteringFormData = z.infer<typeof filteringFormSchema>;
 
 function toFormData(settings: AppSettings): FilteringFormData {
   return {
-    audibleRegion: settings.metadata.audibleRegion,
     languages: [...settings.metadata.languages],
     minDurationMinutes: settings.metadata.minDurationMinutes,
-    hardcoverApiKey: settings.metadata.hardcoverApiKey,
     rejectWords: settings.quality.rejectWords,
     requiredWords: settings.quality.requiredWords,
   };
@@ -45,10 +27,8 @@ function toFormData(settings: AppSettings): FilteringFormData {
 function toPayload(data: FilteringFormData) {
   return {
     metadata: {
-      audibleRegion: data.audibleRegion,
       languages: data.languages as CanonicalLanguage[],
       minDurationMinutes: data.minDurationMinutes,
-      hardcoverApiKey: data.hardcoverApiKey,
     },
     quality: {
       rejectWords: data.rejectWords,
@@ -85,20 +65,6 @@ export function FilteringSettingsSection() {
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <div>
-          <label htmlFor="audibleRegion" className="block text-sm font-medium mb-2">Region</label>
-          <SelectWithChevron id="audibleRegion" {...register('audibleRegion')}>
-            {audibleRegionSchema.options.map((region) => (
-              <option key={region} value={region}>
-                {REGION_LABELS[region] ?? region}
-              </option>
-            ))}
-          </SelectWithChevron>
-          <p className="text-sm text-muted-foreground mt-2">
-            Select your Audible region for metadata lookups. Affects which catalog is searched for audiobook details, narrators, and cover art.
-          </p>
-        </div>
-
-        <div>
           <span className="block text-sm font-medium mb-2">Languages</span>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {CANONICAL_LANGUAGES.map((lang) => (
@@ -131,21 +97,6 @@ export function FilteringSettingsSection() {
           />
           <p className="text-sm text-muted-foreground mt-2">
             Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Set to 0 to disable. Recommended: 30 minutes.
-          </p>
-        </div>
-
-        <div>
-          <label htmlFor="hardcoverApiKey" className="block text-sm font-medium mb-2">Hardcover API Key</label>
-          <input
-            id="hardcoverApiKey"
-            type="password"
-            autoComplete="off"
-            {...register('hardcoverApiKey')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            placeholder="Paste your Hardcover API key"
-          />
-          <p className="text-sm text-muted-foreground mt-2">
-            Used to populate the Series card with Hardcover-canonical members. Leave blank to show only books from your library that share the series name.
           </p>
         </div>
 
