@@ -275,15 +275,21 @@ export class SeriesCardService {
   }
 
   private async buildCardFromCache(row: SeriesRow, seriesName: string): Promise<BookSeriesCardData> {
+    // SQLite's default ASC ordering puts NULL positions FIRST, but the
+    // library-only path puts them LAST via `compareLibraryMembers`. Read the
+    // rows unordered (the DB row id is not user-facing) and sort in JS so
+    // both modes share a single ordering rule.
     const memberRows = await this.db
       .select()
       .from(seriesMembers)
-      .where(eq(seriesMembers.seriesId, row.id))
-      .orderBy(asc(seriesMembers.position), asc(seriesMembers.id));
+      .where(eq(seriesMembers.seriesId, row.id));
     const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
+    const sortedRows = [...memberRows].sort((a, b) =>
+      compareByPositionThenTitle(a.position, a.title, b.position, b.title),
+    );
     const matchedLibraryIds = new Set<number>();
-    const members = memberRows.map<BookSeriesMemberCard>((m) => {
-      const match = findInLibraryMatch({ title: m.title, position: m.position }, libraryBooks);
+    const members = sortedRows.map<BookSeriesMemberCard>((m) => {
+      const match = findInLibraryMatch({ title: m.title, position: m.position }, libraryBooks, matchedLibraryIds);
       if (match) matchedLibraryIds.add(match.id);
       return {
         hardcoverBookId: m.hardcoverBookId,
@@ -311,8 +317,10 @@ export class SeriesCardService {
     const persistedRow = await this.db.transaction(async (tx) => {
       const upserted = await upsertHardcoverSeries(tx, resolved, normalized);
       await tx.delete(seriesMembers).where(eq(seriesMembers.seriesId, upserted.id));
+      const matchedLibraryIds = new Set<number>();
       for (const member of resolved.members) {
-        const match = findInLibraryMatch({ title: member.title, position: member.position }, libraryBooks);
+        const match = findInLibraryMatch({ title: member.title, position: member.position }, libraryBooks, matchedLibraryIds);
+        if (match) matchedLibraryIds.add(match.id);
         await tx.insert(seriesMembers).values({
           seriesId: upserted.id,
           bookId: match?.id ?? null,
@@ -399,14 +407,20 @@ async function upsertHardcoverSeries(
 }
 
 /**
- * Library-only ordering: numeric `series_position` ascending with NULL
- * positions placed at the end. `title` is the tie-breaker for stable order.
+ * Member ordering shared by the cache-driven and library-only paths: numeric
+ * `series_position` ascending with NULL positions placed at the end. `title`
+ * is the tie-breaker for stable order. SQLite's default ASC puts NULLs FIRST,
+ * which is why the cache path can't lean on the DB's ORDER BY for parity.
  */
+function compareByPositionThenTitle(aPos: number | null, aTitle: string, bPos: number | null, bTitle: string): number {
+  if (aPos === null && bPos === null) return aTitle.localeCompare(bTitle);
+  if (aPos === null) return 1;
+  if (bPos === null) return -1;
+  if (aPos !== bPos) return aPos - bPos;
+  return aTitle.localeCompare(bTitle);
+}
+
 function compareLibraryMembers(a: BookSeriesMemberCard, b: BookSeriesMemberCard): number {
-  if (a.position === null && b.position === null) return a.title.localeCompare(b.title);
-  if (a.position === null) return 1;
-  if (b.position === null) return -1;
-  if (a.position !== b.position) return a.position - b.position;
-  return a.title.localeCompare(b.title);
+  return compareByPositionThenTitle(a.position, a.title, b.position, b.title);
 }
 

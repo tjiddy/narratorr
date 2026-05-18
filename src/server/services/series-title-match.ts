@@ -43,17 +43,28 @@ export interface HardcoverMemberSummary {
  * variants where titles drift but positions agree. Either-hits is the
  * empirical sweet spot. Library books MUST already be scoped to the current
  * series_name by the caller — this matcher does no scoping itself.
+ *
+ * `alreadyMatched` (optional) lets callers iterate a member list with
+ * first-match-wins semantics: pass a Set of already-claimed library book ids
+ * and add each returned candidate's id to it before the next call. Two
+ * Hardcover members at the same position (or with normalized-equal titles)
+ * can otherwise both claim the same library book, producing a duplicate
+ * "In Library" badge and — in the persist path — a duplicate `bookId` in
+ * `series_members`.
  */
 export function findInLibraryMatch(
   member: HardcoverMemberSummary,
   candidates: LibraryBookSummary[],
+  alreadyMatched?: ReadonlySet<number>,
 ): LibraryBookSummary | null {
   const memberNormalized = normalizeMemberTitleForMatch(member.title);
   for (const candidate of candidates) {
+    if (alreadyMatched?.has(candidate.id)) continue;
     if (positionsMatch(member.position, candidate.seriesPosition)) return candidate;
   }
   if (memberNormalized.length === 0) return null;
   for (const candidate of candidates) {
+    if (alreadyMatched?.has(candidate.id)) continue;
     if (normalizeMemberTitleForMatch(candidate.title) === memberNormalized) return candidate;
   }
   return null;
