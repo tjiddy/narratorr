@@ -89,22 +89,32 @@ export function parseNzbFileSubject(xml: string): string | undefined {
  * Applied to NZB `<meta type="name">` values, file subjects, and the user-facing
  * search-result title — wherever a single string might carry a language marker.
  *
- * Umlaut/accent handling: real-world NZBs exhibit three character-mangling forms
- * for the same source word. Patterns must accept all three:
+ * Umlaut/accent handling: real-world NZBs exhibit four character-mangling forms
+ * for the same source word. Patterns must accept all four:
  *   1. Proper UTF-8:           Ungekürzt, Hörbuch
  *   2. ASCII digraph fallback: Ungekuerzt (German "ue" rule)
  *   3. Naked-drop:             Ungekrzt   (some indexers strip non-ASCII bytes during NZB generation)
+ *   4. Mojibake (Latin-1-as-UTF-8): UngekÃ¼rzt, HÃ¶rbuch   (double-decoded encoding)
  *
- * Pattern shape `[üu]?(?:e?)` accepts ü or u or nothing, then optionally e — covers all three.
+ * Two distinct pattern shapes coexist because they target different mangling sources;
+ * do NOT unify them.
+ *   - Hörbuch family uses `[öo?]` / `[üu?]` character classes (UTF-8 / Latin-1-strip
+ *     / question-mark placeholder); mojibake is added as a two-char alternation alongside.
+ *   - Ungek/gek family uses `[üu](?:e?)` (UTF-8 / ue-digraph / naked-drop); mojibake is
+ *     added as a two-char alternation alongside. The outer `?` preserves naked-drop.
  *
- * Older patterns use `[öo?]` / `[üu?]` (with literal `?`) — that's the mojibake-placeholder form
- * from a different mangling era. Don't unify; the two shapes target different mangling sources.
+ * Mojibake alternations are pulled into constants so the next mangling variant can be
+ * added in one place per family.
  */
+const O_UMLAUT_OR_MOJIBAKE = '(?:[öo?]|Ã¶)';
+const U_UMLAUT_OR_MOJIBAKE_PLACEHOLDER = '(?:[üu?]|Ã¼)';
+const UE_UMLAUT_FAMILY = '(?:[üu](?:e?)|Ã¼)?';
+
 const LANGUAGE_TEXT_PATTERNS: Array<{ pattern: RegExp; language: string }> = [
-  { pattern: /h[öo?]rb[üu?]cher/i, language: 'german' },
-  { pattern: /h[öo?]rbuch/i, language: 'german' },
-  { pattern: /ungek[üu]?(?:e?)rzt/i, language: 'german' },  // Ungekürzt / Ungekuerzt / Ungekrzt
-  { pattern: /gek[üu]?(?:e?)rzt/i, language: 'german' },    // Gekürzt / Gekuerzt / Gekrzt
+  { pattern: new RegExp(`h${O_UMLAUT_OR_MOJIBAKE}rb${U_UMLAUT_OR_MOJIBAKE_PLACEHOLDER}cher`, 'i'), language: 'german' },
+  { pattern: new RegExp(`h${O_UMLAUT_OR_MOJIBAKE}rbuch`, 'i'), language: 'german' },
+  { pattern: new RegExp(`ungek${UE_UMLAUT_FAMILY}rzt`, 'i'), language: 'german' },  // Ungekürzt / Ungekuerzt / Ungekrzt / UngekÃ¼rzt
+  { pattern: new RegExp(`gek${UE_UMLAUT_FAMILY}rzt`, 'i'), language: 'german' },    // Gekürzt / Gekuerzt / Gekrzt / GekÃ¼rzt
   { pattern: /luisterboek/i, language: 'dutch' },
 ];
 

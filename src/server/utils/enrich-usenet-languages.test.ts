@@ -982,4 +982,180 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
   });
+
+  describe('title-after-fetch-fail fallback (#1148)', () => {
+    it('catch-path: detects german from title (Ungekrzt) when NZB fetch throws', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(
+        new Error('Refused: address 192.168.0.22 is in the blocked range'),
+      );
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Stephen King - Fairy Tale (Ungekrzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Stephen King - Fairy Tale (Ungekrzt)',
+          signal: 'title-after-fetch-fail',
+          matched: 'german',
+        }),
+        'Language detected from title after NZB fetch failure',
+      );
+    });
+
+    it('catch-path: detects german from mojibake title (UngekÃ¼rzt) when NZB fetch throws', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('network down'));
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Stephen King - Fairy Tale (UngekÃ¼rzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+    });
+
+    it('non-OK response: detects german from title when fetch returns 403', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response('Forbidden', { status: 403 }),
+      );
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Stephen King - Fairy Tale (Ungekrzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          signal: 'title-after-fetch-fail',
+          matched: 'german',
+        }),
+        'Language detected from title after NZB fetch failure',
+      );
+    });
+
+    it('non-OK response: detects german from title when fetch returns 500', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response('Server Error', { status: 500 }),
+      );
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Some Book (ungekÃ¼rzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+    });
+
+    it('does NOT overwrite a pre-set result.language on catch-path fallback', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('network down'));
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          language: 'spanish',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Some Book (Ungekrzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      // Pre-set language wins; Phase-1 short-circuits before fetch anyway, but
+      // the contract is the same: never overwrite.
+      expect(results[0]!.language).toBe('spanish');
+    });
+
+    it('languagesDetected counter is bumped when fetch-failure title fallback succeeds', async () => {
+      // Two results: one fails fetch with a German title (fallback hits),
+      // one fails fetch with a no-marker title (fallback misses).
+      mockFetchWithSsrfRedirect.mockRejectedValue(new Error('network down'));
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Stephen King - Fairy Tale (Ungekrzt)',
+        }),
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/2',
+          title: 'Plain English Audiobook',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          usenetResults: 2,
+          nzbFetched: 2,
+          languagesDetected: 1,
+        }),
+        'Usenet language detection complete',
+      );
+    });
+
+    it('emits the distinct "title-after-fetch-fail" signal (not "title-pattern")', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('network down'));
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Fairy Tale (Ungekrzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      const fallbackCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([fields]) => (fields as Record<string, unknown>)?.signal === 'title-after-fetch-fail',
+      );
+      expect(fallbackCalls).toHaveLength(1);
+
+      const titlePatternCalls = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([fields]) => (fields as Record<string, unknown>)?.signal === 'title-pattern',
+      );
+      expect(titlePatternCalls).toHaveLength(0);
+    });
+
+    it('leaves language undefined on fetch failure when title also has no language marker (regression)', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(new Error('network down'));
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          title: 'Stephen King - The Stand (2012) MP3',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBeUndefined();
+    });
+  });
 });

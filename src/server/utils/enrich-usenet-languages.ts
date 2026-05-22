@@ -13,6 +13,25 @@ const NZB_FETCH_TIMEOUT_MS = 5000;
 type Phase2Source = 'newsgroup' | 'name' | 'title' | 'unresolved';
 
 /**
+ * Defense-in-depth title fallback for fetch-failure branches (non-OK response or
+ * thrown exception). Returns `true` when it sets `result.language` so the caller
+ * can bump the `languagesDetected` audit counter. Guarded on `result.language`
+ * so an earlier signal (Phase 1) is never overwritten. Signal name is distinct
+ * from the Phase-2 successful-fetch `title-pattern` signal — grep-friendly.
+ */
+function tryTitleFallback(result: SearchResult, logger: FastifyBaseLogger): boolean {
+  if (result.language) return false;
+  const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
+  if (!titleLang) return false;
+  result.language = titleLang;
+  logger.debug(
+    { title: result.title, signal: 'title-after-fetch-fail', matched: titleLang },
+    'Language detected from title after NZB fetch failure',
+  );
+  return true;
+}
+
+/**
  * Walk the post-fetch signal cascade — newsgroups → nzbName → title — and set
  * `result.language` on the first hit. Each pass is guarded on `result.language`
  * (not a separate flag) so an earlier hit always wins. Emits per-signal debug
@@ -146,6 +165,7 @@ export async function enrichUsenetLanguages(
           { title: result.title, status: response.status, url: safeUrl },
           'NZB fetch failed with non-OK status',
         );
+        if (tryTitleFallback(result, logger)) languagesDetected++;
         return;
       }
       const xml = await response.text();
@@ -182,6 +202,7 @@ export async function enrichUsenetLanguages(
         { title: result.title, url: safeUrl, error: serializeError(error) },
         'NZB fetch failed',
       );
+      if (tryTitleFallback(result, logger)) languagesDetected++;
     } finally {
       await dispatcher.close().catch(() => { /* best-effort cleanup */ });
       semaphore.release();
