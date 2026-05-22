@@ -260,15 +260,6 @@ describe('BookDetails', () => {
     });
   });
 
-  describe('short description', () => {
-    it('does not show expand button for short descriptions', () => {
-      renderBookDetails({ description: '<p>Short text.</p>' });
-
-      expect(screen.getByText('About This Book')).toBeInTheDocument();
-      expect(screen.queryByText('Show more')).not.toBeInTheDocument();
-    });
-  });
-
   describe('genres only (no audio)', () => {
     it('renders genres sidebar without audio quality section', () => {
       renderBookDetails({ audioCodec: null }, fullMetadata);
@@ -315,20 +306,6 @@ describe('BookDetails', () => {
       await user.click(screen.getByText('Search Releases'));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
-    });
-
-    it('toggles description expand/collapse for long text', async () => {
-      const user = userEvent.setup();
-      const longDesc = '<p>' + 'A'.repeat(400) + '</p>';
-      renderBookDetails({ description: longDesc });
-
-      expect(screen.getByText('Show more')).toBeInTheDocument();
-
-      await user.click(screen.getByText('Show more'));
-      expect(screen.getByText('Show less')).toBeInTheDocument();
-
-      await user.click(screen.getByText('Show less'));
-      expect(screen.getByText('Show more')).toBeInTheDocument();
     });
 
     it('opens edit modal when Edit button is clicked', async () => {

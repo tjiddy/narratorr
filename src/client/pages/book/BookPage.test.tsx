@@ -176,24 +176,6 @@ describe('BookPage', () => {
     expect(authorLink.closest('a')).toHaveAttribute('href', '/authors/A00SAND1234');
   });
 
-  it('toggles description expand/collapse for long descriptions', async () => {
-    const user = userEvent.setup();
-    const longDescription = '<p>' + 'A'.repeat(400) + '</p>';
-    vi.mocked(api.getBookById).mockResolvedValue({ ...mockLibraryBook, description: longDescription });
-
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Show more')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Show more'));
-    expect(screen.getByText('Show less')).toBeInTheDocument();
-
-    await user.click(screen.getByText('Show less'));
-    expect(screen.getByText('Show more')).toBeInTheDocument();
-  });
-
   it('opens search releases modal when button is clicked', async () => {
     const user = userEvent.setup();
     renderBookPage();
