@@ -232,6 +232,9 @@ export type SingleBookSearchResult =
 export interface BookListParams {
   status?: BookStatus;
   search?: string;
+  author?: string;
+  series?: string;
+  narrator?: string;
   sortField?: string;
   sortDirection?: 'asc' | 'desc';
   limit?: number;
@@ -255,6 +258,9 @@ function buildBookListQuery(params?: BookListParams): string {
   const searchParams = new URLSearchParams();
   if (params?.status) searchParams.set('status', params.status);
   if (params?.search) searchParams.set('search', params.search);
+  if (params?.author) searchParams.set('author', params.author);
+  if (params?.series) searchParams.set('series', params.series);
+  if (params?.narrator) searchParams.set('narrator', params.narrator);
   if (params?.sortField) searchParams.set('sortField', params.sortField);
   if (params?.sortDirection) searchParams.set('sortDirection', params.sortDirection);
   if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));

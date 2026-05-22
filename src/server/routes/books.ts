@@ -286,10 +286,18 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     '/api/books',
     { schema: { querystring: booksListQuerySchema } },
     async (request) => {
-      const { status, search, sortField, sortDirection, limit, offset } = request.query;
-      request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
+      const { status, search, author, series, narrator, sortField, sortDirection, limit, offset } = request.query;
+      request.log.debug({ status, search, author, series, narrator, sortField, limit, offset }, 'Fetching books');
       const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
-      return bookListService.getAll(status, pagination, { slim: true, ...(search !== undefined && { search }), ...(sortField !== undefined && { sortField }), ...(sortDirection !== undefined && { sortDirection }) });
+      return bookListService.getAll(status, pagination, {
+        slim: true,
+        ...(search !== undefined && { search }),
+        ...(author !== undefined && { author }),
+        ...(series !== undefined && { series }),
+        ...(narrator !== undefined && { narrator }),
+        ...(sortField !== undefined && { sortField }),
+        ...(sortDirection !== undefined && { sortDirection }),
+      });
     },
   );
 
@@ -298,11 +306,14 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     '/api/library/books',
     { schema: { querystring: booksListQuerySchema } },
     async (request) => {
-      const { status, search, sortField, sortDirection, limit, offset } = request.query;
-      request.log.debug({ status, search, sortField, limit, offset }, 'Fetching library books');
+      const { status, search, author, series, narrator, sortField, sortDirection, limit, offset } = request.query;
+      request.log.debug({ status, search, author, series, narrator, sortField, limit, offset }, 'Fetching library books');
       const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
       return bookListService.getAllForLibrary(status, pagination, {
         ...(search !== undefined && { search }),
+        ...(author !== undefined && { author }),
+        ...(series !== undefined && { series }),
+        ...(narrator !== undefined && { narrator }),
         ...(sortField !== undefined && { sortField }),
         ...(sortDirection !== undefined && { sortDirection }),
       });

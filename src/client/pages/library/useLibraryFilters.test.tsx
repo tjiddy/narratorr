@@ -123,6 +123,47 @@ describe('useLibraryFilters', () => {
     expect(result.current.params.pagination.page).toBe(1);
   });
 
+  it('pagination resets when author filter changes (#1143)', () => {
+    const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
+    act(() => { result.current.params.pagination.setPage(3); });
+    expect(result.current.params.pagination.page).toBe(3);
+    act(() => { result.current.actions.setAuthorFilter('Brandon Sanderson'); });
+    expect(result.current.params.pagination.page).toBe(1);
+  });
+
+  it('pagination resets when series filter changes (#1143)', () => {
+    const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
+    act(() => { result.current.params.pagination.setPage(3); });
+    act(() => { result.current.actions.setSeriesFilter('The Stormlight Archive'); });
+    expect(result.current.params.pagination.page).toBe(1);
+  });
+
+  it('pagination resets when narrator filter changes (#1143)', () => {
+    const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
+    act(() => { result.current.params.pagination.setPage(3); });
+    act(() => { result.current.actions.setNarratorFilter('Michael Kramer'); });
+    expect(result.current.params.pagination.page).toBe(1);
+  });
+
+  it('apiParams includes author/series/narrator when set (#1143)', () => {
+    const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
+    act(() => {
+      result.current.actions.setAuthorFilter('Brandon Sanderson');
+      result.current.actions.setSeriesFilter('The Stormlight Archive');
+      result.current.actions.setNarratorFilter('Michael Kramer');
+    });
+    expect(result.current.params.apiParams.author).toBe('Brandon Sanderson');
+    expect(result.current.params.apiParams.series).toBe('The Stormlight Archive');
+    expect(result.current.params.apiParams.narrator).toBe('Michael Kramer');
+  });
+
+  it('apiParams omits author/series/narrator when empty (#1143)', () => {
+    const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
+    expect(result.current.params.apiParams.author).toBeUndefined();
+    expect(result.current.params.apiParams.series).toBeUndefined();
+    expect(result.current.params.apiParams.narrator).toBeUndefined();
+  });
+
   it('tracks active filter count for client-side filters', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
 
@@ -160,35 +201,46 @@ describe('useLibraryFilters', () => {
 });
 
 describe('applyClientFilters', () => {
-  const books: LibraryBookListItem[] = [
-    createMockLibraryBook({ id: 1, title: 'Alpha', status: 'wanted', authors: [{ name: 'Author A' }], seriesName: 'Series X', narrators: [{ name: 'Michael Kramer' }], createdAt: '2024-01-01T00:00:00Z' }),
-    createMockLibraryBook({ id: 2, title: 'Zulu', status: 'imported', authors: [{ name: 'Author B' }], seriesName: 'Series Y', narrators: [{ name: 'Tim Gerard Reynolds' }], createdAt: '2024-01-02T00:00:00Z' }),
-    createMockLibraryBook({ id: 3, title: 'Middle', status: 'downloading', authors: [{ name: 'Author A' }], seriesName: null, narrators: [], createdAt: '2024-01-03T00:00:00Z' }),
-  ];
+  // #1143: author/series/narrator filtering is now server-side; applyClientFilters
+  // only handles the collapse-series UI transform.
+  const defaultFilters = { collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
 
-  const defaultFilters = { authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
-
-  it('returns all books with no filters', () => {
+  it('returns books unchanged when collapse is disabled', () => {
+    const books: LibraryBookListItem[] = [
+      createMockLibraryBook({ id: 1, title: 'Alpha', authors: [{ name: 'Author A' }], createdAt: '2024-01-01T00:00:00Z' }),
+      createMockLibraryBook({ id: 2, title: 'Zulu', authors: [{ name: 'Author B' }], createdAt: '2024-01-02T00:00:00Z' }),
+    ];
     const result = applyClientFilters(books, defaultFilters);
-    expect(result).toHaveLength(3);
-  });
-
-  it('filters by author', () => {
-    const result = applyClientFilters(books, { ...defaultFilters, authorFilter: 'Author A' });
     expect(result).toHaveLength(2);
-    expect(result.every((b) => b.authors?.[0]?.name === 'Author A')).toBe(true);
   });
 
-  it('filters by series', () => {
-    const result = applyClientFilters(books, { ...defaultFilters, seriesFilter: 'Series X' });
-    expect(result).toHaveLength(1);
-    expect(result[0]!.seriesName).toBe('Series X');
+  it('does not filter by author (server-side now)', () => {
+    const books: LibraryBookListItem[] = [
+      createMockLibraryBook({ id: 1, authors: [{ name: 'Author A' }], createdAt: '2024-01-01T00:00:00Z' }),
+      createMockLibraryBook({ id: 2, authors: [{ name: 'Author B' }], createdAt: '2024-01-02T00:00:00Z' }),
+    ];
+    // Even with mismatched author rows in the input, applyClientFilters must pass them through —
+    // the server already filtered.
+    const result = applyClientFilters(books, defaultFilters);
+    expect(result).toHaveLength(2);
   });
 
-  it('filters by narrator', () => {
-    const result = applyClientFilters(books, { ...defaultFilters, narratorFilter: 'Michael Kramer' });
-    expect(result).toHaveLength(1);
-    expect(result[0]!.id).toBe(1);
+  it('does not filter by series (server-side now)', () => {
+    const books: LibraryBookListItem[] = [
+      createMockLibraryBook({ id: 1, seriesName: 'Series X', createdAt: '2024-01-01T00:00:00Z' }),
+      createMockLibraryBook({ id: 2, seriesName: 'Series Y', createdAt: '2024-01-02T00:00:00Z' }),
+    ];
+    const result = applyClientFilters(books, defaultFilters);
+    expect(result).toHaveLength(2);
+  });
+
+  it('does not filter by narrator (server-side now)', () => {
+    const books: LibraryBookListItem[] = [
+      createMockLibraryBook({ id: 1, narrators: [{ name: 'Michael Kramer' }], createdAt: '2024-01-01T00:00:00Z' }),
+      createMockLibraryBook({ id: 2, narrators: [{ name: 'Tim Gerard Reynolds' }], createdAt: '2024-01-02T00:00:00Z' }),
+    ];
+    const result = applyClientFilters(books, defaultFilters);
+    expect(result).toHaveLength(2);
   });
 
   it('collapse series groups books', () => {
@@ -199,95 +251,6 @@ describe('applyClientFilters', () => {
     ];
     const result = applyClientFilters(seriesBooks, { ...defaultFilters, collapseSeriesEnabled: true });
     expect(result).toHaveLength(2);
-  });
-});
-
-describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
-  it('author filter matches when author is ANY of book.authors (not just first)', () => {
-    const multiAuthorBook = createMockLibraryBook({
-      id: 10,
-      authors: [
-        { name: 'Author A' },
-        { name: 'Author B' },
-      ],
-      createdAt: '2024-01-01T00:00:00Z',
-    });
-    const result = applyClientFilters([multiAuthorBook], {
-      authorFilter: 'Author B', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const,
-    });
-    expect(result).toHaveLength(1);
-    expect(result[0]!.id).toBe(10);
-  });
-
-  it('narrator filter matches when narrator is ANY of book.narrators (not just first)', () => {
-    const multiNarratorBook = createMockLibraryBook({
-      id: 11,
-      narrators: [
-        { name: 'Michael Kramer' },
-        { name: 'Kate Reading' },
-      ],
-      createdAt: '2024-01-01T00:00:00Z',
-    });
-    const result = applyClientFilters([multiNarratorBook], {
-      authorFilter: '', seriesFilter: '', narratorFilter: 'Kate Reading', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const,
-    });
-    expect(result).toHaveLength(1);
-    expect(result[0]!.id).toBe(11);
-  });
-
-  it('author filter does not match book where no author matches', () => {
-    const book = createMockLibraryBook({
-      id: 12,
-      authors: [{ name: 'Author A' }],
-      createdAt: '2024-01-01T00:00:00Z',
-    });
-    const result = applyClientFilters([book], {
-      authorFilter: 'Author Z', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const,
-    });
-    expect(result).toHaveLength(0);
-  });
-
-  it('narrator filter does not match book where no narrator matches', () => {
-    const book = createMockLibraryBook({
-      id: 13,
-      narrators: [{ name: 'Michael Kramer' }],
-      createdAt: '2024-01-01T00:00:00Z',
-    });
-    const result = applyClientFilters([book], {
-      authorFilter: '', seriesFilter: '', narratorFilter: 'Kate Reading', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const,
-    });
-    expect(result).toHaveLength(0);
-  });
-});
-
-describe('applyClientFilters case-insensitive (issue #79)', () => {
-  const defaultFilters = { authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
-
-  it('author filter matches book with different casing', () => {
-    const book = createMockLibraryBook({
-      id: 20, createdAt: '2024-01-01T00:00:00Z',
-      authors: [{ name: 'Brandon Sanderson' }],
-    });
-    const result = applyClientFilters([book], { ...defaultFilters, authorFilter: 'brandon sanderson' });
-    expect(result).toHaveLength(1);
-  });
-
-  it('series filter matches book with different casing', () => {
-    const book = createMockLibraryBook({
-      id: 21, createdAt: '2024-01-01T00:00:00Z',
-      seriesName: 'The Stormlight Archive',
-    });
-    const result = applyClientFilters([book], { ...defaultFilters, seriesFilter: 'the stormlight archive' });
-    expect(result).toHaveLength(1);
-  });
-
-  it('narrator filter regression-free after refactor (case-insensitive behavior preserved)', () => {
-    const book = createMockLibraryBook({
-      id: 22, createdAt: '2024-01-01T00:00:00Z',
-      narrators: [{ name: 'Kate Reading' }],
-    });
-    const result = applyClientFilters([book], { ...defaultFilters, narratorFilter: 'KATE READING' });
-    expect(result).toHaveLength(1);
   });
 });
 

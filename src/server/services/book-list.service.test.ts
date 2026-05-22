@@ -291,6 +291,73 @@ describe('BookListService', () => {
       expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
     });
 
+    function containsSubstring(val: unknown, substring: string): boolean {
+      if (typeof val === 'string') return val.includes(substring);
+      if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
+      if (val && typeof val === 'object') {
+        if ('queryChunks' in val) return containsSubstring((val as { queryChunks: unknown[] }).queryChunks, substring);
+        if ('value' in val) return containsSubstring((val as { value: unknown }).value, substring);
+        if ('name' in val) return containsSubstring((val as { name: unknown }).name, substring);
+      }
+      return false;
+    }
+
+    it('author filter emits case-insensitive EXISTS subquery on book_authors (#1143)', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { author: 'Brandon Sanderson' });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
+      expect(containsSubstring(whereArg, 'lower(')).toBe(true);
+    });
+
+    it('series filter emits case-insensitive series_name comparison (#1143)', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { series: 'The Stormlight Archive' });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(containsSubstring(whereArg, 'series_name')).toBe(true);
+      expect(containsSubstring(whereArg, 'lower(')).toBe(true);
+    });
+
+    it('narrator filter emits case-insensitive EXISTS subquery on book_narrators (#1143)', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { narrator: 'Michael Kramer' });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(containsSubstring(whereArg, 'book_narrators')).toBe(true);
+      expect(containsSubstring(whereArg, 'lower(')).toBe(true);
+    });
+
+    it('combined author + status filters both appear in WHERE (#1143)', async () => {
+      const countChain = mockDbChain([{ value: 1 }]);
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll('imported', undefined, { author: 'Sanderson' });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
+      expect(containsSubstring(whereArg, 'status')).toBe(true);
+    });
+
     it('all sort fields include secondary sort by id for stable pagination', async () => {
       const sortFields = ['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format'] as const;
       for (const sortField of sortFields) {
@@ -479,6 +546,36 @@ describe('BookListService', () => {
       expect(containsSubstring(whereArg, 'series_name')).toBe(true);
       expect(containsSubstring(whereArg, 'genres')).toBe(true);
       expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
+    });
+
+    it('author/series/narrator filters reach the shared predicate on the library endpoint (#1143)', async () => {
+      function containsSubstring(val: unknown, substring: string): boolean {
+        if (typeof val === 'string') return val.includes(substring);
+        if (Array.isArray(val)) return val.some((v) => containsSubstring(v, substring));
+        if (val && typeof val === 'object') {
+          if ('queryChunks' in val) return containsSubstring((val as { queryChunks: unknown[] }).queryChunks, substring);
+          if ('value' in val) return containsSubstring((val as { value: unknown }).value, substring);
+          if ('name' in val) return containsSubstring((val as { name: unknown }).name, substring);
+        }
+        return false;
+      }
+
+      const countChain = mockDbChain([{ value: 0 }]);
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAllForLibrary(undefined, undefined, {
+        author: 'Brandon Sanderson',
+        series: 'The Stormlight Archive',
+        narrator: 'Michael Kramer',
+      });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
+      expect(containsSubstring(whereArg, 'series_name')).toBe(true);
+      expect(containsSubstring(whereArg, 'book_narrators')).toBe(true);
     });
 
     it('reuses buildOrderBy — sort fields produce ≥2 order clauses (stable pagination)', async () => {

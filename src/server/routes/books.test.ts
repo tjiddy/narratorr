@@ -108,7 +108,7 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
-      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: 100, offset: undefined }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
+      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: 100, offset: undefined }, { slim: true });
     });
 
     it('forwards limit and offset to service', async () => {
@@ -116,7 +116,19 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books?limit=10&offset=20' });
 
-      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
+      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true });
+    });
+
+    it('forwards author/series/narrator filters to service (#1143)', async () => {
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?author=Sanderson&series=Stormlight&narrator=Kramer' });
+
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 100, offset: undefined },
+        { slim: true, author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' },
+      );
     });
 
     it('rejects limit=0 with 400', async () => {
@@ -163,7 +175,7 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
+      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, { slim: true });
     });
   });
 
@@ -205,12 +217,24 @@ describe('books routes', () => {
       );
     });
 
+    it('forwards author/series/narrator filters to service (#1143)', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books?author=Sanderson&series=Stormlight&narrator=Kramer' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        undefined,
+        { limit: 100, offset: undefined },
+        { author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' },
+      );
+    });
+
     it('defaults to limit=100 when omitted', async () => {
       (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/library/books' });
 
-      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, { search: undefined, sortField: undefined, sortDirection: undefined });
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, {});
     });
 
     it('rejects ?status=monitored (invalid enum) with 400', async () => {

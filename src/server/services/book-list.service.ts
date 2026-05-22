@@ -31,6 +31,9 @@ function getSlimBookColumns() {
 export interface BookListOptions {
   slim?: boolean;
   search?: string;
+  author?: string;
+  series?: string;
+  narrator?: string;
   sortField?: BookSortField;
   sortDirection?: BookSortDirection;
 }
@@ -59,10 +62,13 @@ export class BookListService {
     private db: Db,
   ) {}
 
-  /** Compose status + search WHERE filters shared by getAll() and
-   *  getAllForLibrary(). Search semantics match #365: title/series/genres +
-   *  author name subquery, no narrator subquery. */
-  private buildListWhere(status?: BookStatus, search?: string): SQL | undefined {
+  /** Compose status + search + author/series/narrator WHERE filters shared by
+   *  getAll() and getAllForLibrary(). Search semantics match #365:
+   *  title/series/genres + author name subquery, no narrator subquery.
+   *  Author/series/narrator filters (#1143) are case-insensitive exact matches
+   *  pushed to the DB so pagination operates on the filtered set. */
+  // eslint-disable-next-line complexity -- linear filter composition; each branch is independent
+  private buildListWhere(status?: BookStatus, filters?: { search?: string; author?: string; series?: string; narrator?: string }): SQL | undefined {
     const conditions: SQL[] = [];
 
     if (status) {
@@ -74,14 +80,26 @@ export class BookListService {
       }
     }
 
-    if (search) {
-      const pattern = `%${search}%`;
+    if (filters?.search) {
+      const pattern = `%${filters.search}%`;
       conditions.push(or(
         like(books.title, pattern),
         like(books.seriesName, pattern),
         like(books.genres, pattern),
         sql`EXISTS (SELECT 1 FROM book_authors ba JOIN authors a ON a.id = ba.author_id WHERE ba.book_id = ${books.id} AND a.name LIKE ${pattern})`,
       )!);
+    }
+
+    if (filters?.author) {
+      conditions.push(sql`EXISTS (SELECT 1 FROM book_authors ba JOIN authors a ON a.id = ba.author_id WHERE ba.book_id = ${books.id} AND lower(a.name) = lower(${filters.author}))`);
+    }
+
+    if (filters?.series) {
+      conditions.push(sql`lower(${books.seriesName}) = lower(${filters.series})`);
+    }
+
+    if (filters?.narrator) {
+      conditions.push(sql`EXISTS (SELECT 1 FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND lower(n.name) = lower(${filters.narrator}))`);
     }
 
     return conditions.length > 0 ? and(...conditions) : undefined;
@@ -93,7 +111,12 @@ export class BookListService {
     pagination?: { limit?: number; offset?: number },
     options?: BookListOptions,
   ): Promise<{ data: BookWithAuthor[]; total: number }> {
-    const where = this.buildListWhere(status, options?.search);
+    const where = this.buildListWhere(status, {
+      ...(options?.search !== undefined && { search: options.search }),
+      ...(options?.author !== undefined && { author: options.author }),
+      ...(options?.series !== undefined && { series: options.series }),
+      ...(options?.narrator !== undefined && { narrator: options.narrator }),
+    });
 
     // Get total count (filters only, no pagination)
     const [{ value: total } = { value: 0 }] = await this.db
@@ -191,9 +214,14 @@ export class BookListService {
   async getAllForLibrary(
     status?: BookStatus,
     pagination?: { limit?: number; offset?: number },
-    options?: { search?: string; sortField?: BookSortField; sortDirection?: BookSortDirection },
+    options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection },
   ): Promise<LibraryBookListResponseRow> {
-    const where = this.buildListWhere(status, options?.search);
+    const where = this.buildListWhere(status, {
+      ...(options?.search !== undefined && { search: options.search }),
+      ...(options?.author !== undefined && { author: options.author }),
+      ...(options?.series !== undefined && { series: options.series }),
+      ...(options?.narrator !== undefined && { narrator: options.narrator }),
+    });
 
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })

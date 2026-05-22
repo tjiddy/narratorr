@@ -44,9 +44,9 @@ export function useLibraryFilters() {
 
   // Initialize state from URL params (synchronous, first render only)
   const [statusFilter, setStatusFilterState] = useState<StatusFilter>(() => parseStatus(searchParams.get('status')));
-  const [authorFilter, setAuthorFilter] = useState(() => searchParams.get('author') ?? DEFAULTS.author);
-  const [seriesFilter, setSeriesFilter] = useState(() => searchParams.get('series') ?? DEFAULTS.series);
-  const [narratorFilter, setNarratorFilter] = useState(() => searchParams.get('narrator') ?? DEFAULTS.narrator);
+  const [authorFilter, setAuthorFilterState] = useState(() => searchParams.get('author') ?? DEFAULTS.author);
+  const [seriesFilter, setSeriesFilterState] = useState(() => searchParams.get('series') ?? DEFAULTS.series);
+  const [narratorFilter, setNarratorFilterState] = useState(() => searchParams.get('narrator') ?? DEFAULTS.narrator);
   const [sortField, setSortFieldState] = useState<SortField>(() => parseSortField(searchParams.get('sortField')));
   const [sortDirection, setSortDirectionState] = useState<SortDirection>(() => parseSortDirection(searchParams.get('sortDirection')));
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -88,6 +88,21 @@ export function useLibraryFilters() {
     pagination.reset();
   }, [pagination]);
 
+  const setAuthorFilter = useCallback((value: string) => {
+    setAuthorFilterState(value);
+    pagination.reset();
+  }, [pagination]);
+
+  const setSeriesFilter = useCallback((value: string) => {
+    setSeriesFilterState(value);
+    pagination.reset();
+  }, [pagination]);
+
+  const setNarratorFilter = useCallback((value: string) => {
+    setNarratorFilterState(value);
+    pagination.reset();
+  }, [pagination]);
+
   const setSortField = useCallback((field: SortField) => {
     setSortFieldState(field);
     pagination.reset();
@@ -113,19 +128,22 @@ export function useLibraryFilters() {
   const apiParams: BookListParams = useMemo(() => ({
     ...(statusFilter !== 'all' && { status: statusFilter }),
     ...(debouncedSearch && { search: debouncedSearch }),
+    ...(authorFilter && { author: authorFilter }),
+    ...(seriesFilter && { series: seriesFilter }),
+    ...(narratorFilter && { narrator: narratorFilter }),
     sortField,
     sortDirection,
     limit: pagination.limit,
     offset: pagination.offset,
-  }), [statusFilter, debouncedSearch, sortField, sortDirection, pagination.limit, pagination.offset]);
+  }), [statusFilter, debouncedSearch, authorFilter, seriesFilter, narratorFilter, sortField, sortDirection, pagination.limit, pagination.offset]);
 
   const activeFilterCount = (authorFilter ? 1 : 0) + (seriesFilter ? 1 : 0) + (narratorFilter ? 1 : 0);
 
   const clearAllFilters = () => {
     setStatusFilterState(DEFAULTS.status);
-    setAuthorFilter(DEFAULTS.author);
-    setSeriesFilter(DEFAULTS.series);
-    setNarratorFilter(DEFAULTS.narrator);
+    setAuthorFilterState(DEFAULTS.author);
+    setSeriesFilterState(DEFAULTS.series);
+    setNarratorFilterState(DEFAULTS.narrator);
     setSearchQueryState(DEFAULTS.search);
     setDebouncedSearch(DEFAULTS.search);
     setSortFieldState(DEFAULTS.sortField);
@@ -171,28 +189,15 @@ export function useLibraryFilters() {
   };
 }
 
-/** Apply client-side author/series/narrator filters and series collapse to page data */
+/** Apply series collapse to page data. Author/series/narrator filters are
+ *  pushed to the server (#1143) so they don't appear here — only the
+ *  collapse-series UI transform remains. */
 export function applyClientFilters(
   books: LibraryBookListItem[],
-  filters: { authorFilter: string; seriesFilter: string; narratorFilter: string; collapseSeriesEnabled: boolean; sortField: SortField; sortDirection: SortDirection },
+  filters: { collapseSeriesEnabled: boolean; sortField: SortField; sortDirection: SortDirection },
 ): DisplayBook[] {
-  let result = books;
-  if (filters.authorFilter) {
-    const authorLower = filters.authorFilter.toLowerCase();
-    result = result.filter((b) => b.authors?.some((a) => a.name.toLowerCase() === authorLower));
-  }
-  if (filters.seriesFilter) {
-    const seriesLower = filters.seriesFilter.toLowerCase();
-    result = result.filter((b) => b.seriesName?.toLowerCase() === seriesLower);
-  }
-  if (filters.narratorFilter) {
-    const filterLower = filters.narratorFilter.toLowerCase();
-    result = result.filter((b) =>
-      b.narrators.some((n) => n.name.toLowerCase() === filterLower),
-    );
-  }
   if (filters.collapseSeriesEnabled) {
-    return collapseSeries(result, filters.sortField, filters.sortDirection);
+    return collapseSeries(books, filters.sortField, filters.sortDirection);
   }
-  return result;
+  return books;
 }
