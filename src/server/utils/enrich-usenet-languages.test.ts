@@ -818,4 +818,168 @@ describe('enrichUsenetLanguages', () => {
       expect(warnCall.url).not.toContain('SECRET');
     });
   });
+
+  describe('title-pattern fallback (#1142)', () => {
+    it('Phase-2: detects german from result.title when newsgroup + nzbName both miss — Fairy Tale UAT case', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Fairy.Tale.part01.rar</meta></head>
+        <file poster="t" date="1" subject="Fairy.Tale.part01.rar">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="1" number="1">id@e</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          newsgroup: 'alt.binaries.audiobooks',
+          title: 'Stephen King – Fairy Tale (Ungekrzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+      expect(results[0]!.nzbName).toBe('Fairy.Tale.part01.rar');
+      // Debug trace records source: 'title' so the path is observable
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Stephen King – Fairy Tale (Ungekrzt)',
+          finalLanguage: 'german',
+          source: 'title',
+        }),
+        'Phase-2: enrichment complete',
+      );
+      // Per-pattern detection-attempt log emitted for the title signal
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          signal: 'title-pattern',
+          testedAgainst: 'Stephen King – Fairy Tale (Ungekrzt)',
+          matched: 'german',
+        }),
+        'Detection attempt',
+      );
+    });
+
+    it('Phase-2: nzbName wins over a detectable conflicting title (priority preservation)', async () => {
+      // nzbName matches german (Hörbuch), title matches dutch (Luisterboek).
+      // The earlier signal (nzbName) must win; the title fallback must NOT run.
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Stephen King-Hörbuch-Pack.rar</meta></head>
+        <file poster="t" date="1" subject="Stephen King-Hörbuch-Pack.rar">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="1" number="1">id@e</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          newsgroup: 'alt.binaries.audiobooks',
+          title: 'Boek Luisterboek NL.rar',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Boek Luisterboek NL.rar',
+          finalLanguage: 'german',
+          source: 'name',
+        }),
+        'Phase-2: enrichment complete',
+      );
+      // The title-pattern detection attempt must NOT have been emitted
+      const titleAttempts = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([fields]) => (fields as Record<string, unknown>)?.signal === 'title-pattern',
+      );
+      expect(titleAttempts).toHaveLength(0);
+    });
+
+    it('Phase-2: title fallback still runs when downloadUrl is present and newsgroup is generic — no Phase-1 short-circuit on title', async () => {
+      // Generic newsgroup falls through to the NZB fetch (per #533 wiring); the
+      // fetch is required to populate nzbName for downstream filterMultiPartUsenet.
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Fairy.Tale.part01.rar</meta></head>
+        <file poster="t" date="1" subject="Fairy.Tale.part01.rar">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="1" number="1">id@e</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(
+        new Response(nzbXml, { status: 200 }),
+      );
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://nzb.test/1',
+          newsgroup: 'alt.binaries.audiobooks',
+          title: 'Some Book (Ungekürzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1); // fetch still happened
+      expect(results[0]!.nzbName).toBe('Fairy.Tale.part01.rar'); // nzbName populated
+      expect(results[0]!.language).toBe('german'); // language from title fallback
+    });
+
+    it('Phase-1 (no-fetch): detects german from result.title when downloadUrl is absent and newsgroup is generic', async () => {
+      const { downloadUrl: _downloadUrl, ...resultNoUrl } = makeResult({
+        protocol: 'usenet',
+        newsgroup: 'alt.binaries.audiobooks',
+        title: 'Foo (Ungekürzt)',
+      });
+      const results: SearchResult[] = [resultNoUrl];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Foo (Ungekürzt)',
+          signal: 'title',
+          matched: 'german',
+        }),
+        'Phase-1: language detected from title (no-fetch branch)',
+      );
+    });
+
+    it('Phase-1 (no-fetch): detects german from result.title when downloadUrl is absent and newsgroup is also absent', async () => {
+      const { downloadUrl: _downloadUrl, ...resultNoUrl } = makeResult({
+        protocol: 'usenet',
+        title: 'Foo (Ungekrzt)',
+      });
+      const results: SearchResult[] = [resultNoUrl];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBe('german');
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+
+    it('Phase-1 (no-fetch): leaves language undefined when title also has no language marker', async () => {
+      const { downloadUrl: _downloadUrl, ...resultNoUrl } = makeResult({
+        protocol: 'usenet',
+        newsgroup: 'alt.binaries.audiobooks',
+        title: 'Stephen King - The Stand (2012) MP3',
+      });
+      const results: SearchResult[] = [resultNoUrl];
+
+      await enrichUsenetLanguages(results, logger);
+
+      expect(results[0]!.language).toBeUndefined();
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+  });
 });

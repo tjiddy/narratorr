@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/indexers/types.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
-import { detectLanguageFromNewsgroup, detectLanguageFromNzbName, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
+import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
 import { Semaphore } from './semaphore.js';
 import { serializeError } from './serialize-error.js';
@@ -57,13 +57,29 @@ export async function enrichUsenetLanguages(
         logger.debug({ title: result.title, newsgroup: result.newsgroup }, 'Phase-1: newsgroup generic, falling through to NZB fetch');
         needsFetch.push(result);
       } else {
-        logger.debug({ title: result.title, reason: 'no-download-url' }, 'Phase-1: skipped, cannot fetch');
+        // No fetch possible — try title as a last resort before giving up.
+        const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
+        if (titleLang) {
+          result.language = titleLang;
+          languagesDetected++;
+          logger.debug({ title: result.title, signal: 'title', matched: titleLang }, 'Phase-1: language detected from title (no-fetch branch)');
+        } else {
+          logger.debug({ title: result.title, reason: 'no-download-url' }, 'Phase-1: skipped, cannot fetch');
+        }
       }
     } else if (result.downloadUrl) {
       logger.debug({ title: result.title }, 'Phase-1: no newsgroup, falling through to NZB fetch');
       needsFetch.push(result);
     } else {
-      logger.debug({ title: result.title, reason: 'no-download-url' }, 'Phase-1: skipped, cannot fetch');
+      // No newsgroup AND no downloadUrl — try title as a last resort.
+      const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
+      if (titleLang) {
+        result.language = titleLang;
+        languagesDetected++;
+        logger.debug({ title: result.title, signal: 'title', matched: titleLang }, 'Phase-1: language detected from title (no-fetch branch)');
+      } else {
+        logger.debug({ title: result.title, reason: 'no-download-url' }, 'Phase-1: skipped, cannot fetch');
+      }
     }
   }
 
@@ -111,28 +127,43 @@ export async function enrichUsenetLanguages(
       }, 'Phase-2: NZB parsed');
 
       // Detect language from newsgroups first
-      let langDetected = false;
-      let source: 'newsgroup' | 'name' | 'unresolved' = 'unresolved';
+      let source: 'newsgroup' | 'name' | 'title' | 'unresolved' = 'unresolved';
       for (const group of groups) {
         const lang = normalizeLanguage(detectLanguageFromNewsgroup(group));
         logger.debug({ title: result.title, signal: 'newsgroup-token', testedAgainst: group, matched: lang ?? null }, 'Detection attempt');
         if (lang) {
           result.language = lang;
           languagesDetected++;
-          langDetected = true;
           source = 'newsgroup';
           break;
         }
       }
 
       // Fall back to NZB name for language detection
-      if (!langDetected) {
-        const nameLang = normalizeLanguage(detectLanguageFromNzbName(result.nzbName));
+      if (!result.language) {
+        const nameLang = normalizeLanguage(detectLanguageFromText(result.nzbName));
         logger.debug({ title: result.title, signal: 'nzb-name-pattern', testedAgainst: result.nzbName, matched: nameLang ?? null }, 'Detection attempt');
         if (nameLang) {
           result.language = nameLang;
           languagesDetected++;
           source = 'name';
+        }
+      }
+
+      // Final fallback: scan the user-facing title for language markers. Many
+      // indexers strip parenthetical descriptors like (Ungekürzt) from the NZB
+      // <meta type="name"> while leaving them in the title — without this
+      // pass, German releases on generic newsgroups slip through the language
+      // filter as "language-undetermined". Guarded on result.language (not a
+      // langDetected flag) so a successful nzbName match is respected and
+      // not overridden by a detectable title marker.
+      if (!result.language) {
+        const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
+        logger.debug({ title: result.title, signal: 'title-pattern', testedAgainst: result.title, matched: titleLang ?? null }, 'Detection attempt');
+        if (titleLang) {
+          result.language = titleLang;
+          languagesDetected++;
+          source = 'title';
         }
       }
 

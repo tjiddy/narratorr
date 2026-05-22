@@ -4,7 +4,7 @@ import {
   parseNzbGroups,
   parseNzbName,
   parseNzbFileSubject,
-  detectLanguageFromNzbName,
+  detectLanguageFromText,
 } from './detect-usenet-language.js';
 
 describe('detectLanguageFromNewsgroup', () => {
@@ -293,56 +293,56 @@ describe('parseNzbFileSubject', () => {
   });
 });
 
-describe('detectLanguageFromNzbName', () => {
+describe('detectLanguageFromText', () => {
   it('detects hörbuch (with umlaut) as german', () => {
-    expect(detectLanguageFromNzbName('Stephen King-Hörbuch-Pack.rar')).toBe('german');
+    expect(detectLanguageFromText('Stephen King-Hörbuch-Pack.rar')).toBe('german');
   });
 
   it('detects horbuch (ASCII approximation) as german', () => {
-    expect(detectLanguageFromNzbName('Stephen King-Horbuch-Pack.rar')).toBe('german');
+    expect(detectLanguageFromText('Stephen King-Horbuch-Pack.rar')).toBe('german');
   });
 
   it('detects h?rbuch (question-mark mangled umlaut) as german', () => {
-    expect(detectLanguageFromNzbName('Stephen King-H?rbuch-Pack.rar')).toBe('german');
+    expect(detectLanguageFromText('Stephen King-H?rbuch-Pack.rar')).toBe('german');
   });
 
   it('detects hörbücher and horbucher as german', () => {
-    expect(detectLanguageFromNzbName('Sammlung Hörbücher 2024')).toBe('german');
-    expect(detectLanguageFromNzbName('Sammlung Horbucher 2024')).toBe('german');
+    expect(detectLanguageFromText('Sammlung Hörbücher 2024')).toBe('german');
+    expect(detectLanguageFromText('Sammlung Horbucher 2024')).toBe('german');
   });
 
   it('detects ungekürzt (proper UTF-8) as german', () => {
-    expect(detectLanguageFromNzbName('Stephen King — Fairy Tale (Ungekürzt)')).toBe('german');
+    expect(detectLanguageFromText('Stephen King — Fairy Tale (Ungekürzt)')).toBe('german');
   });
 
   it('detects ungekuerzt (German "ue" digraph fallback) as german', () => {
-    expect(detectLanguageFromNzbName('Stephen King — Fairy Tale (Ungekuerzt)')).toBe('german');
+    expect(detectLanguageFromText('Stephen King — Fairy Tale (Ungekuerzt)')).toBe('german');
   });
 
   it('detects ungekrzt (naked-drop, NZBgeek-stripped form) as german — Fairy Tale UAT case', () => {
-    expect(detectLanguageFromNzbName('Stephen.King-Fairy.Tale.(Ungekrzt)')).toBe('german');
+    expect(detectLanguageFromText('Stephen.King-Fairy.Tale.(Ungekrzt)')).toBe('german');
   });
 
   it('detects gekürzt and its mangled forms as german', () => {
-    expect(detectLanguageFromNzbName('Some Title (Gekürzt)')).toBe('german');
-    expect(detectLanguageFromNzbName('Some Title (Gekuerzt)')).toBe('german');
-    expect(detectLanguageFromNzbName('Some Title (Gekrzt)')).toBe('german');
+    expect(detectLanguageFromText('Some Title (Gekürzt)')).toBe('german');
+    expect(detectLanguageFromText('Some Title (Gekuerzt)')).toBe('german');
+    expect(detectLanguageFromText('Some Title (Gekrzt)')).toBe('german');
   });
 
   it('detects luisterboek as dutch', () => {
-    expect(detectLanguageFromNzbName('Boek Luisterboek NL.rar')).toBe('dutch');
+    expect(detectLanguageFromText('Boek Luisterboek NL.rar')).toBe('dutch');
   });
 
   it('returns undefined for NZB names with no language tokens', () => {
-    expect(detectLanguageFromNzbName('Stephen King - The Stand (2012) MP3')).toBeUndefined();
+    expect(detectLanguageFromText('Stephen King - The Stand (2012) MP3')).toBeUndefined();
   });
 
   it('token matching is case-insensitive', () => {
-    expect(detectLanguageFromNzbName('HÖRBUCH Pack')).toBe('german');
-    expect(detectLanguageFromNzbName('hörbuch pack')).toBe('german');
+    expect(detectLanguageFromText('HÖRBUCH Pack')).toBe('german');
+    expect(detectLanguageFromText('hörbuch pack')).toBe('german');
   });
 
   it('returns undefined for undefined input', () => {
-    expect(detectLanguageFromNzbName(undefined)).toBeUndefined();
+    expect(detectLanguageFromText(undefined)).toBeUndefined();
   });
 });
