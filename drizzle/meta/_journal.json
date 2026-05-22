@@ -50,6 +50,13 @@
       "when": 1779059966152,
       "tag": "0006_replace_series_with_hardcover",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779436440276,
+      "tag": "0007_living_psynapse",
+      "breakpoints": true
     }
   ]
 }

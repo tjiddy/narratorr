@@ -56,6 +56,7 @@ const mockDownload: DownloadWithBook = {
   guid: null,
   outputPath: null,
   pendingCleanup: null,
+  bookStatusAtGrab: null,
   indexerName: null,
 };
 

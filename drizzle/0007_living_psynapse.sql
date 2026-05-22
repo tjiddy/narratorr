@@ -1,0 +1,1 @@
+ALTER TABLE `downloads` ADD `book_status_at_grab` text;

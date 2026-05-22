@@ -260,6 +260,12 @@ export const downloads = sqliteTable('downloads', {
   errorMessage: text('error_message'),
   guid: text('guid'),
   outputPath: text('output_path'),
+  // Pre-grab snapshot of `books.status` captured by DownloadOrchestrator BEFORE
+  // it flips the book to `downloading`/`missing`. The quality gate reads this
+  // (#1144) to distinguish a user-initiated wanted-flow grab from an auto-upgrade
+  // replacement, both of which arrive at the gate with `book.status === 'importing'`.
+  // Nullable so pre-migration rows coexist; null is treated as `'imported'` (conservative).
+  bookStatusAtGrab: text('book_status_at_grab', { enum: BOOK_STATUSES }),
   addedAt: integer('added_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

@@ -118,6 +118,7 @@ const baseDownload = {
   seeders: 10, progress: 1, errorMessage: null, guid: null,
   outputPath: null, addedAt: new Date(), completedAt: new Date(),
   indexerId: 1, progressUpdatedAt: null, pendingCleanup: null,
+  bookStatusAtGrab: 'imported' as const,
 };
 
 const baseBook = {
