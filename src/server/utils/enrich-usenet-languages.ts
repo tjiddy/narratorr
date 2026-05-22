@@ -10,6 +10,45 @@ import { sanitizeLogUrl } from './sanitize-log-url.js';
 const NZB_FETCH_CONCURRENCY = 5;
 const NZB_FETCH_TIMEOUT_MS = 5000;
 
+type Phase2Source = 'newsgroup' | 'name' | 'title' | 'unresolved';
+
+/**
+ * Walk the post-fetch signal cascade — newsgroups → nzbName → title — and set
+ * `result.language` on the first hit. Each pass is guarded on `result.language`
+ * (not a separate flag) so an earlier hit always wins. Emits per-signal debug
+ * traces so a search can be replayed from log output.
+ */
+function detectPhase2Source(
+  result: SearchResult,
+  groups: string[],
+  logger: FastifyBaseLogger,
+): Phase2Source {
+  for (const group of groups) {
+    const lang = normalizeLanguage(detectLanguageFromNewsgroup(group));
+    logger.debug({ title: result.title, signal: 'newsgroup-token', testedAgainst: group, matched: lang ?? null }, 'Detection attempt');
+    if (lang) {
+      result.language = lang;
+      return 'newsgroup';
+    }
+  }
+
+  const nameLang = normalizeLanguage(detectLanguageFromText(result.nzbName));
+  logger.debug({ title: result.title, signal: 'nzb-name-pattern', testedAgainst: result.nzbName, matched: nameLang ?? null }, 'Detection attempt');
+  if (nameLang) {
+    result.language = nameLang;
+    return 'name';
+  }
+
+  const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
+  logger.debug({ title: result.title, signal: 'title-pattern', testedAgainst: result.title, matched: titleLang ?? null }, 'Detection attempt');
+  if (titleLang) {
+    result.language = titleLang;
+    return 'title';
+  }
+
+  return 'unresolved';
+}
+
 /**
  * Enrich Usenet search results with language detected from newsgroup metadata.
  *
@@ -126,46 +165,12 @@ export async function enrichUsenetLanguages(
         fileSubject: result.nzbName,
       }, 'Phase-2: NZB parsed');
 
-      // Detect language from newsgroups first
-      let source: 'newsgroup' | 'name' | 'title' | 'unresolved' = 'unresolved';
-      for (const group of groups) {
-        const lang = normalizeLanguage(detectLanguageFromNewsgroup(group));
-        logger.debug({ title: result.title, signal: 'newsgroup-token', testedAgainst: group, matched: lang ?? null }, 'Detection attempt');
-        if (lang) {
-          result.language = lang;
-          languagesDetected++;
-          source = 'newsgroup';
-          break;
-        }
-      }
-
-      // Fall back to NZB name for language detection
-      if (!result.language) {
-        const nameLang = normalizeLanguage(detectLanguageFromText(result.nzbName));
-        logger.debug({ title: result.title, signal: 'nzb-name-pattern', testedAgainst: result.nzbName, matched: nameLang ?? null }, 'Detection attempt');
-        if (nameLang) {
-          result.language = nameLang;
-          languagesDetected++;
-          source = 'name';
-        }
-      }
-
-      // Final fallback: scan the user-facing title for language markers. Many
-      // indexers strip parenthetical descriptors like (Ungekürzt) from the NZB
-      // <meta type="name"> while leaving them in the title — without this
-      // pass, German releases on generic newsgroups slip through the language
-      // filter as "language-undetermined". Guarded on result.language (not a
-      // langDetected flag) so a successful nzbName match is respected and
-      // not overridden by a detectable title marker.
-      if (!result.language) {
-        const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
-        logger.debug({ title: result.title, signal: 'title-pattern', testedAgainst: result.title, matched: titleLang ?? null }, 'Detection attempt');
-        if (titleLang) {
-          result.language = titleLang;
-          languagesDetected++;
-          source = 'title';
-        }
-      }
+      // Walk the detection signals in priority order — newsgroup → nzbName → title.
+      // Guarded on result.language so earlier signals win; the title fallback
+      // is defense-in-depth for cases where uploaders strip parenthetical
+      // language markers like (Ungekürzt) from the NZB meta name.
+      const source = detectPhase2Source(result, groups, logger);
+      if (source !== 'unresolved') languagesDetected++;
 
       logger.debug({
         title: result.title,
