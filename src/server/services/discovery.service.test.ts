@@ -593,17 +593,19 @@ describe('DiscoveryService', () => {
   });
 
   describe('getSuggestions', () => {
-    it('returns pending suggestions sorted by score', async () => {
+    it('returns pending suggestions sorted by score (enriched with libraryBookId: null when no library matches)', async () => {
       const mockData = [
         { id: 1, asin: 'B001', score: 80, status: 'pending', reason: 'author' },
         { id: 2, asin: 'B002', score: 60, status: 'pending', reason: 'genre' },
       ];
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain(mockData));
+      // First select is the suggestions query; second select is the
+      // library-enrichment query (defaults to empty via createMockDb).
+      db.select.mockReturnValueOnce(mockDbChain(mockData));
       const { service } = createService(db);
 
       const result = await service.getSuggestions();
-      expect(result).toEqual(mockData);
+      expect(result).toEqual(mockData.map((r) => ({ ...r, libraryBookId: null })));
     });
 
     it('returns empty array when no suggestions exist', async () => {
@@ -622,11 +624,13 @@ describe('DiscoveryService', () => {
         { id: 2, asin: 'B002', score: 60, status: 'pending', snoozeUntil: pastDate },
       ];
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain(mockData));
+      // First select is the suggestions query; second select is the enrichment
+      // query (default empty chain → all libraryBookIds are null).
+      db.select.mockReturnValueOnce(mockDbChain(mockData));
       const { service } = createService(db);
 
       const result = await service.getSuggestions();
-      expect(result).toEqual(mockData);
+      expect(result).toEqual(mockData.map((r) => ({ ...r, libraryBookId: null })));
 
       // Verify the WHERE predicate encodes: status = 'pending' AND (snoozeUntil IS NULL OR snoozeUntil <= ?)
       const chain = db.select.mock.results[0]!.value;
@@ -2610,8 +2614,7 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     service = new DiscoveryService(
       db,
       inject<FastifyBaseLogger>(log),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockMetadata as any,
+      inject(mockMetadata),
       settingsService,
     );
 
@@ -2707,5 +2710,152 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     // SQLite integer timestamps are second-precision; allow round-trip truncation
     expect(after[0]!.snoozeUntil).not.toBeNull();
     expect(Math.abs((after[0]!.snoozeUntil!.getTime() - snoozeUntil.getTime()))).toBeLessThan(1100);
+  });
+});
+
+// ===== #1150: enrichWithLibraryBookId — surfaces matched library book id =====
+//
+// Exercises the enrichment helper against a real libsql DB so the ASIN-first +
+// title/author fallback semantics (lowest-id tie-breaker) are covered end-to-end.
+
+describe('DiscoveryService — getSuggestions enrichment with libraryBookId (real libsql)', () => {
+  let dir: string;
+  let db: Db;
+  let service: DiscoveryService;
+  const log = createMockLogger();
+
+  const mockMetadata = {
+    searchBooksForDiscovery: vi.fn().mockResolvedValue({ books: [], warnings: [] }),
+  };
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'discovery-enrich-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+
+    const settingsService = createMockSettingsService({
+      discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
+      metadata: { audibleRegion: 'us' },
+    });
+
+    service = new DiscoveryService(
+      db,
+      inject<FastifyBaseLogger>(log),
+      inject(mockMetadata),
+      settingsService,
+    );
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep file handles on Windows
+    }
+  });
+
+  async function seedAuthor(name: string, slug: string) {
+    const [row] = await db.insert(authors).values({ name, slug }).returning();
+    return row!;
+  }
+
+  async function seedLibraryBook(values: { title: string; asin?: string | null; authorId: number }) {
+    const [book] = await db
+      .insert(books)
+      .values({ title: values.title, asin: values.asin ?? null, status: 'imported', enrichmentStatus: 'enriched' })
+      .returning();
+    await db.insert(bookAuthors).values({ bookId: book!.id, authorId: values.authorId, position: 0 });
+    return book!;
+  }
+
+  async function seedSuggestion(values: { asin: string; title: string; authorName: string; score?: number }) {
+    await db.insert(suggestions).values({
+      asin: values.asin,
+      title: values.title,
+      authorName: values.authorName,
+      reason: 'author',
+      reasonContext: 'ctx',
+      score: values.score ?? 50,
+      status: 'pending',
+      refreshedAt: new Date(),
+    });
+  }
+
+  it('populates libraryBookId via ASIN match (mirrors uniquely-indexed books.asin)', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const libBook = await seedLibraryBook({ title: 'Library Title', asin: 'MATCH1', authorId: author.id });
+    await seedSuggestion({ asin: 'MATCH1', title: 'Suggestion Title', authorName: 'Brandon Sanderson' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(libBook.id);
+  });
+
+  it('falls back to case-insensitive title+primary-author when ASIN does not match', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const libBook = await seedLibraryBook({ title: 'The Way of Kings', asin: null, authorId: author.id });
+    await seedSuggestion({ asin: 'NOMATCH', title: 'the way of kings', authorName: 'brandon sanderson' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(libBook.id);
+  });
+
+  it('returns libraryBookId = null when neither ASIN nor title+author match', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    await seedLibraryBook({ title: 'Different Book', asin: 'OTHER', authorId: author.id });
+    await seedSuggestion({ asin: 'NOMATCH', title: 'Some Other Title', authorName: 'Brandon Sanderson' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBeNull();
+  });
+
+  it('lowest-id wins when multiple library books match the title+author fallback', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const first = await seedLibraryBook({ title: 'Mistborn', asin: null, authorId: author.id });
+    const second = await seedLibraryBook({ title: 'Mistborn', asin: null, authorId: author.id });
+    expect(second.id).toBeGreaterThan(first.id);
+
+    await seedSuggestion({ asin: 'NOMATCH', title: 'Mistborn', authorName: 'Brandon Sanderson' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(first.id);
+  });
+
+  it('returns per-row libraryBookId for a mixed batch — some match, some do not', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const matchBook = await seedLibraryBook({ title: 'Library Title', asin: 'HIT1', authorId: author.id });
+    await seedSuggestion({ asin: 'HIT1', title: 'Suggestion A', authorName: 'Brandon Sanderson', score: 90 });
+    await seedSuggestion({ asin: 'MISS1', title: 'Suggestion B', authorName: 'Brandon Sanderson', score: 80 });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(2);
+    const byAsin = new Map(result.map((r) => [r.asin, r.libraryBookId]));
+    expect(byAsin.get('HIT1')).toBe(matchBook.id);
+    expect(byAsin.get('MISS1')).toBeNull();
+  });
+
+  it('surfaces libraryBookId via dismissSuggestion', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const libBook = await seedLibraryBook({ title: 'Library Title', asin: 'DISMISS1', authorId: author.id });
+    await seedSuggestion({ asin: 'DISMISS1', title: 'Suggestion', authorName: 'Brandon Sanderson' });
+    const [row] = await db.select().from(suggestions).where(eq(suggestions.asin, 'DISMISS1'));
+    const result = await service.dismissSuggestion(row!.id);
+    expect(result).not.toBeNull();
+    expect(result!.libraryBookId).toBe(libBook.id);
+  });
+
+  it('surfaces libraryBookId via markSuggestionAdded', async () => {
+    const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
+    const libBook = await seedLibraryBook({ title: 'Library Title', asin: 'ADD1', authorId: author.id });
+    await seedSuggestion({ asin: 'ADD1', title: 'Suggestion', authorName: 'Brandon Sanderson' });
+    const [row] = await db.select().from(suggestions).where(eq(suggestions.asin, 'ADD1'));
+    const result = await service.markSuggestionAdded(row!.id);
+    expect(result).not.toBeNull();
+    expect(result!.suggestion.libraryBookId).toBe(libBook.id);
   });
 });

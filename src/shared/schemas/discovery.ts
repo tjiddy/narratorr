@@ -51,4 +51,6 @@ export interface SuggestionRowResponse {
   dismissedAt: string | null;
   snoozeUntil: string | null;
   createdAt: string;
+  /** Populated when the suggestion matches a book already in the library (by ASIN or title+primary-author). */
+  libraryBookId: number | null;
 }

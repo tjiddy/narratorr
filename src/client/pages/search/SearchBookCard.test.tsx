@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { SearchBookCard } from './SearchBookCard';
 import { createMockBookMetadata, createMockBook } from '@/__tests__/factories';
 
@@ -35,7 +36,9 @@ function renderCard(bookOverrides = {}, libraryBooks?: ReturnType<typeof createM
   const book = createMockBookMetadata(bookOverrides);
   return render(
     <QueryClientProvider client={queryClient}>
-      <SearchBookCard book={book} index={0} {...(libraryBooks !== undefined && { libraryBooks })} queryClient={queryClient} />
+      <MemoryRouter>
+        <SearchBookCard book={book} index={0} {...(libraryBooks !== undefined && { libraryBooks })} queryClient={queryClient} />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -115,6 +118,20 @@ describe('SearchBookCard', () => {
     expect(screen.getByText('In Library')).toBeInTheDocument();
   });
 
+  it('renders In Library badge as a link to the matched library book detail page', () => {
+    const book = createMockBookMetadata();
+    const libraryBooks = [createMockBook({ id: 42, ...(book.asin !== undefined ? { asin: book.asin } : {}) })];
+    renderCard({}, libraryBooks);
+    const link = screen.getByRole('link', { name: /view this book in your library/i });
+    expect(link).toHaveAttribute('href', '/books/42');
+  });
+
+  it('renders AddBookPopover with no /books link when no library match', () => {
+    renderCard({}, []);
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getByRole('button')).toBeInTheDocument();
+  });
+
   it('calls addBook via popover flow', async () => {
     vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'The Way of Kings' } as never);
     const user = userEvent.setup();
@@ -131,8 +148,8 @@ describe('SearchBookCard', () => {
     });
   });
 
-  it('shows In Library after successful add', async () => {
-    vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'The Way of Kings' } as never);
+  it('shows In Library after successful add, linked to the created book', async () => {
+    vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
     const user = userEvent.setup();
     renderCard();
 
@@ -144,10 +161,12 @@ describe('SearchBookCard', () => {
       expect(toast.success).toHaveBeenCalledWith("Added 'The Way of Kings' to library");
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
+    expect(screen.getByRole('link', { name: /view this book in your library/i }))
+      .toHaveAttribute('href', '/books/99');
   });
 
-  it('handles 409 duplicate gracefully', async () => {
-    vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { id: 1 }));
+  it('handles 409 duplicate gracefully, linking to the existing book id from the 409 body', async () => {
+    vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { id: 7 }));
     const user = userEvent.setup();
     renderCard();
 
@@ -159,6 +178,8 @@ describe('SearchBookCard', () => {
       expect(toast.info).toHaveBeenCalledWith('Already in library');
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
+    expect(screen.getByRole('link', { name: /view this book in your library/i }))
+      .toHaveAttribute('href', '/books/7');
   });
 
   it('shows error toast for non-409 errors', async () => {

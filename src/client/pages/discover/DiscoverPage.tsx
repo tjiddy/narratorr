@@ -41,28 +41,36 @@ function suggestionToPayload(
   };
 }
 
-function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<Set<number>>>) {
+function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<Map<number, number | null>>>) {
   const queryClient = useQueryClient();
   const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
 
-  const markAdded = (id: number) => {
-    setAddedIds((prev) => new Set(prev).add(id));
+  const markAdded = (suggestionId: number, libraryBookId: number | null) => {
+    setAddedMap((prev) => {
+      const next = new Map(prev);
+      next.set(suggestionId, libraryBookId);
+      return next;
+    });
     queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
     // Fire-and-forget: mark suggestion as added in backend
-    api.markDiscoverSuggestionAdded(id).catch(() => {});
+    api.markDiscoverSuggestionAdded(suggestionId).catch(() => {});
   };
 
   const addMutation = useMutation({
     mutationFn: ({ suggestion, overrides }: { suggestion: SuggestionRow; overrides: { searchImmediately: boolean } }) =>
       api.addBook(suggestionToPayload(suggestion, overrides)),
-    onSuccess: (_data, { suggestion }) => {
-      markAdded(suggestion.id);
+    onSuccess: (created, { suggestion }) => {
+      markAdded(suggestion.id, created.id);
       toast.success('Added to library');
     },
     onError: (error: Error, { suggestion }) => {
       if (error instanceof ApiError && error.status === 409) {
-        markAdded(suggestion.id);
+        // 409 body is the existing book row (see src/server/routes/books.ts:141)
+        const existingId = error.body !== null && typeof error.body === 'object' && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
+          ? (error.body as { id: number }).id
+          : null;
+        markAdded(suggestion.id, existingId);
         toast.info('Already in library');
       } else {
         toast.error(`Failed to add book: ${getErrorMessage(error)}`);
@@ -87,7 +95,7 @@ function useDiscoverMutations(setAddedIds: React.Dispatch<React.SetStateAction<S
     mutationFn: () => api.refreshDiscover(),
     onSuccess: () => {
       setRemovedIds(new Set());
-      setAddedIds(new Set());
+      setAddedMap(new Map());
       queryClient.invalidateQueries({ queryKey: queryKeys.discover.suggestions() });
       queryClient.invalidateQueries({ queryKey: queryKeys.discover.stats() });
       toast.success('Suggestions refreshed');
@@ -140,8 +148,8 @@ export function DiscoverPage() {
     return result;
   }, [suggestions, filter, configuredLanguages, rejectWords]);
 
-  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
-  const { addMutation, dismissMutation, refreshMutation, removedIds } = useDiscoverMutations(setAddedIds);
+  const [addedMap, setAddedMap] = useState<Map<number, number | null>>(new Map());
+  const { addMutation, dismissMutation, refreshMutation, removedIds } = useDiscoverMutations(setAddedMap);
 
   const visibleSuggestions = useMemo(
     () => filtered.filter((s) => !removedIds.has(s.id)),
@@ -211,7 +219,8 @@ export function DiscoverPage() {
               onDismiss={(id) => dismissMutation.mutate(id)}
               isAdding={addMutation.isPending && addMutation.variables?.suggestion.id === suggestion.id}
               isDismissing={dismissMutation.isPending && dismissMutation.variables === suggestion.id}
-              isAdded={addedIds.has(suggestion.id)}
+              isAdded={addedMap.has(suggestion.id)}
+              addedLibraryBookId={addedMap.get(suggestion.id) ?? null}
             />
           ))}
         </div>

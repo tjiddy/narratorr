@@ -76,6 +76,8 @@ export type SuggestionRow = Omit<typeof suggestions.$inferSelect, 'reason' | 'st
   status: SuggestionStatus;
 };
 
+export type SuggestionRowWithLibraryBookId = SuggestionRow & { libraryBookId: number | null };
+
 export type ImportJobRow = Omit<typeof importJobs.$inferSelect, 'type' | 'status' | 'phase'> & {
   type: ImportJobType;
   status: ImportJobStatus;

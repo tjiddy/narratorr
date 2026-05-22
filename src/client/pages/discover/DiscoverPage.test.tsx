@@ -60,6 +60,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     dismissedAt: null,
     snoozeUntil: null,
     createdAt: '2026-01-01T00:00:00Z',
+    libraryBookId: null,
     ...overrides,
   };
 }
@@ -631,7 +632,7 @@ describe('DiscoverPage', () => {
       expect(screen.getByText('Other Book')).toBeInTheDocument();
 
       // The added card shows the "In library" checkmark and no longer has an Add button
-      expect(screen.getByLabelText('In library')).toBeInTheDocument();
+      expect(screen.getByText('In Library')).toBeInTheDocument();
       // Other Book should still have its Add button
       const remainingAddButtons = screen.getAllByRole('button', { name: /^add book$/i });
       expect(remainingAddButtons).toHaveLength(1); // only Other Book's Add button
@@ -794,7 +795,7 @@ describe('DiscoverPage', () => {
 
       // Optimistic added state is preserved despite rejection
       expect(screen.getByText('Test Book')).toBeInTheDocument();
-      expect(screen.getByLabelText('In library')).toBeInTheDocument();
+      expect(screen.getByText('In Library')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^add book$/i })).not.toBeInTheDocument();
 
       warnSpy.mockRestore();
