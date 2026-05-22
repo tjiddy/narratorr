@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { BookDescription } from './BookDescription';
 
 describe('BookDescription', () => {
@@ -14,36 +13,13 @@ describe('BookDescription', () => {
     expect(screen.getByText('An epic fantasy novel.')).toBeInTheDocument();
   });
 
-  it('shows Show more button for long descriptions', () => {
-    const longDesc = 'A'.repeat(301);
-    render(<BookDescription description={longDesc} />);
-    expect(screen.getByText('Show more')).toBeInTheDocument();
-  });
-
-  it('does not show button for short descriptions', () => {
-    const shortDesc = 'A'.repeat(300);
-    render(<BookDescription description={shortDesc} />);
-    expect(screen.queryByText('Show more')).not.toBeInTheDocument();
-    expect(screen.queryByText('Show less')).not.toBeInTheDocument();
-  });
-
-  it('expands description on Show more click', async () => {
-    const user = userEvent.setup();
-    const longDesc = 'A'.repeat(301);
+  it('renders a long description in full with no Show more/Show less toggle', () => {
+    const longDesc = 'A'.repeat(5000);
     render(<BookDescription description={longDesc} />);
 
-    await user.click(screen.getByText('Show more'));
-    expect(screen.getByText('Show less')).toBeInTheDocument();
-  });
-
-  it('collapses description on Show less click', async () => {
-    const user = userEvent.setup();
-    const longDesc = 'A'.repeat(301);
-    render(<BookDescription description={longDesc} />);
-
-    await user.click(screen.getByText('Show more'));
-    await user.click(screen.getByText('Show less'));
-    expect(screen.getByText('Show more')).toBeInTheDocument();
+    expect(screen.getByText(longDesc)).toBeInTheDocument();
+    expect(screen.queryByText('Show more')).toBeNull();
+    expect(screen.queryByText('Show less')).toBeNull();
   });
 
   it('sanitizes HTML content via DOMPurify', () => {
