@@ -221,6 +221,63 @@ describe('booksApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
   });
 
+  // #1143 — server-side author/series/narrator filters: URL serialization contract
+  it('getBooks with author filter → GET /books?author=...', async () => {
+    await booksApi.getBooks({ author: 'Brandon Sanderson' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books?author=Brandon+Sanderson');
+  });
+
+  it('getBooks with series filter → GET /books?series=...', async () => {
+    await booksApi.getBooks({ series: 'The Stormlight Archive' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books?series=The+Stormlight+Archive');
+  });
+
+  it('getBooks with narrator filter → GET /books?narrator=...', async () => {
+    await booksApi.getBooks({ narrator: 'Michael Kramer' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books?narrator=Michael+Kramer');
+  });
+
+  it('getBooks with author + series + narrator combined → URL carries all three (#1143)', async () => {
+    await booksApi.getBooks({ author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books?author=Sanderson&series=Stormlight&narrator=Kramer');
+  });
+
+  it('listLibraryBooks with author → GET /library/books?author=...', async () => {
+    await booksApi.listLibraryBooks({ author: 'Brandon Sanderson' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/books?author=Brandon+Sanderson');
+  });
+
+  it('listLibraryBooks with series → GET /library/books?series=...', async () => {
+    await booksApi.listLibraryBooks({ series: 'The Stormlight Archive' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/books?series=The+Stormlight+Archive');
+  });
+
+  it('listLibraryBooks with narrator → GET /library/books?narrator=...', async () => {
+    await booksApi.listLibraryBooks({ narrator: 'Michael Kramer' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/books?narrator=Michael+Kramer');
+  });
+
+  it('listLibraryBooks with status + author + search composes into URL', async () => {
+    await booksApi.listLibraryBooks({ status: 'imported', author: 'Sanderson', search: 'kings' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=imported&search=kings&author=Sanderson');
+  });
+
+  it('getBooks omits author/series/narrator from URL when not set', async () => {
+    await booksApi.getBooks({ status: 'wanted' });
+    const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
+    expect(url).not.toContain('author=');
+    expect(url).not.toContain('series=');
+    expect(url).not.toContain('narrator=');
+  });
+
+  it('getBooks omits author/series/narrator when passed as empty strings', async () => {
+    await booksApi.getBooks({ author: '', series: '', narrator: '' });
+    const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
+    expect(url).not.toContain('author=');
+    expect(url).not.toContain('series=');
+    expect(url).not.toContain('narrator=');
+  });
+
   it('getBookStats → GET /books/stats', async () => {
     await booksApi.getBookStats();
     expect(mockFetchApi).toHaveBeenCalledWith('/books/stats');
