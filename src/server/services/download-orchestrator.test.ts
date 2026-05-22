@@ -109,7 +109,20 @@ describe('DownloadOrchestrator', () => {
     blacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({ id: 99 }) });
     const mockWhere = vi.fn().mockResolvedValue(undefined);
     const mockSet = vi.fn().mockReturnValue({ where: mockWhere });
-    mockDb = { update: vi.fn().mockReturnValue({ set: mockSet }) };
+    // `select(...).from(...).where(...).limit(...)` — orchestrator uses this to
+    // capture pre-grab `books.status` (#1144). Default fixture book.status is
+    // 'imported' so existing tests keep the auto-upgrade-style replacement shape.
+    const mockSelectChain = {
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue([{ status: 'imported' }]),
+        }),
+      }),
+    };
+    mockDb = {
+      update: vi.fn().mockReturnValue({ set: mockSet }),
+      select: vi.fn().mockReturnValue(mockSelectChain),
+    };
     orchestrator = new DownloadOrchestrator(downloadService, mockDb as never, log, notifier, eventHistory, broadcaster, blacklistService);
   });
 
@@ -117,7 +130,7 @@ describe('DownloadOrchestrator', () => {
     it('calls downloadService.grab() and returns the result', async () => {
       const params = { downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 };
       const result = await orchestrator.grab(params);
-      expect(downloadService.grab).toHaveBeenCalledWith(params);
+      expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining(params));
       expect(result).toBe(mockDownload);
     });
 
@@ -200,6 +213,70 @@ describe('DownloadOrchestrator', () => {
       (recordGrabbedEvent as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('record boom'); });
       const result = await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
       expect(result).toBe(mockDownload);
+    });
+
+    // #1144 — capture pre-grab book.status as durable signal for quality gate
+    describe('bookStatusAtGrab capture (#1144)', () => {
+      function withBookStatus(status: string) {
+        (mockDb as Record<string, unknown>).select = vi.fn().mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([{ status }]),
+            }),
+          }),
+        });
+      }
+
+      it('reads books.status BEFORE downloadService.grab and passes it through as bookStatusAtGrab', async () => {
+        withBookStatus('wanted');
+        await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
+        expect(downloadService.grab).toHaveBeenCalledWith(
+          expect.objectContaining({ bookStatusAtGrab: 'wanted' }),
+        );
+      });
+
+      it('captures imported as bookStatusAtGrab when the book is already imported (auto-upgrade flow)', async () => {
+        withBookStatus('imported');
+        await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
+        expect(downloadService.grab).toHaveBeenCalledWith(
+          expect.objectContaining({ bookStatusAtGrab: 'imported' }),
+        );
+      });
+
+      it('passes bookStatusAtGrab=null when params.bookId is undefined (orphaned grab)', async () => {
+        const noBokDownload = { ...mockDownload, bookId: undefined };
+        (downloadService.grab as ReturnType<typeof vi.fn>).mockResolvedValue(noBokDownload);
+        await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test' });
+        expect(downloadService.grab).toHaveBeenCalledWith(
+          expect.objectContaining({ bookStatusAtGrab: null }),
+        );
+        // No books lookup when bookId absent
+        expect((mockDb as Record<string, unknown>).select).not.toHaveBeenCalled();
+      });
+
+      it('captures the pre-grab status BEFORE the orchestrator flips the book to downloading', async () => {
+        // Capture call order — select (books.status) must happen before update (book status)
+        const callOrder: string[] = [];
+        (mockDb as Record<string, unknown>).select = vi.fn().mockImplementation(() => {
+          callOrder.push('select');
+          return {
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue([{ status: 'wanted' }]),
+              }),
+            }),
+          };
+        });
+        const originalUpdate = (mockDb as Record<string, unknown>).update as (...args: unknown[]) => unknown;
+        (mockDb as Record<string, unknown>).update = vi.fn().mockImplementation((...args: unknown[]) => {
+          callOrder.push('update');
+          return originalUpdate(...args);
+        });
+
+        await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
+
+        expect(callOrder.indexOf('select')).toBeLessThan(callOrder.indexOf('update'));
+      });
     });
   });
 

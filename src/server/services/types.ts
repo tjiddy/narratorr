@@ -37,9 +37,10 @@ export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStat
   enrichmentStatus: EnrichmentStatus;
 };
 
-export type DownloadRow = Omit<typeof downloads.$inferSelect, 'status' | 'protocol'> & {
+export type DownloadRow = Omit<typeof downloads.$inferSelect, 'status' | 'protocol' | 'bookStatusAtGrab'> & {
   status: DownloadStatus;
   protocol: DownloadProtocol;
+  bookStatusAtGrab: BookStatus | null;
 };
 
 export type IndexerRow = Omit<typeof indexers.$inferSelect, 'type'> & {

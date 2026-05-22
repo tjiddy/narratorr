@@ -49,8 +49,22 @@ export class DownloadOrchestrator {
    * book_status_change SSE → notification → event recording.
    */
   async grab(params: GrabParams): Promise<DownloadWithBook> {
+    // Capture pre-grab book.status BEFORE downloadService.grab — the orchestrator
+    // about to flip it to 'downloading'/'missing', and the quality gate needs the
+    // user's pre-grab intent (#1144) to distinguish wanted-flow grabs from
+    // auto-upgrade replacements.
+    let bookStatusAtGrab: BookStatus | null = null;
+    if (params.bookId) {
+      const row = await this.db
+        .select({ status: books.status })
+        .from(books)
+        .where(eq(books.id, params.bookId))
+        .limit(1);
+      bookStatusAtGrab = (row[0]?.status ?? null) as BookStatus | null;
+    }
+
     // Core grab — let errors (including duplicate detection) propagate
-    const download = await this.downloadService.grab(params);
+    const download = await this.downloadService.grab({ ...params, bookStatusAtGrab });
 
     // Side effects — each independently guarded, errors don't affect grab result
     const isHandoff = !download.externalId;

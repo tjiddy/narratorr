@@ -96,13 +96,17 @@ export class QualityGateService {
     const reason = buildQualityAssessment(scanResult, book);
     const { holdReasons, mbPerHour: newMbPerHour, existingMbPerHour } = reason;
 
-    // Imported-book replacement guard (#1103 F2): a download whose book is
-    // already imported must ALWAYS be held for explicit review with the
-    // `imported_book_replacement` reason appended, regardless of other hold
-    // reasons. Manual replacement of an imported audiobook is too risky to
-    // auto-decide — edition/abridgement mismatches can silently replace the
-    // user's existing file.
-    if (book !== null && book.path !== null) {
+    // Imported-book replacement guard (#1103 F2, #1144): an auto-upgrade-style
+    // replacement of an already-imported book must be held for explicit review.
+    // Reads `download.bookStatusAtGrab` (the book's status when the user pressed
+    // Grab, captured by DownloadOrchestrator) rather than `book.status`, which
+    // is always `'importing'` by gate time. A null value (legacy pre-migration
+    // rows) defaults to `'imported'` — conservative; an old replacement that
+    // lacks the durable signal still gets held for review. Non-`imported`
+    // pre-grab statuses (`wanted`/`failed`/`missing`) signal explicit user
+    // intent to replace, so the guard skips and the decision falls through.
+    const grabStatus = download.bookStatusAtGrab ?? 'imported';
+    if (book !== null && book.path !== null && grabStatus === 'imported') {
       reason.action = 'held';
       reason.holdReasons.push('imported_book_replacement');
       await this.setStatus(download.id, 'pending_review');

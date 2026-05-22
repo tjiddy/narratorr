@@ -25,6 +25,7 @@ const baseDownload = {
   seeders: 10, progress: 1, errorMessage: null,
   addedAt: new Date(), completedAt: new Date(), indexerId: 1,
   progressUpdatedAt: null, guid: null, outputPath: null, pendingCleanup: null,
+  bookStatusAtGrab: 'imported' as const,
 };
 
 const baseBook = {
@@ -203,6 +204,78 @@ describe('QualityGateService', () => {
       expect(result.action).toBe('held');
       expect(result.reason.holdReasons).toContain('narrator_mismatch');
       expect(result.reason.holdReasons).toContain('imported_book_replacement');
+    });
+  });
+
+  describe('processDownload — imported-book guard scoped by pre-grab status (#1144)', () => {
+    it('bookStatusAtGrab=wanted skips the guard (user-initiated replacement)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const download = { ...baseDownload, bookStatusAtGrab: 'wanted' as const };
+      const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000 }));
+
+      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+      // newMbPerHour > existing → auto-import branch
+      expect(result.action).toBe('imported');
+    });
+
+    it('bookStatusAtGrab=wanted falls through to auto-reject when quality matches', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const download = { ...baseDownload, bookStatusAtGrab: 'wanted' as const };
+      const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 400_000_000 }));
+
+      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+      expect(result.action).toBe('rejected');
+    });
+
+    it('bookStatusAtGrab=failed skips the guard', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const download = { ...baseDownload, bookStatusAtGrab: 'failed' as const };
+      const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000 }));
+
+      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+      expect(result.action).toBe('imported');
+    });
+
+    it('bookStatusAtGrab=missing skips the guard', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const download = { ...baseDownload, bookStatusAtGrab: 'missing' as const };
+      const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000 }));
+
+      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+      expect(result.action).toBe('imported');
+    });
+
+    it('bookStatusAtGrab=null (legacy row) still triggers the guard (conservative default)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const download = { ...baseDownload, bookStatusAtGrab: null };
+      const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000 }));
+
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('imported_book_replacement');
+    });
+
+    it('bookStatusAtGrab=wanted preserves independent hold reasons from buildQualityAssessment (narrator_mismatch)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const download = { ...baseDownload, bookStatusAtGrab: 'wanted' as const };
+      const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }));
+
+      // narrator_mismatch from buildQualityAssessment must still apply, but
+      // the imported-book guard must NOT add its own reason
+      expect(result.reason.holdReasons).toContain('narrator_mismatch');
+      expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
+      expect(result.action).toBe('held');
     });
   });
 

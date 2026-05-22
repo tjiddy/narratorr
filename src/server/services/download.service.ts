@@ -16,6 +16,7 @@ import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 
 import type { BookRow, DownloadRow } from './types.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 export interface DownloadWithBook extends DownloadRow {
@@ -291,6 +292,7 @@ export class DownloadService {
     guid?: string | undefined;
     skipDuplicateCheck?: boolean | undefined;
     source?: CreateEventInput['source'] | undefined;
+    bookStatusAtGrab?: BookStatus | null | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
       await this.checkDuplicateDownloads(params.bookId);
@@ -342,6 +344,7 @@ export class DownloadService {
         progress: downloadProgress,
         completedAt: downloadCompletedAt,
         externalId: externalId ?? undefined,
+        bookStatusAtGrab: params.bookStatusAtGrab ?? null,
       })
       .returning();
 

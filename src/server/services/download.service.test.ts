@@ -423,6 +423,56 @@ describe('DownloadService', () => {
       expect(insertValues.indexerId).toBe(42);
     });
 
+    // #1144 — pre-grab status persistence
+    it('persists bookStatusAtGrab to insert payload when provided in grab params', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+        removeDownload: vi.fn(),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+        bookStatusAtGrab: 'wanted',
+      });
+
+      const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
+      expect(insertValues.bookStatusAtGrab).toBe('wanted');
+    });
+
+    it('defaults bookStatusAtGrab to null when omitted from grab params (orphan / legacy path)', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+        removeDownload: vi.fn(),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      });
+
+      const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
+      expect(insertValues.bookStatusAtGrab).toBeNull();
+    });
+
     // #966 — LAN allowlist construction for HTTP torrent grabs
     describe('LAN allowlist (#966)', () => {
       const httpTorrentUrl = 'http://192.168.0.22:9696/dl/foo.torrent';
