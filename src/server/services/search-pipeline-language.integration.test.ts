@@ -70,6 +70,69 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
     mockFetchWithSsrfRedirect.mockReset();
   });
 
+  it('drops all three Fairy Tale German releases with language-mismatch when NZB fetch fails — #1148 UAT', async () => {
+    // Real UAT reproduction: NZB fetch fails (SSRF block on Prowlarr URL — #1149).
+    // Three German releases: naked-drop, lowercase mojibake, uppercase mojibake.
+    // All three must end up with language === 'german' via title fallback and
+    // drop with reason: 'language-mismatch' (not 'language-undetermined').
+    mockFetchWithSsrfRedirect.mockRejectedValue(
+      new Error('Refused: address 192.168.0.22 is in the blocked range'),
+    );
+
+    const log = createMockLogger();
+    const blacklist = createMockBlacklist();
+    const settings = createMockSettings(['english']);
+
+    const releases: SearchResult[] = [
+      {
+        title: 'Stephen King - Fairy Tale (Ungekrzt)',
+        protocol: 'usenet',
+        indexer: 'NZBgeek',
+        downloadUrl: 'http://nzb.test/1',
+        newsgroup: 'alt.binaries.audiobooks',
+        size: 1.57 * 1024 * 1024 * 1024,
+      },
+      {
+        title: 'Stephen King - Fairy Tale (ungekÃ¼rzt)',
+        protocol: 'usenet',
+        indexer: 'NZBgeek',
+        downloadUrl: 'http://nzb.test/2',
+        newsgroup: 'alt.binaries.audiobooks',
+        size: 1.57 * 1024 * 1024 * 1024,
+      },
+      {
+        title: 'Stephen King - Fairy Tale (UngekÃ¼rzt)',
+        protocol: 'usenet',
+        indexer: 'NZBgeek',
+        downloadUrl: 'http://nzb.test/3',
+        newsgroup: 'alt.binaries.audiobooks',
+        size: 1.57 * 1024 * 1024 * 1024,
+      },
+    ];
+
+    const output = await postProcessSearchResults(releases, 3600, blacklist, settings, log);
+
+    expect(output.results).toHaveLength(0);
+    for (const release of releases) {
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: release.title,
+          reason: 'language-mismatch',
+          detectedLanguage: 'german',
+          dropped: true,
+        }),
+        'Language filter dropped result',
+      );
+      expect(log.debug).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: release.title,
+          reason: 'language-undetermined',
+        }),
+        expect.any(String),
+      );
+    }
+  });
+
   it('drops the Fairy Tale (Ungekrzt) release with language-mismatch when allowed languages = [english]', async () => {
     // Real-world failure shape: NZB meta name lacks any German marker, newsgroup
     // is generic, but the user-facing title carries the (Ungekrzt) marker.
