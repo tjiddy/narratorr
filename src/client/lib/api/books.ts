@@ -254,17 +254,17 @@ export interface BookStats {
   narrators: string[];
 }
 
+const BOOK_LIST_STRING_KEYS = ['status', 'search', 'author', 'series', 'narrator', 'sortField', 'sortDirection'] as const;
+
 function buildBookListQuery(params?: BookListParams): string {
+  if (!params) return '';
   const searchParams = new URLSearchParams();
-  if (params?.status) searchParams.set('status', params.status);
-  if (params?.search) searchParams.set('search', params.search);
-  if (params?.author) searchParams.set('author', params.author);
-  if (params?.series) searchParams.set('series', params.series);
-  if (params?.narrator) searchParams.set('narrator', params.narrator);
-  if (params?.sortField) searchParams.set('sortField', params.sortField);
-  if (params?.sortDirection) searchParams.set('sortDirection', params.sortDirection);
-  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
-  if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
+  for (const key of BOOK_LIST_STRING_KEYS) {
+    const value = params[key];
+    if (value) searchParams.set(key, value);
+  }
+  if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+  if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
   const qs = searchParams.toString();
   return qs ? `?${qs}` : '';
 }

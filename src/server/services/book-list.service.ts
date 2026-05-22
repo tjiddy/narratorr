@@ -57,6 +57,18 @@ export interface BookStats {
   narrators: string[];
 }
 
+/** Project options→filter shape with only defined values, so the helper
+ *  in buildListWhere() doesn't see undefined keys (keeps cyclomatic
+ *  complexity low at the call sites). */
+function pickFilters(options?: { search?: string; author?: string; series?: string; narrator?: string }): { search?: string; author?: string; series?: string; narrator?: string } {
+  const out: { search?: string; author?: string; series?: string; narrator?: string } = {};
+  if (options?.search !== undefined) out.search = options.search;
+  if (options?.author !== undefined) out.author = options.author;
+  if (options?.series !== undefined) out.series = options.series;
+  if (options?.narrator !== undefined) out.narrator = options.narrator;
+  return out;
+}
+
 export class BookListService {
   constructor(
     private db: Db,
@@ -67,7 +79,6 @@ export class BookListService {
    *  title/series/genres + author name subquery, no narrator subquery.
    *  Author/series/narrator filters (#1143) are case-insensitive exact matches
    *  pushed to the DB so pagination operates on the filtered set. */
-  // eslint-disable-next-line complexity -- linear filter composition; each branch is independent
   private buildListWhere(status?: BookStatus, filters?: { search?: string; author?: string; series?: string; narrator?: string }): SQL | undefined {
     const conditions: SQL[] = [];
 
@@ -105,18 +116,12 @@ export class BookListService {
     return conditions.length > 0 ? and(...conditions) : undefined;
   }
 
-  // eslint-disable-next-line complexity -- batch-load pipeline for author/narrator/importList joins
   async getAll(
     status?: BookStatus,
     pagination?: { limit?: number; offset?: number },
     options?: BookListOptions,
   ): Promise<{ data: BookWithAuthor[]; total: number }> {
-    const where = this.buildListWhere(status, {
-      ...(options?.search !== undefined && { search: options.search }),
-      ...(options?.author !== undefined && { author: options.author }),
-      ...(options?.series !== undefined && { series: options.series }),
-      ...(options?.narrator !== undefined && { narrator: options.narrator }),
-    });
+    const where = this.buildListWhere(status, pickFilters(options));
 
     // Get total count (filters only, no pagination)
     const [{ value: total } = { value: 0 }] = await this.db
@@ -216,12 +221,7 @@ export class BookListService {
     pagination?: { limit?: number; offset?: number },
     options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection },
   ): Promise<LibraryBookListResponseRow> {
-    const where = this.buildListWhere(status, {
-      ...(options?.search !== undefined && { search: options.search }),
-      ...(options?.author !== undefined && { author: options.author }),
-      ...(options?.series !== undefined && { series: options.series }),
-      ...(options?.narrator !== undefined && { narrator: options.narrator }),
-    });
+    const where = this.buildListWhere(status, pickFilters(options));
 
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
