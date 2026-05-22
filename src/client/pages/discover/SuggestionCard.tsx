@@ -1,12 +1,13 @@
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
+import { InLibraryBadge } from '@/components/InLibraryBadge';
 import { formatDurationMinutes } from '@/lib/format';
 import type { SuggestionRow } from '@/lib/api';
 import {
   BookOpenIcon,
   HeadphonesIcon,
   ClockIcon,
-  CheckIcon,
+  CheckCircleIcon,
   XIcon,
 } from '@/components/icons';
 
@@ -18,6 +19,7 @@ export function SuggestionCard({
   isAdding,
   isDismissing,
   isAdded = false,
+  addedLibraryBookId = null,
 }: {
   suggestion: SuggestionRow;
   index: number;
@@ -26,7 +28,11 @@ export function SuggestionCard({
   isAdding: boolean;
   isDismissing: boolean;
   isAdded?: boolean;
+  /** When the add mutation just resolved with a created book id, use it as a transient link target. */
+  addedLibraryBookId?: number | null;
 }) {
+  const libraryBookId = suggestion.libraryBookId ?? addedLibraryBookId;
+  const showBadge = libraryBookId !== null || isAdded;
   const durationText = suggestion.duration ? formatDurationMinutes(suggestion.duration) : null;
   const seriesTag =
     suggestion.seriesName
@@ -89,10 +95,16 @@ export function SuggestionCard({
 
         {/* Action Buttons */}
         <div className="shrink-0 flex flex-col items-center gap-2 justify-center">
-          {isAdded ? (
-            <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success" role="img" aria-label="In library">
-              <CheckIcon className="w-4 h-4" />
-            </span>
+          {showBadge ? (
+            libraryBookId !== null ? (
+              <InLibraryBadge bookId={libraryBookId} />
+            ) : (
+              // Transient post-add state before the server returns a libraryBookId — non-link badge.
+              <span className="flex items-center gap-2 px-4 py-2.5 text-success font-medium" role="img" aria-label="In library">
+                <CheckCircleIcon className="w-4 h-4" />
+                <span className="hidden sm:inline">In Library</span>
+              </span>
+            )
           ) : (
             <AddBookPopover
               onAdd={(overrides) => onAdd(suggestion.id, overrides)}

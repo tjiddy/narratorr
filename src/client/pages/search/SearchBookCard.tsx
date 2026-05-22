@@ -1,17 +1,17 @@
 import { useState } from 'react';
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
+import { InLibraryBadge } from '@/components/InLibraryBadge';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type BookMetadata, type BookWithAuthor } from '@/lib/api';
 import { toast } from 'sonner';
-import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
+import { mapBookMetadataToPayload, findLibraryMatch } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import {
   BookOpenIcon,
   HeadphonesIcon,
-  CheckCircleIcon,
   ClockIcon,
 } from '@/components/icons';
 
@@ -26,24 +26,29 @@ export function SearchBookCard({
   libraryBooks?: BookWithAuthor[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
-  const [justAdded, setJustAdded] = useState(false);
+  const [justAddedBookId, setJustAddedBookId] = useState<number | null>(null);
   const authorNames = book.authors.map((a) => a.name).join(', ');
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
   // on Audible can be a broader universe entry rather than the real book series.
   const seriesInfo = book.seriesPrimary ?? book.series?.[0];
-  const inLibrary = justAdded || isBookInLibrary(book, libraryBooks);
+  const libraryMatch = findLibraryMatch(book, libraryBooks);
+  const inLibraryBookId = libraryMatch?.id ?? justAddedBookId;
 
   const addMutation = useMutation({
     mutationFn: (overrides?: { searchImmediately: boolean }) =>
       api.addBook(mapBookMetadataToPayload(book, overrides)),
-    onSuccess: () => {
-      setJustAdded(true);
+    onSuccess: (created) => {
+      setJustAddedBookId(created.id);
       toast.success(`Added '${book.title}' to library`);
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
       if (error instanceof ApiError && error.status === 409) {
-        setJustAdded(true);
+        // 409 body is the existing book row (see src/server/routes/books.ts:141)
+        const existingId = typeof error.body === 'object' && error.body !== null && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
+          ? (error.body as { id: number }).id
+          : null;
+        setJustAddedBookId(existingId);
         toast.info('Already in library');
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
@@ -111,11 +116,8 @@ export function SearchBookCard({
 
         {/* Add Button */}
         <div className="shrink-0 flex items-center">
-          {inLibrary ? (
-            <span className="flex items-center gap-2 px-4 py-2.5 text-success font-medium">
-              <CheckCircleIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">In Library</span>
-            </span>
+          {inLibraryBookId !== null ? (
+            <InLibraryBadge bookId={inLibraryBookId} />
           ) : (
             <AddBookPopover
               onAdd={(overrides) => addMutation.mutate(overrides)}

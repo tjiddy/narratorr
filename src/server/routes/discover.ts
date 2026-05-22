@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
-import type { SuggestionRow } from '../services/types.js';
+import type { SuggestionRowWithLibraryBookId } from '../services/types.js';
 
-/** Maps a DB suggestion row to the API response contract. */
-function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
+/** Maps an enriched DB suggestion row to the API response contract. */
+function toSuggestionResponse(row: SuggestionRowWithLibraryBookId): SuggestionRowResponse {
   return {
     id: row.id,
     asin: row.asin,
@@ -29,6 +29,7 @@ function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
     dismissedAt: row.dismissedAt?.toISOString() ?? null,
     snoozeUntil: row.snoozeUntil?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
+    libraryBookId: row.libraryBookId,
   };
 }
 

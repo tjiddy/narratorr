@@ -20,6 +20,7 @@ function mockSuggestionRow(overrides: Record<string, unknown> = {}) {
     reason: 'author', reasonContext: 'test', score: 80,
     status: 'pending', refreshedAt: NOW, dismissedAt: null,
     snoozeUntil: null, createdAt: NOW,
+    libraryBookId: null,
     ...overrides,
   };
 }
@@ -147,6 +148,43 @@ describe('Discover Routes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.suggestion.authorAsin).toBe('A001');
+    });
+
+    // #1150 — libraryBookId surfaced on mark-added response
+    it('forwards libraryBookId from the service to the response (mark-added)', async () => {
+      (services.discovery.markSuggestionAdded as Mock).mockResolvedValueOnce({
+        suggestion: mockSuggestionRow({ id: 1, status: 'added', libraryBookId: 42 }),
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/mark-added' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).suggestion.libraryBookId).toBe(42);
+    });
+  });
+
+  // #1150 — libraryBookId surfaced across all three suggestion-returning paths
+  describe('libraryBookId surface (#1150)', () => {
+    it('GET /api/discover/suggestions returns libraryBookId per row', async () => {
+      (services.discovery.getSuggestions as Mock).mockResolvedValueOnce([
+        mockSuggestionRow({ id: 1, asin: 'B001', libraryBookId: 42 }),
+        mockSuggestionRow({ id: 2, asin: 'B002', libraryBookId: null }),
+      ]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body[0].libraryBookId).toBe(42);
+      expect(body[1].libraryBookId).toBeNull();
+    });
+
+    it('POST /api/discover/suggestions/:id/dismiss returns libraryBookId', async () => {
+      (services.discovery.dismissSuggestion as Mock).mockResolvedValueOnce(
+        mockSuggestionRow({ id: 1, status: 'dismissed', dismissedAt: NOW, libraryBookId: 7 }),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/dismiss' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).libraryBookId).toBe(7);
     });
   });
 

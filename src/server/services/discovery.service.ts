@@ -9,7 +9,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
-import type { SuggestionRow } from './types.js';
+import type { SuggestionRow, SuggestionRowWithLibraryBookId } from './types.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
 import {
@@ -267,7 +267,7 @@ export class DiscoveryService {
     }
   }
 
-  async getSuggestions(filters?: { reason?: SuggestionReason | undefined; author?: string | undefined } | undefined): Promise<SuggestionRow[]> {
+  async getSuggestions(filters?: { reason?: SuggestionReason | undefined; author?: string | undefined } | undefined): Promise<SuggestionRowWithLibraryBookId[]> {
     const now = new Date();
     const conds = [
       eq(suggestions.status, 'pending'),
@@ -275,26 +275,77 @@ export class DiscoveryService {
     ];
     if (filters?.reason) conds.push(eq(suggestions.reason, filters.reason));
     if (filters?.author) conds.push(eq(suggestions.authorName, filters.author));
-    return this.db.select().from(suggestions).where(and(...conds)).orderBy(desc(suggestions.score));
+    const rows: SuggestionRow[] = await this.db.select().from(suggestions).where(and(...conds)).orderBy(desc(suggestions.score));
+    return this.enrichWithLibraryBookId(rows);
   }
 
-  async dismissSuggestion(id: number): Promise<SuggestionRow | null> {
+  async dismissSuggestion(id: number): Promise<SuggestionRowWithLibraryBookId | null> {
     const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
     if (rows.length === 0) return null;
     const now = new Date();
     await this.db.update(suggestions).set({ status: 'dismissed', dismissedAt: now }).where(eq(suggestions.id, id));
-    return { ...rows[0]!, status: 'dismissed', dismissedAt: now };
+    const updated: SuggestionRow = { ...rows[0]!, status: 'dismissed', dismissedAt: now };
+    const [enriched] = await this.enrichWithLibraryBookId([updated]);
+    return enriched ?? null;
   }
 
-  async markSuggestionAdded(id: number): Promise<{ suggestion: SuggestionRow; alreadyAdded?: boolean; invalidStatus?: boolean } | null> {
+  async markSuggestionAdded(id: number): Promise<{ suggestion: SuggestionRowWithLibraryBookId; alreadyAdded?: boolean; invalidStatus?: boolean } | null> {
     const rows = await this.db.select().from(suggestions).where(eq(suggestions.id, id)).limit(1);
     if (rows.length === 0) return null;
     const row = rows[0]!;
-    if (row.status === 'added') return { suggestion: row, alreadyAdded: true };
-    if (row.status !== 'pending') return { suggestion: row, invalidStatus: true };
+    if (row.status === 'added') {
+      const [enriched] = await this.enrichWithLibraryBookId([row]);
+      return { suggestion: enriched!, alreadyAdded: true };
+    }
+    if (row.status !== 'pending') {
+      const [enriched] = await this.enrichWithLibraryBookId([row]);
+      return { suggestion: enriched!, invalidStatus: true };
+    }
 
     await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
-    return { suggestion: { ...row, status: 'added' as const } };
+    const updated: SuggestionRow = { ...row, status: 'added' as const };
+    const [enriched] = await this.enrichWithLibraryBookId([updated]);
+    return { suggestion: enriched! };
+  }
+
+  /**
+   * Annotate each suggestion with `libraryBookId` — the id of a library `books`
+   * row that matches the suggestion. Mirrors `isBookInLibrary` semantics:
+   * ASIN match first (uniquely indexed), then case-insensitive
+   * title + primary-author fallback. When multiple library books match the
+   * fallback, the LOWEST `books.id` wins (deterministic — there is no unique
+   * index on title+author).
+   */
+  private async enrichWithLibraryBookId(rows: SuggestionRow[]): Promise<SuggestionRowWithLibraryBookId[]> {
+    if (rows.length === 0) return [];
+
+    const libraryRows = await this.db
+      .select({ id: books.id, asin: books.asin, title: books.title, authorName: authors.name })
+      .from(books)
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .orderBy(books.id);
+
+    const asinToId = new Map<string, number>();
+    const titleAuthorToId = new Map<string, number>();
+    for (const row of libraryRows) {
+      // Lowest-id-wins tie-breaker — orderBy books.id ASC + first-write-wins.
+      if (row.asin && !asinToId.has(row.asin)) asinToId.set(row.asin, row.id);
+      if (row.title && row.authorName) {
+        const key = `${row.title.toLowerCase()}|${row.authorName.toLowerCase()}`;
+        if (!titleAuthorToId.has(key)) titleAuthorToId.set(key, row.id);
+      }
+    }
+
+    return rows.map((suggestion) => {
+      let libraryBookId: number | null = null;
+      if (suggestion.asin) libraryBookId = asinToId.get(suggestion.asin) ?? null;
+      if (libraryBookId === null && suggestion.title && suggestion.authorName) {
+        const key = `${suggestion.title.toLowerCase()}|${suggestion.authorName.toLowerCase()}`;
+        libraryBookId = titleAuthorToId.get(key) ?? null;
+      }
+      return { ...suggestion, libraryBookId };
+    });
   }
 
   private async queryDismissalCounts(): Promise<Array<{ reason: string; status: string; count: number }>> {

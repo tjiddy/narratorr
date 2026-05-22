@@ -28,6 +28,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     dismissedAt: null,
     snoozeUntil: null,
     createdAt: '2026-01-01T00:00:00Z',
+    libraryBookId: null,
     ...overrides,
   };
 }
@@ -171,12 +172,12 @@ describe('SuggestionCard', () => {
       expect(screen.getByLabelText(/dismiss/i)).toBeInTheDocument();
     });
 
-    it('shows green checkmark and no Add button in added state', () => {
+    it('shows In Library badge and no Add button in added state', () => {
       renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdded={true} />,
       );
       expect(screen.getByLabelText(/in library/i)).toBeInTheDocument();
-      expect(screen.queryByLabelText(/add.*to library/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^add book$/i })).not.toBeInTheDocument();
     });
 
     it('shows Dismiss button in added state', () => {
@@ -184,6 +185,39 @@ describe('SuggestionCard', () => {
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} isAdded={true} />,
       );
       expect(screen.getByLabelText(/dismiss/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('libraryBookId standardized In Library badge', () => {
+    it('renders a link to /books/<id> when suggestion.libraryBookId is set', () => {
+      renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion({ libraryBookId: 42 })} {...defaultProps} />,
+      );
+      const link = screen.getByRole('link', { name: /view this book in your library/i });
+      expect(link).toHaveAttribute('href', '/books/42');
+      expect(screen.getByText('In Library')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^add book$/i })).not.toBeInTheDocument();
+    });
+
+    it('renders AddBookPopover and no /books link when libraryBookId is null', () => {
+      renderWithProviders(
+        <SuggestionCard suggestion={makeSuggestion({ libraryBookId: null })} {...defaultProps} />,
+      );
+      expect(screen.getByRole('button', { name: /^add book$/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    });
+
+    it('uses the addedLibraryBookId transient when suggestion.libraryBookId is null', () => {
+      renderWithProviders(
+        <SuggestionCard
+          suggestion={makeSuggestion({ libraryBookId: null })}
+          {...defaultProps}
+          isAdded={true}
+          addedLibraryBookId={99}
+        />,
+      );
+      const link = screen.getByRole('link', { name: /view this book in your library/i });
+      expect(link).toHaveAttribute('href', '/books/99');
     });
   });
 

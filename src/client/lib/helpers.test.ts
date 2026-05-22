@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapBookMetadataToPayload, isBookInLibrary } from './helpers.js';
+import { mapBookMetadataToPayload, isBookInLibrary, findLibraryMatch } from './helpers.js';
 import { createMockBook } from '@/__tests__/factories';
 import type { BookMetadata, BookWithAuthor, BookIdentifier } from './api/index.js';
 
@@ -264,5 +264,65 @@ describe('isBookInLibrary — array author matching (#71)', () => {
     };
     // BookIdentifier has authorName (not authors array) — should still match
     expect(isBookInLibrary(searchBook, [bookId as never])).toBe(true);
+  });
+});
+
+describe('findLibraryMatch (#1150)', () => {
+  it('returns null for empty/undefined libraryBooks', () => {
+    const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };
+    expect(findLibraryMatch(book, undefined)).toBeNull();
+    expect(findLibraryMatch(book, [])).toBeNull();
+  });
+
+  it('returns the matched BookWithAuthor entry by ASIN (preserves .id)', () => {
+    const libBook: BookWithAuthor = { ...createMockBook({ id: 42 }), asin: 'MATCH_ASIN' };
+    const book: BookMetadata = {
+      title: 'Different Title',
+      asin: 'MATCH_ASIN',
+      authors: [{ name: 'Different Author' }],
+    };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match).not.toBeNull();
+    expect(match!.id).toBe(42);
+  });
+
+  it('returns the matched BookWithAuthor entry by case-insensitive title+author fallback', () => {
+    const libBook: BookWithAuthor = {
+      ...createMockBook({ id: 7 }),
+      asin: null,
+      title: 'The Way of Kings',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const book: BookMetadata = {
+      title: 'the way of kings',
+      authors: [{ name: 'brandon sanderson' }],
+    };
+    const match = findLibraryMatch(book, [libBook]);
+    expect(match).not.toBeNull();
+    expect(match!.id).toBe(7);
+  });
+
+  it('returns null when no library entry matches', () => {
+    const libBook: BookWithAuthor = { ...createMockBook(), asin: null, title: 'Other' };
+    const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };
+    expect(findLibraryMatch(book, [libBook])).toBeNull();
+  });
+
+  it('generic preserves the BookIdentifier branch of the LibraryEntry union', () => {
+    const bookId: BookIdentifier = {
+      asin: 'B003P2WO5E',
+      title: 'The Way of Kings',
+      authorName: 'Brandon Sanderson',
+      authorSlug: 'brandon-sanderson',
+    };
+    const book: BookMetadata = {
+      title: 'The Way of Kings',
+      asin: 'B003P2WO5E',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    const match = findLibraryMatch(book, [bookId]);
+    expect(match).not.toBeNull();
+    // Narrowed back to BookIdentifier — exposes authorName, not authors array.
+    expect(match!.authorName).toBe('Brandon Sanderson');
   });
 });

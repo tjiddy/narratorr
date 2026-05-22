@@ -32,20 +32,29 @@ function getAuthorName(entry: LibraryEntry): string | null | undefined {
   return (entry as BookWithAuthor).authors?.[0]?.name;
 }
 
+function matchesLibraryEntry(book: BookMetadata, lb: LibraryEntry): boolean {
+  if (book.asin && lb.asin && book.asin === lb.asin) return true;
+  const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
+  const authorName = getAuthorName(lb);
+  const bookAuthorName = book.authors[0]?.name;
+
+  // Both sides have no author — match by title only
+  if (!bookAuthorName && !authorName) return titleMatch;
+
+  // One side has author, the other doesn't — not a match
+  if (!bookAuthorName || !authorName) return false;
+
+  return titleMatch && authorName.toLowerCase() === bookAuthorName.toLowerCase();
+}
+
+export function findLibraryMatch<T extends LibraryEntry>(
+  book: BookMetadata,
+  libraryBooks?: readonly T[],
+): T | null {
+  if (!libraryBooks?.length) return null;
+  return libraryBooks.find((lb) => matchesLibraryEntry(book, lb)) ?? null;
+}
+
 export function isBookInLibrary(book: BookMetadata, libraryBooks?: LibraryEntry[]): boolean {
-  if (!libraryBooks?.length) return false;
-  return libraryBooks.some((lb) => {
-    if (book.asin && lb.asin && book.asin === lb.asin) return true;
-    const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
-    const authorName = getAuthorName(lb);
-    const bookAuthorName = book.authors[0]?.name;
-
-    // Both sides have no author — match by title only
-    if (!bookAuthorName && !authorName) return titleMatch;
-
-    // One side has author, the other doesn't — not a match
-    if (!bookAuthorName || !authorName) return false;
-
-    return titleMatch && authorName.toLowerCase() === bookAuthorName.toLowerCase();
-  });
+  return findLibraryMatch(book, libraryBooks) !== null;
 }
