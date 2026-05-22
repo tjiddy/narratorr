@@ -329,6 +329,34 @@ describe('detectLanguageFromText', () => {
     expect(detectLanguageFromText('Some Title (Gekrzt)')).toBe('german');
   });
 
+  it('detects ungekürzt mojibake form (UngekÃ¼rzt / ungekÃ¼rzt) as german — #1148', () => {
+    expect(detectLanguageFromText('Stephen King — Fairy Tale (UngekÃ¼rzt)')).toBe('german');
+    expect(detectLanguageFromText('Stephen King — Fairy Tale (ungekÃ¼rzt)')).toBe('german');
+  });
+
+  it('detects gekürzt mojibake form (GekÃ¼rzt / gekÃ¼rzt) as german — #1148', () => {
+    expect(detectLanguageFromText('Some Title (GekÃ¼rzt)')).toBe('german');
+    expect(detectLanguageFromText('Some Title (gekÃ¼rzt)')).toBe('german');
+  });
+
+  it('detects hörbuch mojibake form (HÃ¶rbuch / hÃ¶rbuch) as german — #1148', () => {
+    expect(detectLanguageFromText('Stephen King-HÃ¶rbuch-Pack.rar')).toBe('german');
+    expect(detectLanguageFromText('Stephen King-hÃ¶rbuch-Pack.rar')).toBe('german');
+  });
+
+  it('detects hörbücher fully mojibaked (HÃ¶rbÃ¼cher / hÃ¶rbÃ¼cher) as german — #1148', () => {
+    expect(detectLanguageFromText('Sammlung HÃ¶rbÃ¼cher 2024')).toBe('german');
+    expect(detectLanguageFromText('Sammlung hÃ¶rbÃ¼cher 2024')).toBe('german');
+  });
+
+  it('detects hörbücher mixed-mojibake (HÃ¶rbücher — only ö mojibaked) as german — #1148', () => {
+    expect(detectLanguageFromText('Sammlung HÃ¶rbücher 2024')).toBe('german');
+  });
+
+  it('detects hörbücher mixed-mojibake (HörbÃ¼cher — only ü mojibaked) as german — #1148', () => {
+    expect(detectLanguageFromText('Sammlung HörbÃ¼cher 2024')).toBe('german');
+  });
+
   it('detects luisterboek as dutch', () => {
     expect(detectLanguageFromText('Boek Luisterboek NL.rar')).toBe('dutch');
   });
