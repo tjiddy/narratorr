@@ -2614,8 +2614,7 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     service = new DiscoveryService(
       db,
       inject<FastifyBaseLogger>(log),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockMetadata as any,
+      inject(mockMetadata),
       settingsService,
     );
 
@@ -2743,8 +2742,7 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
     service = new DiscoveryService(
       db,
       inject<FastifyBaseLogger>(log),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockMetadata as any,
+      inject(mockMetadata),
       settingsService,
     );
   });
