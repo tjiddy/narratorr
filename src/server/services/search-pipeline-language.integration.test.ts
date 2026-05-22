@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { IndexerService } from './indexer.service.js';
 import type * as NetworkServiceModule from '../../core/utils/network-service.js';
 import { postProcessSearchResults } from './search-pipeline.js';
 
@@ -44,6 +45,22 @@ function createMockBlacklist(): BlacklistService {
       blacklistedGuids: new Set<string>(),
     }),
   } as unknown as BlacklistService;
+}
+
+function createMockIndexerService(apiUrls: string[] = []): IndexerService {
+  const hostPort = new Set<string>();
+  const hostname = new Set<string>();
+  for (const url of apiUrls) {
+    try {
+      const parsed = new URL(url);
+      const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
+      hostPort.add(`${parsed.hostname.toLowerCase()}:${port}`);
+      hostname.add(parsed.hostname.toLowerCase());
+    } catch { /* skip un-parseable */ }
+  }
+  return {
+    getLanAllowlist: vi.fn().mockResolvedValue({ hostPort, hostname }),
+  } as unknown as IndexerService;
 }
 
 function createMockSettings(allowedLanguages: string[]): SettingsService {
@@ -110,7 +127,8 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
       },
     ];
 
-    const output = await postProcessSearchResults(releases, 3600, blacklist, settings, log);
+    const indexerService = createMockIndexerService(['http://192.168.0.22:9696/']);
+    const output = await postProcessSearchResults(releases, 3600, blacklist, settings, indexerService, log);
 
     expect(output.results).toHaveLength(0);
     for (const release of releases) {
@@ -131,6 +149,97 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
         expect.any(String),
       );
     }
+  });
+
+  it('invokes IndexerService.getLanAllowlist exactly once per postProcessSearchResults call (#1149)', async () => {
+    // The LAN allowlist is the shared cost: one DB read per search, not one per release.
+    const nzbXml = `<nzb><file poster="t" date="1" subject="t"><groups><group>alt.binaries.audiobooks</group></groups><segments><segment bytes="1" number="1">id@e</segment></segments></file></nzb>`;
+    mockFetchWithSsrfRedirect.mockResolvedValue(new Response(nzbXml, { status: 200 }));
+
+    const log = createMockLogger();
+    const blacklist = createMockBlacklist();
+    const settings = createMockSettings(['english']);
+    const indexerService = createMockIndexerService(['http://192.168.0.22:9696/']);
+
+    const releases: SearchResult[] = [
+      { title: 'A', protocol: 'usenet', indexer: 'NZBgeek', downloadUrl: 'http://192.168.0.22:9696/1', newsgroup: 'alt.binaries.audiobooks' },
+      { title: 'B', protocol: 'usenet', indexer: 'NZBgeek', downloadUrl: 'http://192.168.0.22:9696/2', newsgroup: 'alt.binaries.audiobooks' },
+      { title: 'C', protocol: 'usenet', indexer: 'NZBgeek', downloadUrl: 'http://192.168.0.22:9696/3', newsgroup: 'alt.binaries.audiobooks' },
+    ];
+
+    await postProcessSearchResults(releases, 3600, blacklist, settings, indexerService, log);
+
+    expect(indexerService.getLanAllowlist).toHaveBeenCalledTimes(1);
+  });
+
+  it('with no indexers configured (empty allowlist), the fetch still SSRF-refuses LAN URLs and the title fallback runs', async () => {
+    // Regression guard: empty allowlist must not degrade to permissive — the
+    // SSRF helper still refuses the LAN URL, and language detection falls
+    // back to the title-after-fetch-fail signal (#1148).
+    mockFetchWithSsrfRedirect.mockRejectedValue(
+      new Error('Refused: address 192.168.0.22 is in the blocked range'),
+    );
+
+    const log = createMockLogger();
+    const blacklist = createMockBlacklist();
+    const settings = createMockSettings(['english']);
+    const indexerService = createMockIndexerService();
+
+    const release: SearchResult = {
+      title: 'Stephen King - Fairy Tale (Ungekrzt)',
+      protocol: 'usenet',
+      indexer: 'NZBgeek',
+      downloadUrl: 'http://192.168.0.22:9696/nzb',
+      newsgroup: 'alt.binaries.audiobooks',
+      size: 1.57 * 1024 * 1024 * 1024,
+    };
+
+    const output = await postProcessSearchResults([release], 3600, blacklist, settings, indexerService, log);
+
+    expect(output.results).toHaveLength(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Stephen King - Fairy Tale (Ungekrzt)',
+        reason: 'language-mismatch',
+        detectedLanguage: 'german',
+      }),
+      'Language filter dropped result',
+    );
+  });
+
+  it('with the allowlist supplied, the same Fairy Tale UAT release enriches via the real NZB body and is dropped via the primary signal (#1149)', async () => {
+    // Companion to the #1148 UAT case above: with the allowlist, the NZB fetch
+    // succeeds against the LAN-IP Prowlarr, the body is parsed, and the
+    // German language is set from newsgroup/nzbName — not via the catch-path
+    // title fallback.
+    const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+      <head><meta type="name">Fairy.Tale.German.Hoerbuch.rar</meta></head>
+      <file poster="t" date="1" subject="Fairy.Tale.German.Hoerbuch.rar">
+        <groups><group>alt.binaries.audiobooks</group></groups>
+        <segments><segment bytes="1" number="1">id@e</segment></segments>
+      </file>
+    </nzb>`;
+    mockFetchWithSsrfRedirect.mockResolvedValueOnce(new Response(nzbXml, { status: 200 }));
+
+    const log = createMockLogger();
+    const blacklist = createMockBlacklist();
+    const settings = createMockSettings(['english']);
+    const indexerService = createMockIndexerService(['http://192.168.0.22:9696/']);
+
+    const release: SearchResult = {
+      title: 'Stephen King – Fairy Tale (Hörbuch)',
+      protocol: 'usenet',
+      indexer: 'NZBgeek',
+      downloadUrl: 'http://192.168.0.22:9696/nzb',
+      newsgroup: 'alt.binaries.audiobooks',
+      size: 1.57 * 1024 * 1024 * 1024,
+    };
+
+    const output = await postProcessSearchResults([release], 3600, blacklist, settings, indexerService, log);
+
+    expect(output.results).toHaveLength(0);
+    expect(release.nzbName).toBe('Fairy.Tale.German.Hoerbuch.rar');
+    expect(release.language).toBe('german');
   });
 
   it('drops the Fairy Tale (Ungekrzt) release with language-mismatch when allowed languages = [english]', async () => {
@@ -160,7 +269,8 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
       size: 1.57 * 1024 * 1024 * 1024,
     };
 
-    const output = await postProcessSearchResults([fairyTale], 3600, blacklist, settings, log);
+    const indexerService = createMockIndexerService();
+    const output = await postProcessSearchResults([fairyTale], 3600, blacklist, settings, indexerService, log);
 
     expect(output.results).toHaveLength(0);
     expect(log.debug).toHaveBeenCalledWith(

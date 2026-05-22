@@ -5,6 +5,7 @@ export type { NarratorPriority } from './search-ranking.js';
 import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
+import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import { DuplicateDownloadError } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -252,12 +253,18 @@ export async function filterBlacklistedResults(
  * Shared post-processing pipeline for search results.
  * Applies multi-part Usenet filtering, blacklist filtering, and quality ranking.
  * Used by both JSON and SSE search routes.
+ *
+ * `indexerService` is required (not optional) so any caller that omits it fails
+ * TypeScript — the LAN allowlist for NZB-body fetches (#1149) must reach the
+ * leaf, and a missed wrapper would silently degrade enrichment back to the
+ * pre-fix "SSRF refuses Prowlarr-on-LAN" behavior.
  */
 export async function postProcessSearchResults(
   allResults: SearchResult[],
   bookDuration: number | undefined,
   blacklistService: BlacklistService,
   settingsService: SettingsService,
+  indexerService: IndexerService,
   logger: FastifyBaseLogger,
 ): Promise<{
   results: SearchResult[];
@@ -266,8 +273,11 @@ export async function postProcessSearchResults(
 }> {
   const filteredResults = await filterBlacklistedResults(allResults, blacklistService, logger);
 
-  // Enrich Usenet results with language from newsgroup metadata
-  await enrichUsenetLanguages(filteredResults, logger);
+  // Enrich Usenet results with language from newsgroup metadata. Forwarding
+  // the LAN allowlist lets the NZB fetch reach a configured-indexer host:port
+  // even at a private IP (#1149).
+  const lanAllowlist = await indexerService.getLanAllowlist();
+  await enrichUsenetLanguages(filteredResults, logger, lanAllowlist);
 
   // Filter multi-part Usenet posts (after enrichment so nzbName is available)
   const { filtered: results, rejectedTitles: unsupportedRejections } = filterMultiPartUsenet(filteredResults);
@@ -336,6 +346,7 @@ async function searchWithBroadcaster(
   qualitySettings: SearchFilterOptions,
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
+  indexerService: IndexerService,
   broadcaster: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
@@ -387,7 +398,7 @@ async function searchWithBroadcaster(
     return { result: 'no_results' };
   }
 
-  await enrichUsenetLanguages(afterBlacklist, log);
+  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist());
 
   const broadcasterInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
@@ -417,6 +428,10 @@ async function searchWithBroadcaster(
 /**
  * Search indexers for a single book and auto-grab the best result.
  * Core search-and-grab logic shared by all callers (jobs, routes).
+ *
+ * `indexerService` is required so the LAN allowlist (#1149) threads to the
+ * enrichment leaf at every production caller without relying on optional-arg
+ * leniency at the type level.
  */
 export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
@@ -425,10 +440,11 @@ export async function searchAndGrabForBook(
   qualitySettings: SearchFilterOptions,
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
+  indexerService: IndexerService,
   broadcaster?: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   if (broadcaster) {
-    return searchWithBroadcaster(book, indexerSearchService, downloadOrchestrator, qualitySettings, log, blacklistService, broadcaster);
+    return searchWithBroadcaster(book, indexerSearchService, downloadOrchestrator, qualitySettings, log, blacklistService, indexerService, broadcaster);
   }
 
   const query = buildSearchQuery(book);
@@ -450,7 +466,7 @@ export async function searchAndGrabForBook(
     return { result: 'no_results' };
   }
 
-  await enrichUsenetLanguages(afterBlacklist, log);
+  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist());
 
   const grabInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);

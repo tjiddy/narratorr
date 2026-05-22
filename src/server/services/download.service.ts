@@ -3,8 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
-import { DownloadUrl, type LanAllowlist } from '../../core/utils/download-url.js';
-import { normalizedHostPortFromUrl, normalizedHostnameFromUrl } from '../../core/utils/network-service.js';
+import { DownloadUrl } from '../../core/utils/download-url.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
@@ -211,31 +210,11 @@ export class DownloadService {
     }));
   }
 
-  /**
-   * Build the host:port + hostname allowlist from configured indexer apiUrls
-   * so a torrent fetch can reach a LAN-hosted Prowlarr (#966). Indexers with
-   * empty/missing/un-parseable apiUrl produce no entries.
-   */
-  private async buildLanAllowlist(): Promise<LanAllowlist> {
-    const { indexerService } = this.wired.require();
-    const indexers = await indexerService.getAll();
-    const hostPort = new Set<string>();
-    const hostname = new Set<string>();
-    for (const row of indexers) {
-      const settings = (row.settings ?? {}) as Record<string, unknown>;
-      const apiUrl = typeof settings.apiUrl === 'string' ? settings.apiUrl.trim() : '';
-      if (!apiUrl) continue;
-      let parsed: URL;
-      try {
-        parsed = new URL(apiUrl);
-      } catch {
-        this.log.debug({ indexerId: row.id, indexerName: row.name }, 'Skipping un-parseable indexer apiUrl in LAN allowlist');
-        continue;
-      }
-      hostPort.add(normalizedHostPortFromUrl(parsed));
-      hostname.add(normalizedHostnameFromUrl(parsed));
-    }
-    return { hostPort, hostname };
+  /** Delegate the apiUrl-derived LAN allowlist build to IndexerService so the
+   *  torrent-download (#966) and Usenet NZB-enrichment (#1149) paths share one
+   *  implementation and one set of parse/normalize semantics. */
+  private async buildLanAllowlist() {
+    return await this.wired.require().indexerService.getLanAllowlist();
   }
 
   /** Send a pre-resolved artifact to the client and return the external ID. */

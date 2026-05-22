@@ -671,6 +671,7 @@ describe('monitor job', () => {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
@@ -686,6 +687,7 @@ describe('monitor job', () => {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
@@ -1038,6 +1040,7 @@ describe('monitor job', () => {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
@@ -1053,6 +1056,7 @@ describe('monitor job', () => {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
@@ -1197,6 +1201,7 @@ describe('monitor job', () => {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
@@ -1212,6 +1217,7 @@ describe('monitor job', () => {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },

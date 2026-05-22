@@ -8,6 +8,7 @@ import { RetryBudget } from '../services/retry-budget.js';
 import type { IndexerSearchService } from '../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BookService } from '../services/book.service.js';
+import type { IndexerService } from '../services/indexer.service.js';
 import type { RetrySearchDeps } from '../services/retry-search.js';
 
 // NOTE: This file is intentionally separate from rejection-helpers.test.ts
@@ -22,6 +23,9 @@ function makeImportedBookDeps(retryBudget: RetryBudget) {
   const mockGrab = vi.fn();
   const deps: RetrySearchDeps = {
     indexerSearchService: inject<IndexerSearchService>({ searchAll: mockSearchAll }),
+    indexerService: inject<IndexerService>({
+      getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }),
+    }),
     downloadOrchestrator: inject<DownloadOrchestrator>({ grab: mockGrab }),
     blacklistService: inject<BlacklistService>({
       getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()),

@@ -14,6 +14,10 @@ import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { IndexerRow } from './types.js';
+import { type LanAllowlist } from '../../core/utils/download-url.js';
+import { normalizedHostPortFromUrl, normalizedHostnameFromUrl } from '../../core/utils/network-service.js';
+
+export type { LanAllowlist } from '../../core/utils/download-url.js';
 
 
 type NewIndexer = typeof indexers.$inferInsert;
@@ -36,6 +40,34 @@ export class IndexerService {
   async getAll(): Promise<IndexerRow[]> {
     const rows = await this.db.select().from(indexers).orderBy(indexers.priority);
     return rows.map((r) => this.decryptRow(r));
+  }
+
+  /**
+   * Build the host:port + hostname allowlist from configured indexer apiUrls.
+   * Used by torrent download (#966) and Usenet NZB-body enrichment (#1149) so
+   * outbound fetches to a configured-indexer URL succeed even when the address
+   * is private/loopback. Indexers with empty/missing/un-parseable apiUrl
+   * produce no entries.
+   */
+  async getLanAllowlist(): Promise<LanAllowlist> {
+    const indexerRows = await this.getAll();
+    const hostPort = new Set<string>();
+    const hostname = new Set<string>();
+    for (const row of indexerRows) {
+      const settings = (row.settings ?? {}) as Record<string, unknown>;
+      const apiUrl = typeof settings.apiUrl === 'string' ? settings.apiUrl.trim() : '';
+      if (!apiUrl) continue;
+      let parsed: URL;
+      try {
+        parsed = new URL(apiUrl);
+      } catch {
+        this.log.debug({ indexerId: row.id, indexerName: row.name }, 'Skipping un-parseable indexer apiUrl in LAN allowlist');
+        continue;
+      }
+      hostPort.add(normalizedHostPortFromUrl(parsed));
+      hostname.add(normalizedHostnameFromUrl(parsed));
+    }
+    return { hostPort, hostname };
   }
 
   async getById(id: number): Promise<IndexerRow | null> {

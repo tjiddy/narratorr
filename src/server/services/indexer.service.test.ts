@@ -1062,6 +1062,88 @@ describe('IndexerService', () => {
     });
   });
 
+  describe('getLanAllowlist (#1149)', () => {
+    type TestDb = Awaited<ReturnType<typeof loadProwlarrPredicateDb>>['db'];
+    let realDb: TestDb;
+    let realService: IndexerService;
+    let close: () => void;
+
+    beforeEach(async () => {
+      const loaded = await loadProwlarrPredicateDb();
+      realDb = loaded.db;
+      close = loaded.close;
+      realService = new IndexerService(
+        inject<Db>(realDb),
+        inject<FastifyBaseLogger>(createMockLogger()),
+      );
+    });
+
+    afterEach(() => {
+      close();
+    });
+
+    it('returns matching host:port and hostname sets for two configured indexers', async () => {
+      const { indexers } = await import('../../db/schema.js');
+      await realDb.insert(indexers).values([
+        {
+          name: 'Prowlarr', type: 'torznab', enabled: true, priority: 50,
+          settings: { apiUrl: 'http://192.168.0.22:9696/1/', apiKey: 'k' },
+        },
+        {
+          name: 'Prowlarr-by-name', type: 'torznab', enabled: true, priority: 50,
+          settings: { apiUrl: 'http://prowlarr.lan/', apiKey: 'k' },
+        },
+      ]);
+
+      const allowlist = await realService.getLanAllowlist();
+
+      expect(allowlist.hostPort.has('192.168.0.22:9696')).toBe(true);
+      // Default port + lowercase normalization
+      expect(allowlist.hostPort.has('prowlarr.lan:80')).toBe(true);
+      expect(allowlist.hostname.has('192.168.0.22')).toBe(true);
+      expect(allowlist.hostname.has('prowlarr.lan')).toBe(true);
+    });
+
+    it('produces no entries for empty/null/un-parseable apiUrl (no empty-string keys, no crash)', async () => {
+      const { indexers } = await import('../../db/schema.js');
+      await realDb.insert(indexers).values([
+        {
+          name: 'NoApiUrl', type: 'abb', enabled: true, priority: 50,
+          settings: { hostname: 'audiobookbay.lu' },
+        },
+        {
+          name: 'EmptyApiUrl', type: 'torznab', enabled: true, priority: 50,
+          settings: { apiUrl: '', apiKey: 'k' },
+        },
+        {
+          name: 'UnparseableApiUrl', type: 'torznab', enabled: true, priority: 50,
+          settings: { apiUrl: 'not-a-url', apiKey: 'k' },
+        },
+      ]);
+
+      const allowlist = await realService.getLanAllowlist();
+
+      expect(allowlist.hostPort.size).toBe(0);
+      expect(allowlist.hostname.size).toBe(0);
+      // Explicit: must not contain an empty-string key
+      expect(allowlist.hostPort.has('')).toBe(false);
+      expect(allowlist.hostname.has('')).toBe(false);
+    });
+
+    it('IPv6 apiUrl emits unbracketed host:port and hostname keys', async () => {
+      const { indexers } = await import('../../db/schema.js');
+      await realDb.insert(indexers).values({
+        name: 'IPv6 Indexer', type: 'torznab', enabled: true, priority: 50,
+        settings: { apiUrl: 'http://[fe80::1]:8080/', apiKey: 'k' },
+      });
+
+      const allowlist = await realService.getLanAllowlist();
+
+      expect(allowlist.hostPort.has('fe80::1:8080')).toBe(true);
+      expect(allowlist.hostname.has('fe80::1')).toBe(true);
+    });
+  });
+
   describe('#372 — test() persists classname alongside isVip', () => {
     it('persists classname alongside isVip on successful test', async () => {
       const mamRow = createMockDbIndexer({

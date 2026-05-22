@@ -4,6 +4,7 @@ import { RetryBudget } from './retry-budget.js';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
+import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { DownloadWithBook } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -64,6 +65,9 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
   return {
     indexerSearchService: inject<IndexerSearchService>({
       searchAll: vi.fn().mockResolvedValue([mockSearchResult]),
+    }),
+    indexerService: inject<IndexerService>({
+      getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }),
     }),
     downloadOrchestrator: inject<DownloadOrchestrator>({
       grab: vi.fn().mockResolvedValue(mockDownload),
@@ -438,6 +442,7 @@ describe('retrySearch — imported-book guard (#1103 F1, F6)', () => {
 describe('createRetrySearchDeps', () => {
   it('maps service bag fields to RetrySearchDeps contract by reference', () => {
     const indexerSearch = {} as IndexerSearchService;
+    const indexer = {} as IndexerService;
     const downloadOrchestrator = {} as DownloadOrchestrator;
     const blacklist = {} as BlacklistService;
     const book = {} as BookService;
@@ -446,11 +451,12 @@ describe('createRetrySearchDeps', () => {
     const log = inject<FastifyBaseLogger>(createMockLogger());
 
     const result = createRetrySearchDeps(
-      { indexerSearch, downloadOrchestrator, blacklist, book, settings, retryBudget },
+      { indexerSearch, indexer, downloadOrchestrator, blacklist, book, settings, retryBudget },
       log,
     );
 
     expect(result.indexerSearchService).toBe(indexerSearch);
+    expect(result.indexerService).toBe(indexer);
     expect(result.downloadOrchestrator).toBe(downloadOrchestrator);
     expect(result.blacklistService).toBe(blacklist);
     expect(result.bookService).toBe(book);
@@ -674,6 +680,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     expect(mockEnrichUsenet).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
       expect.anything(),
+      expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
     );
   });
 

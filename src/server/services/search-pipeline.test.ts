@@ -2,6 +2,7 @@ import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults } from './search-pipeline.js';
 import type { SettingsService } from './settings.service.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
+import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
 import { DuplicateDownloadError } from './download.service.js';
@@ -10,6 +11,10 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '../../shared/constants.js';
 import type { SearchResponsePayload, SearchResultPayload } from '../../shared/schemas/search-stream.js';
+
+const mockIndexer = {
+  getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
+} as unknown as IndexerService;
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -173,7 +178,7 @@ describe('searchAndGrabForBook', () => {
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
 
   it('returns grabbed result on happy path (search → filter → grab)', async () => {
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ bookId: 1 }));
   });
@@ -183,7 +188,7 @@ describe('searchAndGrabForBook', () => {
       searchAll: vi.fn().mockResolvedValue([makeResult({ indexerId: 42 })]),
     } as unknown as IndexerSearchService;
 
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
     expect(downloadService.grab).toHaveBeenCalledWith(
       expect.objectContaining({ indexerId: 42 }),
@@ -191,7 +196,7 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('omits indexerId when search result has no indexerId', async () => {
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
     const grabCall = vi.mocked(downloadService.grab).mock.calls[0]![0];
     expect(grabCall).not.toHaveProperty('indexerId');
@@ -199,7 +204,7 @@ describe('searchAndGrabForBook', () => {
 
   it('returns no_results when indexers return empty array', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([]);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
@@ -207,14 +212,14 @@ describe('searchAndGrabForBook', () => {
   it('returns no_results when all results filtered out by grabFloor', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ size: 100 })]);
     const settings = { ...defaultQualitySettings, grabFloor: 999 };
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
   });
 
   it('returns no_results when all results filtered out by word lists', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ title: 'bad book' })]);
     const settings = { ...defaultQualitySettings, rejectWords: 'bad' };
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
   });
 
@@ -222,7 +227,7 @@ describe('searchAndGrabForBook', () => {
 
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ size: 10 * GB })]);
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
   });
 
@@ -233,7 +238,7 @@ describe('searchAndGrabForBook', () => {
       makeResult({ title: 'Huge', size: 10 * GB }),
     ]);
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer);
     expect(log.debug).toHaveBeenCalledWith(
       { inputCount: 2, outputCount: 1 },
       'Quality gate filtering applied',
@@ -243,7 +248,7 @@ describe('searchAndGrabForBook', () => {
   it('does not log quality gate filtering when no results are filtered', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ size: 500 * 1024 * 1024 })]);
     const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer);
     expect(log.debug).not.toHaveBeenCalledWith(
       expect.objectContaining({ inputCount: expect.any(Number), outputCount: expect.any(Number) }),
       'Quality gate filtering applied',
@@ -252,39 +257,39 @@ describe('searchAndGrabForBook', () => {
 
   it('returns no_results when no result has downloadUrl', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ downloadUrl: undefined })]);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
   });
 
   it('treats empty-string downloadUrl as no download URL', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ downloadUrl: '' })]);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
   });
 
   it('returns skipped with reason when grab throws "already has an active download"', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
   });
 
   // #197 — DuplicateDownloadError instanceof catch (ERR-1)
   it('returns skipped when DuplicateDownloadError is thrown (instanceof check, not string match)', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
   });
 
   it('returns skipped when DuplicateDownloadError with PIPELINE_ACTIVE is thrown', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book has pipeline download', 'PIPELINE_ACTIVE'));
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
   });
 
   it('returns grab_error when non-DuplicateDownloadError is thrown (not swallowed)', async () => {
     const genericError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(genericError);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
     // #863 — Error instances must be returned by reference (no wrapping).
@@ -294,7 +299,7 @@ describe('searchAndGrabForBook', () => {
   it('returns grab_error for non-duplicate grab errors', async () => {
     const grabError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(grabError);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
     // #863 — Error instances must be returned by reference (no wrapping).
@@ -304,7 +309,7 @@ describe('searchAndGrabForBook', () => {
   // #863 — non-Error grab rejections are normalized to Error at tryGrab catch
   it('wraps string grab rejection into Error with the string as message', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue('connection failed');
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
     expect(result.error).toBeInstanceOf(Error);
@@ -313,7 +318,7 @@ describe('searchAndGrabForBook', () => {
 
   it('wraps plain-object grab rejection into Error with message "[object Object]"', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue({ msg: 'oops' });
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
     expect(result.error).toBeInstanceOf(Error);
@@ -322,7 +327,7 @@ describe('searchAndGrabForBook', () => {
 
   it('wraps null grab rejection into Error with message "null"', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(null);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
     expect(result.error).toBeInstanceOf(Error);
@@ -331,7 +336,7 @@ describe('searchAndGrabForBook', () => {
 
   it('wraps undefined grab rejection into Error with message "undefined"', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(undefined);
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
     expect(result.error).toBeInstanceOf(Error);
@@ -340,25 +345,25 @@ describe('searchAndGrabForBook', () => {
 
   it('handles book with duration: null', async () => {
     const nullDurationBook = { ...book, duration: null };
-    const result = await searchAndGrabForBook(nullDurationBook, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(nullDurationBook, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
   });
 
   it('handles book with duration: undefined', async () => {
     const { duration: _duration, ...undefinedDurationBook } = book;
-    const result = await searchAndGrabForBook(undefinedDurationBook, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(undefinedDurationBook, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
   });
 
   it('handles book with duration: 0', async () => {
     const zeroDurationBook = { ...book, duration: 0 };
-    const result = await searchAndGrabForBook(zeroDurationBook, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(zeroDurationBook, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
   });
 
   it('passes guid from best result to grab()', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ guid: 'nzb-guid-abc' })]);
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(downloadService.grab).toHaveBeenCalledWith(
       expect.objectContaining({ guid: 'nzb-guid-abc', bookId: 1 }),
     );
@@ -366,14 +371,14 @@ describe('searchAndGrabForBook', () => {
 
   it('passes undefined guid to grab() when result has no guid', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([makeResult({ guid: undefined })]);
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(downloadService.grab).toHaveBeenCalledWith(
       expect.objectContaining({ guid: undefined, bookId: 1 }),
     );
   });
 
   it('calls buildSearchQuery to construct the query', async () => {
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(indexerSearchService.searchAll).toHaveBeenCalledWith('Test Book Author', expect.any(Object));
   });
 });
@@ -1322,7 +1327,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
 
   describe('search_started emission', () => {
     it('emits search_started with correct indexer list before querying', async () => {
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_started', {
         book_id: 1,
         book_title: 'Test Book',
@@ -1333,7 +1338,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
     it('emits search_started even when no enabled indexers (empty list)', async () => {
       vi.mocked(indexerSearchService.getEnabledIndexers).mockResolvedValue([]);
       vi.mocked(indexerSearchService.searchAllStreaming).mockResolvedValue([]);
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_started', {
         book_id: 1,
         book_title: 'Test Book',
@@ -1344,7 +1349,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
 
   describe('per-indexer events', () => {
     it('emits search_indexer_complete with results_found and elapsed_ms for each successful indexer', async () => {
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_indexer_complete', {
         book_id: 1,
         indexer_id: 10,
@@ -1361,7 +1366,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
           return [];
         },
       );
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_indexer_error', {
         book_id: 1,
         indexer_id: 10,
@@ -1378,7 +1383,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
           return [];
         },
       );
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_indexer_complete', {
         book_id: 1,
         indexer_id: 10,
@@ -1391,7 +1396,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
 
   describe('outcome events', () => {
     it('emits search_grabbed then search_complete with outcome grabbed on successful grab', async () => {
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       const emitCalls = vi.mocked(broadcaster.emit).mock.calls;
       const grabbedCall = emitCalls.find(c => c[0] === 'search_grabbed');
       const completeCall = emitCalls.find(c => c[0] === 'search_complete');
@@ -1416,7 +1421,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
     it('emits search_complete with outcome no_results when raw results are empty', async () => {
       vi.mocked(indexerSearchService.searchAllStreaming).mockResolvedValue([]);
       vi.mocked(indexerSearchService.getEnabledIndexers).mockResolvedValue([]);
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', {
         book_id: 1,
         total_results: 0,
@@ -1432,7 +1437,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
         },
       );
       const settings = { ...defaultQualitySettings, grabFloor: 999 };
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
         outcome: 'no_results',
       }));
@@ -1448,7 +1453,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
         },
       );
       const settings = { ...defaultQualitySettings, maxDownloadSize: 5 };
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer, broadcaster);
       expect(result).toEqual({ result: 'no_results' });
       expect(downloadService.grab).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
@@ -1459,7 +1464,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
 
     it('emits search_complete with outcome skipped on DuplicateDownloadError (not search_grabbed)', async () => {
       vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Active download exists', 'ACTIVE_DOWNLOAD_EXISTS'));
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
         outcome: 'skipped',
@@ -1468,7 +1473,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
 
     it('emits search_complete with outcome grab_error on generic grab error', async () => {
       vi.mocked(downloadService.grab).mockRejectedValue(new Error('Connection refused'));
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).not.toHaveBeenCalledWith('search_grabbed', expect.anything());
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
         outcome: 'grab_error',
@@ -1484,7 +1489,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
           return [makeResult({ indexerId: 10 }), makeResult({ indexerId: 10 }), makeResult({ indexerId: 10 }), makeResult({ indexerId: 20 }), makeResult({ indexerId: 20 })];
         },
       );
-      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({
         total_results: 5,
       }));
@@ -1497,7 +1502,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
       indexerSearchService = {
         searchAll: vi.fn().mockResolvedValue([makeResult()]),
       } as unknown as IndexerSearchService;
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
       expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
       // No broadcaster passed — should not throw
     });
@@ -1506,7 +1511,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
   describe('fire-and-forget safety', () => {
     it('broadcaster.emit() throwing does not break search pipeline', async () => {
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw new Error('SSE write failed'); });
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(result.result).toBe('grabbed');
     });
 
@@ -1514,7 +1519,7 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
       vi.mocked(broadcaster.emit).mockImplementation(() => { throw new Error('SSE write failed'); });
       vi.mocked(indexerSearchService.searchAllStreaming).mockResolvedValue([]);
       vi.mocked(indexerSearchService.getEnabledIndexers).mockResolvedValue([]);
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
       expect(result).toEqual({ result: 'no_results' });
     });
   });
@@ -1778,7 +1783,7 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
       blacklistedGuids: new Set(),
     });
 
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result.result).toBe('grabbed');
     // Grabbed the clean result, not the blacklisted one with higher seeders
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
@@ -1791,7 +1796,7 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
       blacklistedGuids: new Set(),
     });
 
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(result).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
@@ -1805,7 +1810,7 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
       blacklistedGuids: new Set(['bad-guid']),
     });
 
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
     expect(downloadService.grab).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Blacklisted' }));
   });
@@ -1849,7 +1854,7 @@ describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () =>
       blacklistedGuids: new Set(),
     });
 
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
     expect(result.result).toBe('grabbed');
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
   });
@@ -1867,7 +1872,7 @@ describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () =>
       blacklistedGuids: new Set(),
     });
 
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
     expect(result).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
     expect(broadcaster.emit).toHaveBeenCalledWith('search_complete', expect.objectContaining({ outcome: 'no_results' }));
@@ -1888,7 +1893,7 @@ describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () =>
       blacklistedGuids: new Set(['bad-guid']),
     });
 
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, broadcaster);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer, broadcaster);
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
   });
 });
@@ -2080,7 +2085,7 @@ describe('postProcessSearchResults — maxDownloadSize', () => {
       makeResult({ title: 'Huge', size: 10 * GB }),
     ];
 
-    const output = await postProcessSearchResults(results, 3600, blacklist, settings, log);
+    const output = await postProcessSearchResults(results, 3600, blacklist, settings, mockIndexer, log);
 
     expect(output.results).toHaveLength(1);
     expect(output.results[0]!.title).toBe('Small');
@@ -2099,7 +2104,7 @@ describe('postProcessSearchResults — maxDownloadSize', () => {
 
     const results = [makeResult({ title: 'Small', size: 2 * GB })];
 
-    await postProcessSearchResults(results, 3600, blacklist, settings, log);
+    await postProcessSearchResults(results, 3600, blacklist, settings, mockIndexer, log);
 
     expect(log.debug).not.toHaveBeenCalledWith(
       expect.objectContaining({ inputCount: expect.any(Number), outputCount: expect.any(Number) }),
@@ -2119,7 +2124,7 @@ describe('postProcessSearchResults — maxDownloadSize', () => {
       makeResult({ title: 'Real Book', size: 500 * MB }),
     ];
 
-    const output = await postProcessSearchResults(results, 3600, blacklist, settings, log);
+    const output = await postProcessSearchResults(results, 3600, blacklist, settings, mockIndexer, log);
 
     expect(output.results).toHaveLength(1);
     expect(output.results[0]!.title).toBe('Real Book');
@@ -2215,11 +2220,12 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
       searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/1' })]),
     } as unknown as IndexerSearchService;
 
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
 
     expect(mockEnrichUsenet).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
       log,
+      expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
     );
   });
 
@@ -2236,7 +2242,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
     });
 
     const settings = { ...defaultQualitySettings, rejectWords: 'pack' };
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer);
 
     expect(result).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
@@ -2247,7 +2253,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
       searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'torrent' })]),
     } as unknown as IndexerSearchService;
 
-    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService);
+    await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
 
     // enrichUsenetLanguages is still called (it handles filtering internally)
     expect(mockEnrichUsenet).toHaveBeenCalled();
@@ -2284,7 +2290,7 @@ describe('#502 searchAndGrabForBook with broadcaster — enrichment before filte
 
     const settings = { ...defaultQualitySettings, rejectWords: 'pack' };
     const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
-    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, broadcaster);
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, settings, log, blacklistService, mockIndexer, broadcaster);
 
     expect(result).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
@@ -2327,7 +2333,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     });
 
     const results = [makeResult({ protocol: 'usenet', title: 'Book Title', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.results).toHaveLength(0);
     expect(output.unsupportedResults.count).toBe(1);
@@ -2339,7 +2345,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'usenet', title: 'Book Title', rawTitle: 'Book (08 of 30)', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.results).toHaveLength(0);
     expect(output.unsupportedResults.count).toBe(1);
@@ -2350,7 +2356,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'usenet', title: 'Book (3/10)', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.results).toHaveLength(0);
     expect(output.unsupportedResults.count).toBe(1);
@@ -2366,7 +2372,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     });
 
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Book (01 of 30)', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     // Should fall through empty nzbName to rawTitle which has multi-part marker
     expect(output.results).toHaveLength(0);
@@ -2378,7 +2384,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'usenet', title: 'Book (5/10)', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.results).toHaveLength(0);
     expect(output.unsupportedResults.count).toBe(1);
@@ -2389,7 +2395,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'torrent', title: 'Book (01/05)', seeders: 5 })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.results).toHaveLength(1);
     expect(output.results[0]!.title).toBe('Book (01/05)');
@@ -2402,7 +2408,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Book (08 of 30)', language: 'English', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.results).toHaveLength(0);
     expect(output.unsupportedResults.count).toBe(1);
@@ -2414,7 +2420,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
 
     // Result has language set (enrichment won't populate nzbName), and rawTitle is clean
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Also Clean', language: 'English', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     // No multi-part marker in any field — should pass through
     expect(output.results).toHaveLength(1);
@@ -2430,7 +2436,7 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     });
 
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })];
-    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
     expect(output.unsupportedResults.titles).toEqual(['NZB Multi-Part (01 of 30).rar']);
   });
@@ -2454,12 +2460,13 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
       makeResult({ protocol: 'usenet', title: 'Blacklisted', guid: 'blacklisted-guid', downloadUrl: 'http://nzb.test/1' }),
       makeResult({ protocol: 'usenet', title: 'Clean Result', guid: 'clean-guid', downloadUrl: 'http://nzb.test/2' }),
     ];
-    const output = await postProcessSearchResults(results, 3600, blacklist, createMockSettingsService533(), log);
+    const output = await postProcessSearchResults(results, 3600, blacklist, createMockSettingsService533(), mockIndexer, log);
 
     // Only the clean result should be enriched — blacklisted one removed before enrichment
     expect(mockEnrichUsenet).toHaveBeenCalledWith(
       expect.not.arrayContaining([expect.objectContaining({ guid: 'blacklisted-guid' })]),
       log,
+      expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
     );
     // Clean result passes (no multi-part marker in nzbName)
     expect(output.results).toHaveLength(1);

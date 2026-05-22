@@ -5,6 +5,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { validatorCompiler, serializerCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { SearchSessionManager } from '../services/search-session.js';
 import type { IndexerSearchService } from '../services/indexer-search.service.js';
+import type { IndexerService } from '../services/indexer.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { AuthService } from '../services/auth.service.js';
@@ -79,6 +80,10 @@ function createMockSettingsService() {
   } as unknown as SettingsService;
 }
 
+const mockIndexer = {
+  getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
+} as unknown as IndexerService;
+
 describe('searchStreamRoutes', () => {
   let sessionManager: SearchSessionManager;
   let indexerService: ReturnType<typeof createMockIndexerSearchService>;
@@ -115,6 +120,7 @@ describe('searchStreamRoutes', () => {
       indexerService,
       blacklistService,
       settingsService,
+      mockIndexer,
       sessionManager,
     );
   });
@@ -398,6 +404,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       createMockIndexerSearchService(),
       createMockBlacklistService(),
       createMockSettingsService(),
+      mockIndexer,
       new SearchSessionManager(),
     );
     await app.ready();
@@ -423,6 +430,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       createMockIndexerSearchService(),
       createMockBlacklistService(),
       createMockSettingsService(),
+      mockIndexer,
       sessionMgr,
     );
     await app.ready();
@@ -462,6 +470,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       zeroIndexerSearchService,
       createMockBlacklistService(),
       createMockSettingsService(),
+      mockIndexer,
       new SearchSessionManager(),
     );
 
@@ -506,6 +515,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       createMockIndexerSearchService(),
       createMockBlacklistService(),
       createMockSettingsService(),
+      mockIndexer,
       new SearchSessionManager(),
     );
     await app.ready();
@@ -538,7 +548,7 @@ describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
       post: vi.fn(),
     };
 
-    await searchStreamRoutes(mockApp as never, indexerService, blacklistService, settingsService, sessionManager);
+    await searchStreamRoutes(mockApp as never, indexerService, blacklistService, settingsService, mockIndexer, sessionManager);
 
     const { reply, request, write } = createMockReplyAndRequest();
     await streamHandler!(request, reply);

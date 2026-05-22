@@ -4,6 +4,7 @@ import { runRssJob } from './rss.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerSearchService } from '../services/indexer-search.service.js';
+import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
@@ -42,6 +43,10 @@ function createMockIndexerService(rssResults: SearchResult[] = []): IndexerSearc
     getEnabledIndexers: vi.fn().mockResolvedValue([]),
   });
 }
+
+const mockIndexer = {
+  getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
+} as unknown as IndexerService;
 
 function createMockDownloadOrchestrator(): DownloadOrchestrator {
   return inject<DownloadOrchestrator>({
@@ -108,7 +113,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
     expect(bookList.getAll).not.toHaveBeenCalled();
@@ -123,7 +128,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.polled).toBe(1);
     expect(indexer.getRssCapableIndexers).toHaveBeenCalled();
@@ -142,7 +147,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(indexer.pollRss).toHaveBeenCalledTimes(2);
   });
@@ -158,7 +163,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -175,7 +180,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -190,7 +195,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -207,7 +212,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -229,7 +234,7 @@ describe('runRssJob', () => {
     );
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(log.debug).toHaveBeenCalledWith(
@@ -250,7 +255,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -273,7 +278,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.polled).toBe(1);
     expect(log.warn).toHaveBeenCalledWith(
@@ -291,7 +296,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ indexer: 'TestNewznab' }),
@@ -310,7 +315,7 @@ describe('runRssJob', () => {
     (download.grab as Mock).mockRejectedValueOnce(new Error('Concurrent grab conflict'));
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(log.info).toHaveBeenCalledWith(
@@ -330,7 +335,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -345,7 +350,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService(new Set(['abc123']));
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -363,7 +368,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -380,7 +385,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -397,7 +402,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -416,7 +421,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -440,7 +445,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -467,7 +472,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledTimes(1);
@@ -488,7 +493,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'rss' }),
@@ -504,7 +509,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
     expect(indexer.pollRss).not.toHaveBeenCalled();
@@ -522,7 +527,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -539,7 +544,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     // Grab floor is skipped when no duration — result passes through
     expect(result.grabbed).toBe(1);
@@ -554,7 +559,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
   });
@@ -580,7 +585,7 @@ describe('rss tests — GUID blacklist filtering', () => {
       const blacklist = createMockBlacklistService();
       (blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set(['guid-bad']) });
 
-      const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       expect(result.grabbed).toBe(0);
       expect(download.grab).not.toHaveBeenCalled();
@@ -596,7 +601,7 @@ describe('rss tests — GUID blacklist filtering', () => {
       const blacklist = createMockBlacklistService();
       (blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(['hash-bad']), blacklistedGuids: new Set() });
 
-      const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       expect(result.grabbed).toBe(0);
       expect(download.grab).not.toHaveBeenCalled();
@@ -611,7 +616,7 @@ describe('rss tests — GUID blacklist filtering', () => {
       const download = createMockDownloadOrchestrator();
       const blacklist = createMockBlacklistService();
 
-      const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       // Result has no infoHash and no guid, so blacklist check should not be called
       expect(blacklist.getBlacklistedIdentifiers).not.toHaveBeenCalled();
@@ -634,7 +639,7 @@ describe('rss tests — GUID blacklist filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     // settingsService.get('metadata') must be called to get languages for filterAndRankResults
     expect(settings.get).toHaveBeenCalledWith('metadata');
@@ -660,7 +665,7 @@ describe('rss tests — GUID blacklist filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     // Only the English result should be grabbed; the French one is filtered out
     expect(download.grab).toHaveBeenCalledTimes(1);
@@ -684,7 +689,7 @@ describe('rss tests — GUID blacklist filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     // French-only result filtered out → no grab
     expect(download.grab).not.toHaveBeenCalled();
@@ -700,7 +705,7 @@ describe('rss tests — GUID blacklist filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ indexerId: 55 }),
@@ -716,7 +721,7 @@ describe('rss tests — GUID blacklist filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     const grabCall = vi.mocked(download.grab).mock.calls[0]![0];
     expect(grabCall).not.toHaveProperty('indexerId');
@@ -740,7 +745,7 @@ describe('rss tests — GUID blacklist filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
@@ -772,7 +777,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -794,7 +799,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -809,7 +814,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -825,7 +830,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalled();
@@ -851,7 +856,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -878,7 +883,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -900,7 +905,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalled();
@@ -924,7 +929,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     // Enrichment does nothing (language already set)
     mockEnrichUsenet.mockImplementation(async () => {});
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -939,7 +944,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService(new Set(['blacklisted123']));
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(mockEnrichUsenet).not.toHaveBeenCalled();
@@ -959,7 +964,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     // enrichUsenetLanguages called exactly once (for the matched book's candidates)
     expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
@@ -986,7 +991,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     // Book was matched but all candidates rejected by multi-part filter
     expect(result.matched).toBe(1);
@@ -1016,7 +1021,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       }
     });
 
-    const result = await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.matched).toBe(2);
     expect(result.grabbed).toBe(1);
@@ -1036,7 +1041,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       const download = createMockDownloadOrchestrator();
       const blacklist = createMockBlacklistService(new Set(['badhash1']));
 
-      await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ reason: 'blacklist-match', matchedRule: 'hash' }),
@@ -1059,7 +1064,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
         for (const r of results) r.nzbName = 'Test Book (07 of 30).rar';
       });
 
-      await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1084,7 +1089,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       const download = createMockDownloadOrchestrator();
       const blacklist = createMockBlacklistService();
 
-      await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ reason: 'language-undetermined', dropped: false }),
@@ -1113,7 +1118,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
       const download = createMockDownloadOrchestrator();
       const blacklist = createMockBlacklistService();
 
-      await runRssJob(settings, bookList, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+      await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'banned' }),
