@@ -198,7 +198,23 @@ export function createMockLogger(): Record<string, Mock | string> {
 export function createMockServices(overrides?: Partial<Record<keyof Services, Record<string, unknown>>>): Services {
   const services: Record<string, unknown> = {};
   for (const name of SERVICE_KEYS) {
-    services[name] = new Proxy({ ...overrides?.[name] } as Record<string | symbol, unknown>, {
+    // Pre-configured defaults for methods that are called from the production
+    // service-graph wiring layer (not the route under test). Tests can override
+    // by passing `overrides[name][method]` — the spread below puts caller
+    // overrides last so they win.
+    const presets: Record<string, unknown> = {};
+    if (name === 'indexer') {
+      // #1149 — searchAndGrabForBook / postProcessSearchResults / retrySearch /
+      // runRssJob all call IndexerService.getLanAllowlist() to thread the LAN
+      // allowlist to the NZB enrichment leaf. An unconfigured Proxy stub would
+      // reject the promise and bubble up as a 500 in route tests that don't
+      // care about the allowlist shape. Default to an empty allowlist.
+      presets.getLanAllowlist = vi.fn().mockResolvedValue({
+        hostPort: new Set<string>(),
+        hostname: new Set<string>(),
+      });
+    }
+    services[name] = new Proxy({ ...presets, ...overrides?.[name] } as Record<string | symbol, unknown>, {
       get(target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop === 'symbol') return undefined;
@@ -231,9 +247,20 @@ export function resetMockServices(services: Services) {
   for (const [serviceName, svc] of Object.entries(services)) {
     for (const [methodName, fn] of Object.entries(svc as Record<string, unknown>)) {
       if (typeof fn === 'function' && 'mockReset' in fn) {
-        const mock = fn as unknown as { mockReset: () => void; mockRejectedValue: (v: unknown) => void };
+        const mock = fn as unknown as {
+          mockReset: () => void;
+          mockRejectedValue: (v: unknown) => void;
+          mockResolvedValue: (v: unknown) => void;
+        };
         mock.mockReset();
-        mock.mockRejectedValue(new Error(`mock not configured: ${serviceName}.${methodName}`));
+        // Preserve the production-graph defaults set in `createMockServices`
+        // so route tests don't have to re-configure them after every reset
+        // (#1149 — IndexerService.getLanAllowlist).
+        if (serviceName === 'indexer' && methodName === 'getLanAllowlist') {
+          mock.mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() });
+        } else {
+          mock.mockRejectedValue(new Error(`mock not configured: ${serviceName}.${methodName}`));
+        }
       }
     }
   }

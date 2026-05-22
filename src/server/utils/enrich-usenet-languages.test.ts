@@ -684,10 +684,15 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledTimes(1);
+      // No allowlist supplied — dispatcher receives no hostname allowlist arg
+      expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledWith(undefined);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
         'http://nzb.test/1',
         expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000 }),
       );
+      // And no lanAllowlist option is forwarded when none was supplied
+      const fetchOpts = mockFetchWithSsrfRedirect.mock.calls[0]![1] as Record<string, unknown>;
+      expect(fetchOpts.lanAllowlist).toBeUndefined();
       expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
     });
 
@@ -816,6 +821,96 @@ describe('enrichUsenetLanguages', () => {
       const warnCall = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(warnCall.url).toBe('https://indexer.example.com/nzb/12345');
       expect(warnCall.url).not.toContain('SECRET');
+    });
+  });
+
+  describe('LAN allowlist threading (#1149)', () => {
+    beforeEach(() => {
+      mockCreateSsrfSafeDispatcher.mockClear();
+      mockFetchWithSsrfRedirect.mockReset();
+    });
+
+    it('forwards hostname allowlist to createSsrfSafeDispatcher and host:port allowlist to fetchWithSsrfRedirect when supplied', async () => {
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <head><meta type="name">Some Book.part01.rar</meta></head>
+        <file poster="t" date="1" subject="t">
+          <groups><group>alt.binaries.german</group></groups>
+          <segments><segment bytes="1" number="1">id@e</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(new Response(nzbXml, { status: 200 }));
+
+      const allowlist = {
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      };
+      const results = [
+        makeResult({ protocol: 'usenet', downloadUrl: 'http://192.168.0.22:9696/api?t=get' }),
+      ];
+
+      await enrichUsenetLanguages(results, logger, allowlist);
+
+      // Dispatcher receives the hostname-only set (defense-in-depth at socket time)
+      expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledWith(allowlist.hostname);
+      // Redirect helper receives the host:port set (authoritative pre-flight)
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
+        'http://192.168.0.22:9696/api?t=get',
+        expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000, lanAllowlist: allowlist.hostPort }),
+      );
+      expect(results[0]!.language).toBe('german');
+      expect(results[0]!.nzbName).toBe('Some Book.part01.rar');
+    });
+
+    it('with allowlist supplied, the previously-refused private-IP fetch now succeeds (regression complement to #904 refusal test)', async () => {
+      // Before #1149: a LAN-IP fetch through fetchWithSsrfRedirect threw the
+      // SSRF refusal. With the allowlist forwarded, the same hop succeeds.
+      const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+        <file poster="t" date="1" subject="t">
+          <groups><group>alt.binaries.audiobooks</group></groups>
+          <segments><segment bytes="1" number="1">id@e</segment></segments>
+        </file>
+      </nzb>`;
+      mockFetchWithSsrfRedirect.mockResolvedValueOnce(new Response(nzbXml, { status: 200 }));
+
+      const results = [
+        makeResult({ protocol: 'usenet', downloadUrl: 'http://192.168.0.22:9696/nzb' }),
+      ];
+
+      await enrichUsenetLanguages(results, logger, {
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      });
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      // No throw, no title fallback — primary signal path completed
+      expect(results[0]!.nzbName ?? null).not.toBeNull();
+    });
+
+    it('empty allowlist (no indexers configured) still SSRF-refuses LAN URLs and falls back to title detection', async () => {
+      mockFetchWithSsrfRedirect.mockRejectedValueOnce(
+        new Error('Refused: address 192.168.0.22 is in the blocked range'),
+      );
+
+      const results = [
+        makeResult({
+          protocol: 'usenet',
+          downloadUrl: 'http://192.168.0.22:9696/nzb',
+          title: 'Stephen King - Fairy Tale (Ungekrzt)',
+        }),
+      ];
+
+      await enrichUsenetLanguages(results, logger, {
+        hostPort: new Set<string>(),
+        hostname: new Set<string>(),
+      });
+
+      // Empty allowlist must not degrade to permissive — dispatcher and redirect
+      // helper still receive the (empty) sets, and the helper still refuses.
+      expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledWith(new Set<string>());
+      const fetchOpts = mockFetchWithSsrfRedirect.mock.calls[0]![1] as Record<string, unknown>;
+      expect(fetchOpts.lanAllowlist).toEqual(new Set<string>());
+      // Title fallback picks up the German marker (#1148 safety net)
+      expect(results[0]!.language).toBe('german');
     });
   });
 

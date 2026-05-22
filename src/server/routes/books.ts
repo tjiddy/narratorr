@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { config } from '../config.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
@@ -22,6 +22,7 @@ export interface BookRouteDeps {
   taggingService: TaggingService;
   eventHistory?: EventHistoryService;
   indexerSearchService?: IndexerSearchService;
+  indexerService?: IndexerService;
   bookRejectionService?: BookRejectionService;
   blacklistService?: BlacklistService;
   eventBroadcaster?: EventBroadcasterService;
@@ -153,9 +154,9 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
 
       request.log.info({ title: body.title }, 'Book added');
 
-      if (body.searchImmediately && book.status === 'wanted' && deps.indexerSearchService && deps.blacklistService) {
-        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService } = deps;
-        triggerImmediateSearch(book, { indexerSearchService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
+      if (body.searchImmediately && book.status === 'wanted' && deps.indexerSearchService && deps.blacklistService && deps.indexerService) {
+        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService, indexerService } = deps;
+        triggerImmediateSearch(book, { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
       }
 
       // Series card lazily populates on first GET via SeriesCardService when
@@ -206,7 +207,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookR
   });
 }
 
-function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerSearchService' | 'blacklistService' | 'eventBroadcaster'>) {
+function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerSearchService' | 'indexerService' | 'blacklistService' | 'eventBroadcaster'>) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
@@ -228,6 +229,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
         { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
         request.log,
         deps.blacklistService!,
+        deps.indexerService!,
         deps.eventBroadcaster,
       );
       if (result.result === 'grab_error') {

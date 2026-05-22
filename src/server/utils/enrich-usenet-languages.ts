@@ -3,6 +3,7 @@ import type { SearchResult } from '../../core/indexers/types.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
+import type { LanAllowlist } from '../../core/utils/download-url.js';
 import { Semaphore } from './semaphore.js';
 import { serializeError } from './serialize-error.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
@@ -76,11 +77,20 @@ function detectPhase2Source(
  * 2. If result.newsgroup is populated, detect language from it (no fetch)
  * 3. If result.newsgroup is absent, fetch the NZB and parse <group> tags
  *
+ * The optional `lanAllowlist` (#1149) lets the NZB-body fetch reach a configured
+ * indexer's host:port even when its address is private/loopback. The fetch
+ * still routes through the SSRF helpers and any redirect hop outside the
+ * allowlist is refused. The leaf parameter is optional only so existing
+ * test invocations stay valid; production wrappers (postProcessSearchResults,
+ * searchAndGrabForBook, retrySearch, runRssJob) take `indexerService` as a
+ * required dependency and forward the allowlist.
+ *
  * Mutates results in-place. Non-blocking: fetch failures are logged and skipped.
  */
 export async function enrichUsenetLanguages(
   results: SearchResult[],
   logger: FastifyBaseLogger,
+  lanAllowlist?: LanAllowlist,
 ): Promise<void> {
   const startMs = Date.now();
   let nzbFetched = 0;
@@ -147,13 +157,14 @@ export async function enrichUsenetLanguages(
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
     await semaphore.acquire();
     nzbFetched++;
-    const dispatcher = createSsrfSafeDispatcher();
+    const dispatcher = createSsrfSafeDispatcher(lanAllowlist?.hostname);
     const safeUrl = sanitizeLogUrl(result.downloadUrl!);
     try {
       logger.debug({ title: result.title, url: safeUrl }, 'Phase-2: fetching NZB');
       const response = await fetchWithSsrfRedirect(result.downloadUrl!, {
         dispatcher,
         timeoutMs: NZB_FETCH_TIMEOUT_MS,
+        ...(lanAllowlist && { lanAllowlist: lanAllowlist.hostPort }),
       });
       logger.debug({
         title: result.title,

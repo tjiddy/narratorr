@@ -489,13 +489,14 @@ describe('DownloadService', () => {
         db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
       }
 
-      it('builds host:port + hostname allowlist from IndexerService.getAll() for torrent HTTP grabs', async () => {
+      it('delegates LAN allowlist construction to IndexerService.getLanAllowlist for torrent HTTP grabs (#1149 shared builder)', async () => {
         setupCommonGrabMocks();
+        const sharedAllowlist = {
+          hostPort: new Set(['192.168.0.22:9696', 'prowlarr.lan:80']),
+          hostname: new Set(['192.168.0.22', 'prowlarr.lan']),
+        };
         const indexerService = {
-          getAll: vi.fn().mockResolvedValue([
-            { id: 1, name: 'Prowlarr', settings: { apiUrl: 'http://192.168.0.22:9696/api' } },
-            { id: 2, name: 'Torznab', settings: { apiUrl: 'http://prowlarr.lan/api' } },
-          ]),
+          getLanAllowlist: vi.fn().mockResolvedValue(sharedAllowlist),
         };
         service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
 
@@ -505,44 +506,17 @@ describe('DownloadService', () => {
 
         await service.grab({ downloadUrl: httpTorrentUrl, title: 'Test', protocol: 'torrent' });
 
-        expect(indexerService.getAll).toHaveBeenCalledTimes(1);
-        const call = resolveSpy.mock.calls[0]!;
-        const allowlist = call[0]!;
-        expect(allowlist.hostPort).toEqual(new Set(['192.168.0.22:9696', 'prowlarr.lan:80']));
-        expect(allowlist.hostname).toEqual(new Set(['192.168.0.22', 'prowlarr.lan']));
-
-        resolveSpy.mockRestore();
-      });
-
-      it('skips indexers with null/empty/un-parseable apiUrl', async () => {
-        setupCommonGrabMocks();
-        const indexerService = {
-          getAll: vi.fn().mockResolvedValue([
-            { id: 1, name: 'Prowlarr', settings: { apiUrl: 'http://192.168.0.22:9696/api' } },
-            { id: 2, name: 'NoUrl', settings: { apiUrl: '' } },
-            { id: 3, name: 'NullSettings', settings: null },
-            { id: 4, name: 'NoApiKey', settings: {} },
-            { id: 5, name: 'Unparseable', settings: { apiUrl: 'not a url' } },
-          ]),
-        };
-        service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
-
-        const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
-          type: 'torrent-bytes', data: Buffer.from('x'), infoHash: 'a'.repeat(40),
-        });
-
-        await service.grab({ downloadUrl: httpTorrentUrl, title: 'Test', protocol: 'torrent' });
-
+        // Delegation contract: one call to getLanAllowlist, allowlist passed through unchanged
+        expect(indexerService.getLanAllowlist).toHaveBeenCalledTimes(1);
         const allowlist = resolveSpy.mock.calls[0]![0]!;
-        expect(allowlist.hostPort).toEqual(new Set(['192.168.0.22:9696']));
-        expect(allowlist.hostname).toEqual(new Set(['192.168.0.22']));
+        expect(allowlist).toBe(sharedAllowlist);
 
         resolveSpy.mockRestore();
       });
 
-      it('does NOT call IndexerService.getAll() for magnet grabs (allowlist undefined)', async () => {
+      it('does NOT call IndexerService.getLanAllowlist() for magnet grabs (allowlist undefined)', async () => {
         setupCommonGrabMocks();
-        const indexerService = { getAll: vi.fn().mockResolvedValue([]) };
+        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) };
         service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
 
         const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
@@ -554,14 +528,14 @@ describe('DownloadService', () => {
           title: 'Test',
         });
 
-        expect(indexerService.getAll).not.toHaveBeenCalled();
+        expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
         expect(resolveSpy).toHaveBeenCalledWith(undefined);
         resolveSpy.mockRestore();
       });
 
-      it('does NOT call IndexerService.getAll() for usenet HTTP grabs', async () => {
+      it('does NOT call IndexerService.getLanAllowlist() for usenet HTTP grabs', async () => {
         setupCommonGrabMocks();
-        const indexerService = { getAll: vi.fn().mockResolvedValue([]) };
+        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) };
         service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
 
         const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
@@ -574,14 +548,14 @@ describe('DownloadService', () => {
           protocol: 'usenet',
         });
 
-        expect(indexerService.getAll).not.toHaveBeenCalled();
+        expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
         expect(resolveSpy).toHaveBeenCalledWith(undefined);
         resolveSpy.mockRestore();
       });
 
-      it('does NOT call IndexerService.getAll() for data: URI grabs', async () => {
+      it('does NOT call IndexerService.getLanAllowlist() for data: URI grabs', async () => {
         setupCommonGrabMocks();
-        const indexerService = { getAll: vi.fn().mockResolvedValue([]) };
+        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) };
         service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
 
         const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
@@ -594,7 +568,7 @@ describe('DownloadService', () => {
           protocol: 'torrent',
         });
 
-        expect(indexerService.getAll).not.toHaveBeenCalled();
+        expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
         expect(resolveSpy).toHaveBeenCalledWith(undefined);
         resolveSpy.mockRestore();
       });
@@ -1240,6 +1214,7 @@ describe('DownloadService', () => {
       let retryLog: ReturnType<typeof createMockLogger>;
       let mockRetryDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
+        indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
@@ -1254,6 +1229,7 @@ describe('DownloadService', () => {
         retryLog = createMockLogger();
         mockRetryDeps = {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
+          indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, path: null, author: { name: 'Sanderson' } }) },
@@ -1262,7 +1238,7 @@ describe('DownloadService', () => {
           log: retryLog,
         };
         retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
-        retryService.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getAll: vi.fn().mockResolvedValue([]) } as never });
+        retryService.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
       });
 
       it('returns retried and deletes old record on successful retry', async () => {
@@ -1362,7 +1338,7 @@ describe('DownloadService', () => {
 
         const retryLogLocal = createMockLogger();
         const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(retryLogLocal));
-        svc.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getAll: vi.fn().mockResolvedValue([]) } as never });
+        svc.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
         const result = await svc.retry(1);
 

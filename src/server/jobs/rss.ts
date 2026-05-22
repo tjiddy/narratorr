@@ -5,6 +5,7 @@ import type { SettingsService } from '../services/settings.service.js';
 import type { BookWithAuthor } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerSearchService } from '../services/indexer-search.service.js';
+import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
@@ -34,6 +35,7 @@ export async function runRssJob(
   indexerSearchService: IndexerSearchService,
   downloadOrchestrator: DownloadOrchestrator,
   blacklistService: BlacklistService,
+  indexerService: IndexerService,
   log: FastifyBaseLogger,
 ): Promise<RssJobResult> {
   const rssSettings = await settingsService.get('rss');
@@ -129,12 +131,17 @@ export async function runRssJob(
   let matched = 0;
   let grabbed = 0;
 
+  // Build the LAN allowlist once per RSS cycle. The DB read is cheap (indexers
+  // table is tiny) and reusing the same allowlist across every per-book
+  // enrichment in this cycle avoids N reads (#1149).
+  const lanAllowlist = await indexerService.getLanAllowlist();
+
   // Process each matched book — filter and rank all candidates together
   for (const [bookId, { results: bookResults, candidate }] of itemsPerBook) {
     matched++;
 
     // Enrich Usenet results before filtering
-    await enrichUsenetLanguages(bookResults, log);
+    await enrichUsenetLanguages(bookResults, log, lanAllowlist);
 
     // Filter multi-part Usenet posts (after enrichment so nzbName is available)
     const { filtered: afterMultipart, rejectedTitles: rssMultipartRejections } = filterMultiPartUsenet(bookResults);

@@ -197,6 +197,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const importList = new ImportListService(db, log, book, metadata, {
     indexerSearchService: indexerSearch,
+    indexerService: indexer,
     downloadOrchestrator,
     settingsService: settings,
     blacklistService,
@@ -228,7 +229,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   // Build retry-search deps bag now that all required services exist
   const retrySearchDeps = createRetrySearchDeps(
-    { indexerSearch, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
+    { indexerSearch, indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
     log,
   );
 
@@ -276,6 +277,7 @@ const routeRegistry: RouteFactory[] = [
     taggingService: s.tagging,
     eventHistory: s.eventHistory,
     indexerSearchService: s.indexerSearch,
+    indexerService: s.indexer,
     bookRejectionService: s.bookRejection,
     blacklistService: s.blacklist,
     eventBroadcaster: s.eventBroadcaster,
@@ -301,7 +303,7 @@ const routeRegistry: RouteFactory[] = [
   (app) => filesystemRoutes(app),
   (app, s) => eventHistoryRoutes(app, s.eventHistory),
   (app, s) => eventsRoutes(app, s.eventBroadcaster),
-  (app, s) => searchStreamRoutes(app, s.indexerSearch, s.blacklist, s.settings, new SearchSessionManager()),
+  (app, s) => searchStreamRoutes(app, s.indexerSearch, s.blacklist, s.settings, s.indexer, new SearchSessionManager()),
   (app, s) => prowlarrCompatRoutes(app, s.indexer),
   (app, s) => importListsRoutes(app, s.importList),
   (app, s) => discoverRoutes(app, {

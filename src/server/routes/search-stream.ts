@@ -1,5 +1,6 @@
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { type IndexerSearchService } from '../services/indexer-search.service.js';
+import { type IndexerService } from '../services/indexer.service.js';
 import { type BlacklistService } from '../services/blacklist.service.js';
 import { type SettingsService } from '../services/settings.service.js';
 import { type SearchSessionManager } from '../services/search-session.js';
@@ -24,6 +25,7 @@ export async function searchStreamRoutes(
   indexerSearchService: IndexerSearchService,
   blacklistService: BlacklistService,
   settingsService: SettingsService,
+  indexerService: IndexerService,
   sessionManager: SearchSessionManager,
 ): Promise<void> {
   // GET /api/search/stream — SSE endpoint
@@ -95,7 +97,7 @@ export async function searchStreamRoutes(
           },
         );
 
-        const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService, request.log);
+        const processed = await postProcessSearchResults(allResults, bookDuration, blacklistService, settingsService, indexerService, request.log);
         writeSSE(reply, 'search-complete', processed);
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Search stream error');

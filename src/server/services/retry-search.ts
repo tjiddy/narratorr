@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerSearchService } from './indexer-search.service.js';
+import type { IndexerService } from './indexer.service.js';
 import type { DownloadWithBook } from './download.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -21,6 +22,7 @@ export type RetryOutcome =
 
 export interface RetrySearchDeps {
   indexerSearchService: IndexerSearchService;
+  indexerService: IndexerService;
   downloadOrchestrator: DownloadOrchestrator;
   blacklistService: BlacklistService;
   bookService: BookService;
@@ -32,6 +34,7 @@ export interface RetrySearchDeps {
 /** Factory to build RetrySearchDeps from a Services bag + logger. Eliminates duplication across routes and jobs. */
 export function createRetrySearchDeps(services: {
   indexerSearch: IndexerSearchService;
+  indexer: IndexerService;
   downloadOrchestrator: DownloadOrchestrator;
   blacklist: BlacklistService;
   book: BookService;
@@ -40,6 +43,7 @@ export function createRetrySearchDeps(services: {
 }, log: FastifyBaseLogger): RetrySearchDeps {
   return {
     indexerSearchService: services.indexerSearch,
+    indexerService: services.indexer,
     downloadOrchestrator: services.downloadOrchestrator,
     blacklistService: services.blacklist,
     bookService: services.book,
@@ -62,7 +66,7 @@ export async function retrySearch(
   bookId: number,
   deps: RetrySearchDeps,
 ): Promise<RetryOutcome> {
-  const { indexerSearchService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, log } = deps;
+  const { indexerSearchService, indexerService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, log } = deps;
 
   // Check retry budget
   if (!retryBudget.hasRemaining(bookId)) {
@@ -99,8 +103,9 @@ export async function retrySearch(
 
     const filteredResults = await filterBlacklistedResults(rawResults, blacklistService, log);
 
-    // Enrich Usenet results before filtering
-    await enrichUsenetLanguages(filteredResults, log);
+    // Enrich Usenet results before filtering. The LAN allowlist lets NZB-body
+    // fetches reach a configured-indexer host:port even at a private IP (#1149).
+    await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist());
 
     // Quality filtering and ranking
     const qualitySettings = await settingsService.get('quality');
