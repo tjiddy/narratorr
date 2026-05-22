@@ -22,6 +22,9 @@ export type BookSortDirection = z.infer<typeof bookSortDirectionSchema>;
 export const bookListQuerySchema = z.object({
   status: bookStatusSchema.optional(),
   search: z.string().optional(),
+  author: z.string().optional(),
+  series: z.string().optional(),
+  narrator: z.string().optional(),
   sortField: bookSortFieldSchema.optional(),
   sortDirection: bookSortDirectionSchema.optional(),
 });

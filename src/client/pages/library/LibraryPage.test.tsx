@@ -115,6 +115,18 @@ function mockLibraryData(books: LibraryBookListItem[]) {
         (b.seriesName ?? '').toLowerCase().includes(q),
       );
     }
+    if (params?.author) {
+      const q = params.author.toLowerCase();
+      filtered = filtered.filter(b => b.authors.some(a => a.name.toLowerCase() === q));
+    }
+    if (params?.series) {
+      const q = params.series.toLowerCase();
+      filtered = filtered.filter(b => (b.seriesName ?? '').toLowerCase() === q);
+    }
+    if (params?.narrator) {
+      const q = params.narrator.toLowerCase();
+      filtered = filtered.filter(b => b.narrators.some(n => n.name.toLowerCase() === q));
+    }
     if (params?.sortField) {
       filtered = sortBooks(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
     }

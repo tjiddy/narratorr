@@ -95,14 +95,11 @@ export function useLibraryPageState() {
 
   const displayBooks = useMemo((): DisplayBook[] =>
     applyClientFilters(books, {
-      authorFilter: filters.state.authorFilter,
-      seriesFilter: filters.state.seriesFilter,
-      narratorFilter: filters.state.narratorFilter,
       collapseSeriesEnabled: filters.state.collapseSeriesEnabled,
       sortField: filters.state.sortField,
       sortDirection: filters.state.sortDirection,
     }),
-  [books, filters.state.authorFilter, filters.state.seriesFilter, filters.state.narratorFilter, filters.state.collapseSeriesEnabled, filters.state.sortField, filters.state.sortDirection]);
+  [books, filters.state.collapseSeriesEnabled, filters.state.sortField, filters.state.sortDirection]);
 
   const bulk = useLibraryBulkActions(displayBooks);
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();

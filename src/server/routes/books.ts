@@ -279,35 +279,43 @@ function pickRetagOverrides(
   return out;
 }
 
-export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
-  const { bookService, bookListService, renameService, mergeService, taggingService, indexerSearchService } = deps;
-  // GET /api/books
-  app.get<{ Querystring: BooksListQuery }>(
-    '/api/books',
-    { schema: { querystring: booksListQuerySchema } },
-    async (request) => {
-      const { status, search, sortField, sortDirection, limit, offset } = request.query;
-      request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
-      const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
-      return bookListService.getAll(status, pagination, { slim: true, ...(search !== undefined && { search }), ...(sortField !== undefined && { sortField }), ...(sortDirection !== undefined && { sortDirection }) });
-    },
-  );
+/** Project query params into the options shape both list services accept,
+ *  dropping undefined keys so exactOptionalPropertyTypes stays happy. */
+function pickListOptions(q: BooksListQuery): {
+  search?: string; author?: string; series?: string; narrator?: string;
+  sortField?: NonNullable<BooksListQuery['sortField']>;
+  sortDirection?: NonNullable<BooksListQuery['sortDirection']>;
+} {
+  const out: ReturnType<typeof pickListOptions> = {};
+  if (q.search !== undefined) out.search = q.search;
+  if (q.author !== undefined) out.author = q.author;
+  if (q.series !== undefined) out.series = q.series;
+  if (q.narrator !== undefined) out.narrator = q.narrator;
+  if (q.sortField !== undefined) out.sortField = q.sortField;
+  if (q.sortDirection !== undefined) out.sortDirection = q.sortDirection;
+  return out;
+}
+
+function registerBookListRoutes(app: FastifyInstance, bookListService: BookRouteDeps['bookListService']) {
+  app.get<{ Querystring: BooksListQuery }>('/api/books', { schema: { querystring: booksListQuerySchema } }, async (request) => {
+    const { status, limit, offset } = request.query;
+    request.log.debug({ ...request.query }, 'Fetching books');
+    const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
+    return bookListService.getAll(status, pagination, { slim: true, ...pickListOptions(request.query) });
+  });
 
   // GET /api/library/books — slim DTO for the library list view (#1132)
-  app.get<{ Querystring: BooksListQuery }>(
-    '/api/library/books',
-    { schema: { querystring: booksListQuerySchema } },
-    async (request) => {
-      const { status, search, sortField, sortDirection, limit, offset } = request.query;
-      request.log.debug({ status, search, sortField, limit, offset }, 'Fetching library books');
-      const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
-      return bookListService.getAllForLibrary(status, pagination, {
-        ...(search !== undefined && { search }),
-        ...(sortField !== undefined && { sortField }),
-        ...(sortDirection !== undefined && { sortDirection }),
-      });
-    },
-  );
+  app.get<{ Querystring: BooksListQuery }>('/api/library/books', { schema: { querystring: booksListQuerySchema } }, async (request) => {
+    const { status, limit, offset } = request.query;
+    request.log.debug({ ...request.query }, 'Fetching library books');
+    const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
+    return bookListService.getAllForLibrary(status, pagination, pickListOptions(request.query));
+  });
+}
+
+export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
+  const { bookService, bookListService, renameService, mergeService, taggingService, indexerSearchService } = deps;
+  registerBookListRoutes(app, bookListService);
 
   // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
   app.get('/api/books/identifiers', async () => {
