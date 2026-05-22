@@ -213,8 +213,8 @@ export class DownloadService {
   /** Delegate the apiUrl-derived LAN allowlist build to IndexerService so the
    *  torrent-download (#966) and Usenet NZB-enrichment (#1149) paths share one
    *  implementation and one set of parse/normalize semantics. */
-  private async buildLanAllowlist() {
-    return await this.wired.require().indexerService.getLanAllowlist();
+  private buildLanAllowlist() {
+    return this.wired.require().indexerService.getLanAllowlist();
   }
 
   /** Send a pre-resolved artifact to the client and return the external ID. */
