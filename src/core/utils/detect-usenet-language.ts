@@ -84,7 +84,10 @@ export function parseNzbFileSubject(xml: string): string | undefined {
 }
 
 /**
- * Title-level language tokens for NZB release names.
+ * Title-level language tokens for release-name / title text.
+ *
+ * Applied to NZB `<meta type="name">` values, file subjects, and the user-facing
+ * search-result title — wherever a single string might carry a language marker.
  *
  * Umlaut/accent handling: real-world NZBs exhibit three character-mangling forms
  * for the same source word. Patterns must accept all three:
@@ -97,7 +100,7 @@ export function parseNzbFileSubject(xml: string): string | undefined {
  * Older patterns use `[öo?]` / `[üu?]` (with literal `?`) — that's the mojibake-placeholder form
  * from a different mangling era. Don't unify; the two shapes target different mangling sources.
  */
-const NZB_NAME_LANGUAGE_PATTERNS: Array<{ pattern: RegExp; language: string }> = [
+const LANGUAGE_TEXT_PATTERNS: Array<{ pattern: RegExp; language: string }> = [
   { pattern: /h[öo?]rb[üu?]cher/i, language: 'german' },
   { pattern: /h[öo?]rbuch/i, language: 'german' },
   { pattern: /ungek[üu]?(?:e?)rzt/i, language: 'german' },  // Ungekürzt / Ungekuerzt / Ungekrzt
@@ -106,13 +109,13 @@ const NZB_NAME_LANGUAGE_PATTERNS: Array<{ pattern: RegExp; language: string }> =
 ];
 
 /**
- * Detect language from an NZB release name by scanning for known language tokens.
- * Returns undefined when no language token is found.
+ * Detect language from a release-name or title string by scanning for known
+ * language tokens. Returns undefined when no language token is found.
  */
-export function detectLanguageFromNzbName(name: string | undefined): string | undefined {
-  if (!name) return undefined;
-  for (const { pattern, language } of NZB_NAME_LANGUAGE_PATTERNS) {
-    if (pattern.test(name)) return language;
+export function detectLanguageFromText(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  for (const { pattern, language } of LANGUAGE_TEXT_PATTERNS) {
+    if (pattern.test(text)) return language;
   }
   return undefined;
 }
