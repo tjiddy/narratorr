@@ -421,20 +421,32 @@ async function searchWithBroadcaster(
   } else if (grabResult.result === 'skipped') {
     safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'skipped' }, log);
   } else if (grabResult.result === 'grab_error') {
-    const errorMessage = grabResult.error.message || 'Unknown grab error';
-    safeEmit(broadcaster, 'search_complete', {
-      book_id: book.id,
-      total_results: totalResults,
-      outcome: 'grab_error',
-      book_title: book.title,
-      error_message: errorMessage,
-      release_title: best.title,
-    }, log);
-    recordGrabFailedEvent({ book, releaseTitle: best.title, errorMessage, eventHistory, log });
+    emitGrabError(grabResult.error, book, best.title, totalResults, broadcaster, eventHistory, log);
   } else {
     safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
   }
   return grabResult;
+}
+
+function emitGrabError(
+  error: Error,
+  book: { id: number; title: string; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
+  releaseTitle: string,
+  totalResults: number,
+  broadcaster: EventBroadcasterService,
+  eventHistory: EventHistoryService,
+  log: FastifyBaseLogger,
+): void {
+  const errorMessage = error.message || 'Unknown grab error';
+  safeEmit(broadcaster, 'search_complete', {
+    book_id: book.id,
+    total_results: totalResults,
+    outcome: 'grab_error',
+    book_title: book.title,
+    error_message: errorMessage,
+    release_title: releaseTitle,
+  }, log);
+  recordGrabFailedEvent({ book, releaseTitle, errorMessage, eventHistory, log });
 }
 
 /**

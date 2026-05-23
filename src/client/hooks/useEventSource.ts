@@ -158,39 +158,7 @@ export function useEventSource(apiKey: string | null) {
       handleSearchEvent(type as Extract<SSEEventType, `search_${string}`>, asPayload<Extract<SSEEventType, `search_${string}`>>(data));
     }
 
-    // Toast notifications — suppress for cancelled merges (user-initiated, not an error)
-    const record = data as Record<string, unknown>;
-    const isCancelledMerge = type === 'merge_failed' && record.reason === 'cancelled';
-    // Inline dispatch: search_complete + outcome:grab_error → error toast.
-    // The book cache may be empty for scheduled/background searches, so use
-    // payload.book_title and payload.error_message directly instead of a cache lookup.
-    if (type === 'search_complete' && record.outcome === 'grab_error') {
-      const p = asPayload<'search_complete'>(data);
-      const title = p.book_title ?? 'Grab failed';
-      const message = p.error_message ? `Grab failed: ${p.error_message}` : 'Grab failed';
-      toast.error(`${title} — ${message}`, { duration: 5000 });
-    }
-    const toastConfig = TOAST_EVENT_CONFIG[type];
-    if (toastConfig && !isCancelledMerge) {
-      const title = toastConfig.titleKey in data
-        ? String(record[toastConfig.titleKey])
-        : type;
-      const message = formatToastMessage(type, title);
-      switch (toastConfig.level) {
-        case 'success': toast.success(message, { duration: 5000 }); break;
-        case 'info': toast.info(message, { duration: 5000 }); break;
-        case 'warning': toast.warning(message, { duration: 5000 }); break;
-        case 'error': toast.error(message, { duration: 5000 }); break;
-      }
-    }
-
-    // Enrichment warning on merge_complete
-    if (type === 'merge_complete') {
-      const warning = asPayload<'merge_complete'>(data).enrichmentWarning;
-      if (warning) {
-        toast.warning(warning);
-      }
-    }
+    dispatchToasts(type, data);
   }, [queryClient]);
 
   useEffect(() => {
@@ -244,6 +212,42 @@ export function useEventSource(apiKey: string | null) {
       esRef.current = null;
     };
   }, [apiKey, handleEvent, queryClient]);
+}
+
+function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
+  const record = data as Record<string, unknown>;
+  // Inline dispatch: search_complete + outcome:grab_error → error toast.
+  // The book cache may be empty for scheduled/background searches, so use
+  // payload.book_title and payload.error_message directly instead of a cache lookup.
+  if (type === 'search_complete' && record.outcome === 'grab_error') {
+    const p = asPayload<'search_complete'>(data);
+    const title = p.book_title ?? 'Grab failed';
+    const message = p.error_message ? `Grab failed: ${p.error_message}` : 'Grab failed';
+    toast.error(`${title} — ${message}`, { duration: 5000 });
+  }
+
+  const isCancelledMerge = type === 'merge_failed' && record.reason === 'cancelled';
+  const toastConfig = TOAST_EVENT_CONFIG[type];
+  if (toastConfig && !isCancelledMerge) {
+    const title = toastConfig.titleKey in data
+      ? String(record[toastConfig.titleKey])
+      : type;
+    const message = formatToastMessage(type, title);
+    switch (toastConfig.level) {
+      case 'success': toast.success(message, { duration: 5000 }); break;
+      case 'info': toast.info(message, { duration: 5000 }); break;
+      case 'warning': toast.warning(message, { duration: 5000 }); break;
+      case 'error': toast.error(message, { duration: 5000 }); break;
+    }
+  }
+
+  // Enrichment warning on merge_complete
+  if (type === 'merge_complete') {
+    const warning = asPayload<'merge_complete'>(data).enrichmentWarning;
+    if (warning) {
+      toast.warning(warning);
+    }
+  }
 }
 
 function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
