@@ -1831,7 +1831,7 @@ describe('MyAnonamouseIndexer', () => {
       s.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 'User', wedges })));
     }
 
-    function stubBonusBuy(s: ReturnType<typeof useMswServer>, body: unknown, status = 200) {
+    function stubBonusBuy(s: ReturnType<typeof useMswServer>, body: Record<string, unknown>, status = 200) {
       s.use(http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.json(body, { status })));
     }
 

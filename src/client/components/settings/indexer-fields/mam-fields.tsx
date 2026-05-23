@@ -197,7 +197,7 @@ function MamIdField({ register, errors, mamStatus, detectError, detect, watch }:
   );
 }
 
-function MamIdHelper({ errors, mamStatus, detectError, detect, watch }: MamFieldsRegisterProps & { mamStatus: MamStatus | null; detectError: string | null; detect: (mamId: string) => void }) {
+function MamIdHelper({ errors, mamStatus, detectError, detect, watch }: Pick<IndexerFieldsProps, 'errors' | 'watch'> & { mamStatus: MamStatus | null; detectError: string | null; detect: (mamId: string) => void }) {
   if (errors.settings?.mamId) return <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>;
   if (mamStatus) {
     return (

@@ -3,6 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
+import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
