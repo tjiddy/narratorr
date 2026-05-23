@@ -1142,8 +1142,11 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
 
-    // #1157 — grab_error outcome surfaces a global error toast
-    it('search_complete with outcome grab_error dispatches an error toast using payload book_title + error_message', () => {
+    // #1157 — grab_error outcome surfaces a global error toast.
+    // The toast must use sonner's title (1st arg) + description (options.description)
+    // slots — NOT a concatenated single string — so the book title and error message
+    // render in their dedicated UI slots.
+    it('search_complete with outcome grab_error dispatches an error toast using book_title as title and error_message in description slot', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
       const es = MockEventSource.instances[0];
@@ -1159,12 +1162,46 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       }));
 
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('Scheduled Book'),
-        { duration: 5000 },
+        'Scheduled Book',
+        { description: 'at wedge reserve floor', duration: 5000 },
       );
+    });
+
+    it('search_complete grab_error falls back to "Unknown grab error" in description when error_message is absent', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('search_complete', {
+        book_id: 99,
+        total_results: 3,
+        outcome: 'grab_error',
+        book_title: 'Scheduled Book',
+      }));
+
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('at wedge reserve floor'),
-        { duration: 5000 },
+        'Scheduled Book',
+        { description: 'Unknown grab error', duration: 5000 },
+      );
+    });
+
+    it('search_complete grab_error falls back to "Grab failed" title when book_title is absent', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('search_complete', {
+        book_id: 99,
+        total_results: 3,
+        outcome: 'grab_error',
+        error_message: 'Connection refused',
+      }));
+
+      expect(toast.error).toHaveBeenCalledWith(
+        'Grab failed',
+        { description: 'Connection refused', duration: 5000 },
       );
     });
 

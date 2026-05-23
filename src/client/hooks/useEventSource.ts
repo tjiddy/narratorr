@@ -222,8 +222,8 @@ function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type])
   if (type === 'search_complete' && record.outcome === 'grab_error') {
     const p = asPayload<'search_complete'>(data);
     const title = p.book_title ?? 'Grab failed';
-    const message = p.error_message ? `Grab failed: ${p.error_message}` : 'Grab failed';
-    toast.error(`${title} — ${message}`, { duration: 5000 });
+    const description = p.error_message ?? 'Unknown grab error';
+    toast.error(title, { description, duration: 5000 });
   }
 
   const isCancelledMerge = type === 'merge_failed' && record.reason === 'cancelled';
