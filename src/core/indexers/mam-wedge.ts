@@ -93,7 +93,7 @@ export async function fetchCurrentWedges(cfg: WedgeRequestConfig): Promise<numbe
   let raw: unknown;
   try {
     raw = JSON.parse(body);
-  } catch (err) {
+  } catch (err: unknown) {
     throw new IndexerError(cfg.indexerName, 'MAM returned invalid JSON for wedge status', { cause: err instanceof Error ? err : undefined });
   }
   const parsed = mamWedgeStatusSchema.safeParse(raw);

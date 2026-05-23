@@ -208,6 +208,18 @@ describe('mamSettingsSchema — wedge fields (#1156)', () => {
     expect(result.success).toBe(false);
   });
 
+  it('applies documented default useFreeleechWedge="never" when field is omitted (#1156 F1)', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.useFreeleechWedge).toBe('never');
+  });
+
+  it('applies documented default minWedgeReserve=0 when field is omitted (#1156 F1)', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.minWedgeReserve).toBe(0);
+  });
+
   it('accepts minWedgeReserve: 0', () => {
     const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 0 });
     expect(result.success).toBe(true);

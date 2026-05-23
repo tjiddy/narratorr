@@ -193,6 +193,39 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     return { ok: true };
   });
 
+  // Seed the wedge count for /jsonLoad.php and bonus-buy decrement logic.
+  // Accepts { count: number }; rejects negative or non-integer values.
+  server.post('/__control/wedges', async (request, reply) => {
+    const body = request.body as { count?: unknown };
+    const count = body?.count;
+    if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) {
+      return reply.status(400).send({ error: 'body requires { count: non-negative integer }' });
+    }
+    wedgeCount = count;
+    return { ok: true, wedges: wedgeCount };
+  });
+
+  // Override the bonus-buy response shape. POST { success?: boolean, error?: string }
+  // applies the override; POST {} clears it back to the wedge-count-aware default.
+  server.post('/__control/bonus-buy', async (request, reply) => {
+    const body = (request.body ?? {}) as { success?: unknown; error?: unknown };
+    if (body.success === undefined && body.error === undefined) {
+      bonusBuyOverride = null;
+      return { ok: true, cleared: true };
+    }
+    if (body.success !== undefined && typeof body.success !== 'boolean') {
+      return reply.status(400).send({ error: 'success must be boolean when provided' });
+    }
+    if (body.error !== undefined && typeof body.error !== 'string') {
+      return reply.status(400).send({ error: 'error must be string when provided' });
+    }
+    bonusBuyOverride = {
+      ...(body.success !== undefined && { success: body.success }),
+      ...(body.error !== undefined && { error: body.error }),
+    };
+    return { ok: true, override: bonusBuyOverride };
+  });
+
   server.post('/__control/reset', async () => {
     seedStore.clear();
     wedgeCount = 5;

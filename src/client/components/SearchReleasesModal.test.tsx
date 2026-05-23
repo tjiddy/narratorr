@@ -404,6 +404,76 @@ describe('SearchReleasesModal', () => {
         expect(callArgs).toEqual(expect.objectContaining({ guid: undefined }));
       });
     });
+
+    it('#1156 F2 — handleGrab forwards isFreeleech=true from SearchResult to api.searchGrab', async () => {
+      const freeResult: SearchResult[] = [
+        {
+          title: 'Free Book',
+          author: 'Free Author',
+          protocol: 'torrent',
+          downloadUrl: 'mam-torrent://12345',
+          guid: '12345',
+          size: 100 * 1024 * 1024,
+          seeders: 5,
+          indexer: 'MyAnonamouse',
+          indexerId: 1,
+          isFreeleech: true,
+        },
+      ];
+      setStreamResults(freeResult);
+      vi.mocked(api.searchGrab).mockResolvedValue({
+        id: 1,
+        title: 'Free Book',
+        protocol: 'torrent',
+        status: 'queued' as const,
+        progress: 0,
+        addedAt: '2024-01-01T00:00:00Z',
+        indexerName: null,
+        seeders: null,
+        completedAt: null,
+      });
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Free Book');
+      await user.click(screen.getAllByText('Grab')[0]!);
+
+      await waitFor(() => {
+        const callArgs = vi.mocked(api.searchGrab).mock.calls[0]![0];
+        expect(callArgs).toEqual(expect.objectContaining({ isFreeleech: true }));
+      });
+    });
+
+    it('#1156 F2 — handleGrab omits isFreeleech from api.searchGrab when SearchResult has no flag', async () => {
+      setStreamResults(mockResults);
+      vi.mocked(api.searchGrab).mockResolvedValue({
+        id: 1,
+        title: 'The Way of Kings [Unabridged]',
+        protocol: 'torrent',
+        status: 'queued' as const,
+        progress: 0,
+        addedAt: '2024-01-01T00:00:00Z',
+        indexerName: null,
+        seeders: null,
+        completedAt: null,
+      });
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]!);
+
+      await waitFor(() => {
+        const callArgs = vi.mocked(api.searchGrab).mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.isFreeleech).toBeUndefined();
+      });
+    });
   });
 
   it('shows error toast when grab fails', async () => {

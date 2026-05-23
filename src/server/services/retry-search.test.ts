@@ -625,6 +625,29 @@ describe('retrySearch — GUID blacklist filtering', () => {
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 
+  it('forwards isFreeleech=true from best search result to downloadOrchestrator.grab (#1156 F2)', async () => {
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, isFreeleech: true }]),
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ isFreeleech: true }),
+    );
+  });
+
+  it('omits isFreeleech from grab call when best search result does not set it (#1156 F2)', async () => {
+    const deps = createDeps();
+
+    await retrySearch(1, deps);
+
+    const grabCall = vi.mocked(deps.downloadOrchestrator.grab).mock.calls[0]![0];
+    expect(grabCall).not.toHaveProperty('isFreeleech');
+  });
+
   // #439 — retry search honors searchPriority
   it('accuracy mode grabs narrator-matched release over higher-quality non-match on retry', async () => {
     const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);

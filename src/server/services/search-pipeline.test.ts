@@ -202,6 +202,25 @@ describe('searchAndGrabForBook', () => {
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 
+  it('forwards isFreeleech=true from best search result to grab (#1156 F2)', async () => {
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ indexerId: 7, isFreeleech: true })]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
+    expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
+    expect(downloadService.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ isFreeleech: true }),
+    );
+  });
+
+  it('omits isFreeleech from grab when best search result does not set it (#1156 F2)', async () => {
+    const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);
+    expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
+    const grabCall = vi.mocked(downloadService.grab).mock.calls[0]![0];
+    expect(grabCall).not.toHaveProperty('isFreeleech');
+  });
+
   it('returns no_results when indexers return empty array', async () => {
     vi.mocked(indexerSearchService.searchAll).mockResolvedValue([]);
     const result = await searchAndGrabForBook(book, indexerSearchService, downloadService, defaultQualitySettings, log, blacklistService, mockIndexer);

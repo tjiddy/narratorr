@@ -142,7 +142,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     let raw: unknown;
     try {
       raw = JSON.parse(body);
-    } catch (err) {
+    } catch (err: unknown) {
       throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
     }
 
@@ -242,7 +242,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     let raw: unknown;
     try {
       raw = JSON.parse(body);
-    } catch (err) {
+    } catch (err: unknown) {
       throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
     }
     const parsed = mamUserStatusSchema.safeParse(raw);
