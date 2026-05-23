@@ -4,14 +4,18 @@ import {
   type IndexerAdapter,
   type IndexerParseTrace,
   type IndexerSearchResponse,
+  type ResolveDownloadContext,
+  type ResolveDownloadResult,
   type SearchOptions,
   type SearchResult,
+  type WedgeOutcome,
 } from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import type { WedgeMode } from '../../shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
@@ -23,10 +27,16 @@ export interface MAMConfig {
   searchLanguages: number[];
   searchType: string;
   isVip?: boolean | undefined;
+  useFreeleechWedge?: WedgeMode | undefined;
+  minWedgeReserve?: number | undefined;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
-import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
+import { INDEXER_TIMEOUT_MS, WEDGE_FETCH_TIMEOUT_MS } from '../utils/constants.js';
+
+/** Sentinel prefix used as `SearchResult.downloadUrl` for MAM results — the real torrent is fetched at grab time. */
+const MAM_TORRENT_SENTINEL_PREFIX = 'mam-torrent://';
+const MAM_SENTINEL_PATTERN = /^mam-torrent:\/\/(\d+)$/;
 
 // MAM (and many PHP-backend APIs) emit boolean flag fields as 0/1 integers
 // rather than JSON booleans. Accept both shapes and normalize to boolean.
@@ -64,6 +74,12 @@ const mamSearchResponseSchema = z.object({
 const mamUserStatusSchema = z.object({
   username: z.string().nullish(),
   classname: z.string().nullish(),
+  wedges: z.number().nullish(),
+}).passthrough();
+
+const mamBonusBuyResponseSchema = z.object({
+  success: z.boolean().nullish(),
+  error: z.string().nullish(),
 }).passthrough();
 
 type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;
@@ -81,6 +97,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private searchLanguages: number[];
   private searchType: string;
   private isVip?: boolean;
+  private useFreeleechWedge: WedgeMode;
+  private minWedgeReserve: number;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
@@ -89,6 +107,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
     if (config.isVip !== undefined) this.isVip = config.isVip;
+    this.useFreeleechWedge = config.useFreeleechWedge ?? 'never';
+    this.minWedgeReserve = config.minWedgeReserve ?? 0;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -122,7 +142,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       };
     }
 
-    const built = await this.buildResults(response.data, options?.signal);
+    const built = this.buildResults(response.data);
     return {
       results: built.results,
       parseStats: built.parseStats,
@@ -176,7 +196,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return parsed.data;
   }
 
-  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<{ results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] }> {
+  private buildResults(data: MAMSearchResult[]): { results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] } {
     const results: SearchResult[] = [];
     const debugTrace: IndexerParseTrace[] = [];
     const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
@@ -189,11 +209,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         continue;
       }
 
-      let downloadUrl: string | undefined;
-      if (item.id != null) {
-        downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
-      }
-
+      // Emit a sentinel download URL — the real torrent bytes are fetched lazily
+      // by `resolveDownloadUrl` at grab time so the optional freeleech wedge can
+      // be applied first.
+      const downloadUrl = item.id != null ? `${MAM_TORRENT_SENTINEL_PREFIX}${item.id}` : undefined;
       const rawBytes = rawTitleBytesHex(item.title);
       if (!downloadUrl) {
         dropped.noUrl++;
@@ -266,10 +285,11 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
       if (data.username) {
         const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
+        const wedges = typeof data.wedges === 'number' ? data.wedges : undefined;
         const result: { success: boolean; message: string; ip?: string; warning?: string; metadata: Record<string, unknown> } = {
           success: true,
           message: `Connected as ${data.username}`,
-          metadata: { username: data.username, classname: data.classname, isVip },
+          metadata: { username: data.username, classname: data.classname, isVip, ...(wedges !== undefined && { wedges }) },
         };
 
         if (data.classname === 'Mouse') {
@@ -416,6 +436,155 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
 
   /**
+   * Grab-time hook. Optionally spends a freeleech wedge based on configured
+   * mode + reserve floor, then fetches the torrent bytes. Returns the data URL
+   * plus a typed `wedgeOutcome` for the service layer to log. Throws
+   * `IndexerError` when (a) Required-mode and the spend decision failed, or
+   * (b) the torrent fetch itself failed (uniform contract — both modes).
+   */
+  async resolveDownloadUrl(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult> {
+    const tid = parseTorrentIdFromContext(ctx);
+    if (tid === undefined) {
+      throw new IndexerError(this.name, `MAM resolveDownloadUrl: unable to derive torrent id from guid=${ctx.guid ?? 'undefined'} url=${ctx.downloadUrl}`);
+    }
+
+    const wedgeOutcome = await this.decideWedgeSpend(tid, ctx.isFreeleech);
+    // In Required mode, a failed spend decision aborts the grab without
+    // touching the torrent endpoint.
+    if (this.useFreeleechWedge === 'required' && isWedgeFailureOutcome(wedgeOutcome)) {
+      throw new IndexerError(this.name, `MAM wedge spend failed in Required mode (${wedgeOutcome}) for tid=${tid}`, { wedgeOutcome });
+    }
+
+    return this.fetchTorrentForResolve(tid, wedgeOutcome);
+  }
+
+  private async fetchTorrentForResolve(tid: number, wedgeOutcome: WedgeOutcome): Promise<ResolveDownloadResult> {
+    let downloadUrl: string | undefined;
+    try {
+      downloadUrl = await this.fetchTorrentAsDataUri(tid);
+    } catch (error: unknown) {
+      throw new IndexerError(
+        this.name,
+        `MAM torrent fetch failed for tid=${tid}: ${getErrorMessage(error)}`,
+        { cause: error instanceof Error ? error : undefined, wedgeOutcome },
+      );
+    }
+    if (!downloadUrl) {
+      throw new IndexerError(this.name, `MAM torrent fetch returned no data for tid=${tid}`, { wedgeOutcome });
+    }
+    return { downloadUrl, wedgeOutcome };
+  }
+
+  /**
+   * Decide whether to spend a freeleech wedge. Returns a typed outcome on every
+   * non-throwing path. Throws only when the underlying fetch path raises in
+   * Required mode AND `fetchWithCookieMeta` propagates (which it does for
+   * `ProxyError`); the caller wraps to ensure uniform contract.
+   */
+  private async decideWedgeSpend(tid: number, ctxIsFreeleech: boolean): Promise<WedgeOutcome> {
+    if (this.useFreeleechWedge === 'never') return 'skipped-mode-never';
+    if (ctxIsFreeleech) return 'skipped-already-free';
+
+    let currentWedges: number;
+    try {
+      currentWedges = await this.fetchCurrentWedges();
+    } catch {
+      return 'skipped-fetch-failed';
+    }
+
+    if (currentWedges - this.minWedgeReserve < 1) {
+      return 'skipped-no-inventory';
+    }
+
+    return this.spendWedge(tid);
+  }
+
+  private async fetchCurrentWedges(): Promise<number> {
+    const url = `${this.baseUrl}/jsonLoad.php`;
+    const body = await this.fetchWithCookieTimeout(url, WEDGE_FETCH_TIMEOUT_MS);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch (err) {
+      throw new IndexerError(this.name, 'MAM returned invalid JSON for wedge status', { cause: err instanceof Error ? err : undefined });
+    }
+    const parsed = mamUserStatusSchema.safeParse(raw);
+    if (!parsed.success || typeof parsed.data.wedges !== 'number') {
+      throw new IndexerError(this.name, 'MAM user-status response missing numeric wedges field');
+    }
+    return parsed.data.wedges;
+  }
+
+  private async spendWedge(tid: number): Promise<WedgeOutcome> {
+    const ts = Math.floor(Date.now() / 1000);
+    const url = `${this.baseUrl}/json/bonusBuy.php/${ts}?spendtype=personalFL&torrentid=${tid}&timestamp=${ts}`;
+    let body: string;
+    try {
+      body = await this.postWithCookieTimeout(url, WEDGE_FETCH_TIMEOUT_MS);
+    } catch {
+      return 'failed-spend';
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch {
+      return 'failed-spend';
+    }
+    const parsed = mamBonusBuyResponseSchema.safeParse(raw);
+    if (!parsed.success) return 'failed-spend';
+
+    if (parsed.data.success === true) return 'spent';
+    const error = parsed.data.error ?? '';
+    if (error.includes('This Torrent is VIP')) return 'skipped-already-vip';
+    if (error.includes('This is already a personal freeleech')) return 'skipped-idempotent';
+    return 'failed-spend';
+  }
+
+  /** GET variant of `fetchWithCookieMeta` with a configurable timeout. */
+  private async fetchWithCookieTimeout(url: string, timeoutMs: number): Promise<string> {
+    return this.fetchWithCookieMethod(url, 'GET', timeoutMs);
+  }
+
+  /** POST variant of `fetchWithCookieMeta` with a configurable timeout. */
+  private async postWithCookieTimeout(url: string, timeoutMs: number): Promise<string> {
+    return this.fetchWithCookieMethod(url, 'POST', timeoutMs);
+  }
+
+  private async fetchWithCookieMethod(url: string, method: 'GET' | 'POST', timeoutMs: number): Promise<string> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const dispatcher = createProxyAgent(this.proxyUrl);
+    try {
+      const fetchOptions: DispatcherFetchInit = {
+        method,
+        headers: { Cookie: `mam_id=${this.mamId}` },
+        signal: controller.signal,
+        dispatcher,
+      };
+      let response: Response;
+      try {
+        response = await fetchWithOptionalDispatcher(url, fetchOptions);
+      } catch (error: unknown) {
+        if (dispatcher) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
+          }
+          const msg = getErrorMessageWithCause(error);
+          throw new ProxyError(`Proxy connection failed: ${msg}`);
+        }
+        throw error;
+      }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return await response.text();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
    * Fetch .torrent file bytes and encode as a data: URI.
    * Returns undefined on failure (result is kept but not grabbable).
    */
@@ -468,4 +637,26 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       clearTimeout(timeoutId);
     }
   }
+}
+
+/**
+ * Derive the MAM torrent id from the resolve context. Prefers `guid` (when
+ * the dispatch path supplied it), else parses the `mam-torrent://{tid}`
+ * sentinel emitted by `search()`.
+ */
+function parseTorrentIdFromContext(ctx: ResolveDownloadContext): number | undefined {
+  if (ctx.guid !== undefined) {
+    const n = Number(ctx.guid);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  const match = MAM_SENTINEL_PATTERN.exec(ctx.downloadUrl);
+  if (match) {
+    const n = Number(match[1]);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+function isWedgeFailureOutcome(outcome: WedgeOutcome): boolean {
+  return outcome === 'skipped-no-inventory' || outcome === 'skipped-fetch-failed' || outcome === 'failed-spend';
 }

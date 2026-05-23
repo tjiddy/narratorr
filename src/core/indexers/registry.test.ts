@@ -255,4 +255,44 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       expect(new URL(captured.value).searchParams.get('tor[searchType]')).toBe('VIP');
     });
   });
+
+  describe('myanonamouse factory — wedge fields (#1156)', () => {
+    it('forwards useFreeleechWedge=preferred to adapter — resolveDownloadUrl skips spend on isFreeleech ctx', async () => {
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', useFreeleechWedge: 'preferred', minWedgeReserve: 2 }, 'MAM',
+      );
+      // Without isFreeleech short-circuit, this would need /jsonLoad. With short-circuit it skips.
+      server.use(
+        http.get(`${MAM_BASE}/tor/download.php`, () =>
+          new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } }),
+        ),
+      );
+      const result = await adapter.resolveDownloadUrl!({ guid: '1', downloadUrl: 'mam-torrent://1', protocol: 'torrent', isFreeleech: true });
+      expect(result.wedgeOutcome).toBe('skipped-already-free');
+    });
+
+    it('forwards useFreeleechWedge=never to adapter — resolveDownloadUrl emits skipped-mode-never', async () => {
+      const adapter = ADAPTER_FACTORIES.myanonamouse(
+        { mamId: 'test-id', useFreeleechWedge: 'never' }, 'MAM',
+      );
+      server.use(
+        http.get(`${MAM_BASE}/tor/download.php`, () =>
+          new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } }),
+        ),
+      );
+      const result = await adapter.resolveDownloadUrl!({ guid: '1', downloadUrl: 'mam-torrent://1', protocol: 'torrent', isFreeleech: false });
+      expect(result.wedgeOutcome).toBe('skipped-mode-never');
+    });
+
+    it('defaults useFreeleechWedge to "never" when missing from settings', async () => {
+      const adapter = ADAPTER_FACTORIES.myanonamouse({ mamId: 'test-id' }, 'MAM');
+      server.use(
+        http.get(`${MAM_BASE}/tor/download.php`, () =>
+          new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } }),
+        ),
+      );
+      const result = await adapter.resolveDownloadUrl!({ guid: '1', downloadUrl: 'mam-torrent://1', protocol: 'torrent', isFreeleech: false });
+      expect(result.wedgeOutcome).toBe('skipped-mode-never');
+    });
+  });
 });

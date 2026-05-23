@@ -38,6 +38,11 @@ export class WireOnce<T> {
     return this.deps;
   }
 
+  /** Returns the wired deps if present, otherwise undefined. Use only for genuinely optional dependencies. */
+  peek(): T | undefined {
+    return this.deps;
+  }
+
   isWired(): boolean {
     return this.deps !== undefined;
   }

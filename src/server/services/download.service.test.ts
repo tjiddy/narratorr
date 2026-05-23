@@ -1956,4 +1956,212 @@ describe('DownloadService', () => {
       expect(() => svc.wire(deps)).toThrow(/DownloadService\.wire\(\) called more than once/);
     });
   });
+
+  // ── #1156 — adapter resolveDownloadUrl hook integration ──────────────────
+  describe('#1156 — resolveDownloadUrl adapter hook', () => {
+    function makeIndexerServiceMock(adapter: { resolveDownloadUrl?: ReturnType<typeof vi.fn> }) {
+      return {
+        getById: vi.fn().mockResolvedValue({ id: 1, name: 'MAM', type: 'myanonamouse', settings: {} } as never),
+        getAdapter: vi.fn().mockResolvedValue(adapter as never),
+        getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }),
+        getAll: vi.fn().mockResolvedValue([]),
+      };
+    }
+
+    function setupGrabHappyPath(svc: DownloadService) {
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-1') };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      return { mockAdapter, svc };
+    }
+
+    it('invokes adapter.resolveDownloadUrl with explicit ctx including isFreeleech coerced from params', async () => {
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeOutcome: 'skipped-mode-never' as const }) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(service);
+
+      await service.grab({
+        downloadUrl: 'mam-torrent://12345',
+        title: 'Test',
+        indexerId: 1,
+        guid: '12345',
+        protocol: 'torrent',
+        isFreeleech: true,
+        skipDuplicateCheck: true,
+      });
+
+      expect(indexerAdapter.resolveDownloadUrl).toHaveBeenCalledTimes(1);
+      const ctx = (indexerAdapter.resolveDownloadUrl as Mock).mock.calls[0]![0];
+      expect(ctx).toMatchObject({
+        guid: '12345',
+        downloadUrl: 'mam-torrent://12345',
+        protocol: 'torrent',
+        isFreeleech: true,
+      });
+    });
+
+    it('coerces missing/undefined isFreeleech to false in ctx', async () => {
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d' }) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(service);
+
+      await service.grab({
+        downloadUrl: 'mam-torrent://12345',
+        title: 'Test',
+        indexerId: 1,
+        guid: '12345',
+        skipDuplicateCheck: true,
+      });
+
+      const ctx = (indexerAdapter.resolveDownloadUrl as Mock).mock.calls[0]![0];
+      expect(ctx.isFreeleech).toBe(false);
+    });
+
+    it('replaces params.downloadUrl with the hook-returned URL for the rest of the pipeline', async () => {
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:bbf4c61ddcc5e8a2dabede0f3b482cd9aea9434d' }) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(service);
+
+      await service.grab({
+        downloadUrl: 'mam-torrent://12345',
+        title: 'Test',
+        indexerId: 1,
+        skipDuplicateCheck: true,
+      });
+
+      const insertCall = (db.insert.mock.results[0]!.value as ReturnType<typeof mockDbChain>).values.mock.calls[0]![0];
+      expect(insertCall.downloadUrl).toBe('magnet:?xt=urn:btih:bbf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
+    });
+
+    it('skips the hook entirely when indexerId is not provided', async () => {
+      const indexerAdapter = { resolveDownloadUrl: vi.fn() };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(service);
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'Test',
+        skipDuplicateCheck: true,
+      });
+
+      expect(indexerAdapter.resolveDownloadUrl).not.toHaveBeenCalled();
+    });
+
+    it('passes through params.downloadUrl unchanged when adapter does not implement resolveDownloadUrl', async () => {
+      const indexerAdapter = {}; // no resolveDownloadUrl method
+      const indexerService = makeIndexerServiceMock(indexerAdapter as never);
+      service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(service);
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:ccf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'Test',
+        indexerId: 1,
+        skipDuplicateCheck: true,
+      });
+
+      const insertCall = (db.insert.mock.results[0]!.value as ReturnType<typeof mockDbChain>).values.mock.calls[0]![0];
+      expect(insertCall.downloadUrl).toBe('magnet:?xt=urn:btih:ccf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
+    });
+
+    it('emits warn log on Preferred non-success wedge outcome (skipped-no-inventory)', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeOutcome: 'skipped-no-inventory' as const }) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(svc);
+
+      await svc.grab({
+        downloadUrl: 'mam-torrent://12345',
+        title: 'Book',
+        indexerId: 1,
+        skipDuplicateCheck: true,
+      });
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ wedgeOutcome: 'skipped-no-inventory' }),
+        expect.stringMatching(/wedge not applied/i),
+      );
+    });
+
+    it('emits info log when wedge is spent', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeOutcome: 'spent' as const }) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      setupGrabHappyPath(svc);
+
+      await svc.grab({
+        downloadUrl: 'mam-torrent://12345',
+        title: 'Book',
+        indexerId: 1,
+        skipDuplicateCheck: true,
+      });
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ indexerId: 1, title: 'Book' }),
+        expect.stringMatching(/wedge spent/i),
+      );
+    });
+
+    it('thrown IndexerError with wedgeOutcome=spent emits error-level log', async () => {
+      const { IndexerError } = await import('../../core/index.js');
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const err = new IndexerError('MAM', 'fetch failed after spend', { wedgeOutcome: 'spent' });
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockRejectedValue(err) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      // Even though duplicate check is skipped, the hook throws — no insert is reached.
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+
+      await expect(
+        svc.grab({
+          downloadUrl: 'mam-torrent://12345',
+          title: 'Book',
+          indexerId: 1,
+          skipDuplicateCheck: true,
+        }),
+      ).rejects.toBeInstanceOf(IndexerError);
+
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ wedgeOutcome: 'spent' }),
+        expect.stringMatching(/wedge spent but torrent fetch failed/i),
+      );
+    });
+
+    it('thrown IndexerError without wedgeOutcome=spent emits warn-level log', async () => {
+      const { IndexerError } = await import('../../core/index.js');
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const err = new IndexerError('MAM', 'torrent fetch failed');
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockRejectedValue(err) };
+      const indexerService = makeIndexerServiceMock(indexerAdapter);
+      svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+
+      await expect(
+        svc.grab({
+          downloadUrl: 'mam-torrent://12345',
+          title: 'Book',
+          indexerId: 1,
+          skipDuplicateCheck: true,
+        }),
+      ).rejects.toBeInstanceOf(IndexerError);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'torrent fetch failed' }),
+        expect.stringMatching(/resolveDownloadUrl failed/i),
+      );
+    });
+  });
 });

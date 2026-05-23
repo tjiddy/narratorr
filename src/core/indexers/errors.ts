@@ -12,15 +12,22 @@ export class IndexerAuthError extends Error {
 /**
  * Thrown for indexer response shape mismatches and other non-auth indexer failures.
  * Distinct from IndexerAuthError (auth-specific) and ProxyError (proxy transport).
+ *
+ * `wedgeOutcome` is set by adapters (currently MAM) when the error originated
+ * from the freeleech-wedge spend path or the subsequent torrent fetch, so the
+ * service layer can pick log severity based on whether a wedge was consumed.
  */
 export class IndexerError extends Error {
+  public wedgeOutcome?: import('./types.js').WedgeOutcome;
+
   constructor(
     public readonly indexerName: string,
     message?: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { wedgeOutcome?: import('./types.js').WedgeOutcome },
   ) {
     super(message || `Indexer error: ${indexerName}`, options);
     this.name = 'IndexerError';
+    if (options?.wedgeOutcome) this.wedgeOutcome = options.wedgeOutcome;
   }
 }
 

@@ -44,11 +44,19 @@ export interface CreateMAMFakeOptions {
   torrentFileLength?: number;
 }
 
+export interface BonusBuyOverride {
+  success?: boolean;
+  error?: string;
+}
+
 export interface MAMFakeHandle {
   server: FastifyInstance;
   url: string;
   close: () => Promise<void>;
   seedResults: (query: string, fixtures: MAMFixture[]) => void;
+  setWedges: (count: number) => void;
+  setBonusBuyResponse: (response: BonusBuyOverride | null) => void;
+  bonusBuyCalls: () => Array<{ ts: string; torrentid: string | undefined }>;
   reset: () => void;
 }
 
@@ -69,6 +77,9 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
 
   // query (lowercased, trimmed) -> fixtures
   const seedStore = new Map<string, MAMFixture[]>();
+  let wedgeCount = 5;
+  let bonusBuyOverride: BonusBuyOverride | null = null;
+  const bonusBuyCalls: Array<{ ts: string; torrentid: string | undefined }> = [];
 
   const server = Fastify({ logger: process.env.E2E_FAKE_LOGS === '1' });
 
@@ -152,7 +163,24 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
 
   // ── GET /jsonLoad.php ────────────────────────────────────────────────────
   server.get('/jsonLoad.php', async () => {
-    return { username: 'e2e-test-user', classname: 'User' };
+    return { username: 'e2e-test-user', classname: 'User', wedges: wedgeCount };
+  });
+
+  // ── POST /json/bonusBuy.php/:ts — wedge spend ───────────────────────────
+  // Real MAM responds `{ success: true }` on accepted spend or `{ success: false, error: "..." }`
+  // for known failures. The override knob lets tests assert specific branches.
+  server.post('/json/bonusBuy.php/:ts', async (request) => {
+    const params = request.params as { ts: string };
+    const query = request.query as { torrentid?: string };
+    bonusBuyCalls.push({ ts: params.ts, torrentid: query.torrentid });
+    if (bonusBuyOverride !== null) {
+      return { success: bonusBuyOverride.success ?? false, ...(bonusBuyOverride.error !== undefined && { error: bonusBuyOverride.error }) };
+    }
+    if (wedgeCount <= 0) {
+      return { success: false, error: 'Out of wedges' };
+    }
+    wedgeCount -= 1;
+    return { success: true };
   });
 
   // ── Control endpoints ────────────────────────────────────────────────────
@@ -167,6 +195,9 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
 
   server.post('/__control/reset', async () => {
     seedStore.clear();
+    wedgeCount = 5;
+    bonusBuyOverride = null;
+    bonusBuyCalls.length = 0;
     return { ok: true };
   });
 
@@ -181,8 +212,18 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     seedResults: (query, fixtures) => {
       seedStore.set(query.trim().toLowerCase(), fixtures);
     },
+    setWedges: (count) => {
+      wedgeCount = count;
+    },
+    setBonusBuyResponse: (response) => {
+      bonusBuyOverride = response;
+    },
+    bonusBuyCalls: () => bonusBuyCalls.slice(),
     reset: () => {
       seedStore.clear();
+      wedgeCount = 5;
+      bonusBuyOverride = null;
+      bonusBuyCalls.length = 0;
     },
   };
 }

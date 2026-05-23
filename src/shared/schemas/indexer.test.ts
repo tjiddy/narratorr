@@ -187,6 +187,89 @@ describe('createIndexerFormSchema — MAM required-field validation', () => {
   });
 });
 
+describe('mamSettingsSchema — wedge fields (#1156)', () => {
+  it('accepts useFreeleechWedge: "never"', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', useFreeleechWedge: 'never' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts useFreeleechWedge: "preferred"', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', useFreeleechWedge: 'preferred' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts useFreeleechWedge: "required"', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', useFreeleechWedge: 'required' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid useFreeleechWedge enum value', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', useFreeleechWedge: 'maybe' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts minWedgeReserve: 0', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 0 });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts minWedgeReserve: positive integer', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 5 });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects negative minWedgeReserve', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-integer minWedgeReserve', () => {
+    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 1.5 });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('createIndexerFormSchema — wedge fields (#1156)', () => {
+  const mamBase = {
+    name: 'MAM',
+    type: 'myanonamouse' as const,
+    enabled: true,
+    priority: 50,
+  };
+
+  it('accepts both new fields without unknown-key validation failures', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { mamId: 'id', useFreeleechWedge: 'preferred', minWedgeReserve: 2 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.useFreeleechWedge).toBe('preferred');
+      expect(result.data.settings.minWedgeReserve).toBe(2);
+    }
+  });
+
+  it('rejects invalid useFreeleechWedge value at form level', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { mamId: 'id', useFreeleechWedge: 'maybe' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('INDEXER_REGISTRY.myanonamouse defaultSettings (#1156)', () => {
+  it('includes useFreeleechWedge with default "never"', async () => {
+    const { INDEXER_REGISTRY } = await import('../indexer-registry.js');
+    expect(INDEXER_REGISTRY.myanonamouse.defaultSettings.useFreeleechWedge).toBe('never');
+  });
+
+  it('includes minWedgeReserve with default 0', async () => {
+    const { INDEXER_REGISTRY } = await import('../indexer-registry.js');
+    expect(INDEXER_REGISTRY.myanonamouse.defaultSettings.minWedgeReserve).toBe(0);
+  });
+});
+
 const validCreateIndexer = {
   name: 'My Indexer',
   type: 'newznab' as const,
