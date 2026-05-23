@@ -2,10 +2,7 @@ import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
 import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
-import type { DownloadProtocol, ResolveDownloadContext, ResolveDownloadResult, WedgeOutcome } from '../../core/index.js';
-import { IndexerError } from '../../core/index.js';
-import { DownloadUrl } from '../../core/utils/download-url.js';
-import type { DownloadArtifact } from '../../core/download-clients/types.js';
+import type { DownloadProtocol } from '../../core/index.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
@@ -14,6 +11,8 @@ import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
+import { resolveAdapterDownloadUrl } from './download-resolve-adapter-url.js';
+import { resolveArtifact, insertDownloadRecord } from './download-record.js';
 
 import type { BookRow, DownloadRow } from './types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
@@ -218,84 +217,6 @@ export class DownloadService {
     return this.wired.require().indexerService.getLanAllowlist();
   }
 
-  /**
-   * Call the indexer adapter's grab-time hook if present. Currently only MAM
-   * implements `resolveDownloadUrl` (to apply freeleech wedge logic and lazily
-   * fetch the torrent bytes). Returns the URL to use for the rest of the
-   * pipeline — `params.downloadUrl` unchanged when no adapter or no hook.
-   */
-  private async resolveAdapterDownloadUrl(
-    params: {
-      downloadUrl: string;
-      protocol?: DownloadProtocol | undefined;
-      guid?: string | undefined;
-      indexerId?: number | undefined;
-      isFreeleech?: boolean | undefined;
-      title: string;
-    },
-    protocol: DownloadProtocol,
-  ): Promise<string> {
-    if (params.indexerId === undefined) return params.downloadUrl;
-    const indexerService = this.wired.peek()?.indexerService;
-    if (!indexerService) return params.downloadUrl;
-
-    const indexer = await indexerService.getById(params.indexerId);
-    if (!indexer) return params.downloadUrl;
-    const adapter = await indexerService.getAdapter(indexer);
-    if (!adapter.resolveDownloadUrl) return params.downloadUrl;
-
-    const ctx: ResolveDownloadContext = {
-      ...(params.guid !== undefined && { guid: params.guid }),
-      downloadUrl: params.downloadUrl,
-      protocol,
-      isFreeleech: params.isFreeleech === true,
-    };
-
-    let result: ResolveDownloadResult;
-    try {
-      result = await adapter.resolveDownloadUrl(ctx);
-    } catch (error: unknown) {
-      if (error instanceof IndexerError) {
-        const carriedOutcome = error.wedgeOutcome;
-        const cause = error.cause instanceof Error ? error.cause.message : undefined;
-        const logPayload = {
-          indexerId: params.indexerId,
-          title: params.title,
-          guid: params.guid,
-          ...(carriedOutcome !== undefined && { wedgeOutcome: carriedOutcome }),
-          ...(cause !== undefined && { cause }),
-          error: error.message,
-        };
-        if (carriedOutcome === 'spent') {
-          this.log.error(logPayload, 'MAM wedge spent but torrent fetch failed — wedge is lost (no refund API)');
-        } else {
-          this.log.warn(logPayload, 'Indexer resolveDownloadUrl failed');
-        }
-      }
-      throw error;
-    }
-
-    if (result.wedgeOutcome !== undefined) {
-      this.logWedgeOutcome(result.wedgeOutcome, params);
-    }
-    return result.downloadUrl;
-  }
-
-  private logWedgeOutcome(
-    outcome: WedgeOutcome,
-    params: { indexerId?: number | undefined; guid?: string | undefined; title: string },
-  ): void {
-    if (outcome === 'spent') {
-      this.log.info({ indexerId: params.indexerId, guid: params.guid, title: params.title }, 'MAM freeleech wedge spent');
-      return;
-    }
-    if (outcome === 'skipped-no-inventory' || outcome === 'skipped-fetch-failed' || outcome === 'failed-spend') {
-      this.log.warn({ indexerId: params.indexerId, guid: params.guid, title: params.title, wedgeOutcome: outcome }, 'MAM freeleech wedge not applied');
-      return;
-    }
-    this.log.debug({ indexerId: params.indexerId, guid: params.guid, title: params.title, wedgeOutcome: outcome }, 'MAM wedge decision');
-  }
-
   /** Send a pre-resolved artifact to the client and return the external ID. */
   private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
@@ -358,61 +279,26 @@ export class DownloadService {
     }
 
     const protocol = params.protocol ?? 'torrent';
+    const effectiveDownloadUrl = await resolveAdapterDownloadUrl(
+      {
+        downloadUrl: params.downloadUrl,
+        protocol,
+        ...(params.guid !== undefined && { guid: params.guid }),
+        ...(params.indexerId !== undefined && { indexerId: params.indexerId }),
+        ...(params.isFreeleech !== undefined && { isFreeleech: params.isFreeleech }),
+        title: params.title,
+      },
+      this.log,
+      this.wired.peek()?.indexerService,
+    );
+    const { artifact, infoHash } = await resolveArtifact(effectiveDownloadUrl, protocol, () => this.buildLanAllowlist());
 
-    // Adapter hook (currently MAM only): may swap a sentinel downloadUrl for
-    // the real torrent data URL and optionally apply a freeleech wedge.
-    const effectiveDownloadUrl = await this.resolveAdapterDownloadUrl(params, protocol);
-
-    // Resolve the download URL into a typed artifact. Only the torrent HTTP
-    // path needs the LAN allowlist — magnet, data:, and usenet-passthrough
-    // grabs return artifacts without an outbound HTTP fetch (#966).
-    const downloadUrlObj = new DownloadUrl(effectiveDownloadUrl, protocol);
-    const isTorrentHttp = protocol === 'torrent' && downloadUrlObj.isHttp;
-    const lanAllowlist = isTorrentHttp ? await this.buildLanAllowlist() : undefined;
-    const artifact = await downloadUrlObj.resolve(lanAllowlist);
-
-    // Extract info hash from artifact (torrent-bytes and magnet-uri have it; nzb-url does not)
-    const infoHash = 'infoHash' in artifact ? artifact.infoHash : null;
-    const logUrl = sanitizeLogUrl(effectiveDownloadUrl);
-
-    // Send to download client
-    this.log.debug({ protocol, downloadUrl: logUrl, infoHash }, 'Sending download to client');
+    this.log.debug({ protocol, downloadUrl: sanitizeLogUrl(effectiveDownloadUrl), infoHash }, 'Sending download to client');
     const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
     this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately
-    const isHandoff = !externalId;
-    const downloadStatus = isHandoff ? 'completed' as const : 'downloading' as const;
-    const downloadProgress = isHandoff ? 1 : 0;
-    const downloadCompletedAt = isHandoff ? new Date() : undefined;
-    if (isHandoff) {
-      this.log.info({ title: params.title, clientType }, 'Handoff client — download completed immediately (no progress tracking)');
-    }
-
-    // Create download record
-    const result = await this.db
-      .insert(downloads)
-      .values({
-        bookId: params.bookId,
-        indexerId: params.indexerId,
-        downloadClientId: clientId,
-        title: params.title,
-        protocol,
-        infoHash,
-        guid: params.guid,
-        downloadUrl: effectiveDownloadUrl,
-        size: params.size,
-        seeders: params.seeders,
-        status: downloadStatus,
-        progress: downloadProgress,
-        completedAt: downloadCompletedAt,
-        externalId: externalId ?? undefined,
-        bookStatusAtGrab: params.bookStatusAtGrab ?? null,
-      })
-      .returning();
-
+    const result = await insertDownloadRecord(this.db, this.log, params, { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId });
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
-
     return this.getById(result[0]!.id) as Promise<DownloadWithBook>;
   }
 

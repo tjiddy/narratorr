@@ -272,16 +272,6 @@ describe('IndexerFields', () => {
   });
 
   describe('DetectionOverlay modal compatibility', () => {
-    function MamWrapper() {
-      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-        defaultValues: {
-          name: '', type: 'myanonamouse',
-          settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
-        },
-      });
-      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
-    }
-
     it('DetectionOverlay uses relative positioning instead of fixed inset-0 z-50', async () => {
       (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // never resolves — keeps overlay visible
 

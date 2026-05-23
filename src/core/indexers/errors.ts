@@ -9,6 +9,8 @@ export class IndexerAuthError extends Error {
   }
 }
 
+import type { WedgeOutcome } from './types.js';
+
 /**
  * Thrown for indexer response shape mismatches and other non-auth indexer failures.
  * Distinct from IndexerAuthError (auth-specific) and ProxyError (proxy transport).
@@ -18,12 +20,12 @@ export class IndexerAuthError extends Error {
  * service layer can pick log severity based on whether a wedge was consumed.
  */
 export class IndexerError extends Error {
-  public wedgeOutcome?: import('./types.js').WedgeOutcome;
+  public wedgeOutcome?: WedgeOutcome;
 
   constructor(
     public readonly indexerName: string,
     message?: string,
-    options?: ErrorOptions & { wedgeOutcome?: import('./types.js').WedgeOutcome },
+    options?: ErrorOptions & { wedgeOutcome?: WedgeOutcome },
   ) {
     super(message || `Indexer error: ${indexerName}`, options);
     this.name = 'IndexerError';

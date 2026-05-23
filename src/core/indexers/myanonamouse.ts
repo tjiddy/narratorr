@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import {
   rawTitleBytesHex,
   type IndexerAdapter,
@@ -19,6 +19,17 @@ import type { WedgeMode } from '../../shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
+import {
+  MAM_TORRENT_SENTINEL_PREFIX,
+  decideWedgeSpend,
+  isWedgeFailureOutcome,
+  parseTorrentIdFromContext,
+} from './mam-wedge.js';
+import {
+  mamSearchResponseSchema,
+  mamUserStatusSchema,
+  type MAMSearchResult,
+} from './mam-schemas.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -32,57 +43,7 @@ export interface MAMConfig {
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
-import { INDEXER_TIMEOUT_MS, WEDGE_FETCH_TIMEOUT_MS } from '../utils/constants.js';
-
-/** Sentinel prefix used as `SearchResult.downloadUrl` for MAM results — the real torrent is fetched at grab time. */
-const MAM_TORRENT_SENTINEL_PREFIX = 'mam-torrent://';
-const MAM_SENTINEL_PATTERN = /^mam-torrent:\/\/(\d+)$/;
-
-// MAM (and many PHP-backend APIs) emit boolean flag fields as 0/1 integers
-// rather than JSON booleans. Accept both shapes and normalize to boolean.
-const numericBoolean = z.union([z.boolean(), z.number()])
-  .transform((v) => (typeof v === 'number' ? v !== 0 : v));
-
-const mamSearchResultSchema = z.object({
-  id: z.number().nullish(),
-  title: z.string().nullish(),
-  author_info: z.string().nullish(),
-  narrator_info: z.string().nullish(),
-  series_info: z.string().nullish(),
-  lang_code: z.string().nullish(),
-  size: z.union([z.string(), z.number()]).nullish(),
-  seeders: z.number().nullish(),
-  leechers: z.number().nullish(),
-  free: numericBoolean.nullish(),
-  fl_vip: numericBoolean.nullish(),
-  vip: numericBoolean.nullish(),
-  personal_freeleech: numericBoolean.nullish(),
-}).passthrough();
-
-// MAM search responses always carry either `data` (results array, possibly empty)
-// or `error` (a message). A response with neither is malformed (e.g. HTML
-// interstitial, rate-limit page, upstream API change) and must fail validation
-// rather than silently producing an empty result list.
-const mamSearchResponseSchema = z.object({
-  error: z.string().nullish(),
-  data: z.array(mamSearchResultSchema).nullish(),
-}).passthrough().refine(
-  (d) => d.error != null || d.data != null,
-  { message: 'MAM search response missing both "data" and "error" fields' },
-);
-
-const mamUserStatusSchema = z.object({
-  username: z.string().nullish(),
-  classname: z.string().nullish(),
-  wedges: z.number().nullish(),
-}).passthrough();
-
-const mamBonusBuyResponseSchema = z.object({
-  success: z.boolean().nullish(),
-  error: z.string().nullish(),
-}).passthrough();
-
-type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 function orUndef<T>(value: T | null | undefined): T | undefined {
   return value ?? undefined;
@@ -261,91 +222,64 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   async test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
-
       if (body.includes('Error, you are not signed in')) {
         return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
-
-      let raw: unknown;
-      try {
-        raw = JSON.parse(body);
-      } catch (err) {
-        throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
+      const data = this.parseUserStatusBody(body);
+      if (!data.username) {
+        return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
-
-      const parsed = mamUserStatusSchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new IndexerError(
-          this.name,
-          `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-          { cause: parsed.error },
-        );
-      }
-      const data = parsed.data;
-
-      if (data.username) {
-        const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
-        const wedges = typeof data.wedges === 'number' ? data.wedges : undefined;
-        const result: { success: boolean; message: string; ip?: string; warning?: string; metadata: Record<string, unknown> } = {
-          success: true,
-          message: `Connected as ${data.username}`,
-          metadata: { username: data.username, classname: data.classname, isVip, ...(wedges !== undefined && { wedges }) },
-        };
-
-        if (data.classname === 'Mouse') {
-          result.warning = 'Account is ratio-locked (Mouse class) — cannot download';
-        }
-
-        if (this.proxyUrl) {
-          result.ip = await resolveProxyIp(this.proxyUrl);
-        }
-
-        return result;
-      }
-
-      return { success: false, message: 'Authentication failed — check your MAM ID' };
+      return await this.buildTestSuccess(data);
     } catch (error: unknown) {
-      if (error instanceof IndexerAuthError) {
+      if (error instanceof IndexerAuthError || error instanceof IndexerError) {
         return { success: false, message: error.message };
       }
-      if (error instanceof IndexerError) {
-        return { success: false, message: error.message };
-      }
-      return {
-        success: false,
-        message: getErrorMessage(error),
-      };
+      return { success: false, message: getErrorMessage(error) };
     }
+  }
+
+  private parseUserStatusBody(body: string): z.infer<typeof mamUserStatusSchema> {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch (err) {
+      throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
+    }
+    const parsed = mamUserStatusSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new IndexerError(
+        this.name,
+        `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
+  }
+
+  private async buildTestSuccess(data: z.infer<typeof mamUserStatusSchema>) {
+    const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
+    const wedges = typeof data.wedges === 'number' ? data.wedges : undefined;
+    const result: { success: boolean; message: string; ip?: string; warning?: string; metadata: Record<string, unknown> } = {
+      success: true,
+      message: `Connected as ${data.username}`,
+      metadata: { username: data.username, classname: data.classname, isVip, ...(wedges !== undefined && { wedges }) },
+    };
+    if (data.classname === 'Mouse') {
+      result.warning = 'Account is ratio-locked (Mouse class) — cannot download';
+    }
+    if (this.proxyUrl) {
+      result.ip = await resolveProxyIp(this.proxyUrl);
+    }
+    return result;
   }
 
   async refreshStatus(): Promise<{ isVip: boolean; classname: string } | null> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
-
-      let raw: unknown;
-      try {
-        raw = JSON.parse(body);
-      } catch (err) {
-        throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
-      }
-
-      const parsed = mamUserStatusSchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new IndexerError(
-          this.name,
-          `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-          { cause: parsed.error },
-        );
-      }
-      const data = parsed.data;
-
-      if (!data.classname) {
-        return null;
-      }
-
+      const data = this.parseUserStatusBody(body);
+      if (!data.classname) return null;
       const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
       this.isVip = isVip;
-
       return { isVip, classname: data.classname };
     } catch (error: unknown) {
       if (error instanceof IndexerError) {
@@ -448,14 +382,16 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       throw new IndexerError(this.name, `MAM resolveDownloadUrl: unable to derive torrent id from guid=${ctx.guid ?? 'undefined'} url=${ctx.downloadUrl}`);
     }
 
-    const wedgeOutcome = await this.decideWedgeSpend(tid, ctx.isFreeleech);
-    // In Required mode, a failed spend decision aborts the grab without
-    // touching the torrent endpoint.
+    const wedgeOutcome = await decideWedgeSpend(this.wedgeCfg(), this.useFreeleechWedge, this.minWedgeReserve, tid, ctx.isFreeleech);
     if (this.useFreeleechWedge === 'required' && isWedgeFailureOutcome(wedgeOutcome)) {
       throw new IndexerError(this.name, `MAM wedge spend failed in Required mode (${wedgeOutcome}) for tid=${tid}`, { wedgeOutcome });
     }
 
     return this.fetchTorrentForResolve(tid, wedgeOutcome);
+  }
+
+  private wedgeCfg() {
+    return { baseUrl: this.baseUrl, mamId: this.mamId, proxyUrl: this.proxyUrl, indexerName: this.name };
   }
 
   private async fetchTorrentForResolve(tid: number, wedgeOutcome: WedgeOutcome): Promise<ResolveDownloadResult> {
@@ -473,115 +409,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       throw new IndexerError(this.name, `MAM torrent fetch returned no data for tid=${tid}`, { wedgeOutcome });
     }
     return { downloadUrl, wedgeOutcome };
-  }
-
-  /**
-   * Decide whether to spend a freeleech wedge. Returns a typed outcome on every
-   * non-throwing path. Throws only when the underlying fetch path raises in
-   * Required mode AND `fetchWithCookieMeta` propagates (which it does for
-   * `ProxyError`); the caller wraps to ensure uniform contract.
-   */
-  private async decideWedgeSpend(tid: number, ctxIsFreeleech: boolean): Promise<WedgeOutcome> {
-    if (this.useFreeleechWedge === 'never') return 'skipped-mode-never';
-    if (ctxIsFreeleech) return 'skipped-already-free';
-
-    let currentWedges: number;
-    try {
-      currentWedges = await this.fetchCurrentWedges();
-    } catch {
-      return 'skipped-fetch-failed';
-    }
-
-    if (currentWedges - this.minWedgeReserve < 1) {
-      return 'skipped-no-inventory';
-    }
-
-    return this.spendWedge(tid);
-  }
-
-  private async fetchCurrentWedges(): Promise<number> {
-    const url = `${this.baseUrl}/jsonLoad.php`;
-    const body = await this.fetchWithCookieTimeout(url, WEDGE_FETCH_TIMEOUT_MS);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(body);
-    } catch (err) {
-      throw new IndexerError(this.name, 'MAM returned invalid JSON for wedge status', { cause: err instanceof Error ? err : undefined });
-    }
-    const parsed = mamUserStatusSchema.safeParse(raw);
-    if (!parsed.success || typeof parsed.data.wedges !== 'number') {
-      throw new IndexerError(this.name, 'MAM user-status response missing numeric wedges field');
-    }
-    return parsed.data.wedges;
-  }
-
-  private async spendWedge(tid: number): Promise<WedgeOutcome> {
-    const ts = Math.floor(Date.now() / 1000);
-    const url = `${this.baseUrl}/json/bonusBuy.php/${ts}?spendtype=personalFL&torrentid=${tid}&timestamp=${ts}`;
-    let body: string;
-    try {
-      body = await this.postWithCookieTimeout(url, WEDGE_FETCH_TIMEOUT_MS);
-    } catch {
-      return 'failed-spend';
-    }
-
-    let raw: unknown;
-    try {
-      raw = JSON.parse(body);
-    } catch {
-      return 'failed-spend';
-    }
-    const parsed = mamBonusBuyResponseSchema.safeParse(raw);
-    if (!parsed.success) return 'failed-spend';
-
-    if (parsed.data.success === true) return 'spent';
-    const error = parsed.data.error ?? '';
-    if (error.includes('This Torrent is VIP')) return 'skipped-already-vip';
-    if (error.includes('This is already a personal freeleech')) return 'skipped-idempotent';
-    return 'failed-spend';
-  }
-
-  /** GET variant of `fetchWithCookieMeta` with a configurable timeout. */
-  private async fetchWithCookieTimeout(url: string, timeoutMs: number): Promise<string> {
-    return this.fetchWithCookieMethod(url, 'GET', timeoutMs);
-  }
-
-  /** POST variant of `fetchWithCookieMeta` with a configurable timeout. */
-  private async postWithCookieTimeout(url: string, timeoutMs: number): Promise<string> {
-    return this.fetchWithCookieMethod(url, 'POST', timeoutMs);
-  }
-
-  private async fetchWithCookieMethod(url: string, method: 'GET' | 'POST', timeoutMs: number): Promise<string> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    const dispatcher = createProxyAgent(this.proxyUrl);
-    try {
-      const fetchOptions: DispatcherFetchInit = {
-        method,
-        headers: { Cookie: `mam_id=${this.mamId}` },
-        signal: controller.signal,
-        dispatcher,
-      };
-      let response: Response;
-      try {
-        response = await fetchWithOptionalDispatcher(url, fetchOptions);
-      } catch (error: unknown) {
-        if (dispatcher) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
-          }
-          const msg = getErrorMessageWithCause(error);
-          throw new ProxyError(`Proxy connection failed: ${msg}`);
-        }
-        throw error;
-      }
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      return await response.text();
-    } finally {
-      clearTimeout(timeoutId);
-    }
   }
 
   /**
@@ -639,24 +466,3 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 }
 
-/**
- * Derive the MAM torrent id from the resolve context. Prefers `guid` (when
- * the dispatch path supplied it), else parses the `mam-torrent://{tid}`
- * sentinel emitted by `search()`.
- */
-function parseTorrentIdFromContext(ctx: ResolveDownloadContext): number | undefined {
-  if (ctx.guid !== undefined) {
-    const n = Number(ctx.guid);
-    if (Number.isInteger(n) && n > 0) return n;
-  }
-  const match = MAM_SENTINEL_PATTERN.exec(ctx.downloadUrl);
-  if (match) {
-    const n = Number(match[1]);
-    if (Number.isInteger(n) && n > 0) return n;
-  }
-  return undefined;
-}
-
-function isWedgeFailureOutcome(outcome: WedgeOutcome): boolean {
-  return outcome === 'skipped-no-inventory' || outcome === 'skipped-fetch-failed' || outcome === 'failed-spend';
-}

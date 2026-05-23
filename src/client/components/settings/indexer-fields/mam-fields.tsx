@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
+import type { WedgeMode } from '../../../../shared/schemas/indexer.js';
 import { api } from '@/lib/api';
 import type { IndexerFieldsProps } from './types.js';
 import { getMinDetectionMs } from './mam-detection-timing.js';
@@ -170,72 +171,74 @@ function metadataToMamStatus(metadata: Record<string, unknown>, ip?: string): Ma
   };
 }
 
-export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
-  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
-
-  // Bridge: update card from explicit Test button result
-  useEffect(() => {
-    if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
-      setMamStatus(metadataToMamStatus(formTestResult.metadata, formTestResult.ip));
-    }
-  }, [formTestResult, setMamStatus]);
-
-  const wedgeMode = (watch ? watch('settings.useFreeleechWedge') : undefined) ?? 'never';
-  const minReserve = watch ? watch('settings.minWedgeReserve') : undefined;
-  const currentWedges = mamStatus?.wedges;
-  const reserveOverInventory = wedgeMode !== 'never'
+function computeReserveOverInventory(wedgeMode: WedgeMode, minReserve: number | undefined, currentWedges: number | undefined): boolean {
+  return wedgeMode !== 'never'
     && typeof minReserve === 'number'
     && typeof currentWedges === 'number'
     && minReserve > currentWedges;
+}
 
+type MamFieldsRegisterProps = Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch'>;
+
+function MamIdField({ register, errors, mamStatus, detectError, detect, watch }: MamFieldsRegisterProps & { mamStatus: MamStatus | null; detectError: string | null; detect: (mamId: string) => void }) {
+  return (
+    <div className="sm:col-span-2">
+      <label htmlFor="indexerMamId" className="block text-sm font-medium mb-2">MAM ID</label>
+      <input
+        id="indexerMamId"
+        type="password"
+        {...register('settings.mamId')}
+        className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
+          errors.settings?.mamId ? 'border-destructive' : 'border-border'
+        }`}
+      />
+      <MamIdHelper errors={errors} mamStatus={mamStatus} detectError={detectError} detect={detect} watch={watch} />
+    </div>
+  );
+}
+
+function MamIdHelper({ errors, mamStatus, detectError, detect, watch }: MamFieldsRegisterProps & { mamStatus: MamStatus | null; detectError: string | null; detect: (mamId: string) => void }) {
+  if (errors.settings?.mamId) return <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>;
+  if (mamStatus) {
+    return (
+      <MamAccountCard status={mamStatus} onRefresh={() => {
+        const mamId = watch ? watch('settings.mamId') : '';
+        if (mamId) detect(mamId);
+      }} />
+    );
+  }
+  if (detectError) return <p className="text-sm text-destructive mt-1">{detectError}</p>;
+  return <p className="text-sm text-muted-foreground mt-1">Generate from MAM &gt; Preferences &gt; Security &gt; Create Session</p>;
+}
+
+function BaseUrlField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
+  return (
+    <div className="sm:col-span-2">
+      <label htmlFor="indexerBaseUrl" className="block text-sm font-medium mb-2">
+        Base URL
+        <span className="text-muted-foreground font-normal ml-1">(optional)</span>
+      </label>
+      <input
+        id="indexerBaseUrl"
+        type="text"
+        {...register('settings.baseUrl')}
+        className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
+          errors.settings?.baseUrl ? 'border-destructive' : 'border-border'
+        }`}
+        placeholder="https://www.myanonamouse.net"
+      />
+      {errors.settings?.baseUrl ? (
+        <p className="text-sm text-destructive mt-1">{errors.settings.baseUrl.message}</p>
+      ) : (
+        <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
+      )}
+    </div>
+  );
+}
+
+function WedgeFields({ register, wedgeMode, minReserve, currentWedges, reserveOverInventory }: { register: IndexerFieldsProps['register']; wedgeMode: WedgeMode; minReserve: number | undefined; currentWedges: number | undefined; reserveOverInventory: boolean }) {
   return (
     <>
-      <div className="sm:col-span-2">
-        <label htmlFor="indexerMamId" className="block text-sm font-medium mb-2">MAM ID</label>
-        <input
-          id="indexerMamId"
-          type="password"
-          {...register('settings.mamId')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-            errors.settings?.mamId ? 'border-destructive' : 'border-border'
-          }`}
-        />
-        {errors.settings?.mamId ? (
-          <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>
-        ) : mamStatus ? (
-          <MamAccountCard status={mamStatus} onRefresh={() => {
-            const mamId = watch ? watch('settings.mamId') : '';
-            if (mamId) detect(mamId);
-          }} />
-        ) : detectError ? (
-          <p className="text-sm text-destructive mt-1">{detectError}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground mt-1">Generate from MAM &gt; Preferences &gt; Security &gt; Create Session</p>
-        )}
-      </div>
-
-      {isDetecting && <DetectionOverlay />}
-      <div className="sm:col-span-2">
-        <label htmlFor="indexerBaseUrl" className="block text-sm font-medium mb-2">
-          Base URL
-          <span className="text-muted-foreground font-normal ml-1">(optional)</span>
-        </label>
-        <input
-          id="indexerBaseUrl"
-          type="text"
-          {...register('settings.baseUrl')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-            errors.settings?.baseUrl ? 'border-destructive' : 'border-border'
-          }`}
-          placeholder="https://www.myanonamouse.net"
-        />
-        {errors.settings?.baseUrl ? (
-          <p className="text-sm text-destructive mt-1">{errors.settings.baseUrl.message}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
-        )}
-      </div>
-
       <div className="sm:col-span-2">
         <label htmlFor="indexerWedgeMode" className="block text-sm font-medium mb-2">Use Freeleech Wedges</label>
         <select
@@ -267,6 +270,31 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
           <p className="text-sm text-muted-foreground mt-1">Stop spending when inventory would drop below this floor. 0 = spend any available wedge.</p>
         )}
       </div>
+    </>
+  );
+}
+
+export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
+  const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
+
+  // Bridge: update card from explicit Test button result
+  useEffect(() => {
+    if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
+      setMamStatus(metadataToMamStatus(formTestResult.metadata, formTestResult.ip));
+    }
+  }, [formTestResult, setMamStatus]);
+
+  const wedgeMode: WedgeMode = ((watch ? watch('settings.useFreeleechWedge') : undefined) ?? 'never') as WedgeMode;
+  const minReserve = watch ? watch('settings.minWedgeReserve') : undefined;
+  const currentWedges = mamStatus?.wedges;
+  const reserveOverInventory = computeReserveOverInventory(wedgeMode, minReserve, currentWedges);
+
+  return (
+    <>
+      <MamIdField register={register} errors={errors} watch={watch} mamStatus={mamStatus} detectError={detectError} detect={detect} />
+      {isDetecting && <DetectionOverlay />}
+      <BaseUrlField register={register} errors={errors} />
+      <WedgeFields register={register} wedgeMode={wedgeMode} minReserve={minReserve} currentWedges={currentWedges} reserveOverInventory={reserveOverInventory} />
     </>
   );
 }
