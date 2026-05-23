@@ -10,7 +10,7 @@ import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 const EVENT_TYPE_FILTERS = [
   { value: '', label: 'All' },
-  { value: 'download_failed,import_failed,merge_failed', label: 'Errors' },
+  { value: 'download_failed,import_failed,merge_failed,grab_failed', label: 'Errors' },
   { value: 'held_for_review', label: 'Needs Review' },
   { value: 'grabbed,download_completed,merge_started', label: 'Downloads' },
   { value: 'imported,merged', label: 'Imported' },
@@ -18,7 +18,7 @@ const EVENT_TYPE_FILTERS = [
   { value: 'deleted', label: 'Removed' },
 ];
 
-const CLEAR_ERRORS_EVENT_TYPES = 'download_failed,import_failed,merge_failed';
+const CLEAR_ERRORS_EVENT_TYPES = 'download_failed,import_failed,merge_failed,grab_failed';
 
 export interface EventHistorySectionProps {
   urlFilter?: string;

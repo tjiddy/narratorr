@@ -14,6 +14,7 @@ import {
   recordGrabbedEvent,
   recordDownloadCompletedEvent,
   recordDownloadFailedEvent,
+  recordGrabFailedEvent,
 } from './download-side-effects.js';
 
 function createMockBroadcaster(): EventBroadcasterService {
@@ -336,6 +337,103 @@ describe('recordDownloadFailedEvent', () => {
     recordDownloadFailedEvent({ eventHistory, downloadId: 1, bookId: 2, bookTitle: 'Test', errorMessage: 'Cancelled by user', log });
     expect(eventHistory.create).toHaveBeenCalledWith(
       expect.objectContaining({ reason: { error: 'Cancelled by user' } }),
+    );
+  });
+});
+
+describe('recordGrabFailedEvent (#1157)', () => {
+  let eventHistory: EventHistoryService;
+  let log: FastifyBaseLogger;
+
+  beforeEach(() => {
+    eventHistory = createMockEventHistory();
+    log = createMockLog();
+  });
+
+  it('records grab_failed event with flat persisted fields derived from book + release', () => {
+    const book = {
+      id: 7,
+      title: 'Test Book',
+      authors: [{ name: 'Test Author' }],
+      narrators: [{ name: 'Test Narrator' }],
+    };
+    recordGrabFailedEvent({ eventHistory, book, releaseTitle: 'Release.Title.MP3', errorMessage: 'Connection refused', log });
+    expect(eventHistory.create).toHaveBeenCalledWith({
+      bookId: 7,
+      bookTitle: 'Test Book',
+      authorName: 'Test Author',
+      narratorName: 'Test Narrator',
+      eventType: 'grab_failed',
+      source: 'auto',
+      reason: { error: 'Connection refused', release_title: 'Release.Title.MP3' },
+    });
+  });
+
+  it('passes authorName: null when book.authors is null', () => {
+    recordGrabFailedEvent({
+      eventHistory,
+      book: { id: 1, title: 'Test', authors: null },
+      releaseTitle: 'Release',
+      errorMessage: 'fail',
+      log,
+    });
+    expect(eventHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({ authorName: null, narratorName: null }),
+    );
+  });
+
+  it('passes authorName: null when book.authors is an empty array', () => {
+    recordGrabFailedEvent({
+      eventHistory,
+      book: { id: 1, title: 'Test', authors: [] },
+      releaseTitle: 'Release',
+      errorMessage: 'fail',
+      log,
+    });
+    expect(eventHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({ authorName: null }),
+    );
+  });
+
+  it('passes narratorName: null when book.narrators is undefined', () => {
+    recordGrabFailedEvent({
+      eventHistory,
+      book: { id: 1, title: 'Test', authors: [{ name: 'A' }] },
+      releaseTitle: 'Release',
+      errorMessage: 'fail',
+      log,
+    });
+    expect(eventHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({ narratorName: null }),
+    );
+  });
+
+  it('catches and logs recording failures (fire-and-forget)', async () => {
+    (eventHistory.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('record fail'));
+    recordGrabFailedEvent({
+      eventHistory,
+      book: { id: 1, title: 'Test' },
+      releaseTitle: 'Release',
+      errorMessage: 'fail',
+      log,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'record fail', type: 'Error' }) }),
+      'Failed to record grab_failed event',
+    );
+  });
+
+  it('passes errorMessage through unchanged — does not apply a fallback (pipeline owns fallback)', () => {
+    recordGrabFailedEvent({
+      eventHistory,
+      book: { id: 1, title: 'Test' },
+      releaseTitle: 'Release',
+      errorMessage: '',
+      log,
+    });
+    expect(eventHistory.create).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: { error: '', release_title: 'Release' } }),
     );
   });
 });

@@ -192,3 +192,32 @@ export function recordDownloadFailedEvent(args: RecordDownloadFailedEventArgs): 
     reason: { error: errorMessage },
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record download_failed event'));
 }
+
+// ── recordGrabFailedEvent ─────────────────────────────────────────────
+
+export interface RecordGrabFailedEventArgs {
+  eventHistory: EventHistoryService;
+  book: {
+    id: number;
+    title: string;
+    authors?: Array<{ name: string }> | null;
+    narrators?: Array<{ name: string }> | null;
+  };
+  releaseTitle: string;
+  errorMessage: string;
+  log: FastifyBaseLogger;
+}
+
+/** Fire-and-forget grab_failed event recording. */
+export function recordGrabFailedEvent(args: RecordGrabFailedEventArgs): void {
+  const { eventHistory, book, releaseTitle, errorMessage, log } = args;
+  eventHistory.create({
+    bookId: book.id,
+    bookTitle: book.title,
+    authorName: book.authors?.[0]?.name ?? null,
+    narratorName: book.narrators?.[0]?.name ?? null,
+    eventType: 'grab_failed',
+    source: 'auto',
+    reason: { error: errorMessage, release_title: releaseTitle },
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record grab_failed event'));
+}

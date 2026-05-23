@@ -7,6 +7,7 @@ import type { IndexerSearchService } from '../services/indexer-search.service.js
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
+import type { EventHistoryService } from '../services/event-history.service.js';
 import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '../../shared/constants.js';
@@ -61,6 +62,10 @@ const mockIndexer = {
   getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
 } as unknown as IndexerService;
 
+const mockEventHistory = {
+  create: vi.fn().mockResolvedValue({ id: 1 }),
+} as unknown as EventHistoryService;
+
 const mockResult = (seeders: number, downloadUrl?: string): SearchResult => ({
   title: 'Test Book',
   protocol: 'torrent',
@@ -88,7 +93,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService();
     const download = createMockDownloadOrchestrator();
 
-    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, retryBudget);
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory, retryBudget);
 
     expect(resetAllSpy).toHaveBeenCalledOnce();
   });
@@ -99,7 +104,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService();
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result).toEqual({ searched: 0, grabbed: 0 });
     expect(bookList.getAll).not.toHaveBeenCalled();
@@ -115,7 +120,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
@@ -131,7 +136,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -152,7 +157,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]); // no results for any search
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(0);
@@ -184,7 +189,7 @@ describe('runSearchJob', () => {
       .mockResolvedValueOnce(results);    // Book C succeeds with results
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // Book A searched + grabbed, Book B failed (not counted), Book C searched + grabbed
     expect(result.searched).toBe(2);
@@ -206,7 +211,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     // Query should just be the title without author
@@ -226,7 +231,7 @@ describe('runSearchJob', () => {
       new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS'),
     );
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -249,7 +254,7 @@ describe('runSearchJob', () => {
       new Error('No download client configured'),
     );
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // Search succeeded but grab failed — searched is still counted
     expect(result.searched).toBe(1);
@@ -278,7 +283,7 @@ describe('runSearchJob', () => {
     // Bare-string rejection — would serialize to {} via Pino without serializeError wrapping
     vi.mocked(download.grab).mockRejectedValueOnce('string error');
 
-    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -302,7 +307,7 @@ describe('runSearchJob', () => {
       .mockResolvedValueOnce([]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1); // only second book counted
     expect(log.warn).toHaveBeenCalled();
@@ -321,7 +326,7 @@ describe('runSearchJob', () => {
     ]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(1);
@@ -343,7 +348,7 @@ describe('runSearchJob', () => {
     ]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(1);
@@ -364,7 +369,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([mockResult(2, 'magnet:?xt=urn:btih:aaa')]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -382,7 +387,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([oversizedResult]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -401,7 +406,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ indexerId: 42 }),
@@ -436,7 +441,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([frenchResult, englishResult]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // Only the English result should be grabbed — French is filtered out
     expect(download.grab).toHaveBeenCalledTimes(1);
@@ -465,7 +470,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
@@ -481,7 +486,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -499,7 +504,7 @@ describe('searchAllWanted', () => {
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValueOnce(new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS'));
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.skipped).toBe(1);
     expect(result.errors).toBe(0);
@@ -522,7 +527,7 @@ describe('searchAllWanted', () => {
       .mockResolvedValueOnce(results);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(2);
@@ -537,7 +542,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(1);
@@ -563,7 +568,7 @@ describe('searchAllWanted', () => {
       .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'))
       .mockResolvedValueOnce({ id: 2 } as never);
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result).toEqual({ searched: 3, grabbed: 2, skipped: 1, errors: 0 });
   });
@@ -577,7 +582,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -592,7 +597,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.grabbed).toBe(1);
   });
@@ -605,7 +610,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -618,7 +623,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService();
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result).toEqual({ searched: 0, grabbed: 0, skipped: 0, errors: 0 });
   });
@@ -634,7 +639,7 @@ describe('searchAllWanted', () => {
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValue(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.grabbed).toBe(0);
     expect(result.skipped).toBe(2);
@@ -650,7 +655,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(0);
@@ -663,7 +668,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadOrchestrator();
 
-    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(vi.mocked(indexer.searchAll).mock.calls[0]![0]).toBe('Anonymous Work');
   });
@@ -689,7 +694,7 @@ describe('searchAllWanted', () => {
       .mockResolvedValueOnce({ id: 1 } as never) // Book A
       .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS')); // Book C
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result).toEqual({ searched: 3, grabbed: 1, skipped: 1, errors: 1 });
   });
@@ -702,7 +707,7 @@ describe('searchAllWanted', () => {
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValueOnce('some string error');
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(1);
@@ -731,7 +736,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // settingsService.get('metadata') must be called to get languages
     expect(settings.get).toHaveBeenCalledWith('metadata');
@@ -757,7 +762,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService([frenchResult]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // French result filtered out → no grab
     expect(download.grab).not.toHaveBeenCalled();
@@ -791,7 +796,7 @@ describe('searchAllWanted', () => {
     const indexer = createMockIndexerService([frenchResult, englishResult]);
     const download = createMockDownloadOrchestrator();
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // Only the English result should be grabbed
     expect(download.grab).toHaveBeenCalledTimes(1);
@@ -811,7 +816,7 @@ describe('searchAllWanted', () => {
       new Error('No download client configured'),
     );
 
-    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer);
+    const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     // Search succeeded but grab failed — searched is counted, errors incremented
     expect(result).toEqual({ searched: 1, grabbed: 0, skipped: 0, errors: 1 });
@@ -857,7 +862,7 @@ describe('#392 runSearchJob broadcaster wiring', () => {
     const log = createMockLogger();
     const broadcaster = { emit: vi.fn() };
 
-    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, undefined, broadcaster as never);
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory, undefined, broadcaster as never);
 
     // When broadcaster is passed, searchAndGrabForBook uses streaming path
     expect(indexer.getEnabledIndexers).toHaveBeenCalled();
@@ -876,7 +881,7 @@ describe('#392 searchAllWanted broadcaster wiring', () => {
     const log = createMockLogger();
     const broadcaster = { emit: vi.fn() };
 
-    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, broadcaster as never);
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory, broadcaster as never);
 
     expect(indexer.getEnabledIndexers).toHaveBeenCalled();
     expect(indexer.searchAllStreaming).toHaveBeenCalled();
@@ -909,7 +914,7 @@ describe('runSearchJob — narrator priority wiring (#439)', () => {
     const indexer = createMockIndexerService([qualityWin, narratorMatch]);
     const download = createMockDownloadOrchestrator();
 
-    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService(), mockIndexer);
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }));
   });
@@ -921,7 +926,7 @@ describe('runSearchJob — narrator priority wiring (#439)', () => {
     const indexer = createMockIndexerService([narratorMatch, qualityWin]);
     const download = createMockDownloadOrchestrator();
 
-    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService(), mockIndexer);
+    await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:quality' }));
   });
@@ -944,7 +949,7 @@ describe('searchAllWanted — narrator priority wiring (#439)', () => {
     ]);
     const download = createMockDownloadOrchestrator();
 
-    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService(), mockIndexer);
+    await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(testLog), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }));
   });

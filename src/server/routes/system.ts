@@ -60,6 +60,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         request.log,
         services.blacklist,
         services.indexer,
+        services.eventHistory,
         services.retryBudget,
         services.eventBroadcaster,
       ),
@@ -78,6 +79,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         request.log,
         services.blacklist,
         services.indexer,
+        services.eventHistory,
         services.eventBroadcaster,
       ),
     );

@@ -57,6 +57,13 @@
       "when": 1779436440276,
       "tag": "0007_living_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779541487241,
+      "tag": "0008_add_grab_failed_event_enum",
+      "breakpoints": true
     }
   ]
 }

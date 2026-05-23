@@ -212,6 +212,34 @@ describe('startJobs', () => {
     expect(retryDepsArg.retrySearchDeps).toBe(services.retrySearchDeps);
   });
 
+  describe('search job callback wires eventHistory (#1157)', () => {
+    it('forwards services.eventHistory into runSearchJob when the scheduled callback fires', async () => {
+      const { runSearchJob } = await import('./search.js');
+      vi.mocked(runSearchJob).mockResolvedValue({ searched: 0, grabbed: 0 });
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const intervalMs = 30 * 60 * 1000;
+      await vi.waitFor(() => {
+        const call = setTimeoutSpy.mock.calls.find(([, delay]) => delay === intervalMs);
+        expect(call).toBeDefined();
+      });
+      const timeoutCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === intervalMs);
+      const timeoutCallback = timeoutCall![0] as () => Promise<void>;
+      await timeoutCallback();
+
+      // runSearchJob signature: (settings, bookList, indexerSearch, downloadOrchestrator, log,
+      //                         blacklist, indexer, eventHistory, retryBudget?, broadcaster?)
+      const callArgs = vi.mocked(runSearchJob).mock.calls[0];
+      expect(callArgs![7]).toBe(services.eventHistory);
+
+      setTimeoutSpy.mockRestore();
+    });
+  });
+
   describe('scheduleCron error handling (#448 item 9)', () => {
     it('logs error when cron job callback throws', async () => {
       // Make the monitor job's callback throw by making monitorDownloads reject

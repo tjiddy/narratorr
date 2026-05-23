@@ -161,6 +161,15 @@ export function useEventSource(apiKey: string | null) {
     // Toast notifications — suppress for cancelled merges (user-initiated, not an error)
     const record = data as Record<string, unknown>;
     const isCancelledMerge = type === 'merge_failed' && record.reason === 'cancelled';
+    // Inline dispatch: search_complete + outcome:grab_error → error toast.
+    // The book cache may be empty for scheduled/background searches, so use
+    // payload.book_title and payload.error_message directly instead of a cache lookup.
+    if (type === 'search_complete' && record.outcome === 'grab_error') {
+      const p = asPayload<'search_complete'>(data);
+      const title = p.book_title ?? 'Grab failed';
+      const message = p.error_message ? `Grab failed: ${p.error_message}` : 'Grab failed';
+      toast.error(`${title} — ${message}`, { duration: 5000 });
+    }
     const toastConfig = TOAST_EVENT_CONFIG[type];
     if (toastConfig && !isCancelledMerge) {
       const title = toastConfig.titleKey in data

@@ -6,6 +6,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { EventHistoryService } from '../services/event-history.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { buildNarratorPriority, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -34,6 +35,7 @@ export async function runSearchJob(
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   indexerService: IndexerService,
+  eventHistory: EventHistoryService,
   retryBudget?: RetryBudget,
   broadcaster?: EventBroadcasterService,
 ): Promise<SearchJobResult> {
@@ -62,7 +64,7 @@ export async function runSearchJob(
   for (const book of wantedBooks) {
     try {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, indexerService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, indexerService, eventHistory, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -89,6 +91,7 @@ export async function searchAllWanted(
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   indexerService: IndexerService,
+  eventHistory: EventHistoryService,
   broadcaster?: EventBroadcasterService,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
@@ -111,7 +114,7 @@ export async function searchAllWanted(
   for (const book of wantedBooks) {
     try {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, indexerService, broadcaster);
+      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, indexerService, eventHistory, broadcaster);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;

@@ -1141,6 +1141,58 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
 
       expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
+
+    // #1157 — grab_error outcome surfaces a global error toast
+    it('search_complete with outcome grab_error dispatches an error toast using payload book_title + error_message', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('search_complete', {
+        book_id: 99,
+        total_results: 3,
+        outcome: 'grab_error',
+        book_title: 'Scheduled Book',
+        release_title: 'Release.MP3',
+        error_message: 'at wedge reserve floor',
+      }));
+
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('Scheduled Book'),
+        { duration: 5000 },
+      );
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('at wedge reserve floor'),
+        { duration: 5000 },
+      );
+    });
+
+    it('search_complete with outcome no_results does NOT dispatch a toast', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('search_complete', {
+        book_id: 99, total_results: 0, outcome: 'no_results',
+      }));
+
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('search_complete with outcome grabbed does NOT dispatch a toast', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es!.simulateOpen());
+
+      act(() => es!.simulateEvent('search_complete', {
+        book_id: 99, total_results: 1, outcome: 'grabbed',
+      }));
+
+      expect(toast.error).not.toHaveBeenCalled();
+    });
   });
 
   describe('merge cancellation SSE handling', () => {
@@ -1465,7 +1517,7 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     search_indexer_complete: {},
     search_indexer_error: {},
     search_grabbed: {},
-    search_complete: {},
+    search_complete: { eventHistory: 'invalidate' },
   };
 
   // Minimal valid payloads — only fields the consumer reads.

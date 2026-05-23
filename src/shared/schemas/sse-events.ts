@@ -190,6 +190,9 @@ export const searchCompletePayload = z.object({
   book_id: z.number(),
   total_results: z.number(),
   outcome: z.enum(['grabbed', 'no_results', 'skipped', 'grab_error']),
+  book_title: z.string().optional(),
+  error_message: z.string().optional(),
+  release_title: z.string().optional(),
 });
 
 // ============================================================================
@@ -253,7 +256,7 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   search_indexer_complete: {},
   search_indexer_error: {},
   search_grabbed: {},
-  search_complete: {},
+  search_complete: { eventHistory: 'invalidate' },
 };
 
 // Event types that should trigger toast notifications

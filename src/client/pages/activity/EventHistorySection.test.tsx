@@ -182,7 +182,7 @@ describe('EventHistorySection', () => {
       expect(filterButtons).toHaveLength(7);
     });
 
-    it('Errors chip sends eventType=download_failed,import_failed,merge_failed', async () => {
+    it('Errors chip sends eventType=download_failed,import_failed,merge_failed,grab_failed', async () => {
       const user = userEvent.setup();
       mockDefaultHook();
 
@@ -190,7 +190,7 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Errors'));
 
       expect(mockUseEventHistory).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: 'download_failed,import_failed,merge_failed' }),
+        expect.objectContaining({ eventType: 'download_failed,import_failed,merge_failed,grab_failed' }),
       );
     });
 
@@ -269,7 +269,7 @@ describe('EventHistorySection', () => {
   });
 
   describe('Clear Errors — single mutation', () => {
-    it('sends single DELETE with eventType=download_failed,import_failed,merge_failed', async () => {
+    it('sends single DELETE with eventType=download_failed,import_failed,merge_failed,grab_failed', async () => {
       const user = userEvent.setup();
       const mockBulkDelete = vi.fn();
       mockDefaultHook({ bulkDeleteMutation: { mutate: mockBulkDelete, isPending: false } as never });
@@ -281,7 +281,7 @@ describe('EventHistorySection', () => {
       await user.click(confirmButtons[confirmButtons.length - 1]!);
 
       expect(mockBulkDelete).toHaveBeenCalledTimes(1);
-      expect(mockBulkDelete).toHaveBeenCalledWith({ eventType: 'download_failed,import_failed,merge_failed' });
+      expect(mockBulkDelete).toHaveBeenCalledWith({ eventType: 'download_failed,import_failed,merge_failed,grab_failed' });
     });
 
     it('confirmation modal copy reflects all three error event classes', async () => {
