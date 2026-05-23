@@ -89,32 +89,27 @@ describe('MAM dispatcher-routing regression — fetchTorrentAsDataUri (F3)', () 
   });
 
   it('passes the dispatcher into fetchWithOptionalDispatcher on the torrent download', async () => {
-    // Search returns one result so the indexer follows up with a torrent
-    // download — that download is the F3 call site we need to protect.
-    mockHelper
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            data: [{ id: 12345, title: 'Test', seeders: 1, leechers: 0, size: '100 MiB' }],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(Buffer.from('fake-torrent'), {
-          status: 200,
-          headers: { 'Content-Type': 'application/x-bittorrent' },
-        }),
-      );
+    // The torrent fetch now happens at grab time via resolveDownloadUrl, not
+    // inside search. Drive that path directly with a freeleech context so the
+    // wedge logic short-circuits and only the torrent fetch runs.
+    mockHelper.mockResolvedValueOnce(
+      new Response(Buffer.from('fake-torrent'), {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }),
+    );
 
-    await makeProxiedIndexer().search('test');
+    await makeProxiedIndexer().resolveDownloadUrl({
+      guid: '12345',
+      downloadUrl: 'mam-torrent://12345',
+      protocol: 'torrent',
+      isFreeleech: true,
+    });
 
-    // Two helper invocations: search + torrent download. The torrent
-    // download is the second call and MUST also carry the dispatcher.
-    expect(mockHelper).toHaveBeenCalledTimes(2);
-    const torrentUrl = mockHelper.mock.calls[1]![0] as string;
+    expect(mockHelper).toHaveBeenCalledTimes(1);
+    const torrentUrl = mockHelper.mock.calls[0]![0] as string;
     expect(torrentUrl).toContain('/tor/download.php');
-    const torrentInit = mockHelper.mock.calls[1]![1] as { dispatcher?: unknown };
+    const torrentInit = mockHelper.mock.calls[0]![1] as { dispatcher?: unknown };
     expect(torrentInit.dispatcher).toBeDefined();
   });
 });

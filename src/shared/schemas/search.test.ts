@@ -134,6 +134,25 @@ describe('grabSchema', () => {
     // .strict() rejects unknown keys with a Zod issue rather than silently stripping them.
     expect(result.success).toBe(false);
   });
+
+  it('accepts optional isFreeleech (#1156)', () => {
+    const result = grabSchema.safeParse({
+      downloadUrl: 'https://example.com',
+      title: 'Test',
+      isFreeleech: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.isFreeleech).toBe(true);
+  });
+
+  it('omits isFreeleech from output when not provided (#1156)', () => {
+    const result = grabSchema.safeParse({
+      downloadUrl: 'https://example.com',
+      title: 'Test',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.isFreeleech).toBeUndefined();
+  });
 });
 
 const validGrab = { downloadUrl: 'https://example.com/file.torrent', title: 'My Book' };

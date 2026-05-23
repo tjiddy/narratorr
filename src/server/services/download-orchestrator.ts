@@ -28,6 +28,7 @@ export interface GrabParams {
   size?: number | undefined;
   seeders?: number | undefined;
   guid?: string | undefined;
+  isFreeleech?: boolean | undefined;
   skipDuplicateCheck?: boolean | undefined;
   source?: CreateEventInput['source'] | undefined;
 }

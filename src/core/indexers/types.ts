@@ -80,6 +80,38 @@ export interface IndexerSearchResponse {
   httpStatus?: number;
 }
 
+/**
+ * Outcome of an adapter's `resolveDownloadUrl` wedge-decision step. Adapters
+ * that don't implement wedge logic return `undefined` for `wedgeOutcome`.
+ */
+export type WedgeOutcome =
+  | 'spent'
+  | 'skipped-mode-never'
+  | 'skipped-already-free'
+  | 'skipped-already-vip'
+  | 'skipped-idempotent'
+  | 'skipped-no-inventory'
+  | 'skipped-fetch-failed'
+  | 'failed-spend';
+
+/**
+ * Explicit context passed to `IndexerAdapter.resolveDownloadUrl`. The
+ * dispatch path satisfies all fields; `guid` is optional to match
+ * `GrabParams.guid`. `isFreeleech` is required at the type level — callers
+ * coerce missing values to `false` at the call site.
+ */
+export interface ResolveDownloadContext {
+  guid?: string;
+  downloadUrl: string;
+  protocol: DownloadProtocol;
+  isFreeleech: boolean;
+}
+
+export interface ResolveDownloadResult {
+  downloadUrl: string;
+  wedgeOutcome?: WedgeOutcome;
+}
+
 export interface IndexerAdapter {
   readonly type: string;
   readonly name: string;
@@ -87,6 +119,13 @@ export interface IndexerAdapter {
   search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse>;
   test(): Promise<IndexerTestResult>;
   refreshStatus?(): Promise<{ isVip: boolean; classname: string } | null>;
+  /**
+   * Optional grab-time hook that resolves a search-time `downloadUrl` (which
+   * may be an adapter-specific sentinel) into the real artifact URL. MAM uses
+   * this to fetch the torrent bytes lazily and optionally apply a freeleech
+   * wedge before download.
+   */
+  resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>;
 }
 
 /**

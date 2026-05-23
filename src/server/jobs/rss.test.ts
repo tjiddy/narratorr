@@ -171,6 +171,37 @@ describe('runRssJob', () => {
     );
   });
 
+  it('forwards isFreeleech=true from matched RSS result to grab call (#1156 F2)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { isFreeleech: true })];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1, isFreeleech: true }),
+    );
+  });
+
+  it('omits isFreeleech from grab call when matched RSS result does not set it (#1156 F2)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    const grabCall = (download.grab as Mock).mock.calls[0]![0];
+    expect(grabCall).not.toHaveProperty('isFreeleech');
+  });
+
   it('skips release below 0.7 match threshold', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('Cooking with Julia Child', 'Julia Child')];

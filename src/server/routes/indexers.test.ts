@@ -250,9 +250,10 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
+      // mamSettingsSchema materializes useFreeleechWedge/minWedgeReserve defaults (#1156 F1).
       expect(services.indexer.testConfig).toHaveBeenCalledWith({
         type: 'myanonamouse',
-        settings: { mamId: '********' },
+        settings: { mamId: '********', useFreeleechWedge: 'never', minWedgeReserve: 0 },
         id: 5,
       });
     });
@@ -273,9 +274,10 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
+      // mamSettingsSchema materializes useFreeleechWedge/minWedgeReserve defaults (#1156 F1).
       expect(services.indexer.testConfig).toHaveBeenCalledWith({
         type: 'myanonamouse',
-        settings: { mamId: 'real-id' },
+        settings: { mamId: 'real-id', useFreeleechWedge: 'never', minWedgeReserve: 0 },
       });
     });
 

@@ -1,20 +1,35 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import {
   rawTitleBytesHex,
   type IndexerAdapter,
   type IndexerParseTrace,
   type IndexerSearchResponse,
+  type ResolveDownloadContext,
+  type ResolveDownloadResult,
   type SearchOptions,
   type SearchResult,
+  type WedgeOutcome,
 } from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import type { WedgeMode } from '../../shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
+import {
+  MAM_TORRENT_SENTINEL_PREFIX,
+  decideWedgeSpend,
+  isWedgeFailureOutcome,
+  parseTorrentIdFromContext,
+} from './mam-wedge.js';
+import {
+  mamSearchResponseSchema,
+  mamUserStatusSchema,
+  type MAMSearchResult,
+} from './mam-schemas.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -23,50 +38,12 @@ export interface MAMConfig {
   searchLanguages: number[];
   searchType: string;
   isVip?: boolean | undefined;
+  useFreeleechWedge?: WedgeMode | undefined;
+  minWedgeReserve?: number | undefined;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
-
-// MAM (and many PHP-backend APIs) emit boolean flag fields as 0/1 integers
-// rather than JSON booleans. Accept both shapes and normalize to boolean.
-const numericBoolean = z.union([z.boolean(), z.number()])
-  .transform((v) => (typeof v === 'number' ? v !== 0 : v));
-
-const mamSearchResultSchema = z.object({
-  id: z.number().nullish(),
-  title: z.string().nullish(),
-  author_info: z.string().nullish(),
-  narrator_info: z.string().nullish(),
-  series_info: z.string().nullish(),
-  lang_code: z.string().nullish(),
-  size: z.union([z.string(), z.number()]).nullish(),
-  seeders: z.number().nullish(),
-  leechers: z.number().nullish(),
-  free: numericBoolean.nullish(),
-  fl_vip: numericBoolean.nullish(),
-  vip: numericBoolean.nullish(),
-  personal_freeleech: numericBoolean.nullish(),
-}).passthrough();
-
-// MAM search responses always carry either `data` (results array, possibly empty)
-// or `error` (a message). A response with neither is malformed (e.g. HTML
-// interstitial, rate-limit page, upstream API change) and must fail validation
-// rather than silently producing an empty result list.
-const mamSearchResponseSchema = z.object({
-  error: z.string().nullish(),
-  data: z.array(mamSearchResultSchema).nullish(),
-}).passthrough().refine(
-  (d) => d.error != null || d.data != null,
-  { message: 'MAM search response missing both "data" and "error" fields' },
-);
-
-const mamUserStatusSchema = z.object({
-  username: z.string().nullish(),
-  classname: z.string().nullish(),
-}).passthrough();
-
-type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;
 
 function orUndef<T>(value: T | null | undefined): T | undefined {
   return value ?? undefined;
@@ -81,6 +58,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private searchLanguages: number[];
   private searchType: string;
   private isVip?: boolean;
+  private useFreeleechWedge: WedgeMode;
+  private minWedgeReserve: number;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
@@ -89,6 +68,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.searchLanguages = config.searchLanguages;
     this.searchType = config.searchType;
     if (config.isVip !== undefined) this.isVip = config.isVip;
+    this.useFreeleechWedge = config.useFreeleechWedge ?? 'never';
+    this.minWedgeReserve = config.minWedgeReserve ?? 0;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -122,7 +103,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       };
     }
 
-    const built = await this.buildResults(response.data, options?.signal);
+    const built = this.buildResults(response.data);
     return {
       results: built.results,
       parseStats: built.parseStats,
@@ -161,7 +142,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     let raw: unknown;
     try {
       raw = JSON.parse(body);
-    } catch (err) {
+    } catch (err: unknown) {
       throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
     }
 
@@ -176,7 +157,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return parsed.data;
   }
 
-  private async buildResults(data: MAMSearchResult[], signal?: AbortSignal): Promise<{ results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] }> {
+  private buildResults(data: MAMSearchResult[]): { results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] } {
     const results: SearchResult[] = [];
     const debugTrace: IndexerParseTrace[] = [];
     const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
@@ -189,11 +170,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         continue;
       }
 
-      let downloadUrl: string | undefined;
-      if (item.id != null) {
-        downloadUrl = await this.fetchTorrentAsDataUri(item.id, signal);
-      }
-
+      // Emit a sentinel download URL — the real torrent bytes are fetched lazily
+      // by `resolveDownloadUrl` at grab time so the optional freeleech wedge can
+      // be applied first.
+      const downloadUrl = item.id != null ? `${MAM_TORRENT_SENTINEL_PREFIX}${item.id}` : undefined;
       const rawBytes = rawTitleBytesHex(item.title);
       if (!downloadUrl) {
         dropped.noUrl++;
@@ -242,90 +222,64 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   async test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
-
       if (body.includes('Error, you are not signed in')) {
         return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
-
-      let raw: unknown;
-      try {
-        raw = JSON.parse(body);
-      } catch (err) {
-        throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
+      const data = this.parseUserStatusBody(body);
+      if (!data.username) {
+        return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
-
-      const parsed = mamUserStatusSchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new IndexerError(
-          this.name,
-          `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-          { cause: parsed.error },
-        );
-      }
-      const data = parsed.data;
-
-      if (data.username) {
-        const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
-        const result: { success: boolean; message: string; ip?: string; warning?: string; metadata: Record<string, unknown> } = {
-          success: true,
-          message: `Connected as ${data.username}`,
-          metadata: { username: data.username, classname: data.classname, isVip },
-        };
-
-        if (data.classname === 'Mouse') {
-          result.warning = 'Account is ratio-locked (Mouse class) — cannot download';
-        }
-
-        if (this.proxyUrl) {
-          result.ip = await resolveProxyIp(this.proxyUrl);
-        }
-
-        return result;
-      }
-
-      return { success: false, message: 'Authentication failed — check your MAM ID' };
+      return await this.buildTestSuccess(data);
     } catch (error: unknown) {
-      if (error instanceof IndexerAuthError) {
+      if (error instanceof IndexerAuthError || error instanceof IndexerError) {
         return { success: false, message: error.message };
       }
-      if (error instanceof IndexerError) {
-        return { success: false, message: error.message };
-      }
-      return {
-        success: false,
-        message: getErrorMessage(error),
-      };
+      return { success: false, message: getErrorMessage(error) };
     }
+  }
+
+  private parseUserStatusBody(body: string): z.infer<typeof mamUserStatusSchema> {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body);
+    } catch (err: unknown) {
+      throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
+    }
+    const parsed = mamUserStatusSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new IndexerError(
+        this.name,
+        `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
+  }
+
+  private async buildTestSuccess(data: z.infer<typeof mamUserStatusSchema>) {
+    const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
+    const wedges = typeof data.wedges === 'number' ? data.wedges : undefined;
+    const result: { success: boolean; message: string; ip?: string; warning?: string; metadata: Record<string, unknown> } = {
+      success: true,
+      message: `Connected as ${data.username}`,
+      metadata: { username: data.username, classname: data.classname, isVip, ...(wedges !== undefined && { wedges }) },
+    };
+    if (data.classname === 'Mouse') {
+      result.warning = 'Account is ratio-locked (Mouse class) — cannot download';
+    }
+    if (this.proxyUrl) {
+      result.ip = await resolveProxyIp(this.proxyUrl);
+    }
+    return result;
   }
 
   async refreshStatus(): Promise<{ isVip: boolean; classname: string } | null> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
-
-      let raw: unknown;
-      try {
-        raw = JSON.parse(body);
-      } catch (err) {
-        throw new IndexerError(this.name, 'MAM returned invalid JSON response', { cause: err instanceof Error ? err : undefined });
-      }
-
-      const parsed = mamUserStatusSchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new IndexerError(
-          this.name,
-          `MAM returned unexpected user-status response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-          { cause: parsed.error },
-        );
-      }
-      const data = parsed.data;
-
-      if (!data.classname) {
-        return null;
-      }
-
+      const data = this.parseUserStatusBody(body);
+      if (!data.classname) return null;
       const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
       this.isVip = isVip;
-
       return { isVip, classname: data.classname };
     } catch (error: unknown) {
       if (error instanceof IndexerError) {
@@ -416,6 +370,48 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
 
   /**
+   * Grab-time hook. Optionally spends a freeleech wedge based on configured
+   * mode + reserve floor, then fetches the torrent bytes. Returns the data URL
+   * plus a typed `wedgeOutcome` for the service layer to log. Throws
+   * `IndexerError` when (a) Required-mode and the spend decision failed, or
+   * (b) the torrent fetch itself failed (uniform contract — both modes).
+   */
+  async resolveDownloadUrl(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult> {
+    const tid = parseTorrentIdFromContext(ctx);
+    if (tid === undefined) {
+      throw new IndexerError(this.name, `MAM resolveDownloadUrl: unable to derive torrent id from guid=${ctx.guid ?? 'undefined'} url=${ctx.downloadUrl}`);
+    }
+
+    const wedgeOutcome = await decideWedgeSpend(this.wedgeCfg(), this.useFreeleechWedge, this.minWedgeReserve, tid, ctx.isFreeleech);
+    if (this.useFreeleechWedge === 'required' && isWedgeFailureOutcome(wedgeOutcome)) {
+      throw new IndexerError(this.name, `MAM wedge spend failed in Required mode (${wedgeOutcome}) for tid=${tid}`, { wedgeOutcome });
+    }
+
+    return this.fetchTorrentForResolve(tid, wedgeOutcome);
+  }
+
+  private wedgeCfg() {
+    return { baseUrl: this.baseUrl, mamId: this.mamId, proxyUrl: this.proxyUrl, indexerName: this.name };
+  }
+
+  private async fetchTorrentForResolve(tid: number, wedgeOutcome: WedgeOutcome): Promise<ResolveDownloadResult> {
+    let downloadUrl: string | undefined;
+    try {
+      downloadUrl = await this.fetchTorrentAsDataUri(tid);
+    } catch (error: unknown) {
+      throw new IndexerError(
+        this.name,
+        `MAM torrent fetch failed for tid=${tid}: ${getErrorMessage(error)}`,
+        { cause: error instanceof Error ? error : undefined, wedgeOutcome },
+      );
+    }
+    if (!downloadUrl) {
+      throw new IndexerError(this.name, `MAM torrent fetch returned no data for tid=${tid}`, { wedgeOutcome });
+    }
+    return { downloadUrl, wedgeOutcome };
+  }
+
+  /**
    * Fetch .torrent file bytes and encode as a data: URI.
    * Returns undefined on failure (result is kept but not grabbable).
    */
@@ -469,3 +465,4 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
   }
 }
+

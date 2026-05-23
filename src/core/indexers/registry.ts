@@ -32,6 +32,8 @@ const TYPED_FACTORIES: { [K in IndexerType]: (settings: IndexerSettingsMap[K], n
     searchLanguages: s.searchLanguages ?? [1],
     searchType: coerceSearchType(s.searchType),
     isVip: s.isVip,
+    useFreeleechWedge: s.useFreeleechWedge ?? 'never',
+    minWedgeReserve: s.minWedgeReserve ?? 0,
     proxyUrl,
   }, name),
 };

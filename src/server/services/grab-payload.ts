@@ -21,6 +21,7 @@ export function buildGrabPayload(
   if (result.indexerId !== undefined) payload.indexerId = result.indexerId;
   if (result.size !== undefined) payload.size = result.size;
   if (result.seeders !== undefined) payload.seeders = result.seeders;
+  if (result.isFreeleech !== undefined) payload.isFreeleech = result.isFreeleech;
 
   if (overrides) {
     Object.assign(payload, overrides);

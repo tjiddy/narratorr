@@ -28,6 +28,9 @@ const mamSearchTypeServerSchema = z.union([
   }),
 ]);
 
+export const wedgeModeSchema = z.enum(['never', 'preferred', 'required']);
+export type WedgeMode = z.infer<typeof wedgeModeSchema>;
+
 export const mamSettingsSchema = z.object({
   mamId: z.string().trim().min(1),
   baseUrl: z.string().trim().optional(),
@@ -38,6 +41,8 @@ export const mamSettingsSchema = z.object({
   classname: z.string().optional(),
   useProxy: z.boolean().optional(),
   flareSolverrUrl: z.string().optional(),
+  useFreeleechWedge: wedgeModeSchema.default('never'),
+  minWedgeReserve: z.number().int().min(0).default(0),
 }).strict();
 
 export const abbSettingsSchema = z.object({
@@ -51,7 +56,11 @@ export const abbSettingsSchema = z.object({
 
 export type NewznabSettings = z.infer<typeof newznabSettingsSchema>;
 export type TorznabSettings = z.infer<typeof torznabSettingsSchema>;
-export type MamSettings = z.infer<typeof mamSettingsSchema>;
+// Use z.input so callers (factory, legacy persisted rows, tests) can pass
+// settings with the new wedge fields omitted. Schema `.default()` materializes
+// them on parse; factory `??` applies the same defaults at runtime when settings
+// bypass validation. Other adapters use z.infer because none of their fields use `.default()`.
+export type MamSettings = z.input<typeof mamSettingsSchema>;
 export type AbbSettings = z.infer<typeof abbSettingsSchema>;
 
 export type IndexerSettingsMap = {
@@ -137,6 +146,8 @@ export const createIndexerFormSchema = z.object({
     isVip: z.boolean().optional(),
     mamUsername: z.string().optional(),
     classname: z.string().optional(),
+    useFreeleechWedge: wedgeModeSchema.optional(),
+    minWedgeReserve: z.number().int().min(0).optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = INDEXER_REGISTRY[data.type];

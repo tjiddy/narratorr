@@ -144,4 +144,129 @@ describe('fake MAM indexer', () => {
       expect(fake.url).toMatch(/^http:\/\/localhost:\d+$/);
     });
   });
+
+  // #1156 F5 — HTTP control endpoints added with the wedge fix must be exercised
+  // directly so future deletion of the handlers can't pass silently.
+  describe('POST /__control/wedges', () => {
+    async function postWedges(body: unknown) {
+      return fetch(`${fake.url}/__control/wedges`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    it('seeds wedge count surfaced via /jsonLoad.php', async () => {
+      const res = await postWedges({ count: 11 });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { ok: boolean; wedges: number };
+      expect(body).toEqual({ ok: true, wedges: 11 });
+
+      const status = await fetchWithCookie('/jsonLoad.php');
+      const statusBody = await status.json() as { wedges?: number };
+      expect(statusBody.wedges).toBe(11);
+    });
+
+    it('accepts 0 as a valid seed', async () => {
+      const res = await postWedges({ count: 0 });
+      expect(res.status).toBe(200);
+      const body = await res.json() as { ok: boolean; wedges: number };
+      expect(body.wedges).toBe(0);
+    });
+
+    it('rejects negative count with HTTP 400', async () => {
+      const res = await postWedges({ count: -1 });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toMatch(/non-negative integer/);
+    });
+
+    it('rejects non-integer count with HTTP 400', async () => {
+      const res = await postWedges({ count: 1.5 });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects non-numeric count with HTTP 400', async () => {
+      const res = await postWedges({ count: 'lots' });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects missing count field with HTTP 400', async () => {
+      const res = await postWedges({});
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /__control/bonus-buy', () => {
+    async function postBonusBuy(body: unknown) {
+      return fetch(`${fake.url}/__control/bonus-buy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    async function callBonusBuy() {
+      return fetch(`${fake.url}/json/bonusBuy.php/12345?spendtype=personalFL&torrentid=1&timestamp=12345`, {
+        method: 'POST',
+        headers: { Cookie: 'mam_id=test-mam-id' },
+      });
+    }
+
+    it('applies an override that forces success=true regardless of wedge inventory', async () => {
+      await postBonusBuy({}); // ensure cleared
+      await fetch(`${fake.url}/__control/wedges`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 0 }),
+      });
+
+      const override = await postBonusBuy({ success: true });
+      expect(override.status).toBe(200);
+      const overrideBody = await override.json() as { ok: boolean; override: { success: boolean } };
+      expect(overrideBody.override).toEqual({ success: true });
+
+      const buy = await callBonusBuy();
+      const buyBody = await buy.json() as { success: boolean };
+      expect(buyBody.success).toBe(true);
+    });
+
+    it('applies an override that forces an error string', async () => {
+      const override = await postBonusBuy({ success: false, error: 'This Torrent is VIP only' });
+      expect(override.status).toBe(200);
+
+      const buy = await callBonusBuy();
+      const buyBody = await buy.json() as { success: boolean; error?: string };
+      expect(buyBody).toEqual({ success: false, error: 'This Torrent is VIP only' });
+    });
+
+    it('clears an override when posted with an empty body — restores wedge-count-aware default', async () => {
+      // Seed an override forcing failure, then clear it.
+      await postBonusBuy({ success: false, error: 'forced' });
+      const cleared = await postBonusBuy({});
+      expect(cleared.status).toBe(200);
+      const clearedBody = await cleared.json() as { ok: boolean; cleared: boolean };
+      expect(clearedBody.cleared).toBe(true);
+
+      // Seed wedges > 0 so the default path returns success.
+      await fetch(`${fake.url}/__control/wedges`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 3 }),
+      });
+      const buy = await callBonusBuy();
+      const buyBody = await buy.json() as { success: boolean };
+      expect(buyBody.success).toBe(true);
+    });
+
+    it('rejects non-boolean success with HTTP 400', async () => {
+      const res = await postBonusBuy({ success: 'yes' });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toMatch(/success must be boolean/);
+    });
+
+    it('rejects non-string error with HTTP 400', async () => {
+      const res = await postBonusBuy({ error: 42 });
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string };
+      expect(body.error).toMatch(/error must be string/);
+    });
+  });
 });

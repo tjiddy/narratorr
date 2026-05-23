@@ -61,6 +61,16 @@ describe('buildGrabPayload', () => {
       expect(payload.guid).toBe('abc-123');
     });
 
+    it('#1156 forwards isFreeleech from SearchResult into the payload', () => {
+      const payload = buildGrabPayload({ ...baseResult, isFreeleech: true }, 42);
+      expect(payload.isFreeleech).toBe(true);
+    });
+
+    it('#1156 omits isFreeleech from the payload when SearchResult does not set it', () => {
+      const payload = buildGrabPayload(baseResult, 42);
+      expect(payload).not.toHaveProperty('isFreeleech');
+    });
+
     it('omits undefined optional fields from SearchResult', () => {
       const sparse: SearchResult = {
         title: 'Sparse',

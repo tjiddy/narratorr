@@ -246,7 +246,7 @@ describe('IndexerFields', () => {
     });
   });
 
-  describe('#317 — MAM VIP detection on blur', () => {
+  describe('#1156 — onBlur auto-detect removed; Test button remains the trigger', () => {
     function MamDetectionWrapper() {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
@@ -257,378 +257,74 @@ describe('IndexerFields', () => {
       return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
     }
 
-    it('does not call API when MAM ID is blurred empty', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.click(mamIdInput);
-      await user.tab(); // blur with empty value
-
-      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
-    });
-
-    it('calls testIndexerConfig with correct payload on MAM ID blur', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'TestUser', classname: 'VIP', isVip: true },
-      });
+    it('typing into MAM ID and blurring does NOT trigger testIndexerConfig', async () => {
       const user = userEvent.setup();
       renderWithProviders(<MamDetectionWrapper />);
 
       const mamIdInput = screen.getByLabelText('MAM ID');
       await user.type(mamIdInput, 'my-mam-id');
-      await user.tab(); // blur triggers detection
-
-      await waitFor(() => {
-        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
-          expect.objectContaining({
-            type: 'myanonamouse',
-            settings: expect.objectContaining({ mamId: 'my-mam-id' }),
-          }),
-        );
-      });
-    });
-
-    it('renders status badge with username and classname on success', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'GotaBe1', classname: 'VIP', isVip: true },
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'valid-id');
       await user.tab();
 
-      await waitFor(() => {
-        expect(screen.getByText('GotaBe1')).toBeInTheDocument();
-      });
-      expect(screen.getByText('VIP')).toBeInTheDocument();
-    });
-
-    it('renders error message on detection failure', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: false,
-        message: 'Authentication failed',
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'bad-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect(screen.getByText('Authentication failed')).toBeInTheDocument();
-      });
-    });
-
-    it('includes current baseUrl in the synthetic test payload', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'User1', classname: 'User', isVip: false },
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      // Fill base URL first, then MAM ID and blur
-      const baseUrlInput = screen.getByLabelText(/Base URL/);
-      await user.type(baseUrlInput, 'https://custom.mam.net');
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'my-mam-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
-          expect.objectContaining({
-            settings: expect.objectContaining({
-              mamId: 'my-mam-id',
-              baseUrl: 'https://custom.mam.net',
-            }),
-          }),
-        );
-      });
-    });
-
-    it('detection completes instantly in test mode (MIN_DETECTION_MS is 0)', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'OverlayUser', classname: 'Mouse', isVip: false },
-      });
-
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'test-id');
-      await user.tab();
-
-      // With MIN_DETECTION_MS=0, detection resolves instantly — no 1s delay
-      await waitFor(() => {
-        expect(screen.queryByText('Checking MAM status…')).not.toBeInTheDocument();
-      });
-      expect(screen.getByText('OverlayUser')).toBeInTheDocument();
-    });
-
-    it('successful detection writes isVip into form state', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'VipUser', classname: 'VIP', isVip: true },
-      });
-
-      const onSubmit = vi.fn();
-      function MamDetectionFormWrapper() {
-        const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-          defaultValues: {
-            name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
-            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
-          },
-        });
-        return (
-          <form onSubmit={handleSubmit(onSubmit)}>
-            <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />
-            <button type="submit">Submit</button>
-          </form>
-        );
-      }
-
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionFormWrapper />);
-
-      // Trigger detection
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'vip-id');
-      await user.tab();
-
-      // Wait for badge to appear (detection complete including min duration)
-      await waitFor(() => {
-        expect(screen.getByText('VipUser')).toBeInTheDocument();
-      });
-
-      // Submit form and check isVip was written
-      await user.click(screen.getByText('Submit'));
-      await waitFor(() => {
-        expect(onSubmit).toHaveBeenCalled();
-      });
-      expect(onSubmit.mock.calls[0]![0].settings.isVip).toBe(true);
-    });
-
-    it('#339 skips detection when MAM ID is sentinel value (********)', async () => {
-      const user = userEvent.setup();
-
-      function SentinelWrapper() {
-        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-          defaultValues: {
-            name: '', type: 'myanonamouse',
-            settings: { mamId: '********', searchLanguages: [1], searchType: 'active' },
-          },
-        });
-        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
-      }
-
-      renderWithProviders(<SentinelWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.click(mamIdInput);
-      await user.tab(); // blur with sentinel value
-
+      // Wait a tick to allow any background async to settle, then assert no API call.
+      await new Promise(r => setTimeout(r, 50));
       expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
-    });
-
-    it('#339 onBlur detect includes useProxy: true from form state in payload', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'ProxyUser', classname: 'User', isVip: false },
-      });
-      const user = userEvent.setup();
-
-      function ProxyWrapper() {
-        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-          defaultValues: {
-            name: '', type: 'myanonamouse',
-            settings: { mamId: '', searchLanguages: [1], searchType: 'active', useProxy: true },
-          },
-        });
-        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
-      }
-
-      (api.getSettings as Mock).mockResolvedValue({ network: { proxyUrl: 'http://proxy:8888' } });
-      renderWithProviders(<ProxyWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'proxy-test-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
-          expect.objectContaining({
-            settings: expect.objectContaining({ mamId: 'proxy-test-id', useProxy: true }),
-          }),
-        );
-      });
-    });
-
-    it('#339 onBlur detect omits useProxy when form has useProxy: false', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'NoProxyUser', classname: 'User', isVip: false },
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'no-proxy-id');
-      await user.tab();
-
-      await waitFor(() => {
-        const call = (api.testIndexerConfig as Mock).mock.calls[0]![0];
-        expect(call.settings.useProxy).toBeFalsy();
-      });
-    });
-
-    it('#339 detection success writes mamUsername into form state via setValue', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'DetectedUser', classname: 'VIP', isVip: true },
-      });
-
-      const onSubmit = vi.fn();
-      function MamUsernameFormWrapper() {
-        const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-          defaultValues: {
-            name: 'Test', type: 'myanonamouse', enabled: true, priority: 0,
-            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
-          },
-        });
-        return (
-          <form onSubmit={handleSubmit(onSubmit)}>
-            <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />
-            <button type="submit">Submit</button>
-          </form>
-        );
-      }
-
-      const user = userEvent.setup();
-      renderWithProviders(<MamUsernameFormWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'detect-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect(screen.getByText('DetectedUser')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByText('Submit'));
-      await waitFor(() => {
-        expect(onSubmit).toHaveBeenCalled();
-      });
-      expect(onSubmit.mock.calls[0]![0].settings.mamUsername).toBe('DetectedUser');
-    });
-
-    it('refresh button triggers a second detection request', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'User1', classname: 'User', isVip: false },
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<MamDetectionWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'my-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect(screen.getByText('User1')).toBeInTheDocument();
-      });
-
-      // Clear mock and click refresh
-      (api.testIndexerConfig as Mock).mockClear();
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'User1', classname: 'VIP', isVip: true },
-      });
-
-      await user.click(screen.getByTitle('Refresh MAM status'));
-
-      await waitFor(() => {
-        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledTimes(1);
-      });
     });
   });
 
   describe('DetectionOverlay modal compatibility', () => {
-    function MamWrapper() {
-      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-        defaultValues: {
-          name: '', type: 'myanonamouse',
-          settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
-        },
-      });
-      return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
-    }
-
     it('DetectionOverlay uses relative positioning instead of fixed inset-0 z-50', async () => {
       (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // never resolves — keeps overlay visible
 
-      const user = userEvent.setup();
-      renderWithProviders(<MamWrapper />);
+      function MamPrehydratedWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: 'has-id', searchLanguages: [1], searchType: 'active', isVip: false, mamUsername: 'Existing' },
+          },
+        });
+        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} />;
+      }
 
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'test-id');
-      await user.tab();
+      const user = userEvent.setup();
+      renderWithProviders(<MamPrehydratedWrapper />);
+
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('Checking MAM status…')).toBeInTheDocument();
       });
 
-      // Walk up from the text to find the outermost overlay wrapper (the sm:col-span-2 div)
       const overlayText = screen.getByText('Checking MAM status…');
-      // The card div is the direct parent, the overlay wrapper is its parent
       const overlayWrapper = overlayText.closest('.sm\\:col-span-2') ?? overlayText.parentElement!.parentElement!;
-      // Must NOT use fixed positioning or z-50 (conflicts with Modal)
       expect(overlayWrapper.className).toContain('relative');
       expect(overlayWrapper.className).not.toContain('fixed');
       expect(overlayWrapper.className).not.toContain('z-50');
     });
 
-    it('MamAccountCard renders correctly after successful detection', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'TestUser', classname: 'Power User', isVip: true },
-      });
-
-      const user = userEvent.setup();
-      renderWithProviders(<MamWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'test-id');
-      await user.tab();
-
+    it('MamAccountCard renders correctly when detection is triggered via formTestResult bridge', async () => {
+      function MamFormTestResultWrapper() {
+        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse',
+            settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active' },
+          },
+        });
+        return (
+          <IndexerFields
+            selectedType="myanonamouse"
+            register={register}
+            errors={errors}
+            watch={watch}
+            setValue={setValue}
+            formTestResult={{ success: true, metadata: { username: 'TestUser', classname: 'Power User', isVip: true } }}
+          />
+        );
+      }
+      renderWithProviders(<MamFormTestResultWrapper />);
       await waitFor(() => {
         expect(screen.getByText('TestUser')).toBeInTheDocument();
       });
       expect(screen.getByText('Power User')).toBeInTheDocument();
-    });
-
-    it('detection error message renders inline in form', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: false,
-        message: 'Invalid MAM ID',
-      });
-
-      const user = userEvent.setup();
-      renderWithProviders(<MamWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'bad-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect(screen.getByText('Invalid MAM ID')).toBeInTheDocument();
-      });
     });
   });
 
@@ -831,38 +527,23 @@ describe('IndexerFields', () => {
     });
 
     it('#361 refresh with non-sentinel mamId calls testIndexerConfig without id (existing path)', async () => {
-      (api.testIndexerConfig as Mock)
-        .mockResolvedValueOnce({ success: true, metadata: { username: 'User1', classname: 'User', isVip: false } })
-        .mockResolvedValueOnce({ success: true, metadata: { username: 'User1', classname: 'VIP', isVip: true } });
+      (api.testIndexerConfig as Mock).mockResolvedValue({
+        success: true,
+        metadata: { username: 'User1', classname: 'VIP', isVip: true },
+      });
       const user = userEvent.setup();
 
       function NonSentinelWrapper() {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: '', type: 'myanonamouse',
-            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
+            settings: { mamId: 'real-mam-id', searchLanguages: [1], searchType: 'active', isVip: false, mamUsername: 'Existing' },
           },
         });
         return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={42} />;
       }
 
       renderWithProviders(<NonSentinelWrapper />);
-
-      // Type a real mamId and blur to get initial badge
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'real-mam-id');
-      await user.tab();
-
-      await waitFor(() => {
-        expect(screen.getByText('User1')).toBeInTheDocument();
-      });
-
-      // Clear mock and click refresh
-      (api.testIndexerConfig as Mock).mockClear();
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'User1', classname: 'VIP', isVip: true },
-      });
 
       await user.click(screen.getByTitle('Refresh MAM status'));
 
@@ -895,45 +576,16 @@ describe('IndexerFields', () => {
       expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
     });
 
-    it('#361 blur with sentinel mamId still skips detection (unchanged behavior)', async () => {
+    it('#1156 blur on MAM ID does not call the API (onBlur auto-detect removed)', async () => {
       const user = userEvent.setup();
       renderWithProviders(<SentinelEditWrapper indexerId={42} />);
 
       const mamIdInput = screen.getByLabelText('MAM ID');
       await user.click(mamIdInput);
-      await user.tab(); // blur with sentinel value
-
-      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
-    });
-
-    it('#361 blur with real mamId still calls testIndexerConfig without id (unchanged behavior)', async () => {
-      (api.testIndexerConfig as Mock).mockResolvedValue({
-        success: true,
-        metadata: { username: 'BlurUser', classname: 'User', isVip: false },
-      });
-      const user = userEvent.setup();
-
-      function BlurTestWrapper() {
-        const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
-          defaultValues: {
-            name: '', type: 'myanonamouse',
-            settings: { mamId: '', searchLanguages: [1], searchType: 'active' },
-          },
-        });
-        return <IndexerFields selectedType="myanonamouse" register={register} errors={errors} watch={watch} setValue={setValue} indexerId={42} />;
-      }
-
-      renderWithProviders(<BlurTestWrapper />);
-
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.type(mamIdInput, 'new-real-id');
       await user.tab();
 
-      await waitFor(() => {
-        expect((api.testIndexerConfig as Mock)).toHaveBeenCalledWith(
-          expect.not.objectContaining({ id: expect.anything() }),
-        );
-      });
+      await new Promise(r => setTimeout(r, 50));
+      expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
     });
   });
 
@@ -1084,7 +736,7 @@ describe('IndexerFields', () => {
       expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
     });
 
-    it('renders "Unknown" when detection returns undefined classname', async () => {
+    it('renders "Unknown" when refresh result returns undefined classname', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
         metadata: { username: 'TestUser', isVip: false },
@@ -1093,17 +745,14 @@ describe('IndexerFields', () => {
       const user = userEvent.setup();
       renderWithProviders(<MamFieldWithStatus isVip={false} classname="Power User" />);
 
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.clear(mamIdInput);
-      await user.type(mamIdInput, 'new-id');
-      await user.tab();
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('Unknown')).toBeInTheDocument();
       });
     });
 
-    it('shows Exit IP row when detection returns ip (proxy enabled)', async () => {
+    it('shows Exit IP row when refresh result returns ip (proxy enabled)', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
         ip: '203.0.113.42',
@@ -1113,10 +762,7 @@ describe('IndexerFields', () => {
       const user = userEvent.setup();
       renderWithProviders(<MamFieldWithStatus isVip={false} classname="User" />);
 
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.clear(mamIdInput);
-      await user.type(mamIdInput, 'new-id');
-      await user.tab();
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('Exit IP')).toBeInTheDocument();
@@ -1124,7 +770,7 @@ describe('IndexerFields', () => {
       });
     });
 
-    it('does not show Exit IP row when detection returns no ip (no proxy)', async () => {
+    it('does not show Exit IP row when refresh result returns no ip (no proxy)', async () => {
       (api.testIndexerConfig as Mock).mockResolvedValue({
         success: true,
         metadata: { username: 'DirectUser', classname: 'Power User', isVip: false },
@@ -1133,10 +779,7 @@ describe('IndexerFields', () => {
       const user = userEvent.setup();
       renderWithProviders(<MamFieldWithStatus isVip={false} classname="User" />);
 
-      const mamIdInput = screen.getByLabelText('MAM ID');
-      await user.clear(mamIdInput);
-      await user.type(mamIdInput, 'new-id');
-      await user.tab();
+      await user.click(screen.getByTitle('Refresh MAM status'));
 
       await waitFor(() => {
         expect(screen.getByText('DirectUser')).toBeInTheDocument();
@@ -1212,6 +855,83 @@ describe('IndexerFields', () => {
       renderWithProviders(<MamFieldWrapperSimple />);
       expect(screen.queryByRole('checkbox', { name: /english/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('checkbox', { name: /french/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('#1156 — freeleech wedge fields', () => {
+    function WedgeWrapper({ mode = 'never', reserve, status }: { mode?: 'never' | 'preferred' | 'required'; reserve?: number; status?: { isVip: boolean; mamUsername: string; classname?: string; wedges?: number } } = {}) {
+      const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
+        defaultValues: {
+          name: '', type: 'myanonamouse', enabled: true, priority: 50,
+          settings: {
+            mamId: 'test-id', searchLanguages: [1], searchType: 'active',
+            useFreeleechWedge: mode,
+            ...(reserve !== undefined && { minWedgeReserve: reserve }),
+            ...(status?.isVip !== undefined && { isVip: status.isVip }),
+            ...(status?.mamUsername !== undefined && { mamUsername: status.mamUsername }),
+            ...(status?.classname !== undefined && { classname: status.classname }),
+          } as Record<string, unknown>,
+        },
+      });
+      return (
+        <IndexerFields
+          selectedType="myanonamouse"
+          register={register}
+          errors={errors}
+          watch={watch}
+          setValue={setValue}
+          {...(status?.wedges !== undefined ? { formTestResult: { success: true, metadata: { username: status.mamUsername, classname: status.classname, isVip: status.isVip, wedges: status.wedges } } } : {})}
+        />
+      );
+    }
+
+    it('renders the Use Freeleech Wedges dropdown with Never/Preferred/Required options', () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" />);
+      const select = screen.getByLabelText('Use Freeleech Wedges') as HTMLSelectElement;
+      expect(select).toBeInTheDocument();
+      const opts = Array.from(select.options).map(o => o.value);
+      expect(opts).toEqual(['never', 'preferred', 'required']);
+      expect(select.value).toBe('preferred');
+    });
+
+    it('renders the Minimum wedge reserve number input', () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" reserve={3} />);
+      const input = screen.getByLabelText('Minimum wedge reserve') as HTMLInputElement;
+      expect(input).toBeInTheDocument();
+      expect(input.type).toBe('number');
+      expect(input.value).toBe('3');
+      expect(input).not.toBeDisabled();
+    });
+
+    it('disables the reserve input when mode is Never', () => {
+      renderWithProviders(<WedgeWrapper mode="never" />);
+      const input = screen.getByLabelText('Minimum wedge reserve') as HTMLInputElement;
+      expect(input).toBeDisabled();
+    });
+
+    it('Test button result populates the wedges row on the MAM account card', async () => {
+      renderWithProviders(<WedgeWrapper status={{ isVip: false, mamUsername: 'TestUser', classname: 'User', wedges: 4 }} />);
+      await waitFor(() => {
+        expect(screen.getByText('TestUser')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Wedges')).toBeInTheDocument();
+      expect(screen.getByText('4')).toBeInTheDocument();
+    });
+
+    it('renders soft reserve-over-inventory warning when reserve > currentWedges', async () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" reserve={10} status={{ isVip: false, mamUsername: 'U', classname: 'User', wedges: 3 }} />);
+      await waitFor(() => {
+        expect(screen.getByText('U')).toBeInTheDocument();
+      });
+      expect(screen.getByText(/Reserve \(10\) is above current wedge count \(3\)/)).toBeInTheDocument();
+    });
+
+    it('does NOT render the warning when reserve <= currentWedges', async () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" reserve={2} status={{ isVip: false, mamUsername: 'U', classname: 'User', wedges: 5 }} />);
+      await waitFor(() => {
+        expect(screen.getByText('U')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/is above current wedge count/)).not.toBeInTheDocument();
     });
   });
 });
