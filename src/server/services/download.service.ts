@@ -280,6 +280,7 @@ export class DownloadService {
     }
 
     const protocol = params.protocol ?? 'torrent';
+    this.log.debug({ title: params.title, indexerId: params.indexerId, guid: params.guid, isFreeleech: params.isFreeleech, isWired: this.wired.isWired(), hasIndexerService: !!this.wired.peek()?.indexerService }, 'grab: pre-resolveAdapterDownloadUrl');
     const effectiveDownloadUrl = await resolveAdapterDownloadUrl(
       {
         downloadUrl: params.downloadUrl,
@@ -292,6 +293,7 @@ export class DownloadService {
       this.log,
       this.wired.peek()?.indexerService,
     );
+    this.log.debug({ title: params.title, urlChanged: effectiveDownloadUrl !== params.downloadUrl }, 'grab: post-resolveAdapterDownloadUrl');
     const { artifact, infoHash } = await resolveArtifact(effectiveDownloadUrl, protocol, () => this.buildLanAllowlist());
 
     this.log.debug({ protocol, downloadUrl: sanitizeLogUrl(effectiveDownloadUrl), infoHash }, 'Sending download to client');

@@ -48,8 +48,9 @@ describe('download-resolve-adapter-url', () => {
 
     expect(log.info).not.toHaveBeenCalled();
     expect(log.warn).not.toHaveBeenCalled();
-    expect(log.debug).not.toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
+    const debugMsgs = (log.debug as ReturnType<typeof vi.fn>).mock.calls.map(c => c[1]);
+    expect(debugMsgs).not.toContain('MAM wedge decision');
   });
 
   it('logWedgeOutcome for failed-spend includes wedgeCause in log payload', async () => {
@@ -143,8 +144,9 @@ describe('download-resolve-adapter-url', () => {
 
     await resolveAdapterDownloadUrl(params, log, indexerService as never);
 
-    expect(log.debug).toHaveBeenCalledTimes(1);
-    const payload = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    const outcomeCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls.find(c => c[1] === 'MAM wedge decision');
+    expect(outcomeCall).toBeTruthy();
+    const payload = outcomeCall![0];
     expect(payload).toMatchObject({
       indexerId: 1,
       title: 'Test Book',

@@ -1075,8 +1075,11 @@ describe('DownloadService', () => {
         expect.objectContaining({ downloadUrl: expect.stringContaining('data:application/x-bittorrent') }),
         expect.any(String),
       );
-      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
-      expect(debugCall.downloadUrl).not.toContain(torrentContent.toString('base64'));
+      const sendingCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+        c => typeof c[1] === 'string' && c[1].includes('Sending download'),
+      );
+      expect(sendingCall).toBeTruthy();
+      expect((sendingCall![0] as Record<string, unknown>).downloadUrl).not.toContain(torrentContent.toString('base64'));
     });
 
     it('logs sanitized URL for HTTP URL with credential query params', async () => {
@@ -1102,7 +1105,11 @@ describe('DownloadService', () => {
         protocol: 'usenet',
       });
 
-      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      const sendingCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+        c => typeof c[1] === 'string' && c[1].includes('Sending download'),
+      );
+      expect(sendingCall).toBeTruthy();
+      const debugCall = sendingCall![0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).toBe('https://indexer.example.com/api/v1/download/12345');
       expect(debugCall.downloadUrl).not.toContain('SECRETKEY123');
     });
@@ -1129,7 +1136,11 @@ describe('DownloadService', () => {
         title: 'Test Magnet',
       });
 
-      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      const sendingCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls.find(
+        c => typeof c[1] === 'string' && c[1].includes('Sending download'),
+      );
+      expect(sendingCall).toBeTruthy();
+      const debugCall = sendingCall![0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).toBe('magnet:[aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d]');
       expect(debugCall.downloadUrl).not.toContain('tracker.example.com');
     });

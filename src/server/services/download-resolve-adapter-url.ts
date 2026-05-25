@@ -27,12 +27,26 @@ export async function resolveAdapterDownloadUrl(
   log: FastifyBaseLogger,
   indexerService: IndexerService | undefined,
 ): Promise<string> {
-  if (params.indexerId === undefined || !indexerService) return params.downloadUrl;
+  log.debug({ ...buildLogPayload(params), hasIndexerService: !!indexerService }, 'resolveAdapterDownloadUrl: entry');
+
+  if (params.indexerId === undefined || !indexerService) {
+    log.debug({ indexerId: params.indexerId, hasIndexerService: !!indexerService }, 'resolveAdapterDownloadUrl: short-circuit — no indexerId or indexerService');
+    return params.downloadUrl;
+  }
 
   const indexer = await indexerService.getById(params.indexerId);
-  if (!indexer) return params.downloadUrl;
+  if (!indexer) {
+    log.debug({ indexerId: params.indexerId }, 'resolveAdapterDownloadUrl: short-circuit — indexer not found by id');
+    return params.downloadUrl;
+  }
+
   const adapter: IndexerAdapter = await indexerService.getAdapter(indexer);
-  if (!adapter.resolveDownloadUrl) return params.downloadUrl;
+  log.debug({ indexerId: params.indexerId, adapterType: adapter.type, hasResolveHook: !!adapter.resolveDownloadUrl }, 'resolveAdapterDownloadUrl: adapter resolved');
+
+  if (!adapter.resolveDownloadUrl) {
+    log.debug({ indexerId: params.indexerId, adapterType: adapter.type }, 'resolveAdapterDownloadUrl: short-circuit — adapter has no resolveDownloadUrl hook');
+    return params.downloadUrl;
+  }
 
   const ctx: ResolveDownloadContext = {
     ...(params.guid !== undefined && { guid: params.guid }),
@@ -40,16 +54,20 @@ export async function resolveAdapterDownloadUrl(
     protocol: params.protocol,
     isFreeleech: params.isFreeleech ?? false,
   };
+  log.debug({ ...buildLogPayload(params), isFreeleech: ctx.isFreeleech, protocol: ctx.protocol }, 'resolveAdapterDownloadUrl: calling adapter.resolveDownloadUrl');
 
   let result: ResolveDownloadResult;
   try {
     result = await adapter.resolveDownloadUrl(ctx);
   } catch (error: unknown) {
+    log.debug({ ...buildLogPayload(params), errorType: error instanceof Error ? error.constructor.name : typeof error }, 'resolveAdapterDownloadUrl: adapter threw');
     if (error instanceof IndexerError) {
       logHookError(log, error, params);
     }
     throw error;
   }
+
+  log.debug({ ...buildLogPayload(params), wedgeOutcome: result.wedgeOutcome, hasDownloadUrl: !!result.downloadUrl }, 'resolveAdapterDownloadUrl: adapter returned');
 
   if (result.wedgeOutcome !== undefined) {
     logWedgeOutcome(log, result.wedgeOutcome, result.wedgeCause, params);
