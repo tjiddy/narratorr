@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { createProxyAgent } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { ProxyError, IndexerError } from './errors.js';
@@ -6,6 +5,8 @@ import { getErrorMessageWithCause } from '../../shared/error-message.js';
 import type { ResolveDownloadContext, WedgeOutcome } from './types.js';
 import type { WedgeMode } from '../../shared/schemas/indexer.js';
 import { WEDGE_FETCH_TIMEOUT_MS } from '../utils/constants.js';
+import { z } from 'zod';
+import { mamUserStatusSchema } from './mam-schemas.js';
 
 /** Sentinel prefix used as `SearchResult.downloadUrl` for MAM results — the real torrent is fetched at grab time. */
 export const MAM_TORRENT_SENTINEL_PREFIX = 'mam-torrent://';
@@ -14,10 +15,6 @@ const MAM_SENTINEL_PATTERN = /^mam-torrent:\/\/(\d+)$/;
 export const mamBonusBuyResponseSchema = z.object({
   success: z.boolean().nullish(),
   error: z.string().nullish(),
-}).passthrough();
-
-const mamWedgeStatusSchema = z.object({
-  wedges: z.number().nullish(),
 }).passthrough();
 
 /**
@@ -96,38 +93,43 @@ export async function fetchCurrentWedges(cfg: WedgeRequestConfig): Promise<numbe
   } catch (err: unknown) {
     throw new IndexerError(cfg.indexerName, 'MAM returned invalid JSON for wedge status', { cause: err instanceof Error ? err : undefined });
   }
-  const parsed = mamWedgeStatusSchema.safeParse(raw);
+  const parsed = mamUserStatusSchema.safeParse(raw);
   if (!parsed.success || typeof parsed.data.wedges !== 'number') {
     throw new IndexerError(cfg.indexerName, 'MAM user-status response missing numeric wedges field');
   }
   return parsed.data.wedges;
 }
 
+export interface WedgeSpendResult {
+  outcome: WedgeOutcome;
+  cause?: string;
+}
+
 /** POST `/json/bonusBuy.php/{ts}` to spend one wedge on the given torrent id. */
-export async function spendWedge(cfg: WedgeRequestConfig, tid: number): Promise<WedgeOutcome> {
+export async function spendWedge(cfg: WedgeRequestConfig, tid: number): Promise<WedgeSpendResult> {
   const ts = Math.floor(Date.now() / 1000);
   const url = `${cfg.baseUrl}/json/bonusBuy.php/${ts}?spendtype=personalFL&torrentid=${tid}&timestamp=${ts}`;
   let body: string;
   try {
     body = await mamRequest(cfg, url, 'POST', WEDGE_FETCH_TIMEOUT_MS);
-  } catch {
-    return 'failed-spend';
+  } catch (error: unknown) {
+    return { outcome: 'failed-spend', cause: getErrorMessageWithCause(error) };
   }
 
   let raw: unknown;
   try {
     raw = JSON.parse(body);
-  } catch {
-    return 'failed-spend';
+  } catch (error: unknown) {
+    return { outcome: 'failed-spend', cause: getErrorMessageWithCause(error) };
   }
   const parsed = mamBonusBuyResponseSchema.safeParse(raw);
-  if (!parsed.success) return 'failed-spend';
+  if (!parsed.success) return { outcome: 'failed-spend', cause: 'Unexpected bonusBuy response shape' };
 
-  if (parsed.data.success === true) return 'spent';
+  if (parsed.data.success === true) return { outcome: 'spent' };
   const error = parsed.data.error ?? '';
-  if (error.includes('This Torrent is VIP')) return 'skipped-already-vip';
-  if (error.includes('This is already a personal freeleech')) return 'skipped-idempotent';
-  return 'failed-spend';
+  if (error.includes('This Torrent is VIP')) return { outcome: 'skipped-already-vip' };
+  if (error.includes('This is already a personal freeleech')) return { outcome: 'skipped-idempotent' };
+  return { outcome: 'failed-spend', cause: error || 'Unknown bonusBuy error' };
 }
 
 /**
@@ -140,19 +142,19 @@ export async function decideWedgeSpend(
   minReserve: number,
   tid: number,
   ctxIsFreeleech: boolean,
-): Promise<WedgeOutcome> {
-  if (mode === 'never') return 'skipped-mode-never';
-  if (ctxIsFreeleech) return 'skipped-already-free';
+): Promise<WedgeSpendResult> {
+  if (mode === 'never') return { outcome: 'skipped-mode-never' };
+  if (ctxIsFreeleech) return { outcome: 'skipped-already-free' };
 
   let currentWedges: number;
   try {
     currentWedges = await fetchCurrentWedges(cfg);
   } catch {
-    return 'skipped-fetch-failed';
+    return { outcome: 'skipped-fetch-failed' };
   }
 
   if (currentWedges - minReserve < 1) {
-    return 'skipped-no-inventory';
+    return { outcome: 'skipped-no-inventory' };
   }
 
   return spendWedge(cfg, tid);

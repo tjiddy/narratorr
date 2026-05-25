@@ -110,6 +110,7 @@ export interface ResolveDownloadContext {
 export interface ResolveDownloadResult {
   downloadUrl: string;
   wedgeOutcome?: WedgeOutcome;
+  wedgeCause?: string;
 }
 
 export interface IndexerAdapter {
