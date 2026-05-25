@@ -382,19 +382,25 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       throw new IndexerError(this.name, `MAM resolveDownloadUrl: unable to derive torrent id from guid=${ctx.guid ?? 'undefined'} url=${ctx.downloadUrl}`);
     }
 
-    const wedgeOutcome = await decideWedgeSpend(this.wedgeCfg(), this.useFreeleechWedge, this.minWedgeReserve, tid, ctx.isFreeleech);
-    if (this.useFreeleechWedge === 'required' && isWedgeFailureOutcome(wedgeOutcome)) {
-      throw new IndexerError(this.name, `MAM wedge spend failed in Required mode (${wedgeOutcome}) for tid=${tid}`, { wedgeOutcome });
+    const decision = await decideWedgeSpend(this.wedgeCfg(), this.useFreeleechWedge, this.minWedgeReserve, tid, ctx.isFreeleech);
+    if (this.useFreeleechWedge === 'required' && isWedgeFailureOutcome(decision.outcome)) {
+      throw new IndexerError(this.name, `MAM wedge spend failed in Required mode (${decision.outcome}) for tid=${tid}`, {
+        wedgeOutcome: decision.outcome,
+        cause: decision.cause ? new Error(decision.cause) : undefined,
+      });
     }
 
-    return this.fetchTorrentForResolve(tid, wedgeOutcome);
+    return this.fetchTorrentForResolve(tid, decision.outcome, decision.cause);
   }
 
   private wedgeCfg() {
+    if (!this.baseUrl) {
+      throw new IndexerError(this.name, 'MAM wedge config: baseUrl is empty');
+    }
     return { baseUrl: this.baseUrl, mamId: this.mamId, proxyUrl: this.proxyUrl, indexerName: this.name };
   }
 
-  private async fetchTorrentForResolve(tid: number, wedgeOutcome: WedgeOutcome): Promise<ResolveDownloadResult> {
+  private async fetchTorrentForResolve(tid: number, wedgeOutcome: WedgeOutcome, wedgeCause?: string): Promise<ResolveDownloadResult> {
     let downloadUrl: string | undefined;
     try {
       downloadUrl = await this.fetchTorrentAsDataUri(tid);
@@ -408,7 +414,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     if (!downloadUrl) {
       throw new IndexerError(this.name, `MAM torrent fetch returned no data for tid=${tid}`, { wedgeOutcome });
     }
-    return { downloadUrl, wedgeOutcome };
+    return { downloadUrl, wedgeOutcome, ...(wedgeCause !== undefined && { wedgeCause }) };
   }
 
   /**
