@@ -105,13 +105,13 @@ export interface WedgeSpendResult {
   cause?: string;
 }
 
-/** POST `/json/bonusBuy.php/{ts}` to spend one wedge on the given torrent id. */
+/** GET `/json/bonusBuy.php/{ts}` to spend one wedge on the given torrent id. */
 export async function spendWedge(cfg: WedgeRequestConfig, tid: number): Promise<WedgeSpendResult> {
   const ts = Math.floor(Date.now() / 1000);
   const url = `${cfg.baseUrl}/json/bonusBuy.php/${ts}?spendtype=personalFL&torrentid=${tid}&timestamp=${ts}`;
   let body: string;
   try {
-    body = await mamRequest(cfg, url, 'POST', WEDGE_FETCH_TIMEOUT_MS);
+    body = await mamRequest(cfg, url, 'GET', WEDGE_FETCH_TIMEOUT_MS);
   } catch (error: unknown) {
     return { outcome: 'failed-spend', cause: getErrorMessageWithCause(error) };
   }

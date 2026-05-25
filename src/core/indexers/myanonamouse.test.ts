@@ -1832,7 +1832,7 @@ describe('MyAnonamouseIndexer', () => {
     }
 
     function stubBonusBuy(s: ReturnType<typeof useMswServer>, body: Record<string, unknown>, status = 200) {
-      s.use(http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.json(body, { status })));
+      s.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.json(body, { status })));
     }
 
     it('useFreeleechWedge=never short-circuits to skipped-mode-never, no /jsonLoad fetch', async () => {
@@ -1863,7 +1863,7 @@ describe('MyAnonamouseIndexer', () => {
     it('Preferred + reserve denies spend → skipped-no-inventory (downloadUrl still returned)', async () => {
       stubJsonLoadWedges(server, 3);
       let bonusBuyHit = false;
-      server.use(http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => { bonusBuyHit = true; return HttpResponse.json({ success: true }); }));
+      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => { bonusBuyHit = true; return HttpResponse.json({ success: true }); }));
       stubTorrentDownload(server);
 
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred', minWedgeReserve: 3 });
@@ -1910,7 +1910,7 @@ describe('MyAnonamouseIndexer', () => {
       let postedUrl = '';
       server.use(
         http.get(`${customBase}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 'User', wedges: 5 })),
-        http.post(`${customBase}/json/bonusBuy.php/:ts`, ({ request }) => { postedUrl = request.url; return HttpResponse.json({ success: true }); }),
+        http.get(`${customBase}/json/bonusBuy.php/:ts`, ({ request }) => { postedUrl = request.url; return HttpResponse.json({ success: true }); }),
         http.get(`${customBase}/tor/download.php`, () => new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } })),
       );
 
@@ -1980,7 +1980,7 @@ describe('MyAnonamouseIndexer', () => {
       stubJsonLoadWedges(server, 5);
       let postedQuery = '';
       server.use(
-        http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, ({ request }) => {
+        http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, ({ request }) => {
           postedQuery = new URL(request.url).search;
           return HttpResponse.json({ success: true });
         }),
@@ -1995,7 +1995,7 @@ describe('MyAnonamouseIndexer', () => {
       stubJsonLoadWedges(server, 5);
       let postedQuery = '';
       server.use(
-        http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, ({ request }) => {
+        http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, ({ request }) => {
           postedQuery = new URL(request.url).search;
           return HttpResponse.json({ success: true });
         }),
@@ -2055,7 +2055,7 @@ describe('MyAnonamouseIndexer', () => {
 
     it('spendWedge transport failure includes cause in failed-spend (Preferred proceeds with wedgeCause)', async () => {
       stubJsonLoadWedges(server, 5);
-      server.use(http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.error()));
+      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.error()));
       stubTorrentDownload(server);
 
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
@@ -2066,7 +2066,7 @@ describe('MyAnonamouseIndexer', () => {
 
     it('spendWedge JSON parse failure includes cause (Preferred proceeds with wedgeCause)', async () => {
       stubJsonLoadWedges(server, 5);
-      server.use(http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => new HttpResponse('not-json', { headers: { 'Content-Type': 'text/plain' } })));
+      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => new HttpResponse('not-json', { headers: { 'Content-Type': 'text/plain' } })));
       stubTorrentDownload(server);
 
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
@@ -2077,7 +2077,7 @@ describe('MyAnonamouseIndexer', () => {
 
     it('Required mode failed-spend threads cause into IndexerError.cause', async () => {
       stubJsonLoadWedges(server, 5);
-      server.use(http.post(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.error()));
+      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.error()));
 
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'required' });
       const err = await wedgeIndexer
@@ -2105,7 +2105,7 @@ describe('MyAnonamouseIndexer', () => {
       let jsonLoadUrl = '';
       server.use(
         http.get(`${defaultBase}/jsonLoad.php`, ({ request }) => { jsonLoadUrl = request.url; return HttpResponse.json({ username: 'u', classname: 'User', wedges: 5 }); }),
-        http.post(`${defaultBase}/json/bonusBuy.php/:ts`, () => HttpResponse.json({ success: true })),
+        http.get(`${defaultBase}/json/bonusBuy.php/:ts`, () => HttpResponse.json({ success: true })),
         http.get(`${defaultBase}/tor/download.php`, () => new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } })),
       );
 
