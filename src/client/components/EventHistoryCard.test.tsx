@@ -152,6 +152,26 @@ describe('EventHistoryCard', () => {
 
     expect(screen.getByText('unknown_type')).toBeInTheDocument();
   });
+
+  // #1157 — grab_failed event rendering
+  it('grab_failed renders with label "Grab Failed" (not raw event type)', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'grab_failed' })} />);
+    expect(screen.getByText('Grab Failed')).toBeInTheDocument();
+    expect(screen.queryByText('grab_failed')).not.toBeInTheDocument();
+  });
+
+  it('grab_failed reveals both release title and error in detail panel', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<EventHistoryCard event={createMockEvent({
+      eventType: 'grab_failed',
+      reason: { error: 'Connection refused', release_title: 'My.Book.MP3' },
+    })} />);
+
+    await user.click(screen.getByText('View details'));
+    expect(screen.getByText('Release:')).toBeInTheDocument();
+    expect(screen.getByText('My.Book.MP3')).toBeInTheDocument();
+    expect(screen.getByText('Connection refused')).toBeInTheDocument();
+  });
 });
 
 // ============================================================================

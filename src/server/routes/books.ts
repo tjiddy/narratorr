@@ -20,7 +20,7 @@ export interface BookRouteDeps {
   renameService: RenameService;
   mergeService: MergeService;
   taggingService: TaggingService;
-  eventHistory?: EventHistoryService;
+  eventHistory: EventHistoryService;
   indexerSearchService?: IndexerSearchService;
   indexerService?: IndexerService;
   bookRejectionService?: BookRejectionService;
@@ -143,20 +143,18 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
 
       const book = await deps.bookService.create(body);
 
-      if (deps.eventHistory) {
-        deps.eventHistory.create({
-          bookId: book.id,
-          ...snapshotBookForEvent(book),
-          eventType: 'book_added',
-          source: 'manual',
-        }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
-      }
+      deps.eventHistory.create({
+        bookId: book.id,
+        ...snapshotBookForEvent(book),
+        eventType: 'book_added',
+        source: 'manual',
+      }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
 
       request.log.info({ title: body.title }, 'Book added');
 
       if (body.searchImmediately && book.status === 'wanted' && deps.indexerSearchService && deps.blacklistService && deps.indexerService) {
-        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService, indexerService } = deps;
-        triggerImmediateSearch(book, { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster }, request.log);
+        const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService, indexerService, eventHistory } = deps;
+        triggerImmediateSearch(book, { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, eventHistory }, request.log);
       }
 
       // Series card lazily populates on first GET via SeriesCardService when
@@ -207,7 +205,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookR
   });
 }
 
-function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerSearchService' | 'indexerService' | 'blacklistService' | 'eventBroadcaster'>) {
+function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerSearchService' | 'indexerService' | 'blacklistService' | 'eventBroadcaster' | 'eventHistory'>) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
@@ -230,6 +228,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
         request.log,
         deps.blacklistService!,
         deps.indexerService!,
+        deps.eventHistory,
         deps.eventBroadcaster,
       );
       if (result.result === 'grab_error') {

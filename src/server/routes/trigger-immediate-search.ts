@@ -4,6 +4,7 @@ import type { IndexerSearchService, SettingsService, IndexerService } from '../s
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { EventHistoryService } from '../services/event-history.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -13,6 +14,7 @@ export interface ImmediateSearchDeps {
   downloadOrchestrator: DownloadOrchestrator;
   settingsService: SettingsService;
   blacklistService: BlacklistService;
+  eventHistory: EventHistoryService;
   eventBroadcaster?: EventBroadcasterService | undefined;
 }
 
@@ -25,7 +27,7 @@ export function triggerImmediateSearch(
   Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
     .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      await searchAndGrabForBook(book, deps.indexerSearchService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.indexerService, deps.eventBroadcaster);
+      await searchAndGrabForBook(book, deps.indexerSearchService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.indexerService, deps.eventHistory, deps.eventBroadcaster);
     })
     .catch((err: unknown) => {
       log.warn({ error: serializeError(err), bookId: book.id }, 'Search-immediately trigger failed');

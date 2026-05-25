@@ -116,4 +116,12 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('Protocol:')).toBeInTheDocument();
     expect(screen.getByText('Size:')).toBeInTheDocument();
   });
+
+  // #1157 — grab_failed renders both release_title and error
+  it('grab_failed — renders both release title and error message', () => {
+    render(<EventReasonDetails eventType="grab_failed" reason={{ error: 'Connection refused', release_title: 'My.Book.MP3' }} indexerMap={emptyMap} />);
+    expect(screen.getByText('Release:')).toBeInTheDocument();
+    expect(screen.getByText('My.Book.MP3')).toBeInTheDocument();
+    expect(screen.getByText('Connection refused')).toBeInTheDocument();
+  });
 });

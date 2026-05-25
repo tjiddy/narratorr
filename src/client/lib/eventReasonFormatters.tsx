@@ -70,6 +70,16 @@ function HeldForReviewDetails({ reason }: { reason: Record<string, unknown> }) {
   return <QualityComparisonPanel data={reason as unknown as QualityGateData} />;
 }
 
+function GrabFailedDetails({ reason }: { reason: Record<string, unknown> }) {
+  const releaseTitle = reason.release_title as string | undefined;
+  return (
+    <div className="space-y-2">
+      {releaseTitle && <KeyValueRow label="Release" value={releaseTitle} />}
+      <ErrorDetails reason={reason} />
+    </div>
+  );
+}
+
 function GenericDetails({ reason }: { reason: Record<string, unknown> }) {
   const entries = Object.entries(reason).filter(([, v]) => v != null);
   if (entries.length === 0) return null;
@@ -94,6 +104,7 @@ const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown
   merge_failed: ({ reason }) => <ErrorDetails reason={reason} />,
   download_failed: ({ reason }) => <ErrorDetails reason={reason} />,
   held_for_review: ({ reason }) => <HeldForReviewDetails reason={reason} />,
+  grab_failed: ({ reason }) => <GrabFailedDetails reason={reason} />,
 };
 
 /** Renders formatted event reason details based on event type. */

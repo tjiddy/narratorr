@@ -360,14 +360,41 @@ describe('#392 search progress — SSE event schemas', () => {
     it('rejects payload with invalid outcome string', () => {
       expect(() => searchCompletePayload.parse({ book_id: 1, total_results: 0, outcome: 'invalid' })).toThrow();
     });
+
+    // #1157 — optional book_title / release_title / error_message populated on grab_error
+    it('accepts grab_error payload with book_title, release_title, and error_message', () => {
+      const valid = {
+        book_id: 1,
+        total_results: 3,
+        outcome: 'grab_error',
+        book_title: 'My Book',
+        release_title: 'Release.MP3',
+        error_message: 'Connection refused',
+      };
+      expect(searchCompletePayload.parse(valid)).toEqual(valid);
+    });
+
+    it('omits book_title / release_title / error_message for non-grab_error outcomes', () => {
+      const valid = { book_id: 1, total_results: 1, outcome: 'grabbed' };
+      const parsed = searchCompletePayload.parse(valid);
+      expect(parsed).not.toHaveProperty('book_title');
+      expect(parsed).not.toHaveProperty('release_title');
+      expect(parsed).not.toHaveProperty('error_message');
+    });
   });
 
   describe('cache invalidation matrix for search events', () => {
-    it('all 5 search event types have empty {} entries (ephemeral, no cache impact)', () => {
-      const searchEvents = ['search_started', 'search_indexer_complete', 'search_indexer_error', 'search_grabbed', 'search_complete'] as const;
+    it('search progress event types have empty {} entries (ephemeral, no cache impact)', () => {
+      const searchEvents = ['search_started', 'search_indexer_complete', 'search_indexer_error', 'search_grabbed'] as const;
       for (const event of searchEvents) {
         expect(CACHE_INVALIDATION_MATRIX[event]).toEqual({});
       }
+    });
+
+    // #1157 — search_complete invalidates eventHistory so a new grab_failed row
+    // appears on the Activity page without a manual refresh.
+    it('search_complete invalidates eventHistory', () => {
+      expect(CACHE_INVALIDATION_MATRIX.search_complete).toEqual({ eventHistory: 'invalidate' });
     });
   });
 });

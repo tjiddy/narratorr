@@ -347,6 +347,7 @@ describe('Job lifecycle E2E', () => {
       e2e.app.log,
       e2e.services.blacklist,
       e2e.services.indexer,
+      e2e.services.eventHistory,
     );
 
     expect(result.searched).toBeGreaterThanOrEqual(1);

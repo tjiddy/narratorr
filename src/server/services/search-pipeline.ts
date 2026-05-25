@@ -11,6 +11,8 @@ import { DuplicateDownloadError } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { EventHistoryService } from './event-history.service.js';
+import { recordGrabFailedEvent } from '../utils/download-side-effects.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
@@ -348,6 +350,7 @@ async function searchWithBroadcaster(
   blacklistService: BlacklistService,
   indexerService: IndexerService,
   broadcaster: EventBroadcasterService,
+  eventHistory: EventHistoryService,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
   const enabledIndexers = await indexerSearchService.getEnabledIndexers();
@@ -418,11 +421,32 @@ async function searchWithBroadcaster(
   } else if (grabResult.result === 'skipped') {
     safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'skipped' }, log);
   } else if (grabResult.result === 'grab_error') {
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'grab_error' }, log);
+    emitGrabError(grabResult.error, book, best.title, totalResults, broadcaster, eventHistory, log);
   } else {
     safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
   }
   return grabResult;
+}
+
+function emitGrabError(
+  error: Error,
+  book: { id: number; title: string; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
+  releaseTitle: string,
+  totalResults: number,
+  broadcaster: EventBroadcasterService,
+  eventHistory: EventHistoryService,
+  log: FastifyBaseLogger,
+): void {
+  const errorMessage = error.message || 'Unknown grab error';
+  safeEmit(broadcaster, 'search_complete', {
+    book_id: book.id,
+    total_results: totalResults,
+    outcome: 'grab_error',
+    book_title: book.title,
+    error_message: errorMessage,
+    release_title: releaseTitle,
+  }, log);
+  recordGrabFailedEvent({ book, releaseTitle, errorMessage, eventHistory, log });
 }
 
 /**
@@ -441,10 +465,11 @@ export async function searchAndGrabForBook(
   log: FastifyBaseLogger,
   blacklistService: BlacklistService,
   indexerService: IndexerService,
+  eventHistory: EventHistoryService,
   broadcaster?: EventBroadcasterService,
 ): Promise<SingleBookSearchResult> {
   if (broadcaster) {
-    return searchWithBroadcaster(book, indexerSearchService, downloadOrchestrator, qualitySettings, log, blacklistService, indexerService, broadcaster);
+    return searchWithBroadcaster(book, indexerSearchService, downloadOrchestrator, qualitySettings, log, blacklistService, indexerService, broadcaster, eventHistory);
   }
 
   const query = buildSearchQuery(book);
@@ -477,5 +502,10 @@ export async function searchAndGrabForBook(
     return { result: 'no_results' };
   }
 
-  return tryGrab(best, book, downloadOrchestrator, log);
+  const grabResult = await tryGrab(best, book, downloadOrchestrator, log);
+  if (grabResult.result === 'grab_error') {
+    const errorMessage = grabResult.error.message || 'Unknown grab error';
+    recordGrabFailedEvent({ book, releaseTitle: best.title, errorMessage, eventHistory, log });
+  }
+  return grabResult;
 }

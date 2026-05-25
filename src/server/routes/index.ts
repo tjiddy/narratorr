@@ -201,6 +201,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     downloadOrchestrator,
     settingsService: settings,
     blacklistService,
+    eventHistory,
     eventBroadcaster,
   });
   const taskRegistry = new TaskRegistry();

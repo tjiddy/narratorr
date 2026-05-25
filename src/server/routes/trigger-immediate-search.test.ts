@@ -23,6 +23,7 @@ function createMockDeps(): ImmediateSearchDeps {
         .mockResolvedValueOnce({ searchPriority: 'accuracy' }), // search
     } as never,
     blacklistService: {} as never,
+    eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) } as never,
     eventBroadcaster: {} as never,
   };
 }
