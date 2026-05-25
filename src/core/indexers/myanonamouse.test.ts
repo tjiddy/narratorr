@@ -2061,7 +2061,7 @@ describe('MyAnonamouseIndexer', () => {
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
       const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
       expect(result.wedgeOutcome).toBe('failed-spend');
-      expect(result.wedgeCause).toBeDefined();
+      expect(result.wedgeCause).toEqual(expect.stringMatching(/failed|abort|error|refused|reset/i));
     });
 
     it('spendWedge JSON parse failure includes cause (Preferred proceeds with wedgeCause)', async () => {
@@ -2072,7 +2072,7 @@ describe('MyAnonamouseIndexer', () => {
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
       const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
       expect(result.wedgeOutcome).toBe('failed-spend');
-      expect(result.wedgeCause).toBeDefined();
+      expect(result.wedgeCause).toEqual(expect.stringContaining('not-json'));
     });
 
     it('Required mode failed-spend threads cause into IndexerError.cause', async () => {
@@ -2085,7 +2085,19 @@ describe('MyAnonamouseIndexer', () => {
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(IndexerError);
       expect((err as IndexerError).wedgeOutcome).toBe('failed-spend');
-      expect((err as IndexerError).cause).toBeInstanceOf(Error);
+      const cause = (err as IndexerError).cause;
+      expect(cause).toBeInstanceOf(Error);
+      expect((cause as Error).message).toEqual(expect.stringMatching(/failed|abort|error|refused|reset/i));
+    });
+
+    it('wedgeCfg() invariant throws IndexerError when baseUrl is empty', async () => {
+      const wedgeIndexer = makeWedgeIndexer();
+      // Force baseUrl empty after construction to exercise the wedgeCfg invariant directly
+      (wedgeIndexer as unknown as { baseUrl: string }).baseUrl = '';
+
+      await expect(
+        wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false }),
+      ).rejects.toThrow('baseUrl is empty');
     });
 
     it('empty-string baseUrl in constructor falls back to DEFAULT_BASE_URL for wedge requests', async () => {
