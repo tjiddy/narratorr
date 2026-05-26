@@ -903,5 +903,47 @@ describe('IndexerFields', () => {
       expect(screen.getByText('Wedges')).toBeInTheDocument();
       expect(screen.getByText('4')).toBeInTheDocument();
     });
+
+    it('hidden wedge fields are registered with react-hook-form', () => {
+      const registeredNames: Array<{ name: string; options?: Record<string, unknown> }> = [];
+      function SpyWrapper() {
+        const form = useForm<CreateIndexerFormData>({
+          defaultValues: {
+            name: '', type: 'myanonamouse', enabled: true, priority: 50,
+            settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', useFreeleechWedge: 'preferred', minWedgeReserve: 5 } as Record<string, unknown>,
+          },
+        });
+        const originalRegister = form.register;
+        const spyRegister = new Proxy(originalRegister, {
+          apply(target, thisArg, args: [string, ...unknown[]]) {
+            registeredNames.push({ name: args[0], ...(args[1] ? { options: args[1] as Record<string, unknown> } : {}) });
+            return Reflect.apply(target, thisArg, args);
+          },
+        }) as typeof originalRegister;
+        return (
+          <IndexerFields
+            selectedType="myanonamouse"
+            register={spyRegister}
+            errors={form.formState.errors}
+            watch={form.watch}
+            setValue={form.setValue}
+          />
+        );
+      }
+      renderWithProviders(<SpyWrapper />);
+      const wedgeModeEntry = registeredNames.find(r => r.name === 'settings.useFreeleechWedge');
+      const reserveEntry = registeredNames.find(r => r.name === 'settings.minWedgeReserve');
+      expect(wedgeModeEntry).toBeDefined();
+      expect(reserveEntry).toBeDefined();
+      expect(reserveEntry!.options).toEqual(expect.objectContaining({ valueAsNumber: true }));
+    });
+
+    it('does not render the reserve-over-inventory warning when reserve > currentWedges', async () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" reserve={10} status={{ isVip: false, mamUsername: 'U', classname: 'User', wedges: 3 }} />);
+      await waitFor(() => {
+        expect(screen.getByText('U')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/is above current wedge count/)).not.toBeInTheDocument();
+    });
   });
 });
