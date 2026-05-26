@@ -1,14 +1,14 @@
 import type { BookSortField, BookSortDirection } from '../../shared/schemas/book.js';
 import type { LibraryBookListItemRow } from './book-list.service.js';
 import { toSortTitle } from '../../core/utils/naming.js';
+import { resolveBookQualityInputs } from '../../core/utils/quality.js';
 
 type SortKeyExtractor = (row: LibraryBookListItemRow) => string | number | null;
 
 function qualitySortKey(row: LibraryBookListItemRow): number | null {
-  const size = row.audioTotalSize ?? row.size;
-  const dur = row.audioDuration ?? (row.duration != null ? row.duration * 60 : null);
-  if (size == null || dur == null || dur === 0) return null;
-  return size / dur;
+  const { sizeBytes, durationSeconds } = resolveBookQualityInputs(row);
+  if (!sizeBytes || !durationSeconds) return null;
+  return sizeBytes / durationSeconds;
 }
 
 function titleSortKey(row: LibraryBookListItemRow): string {

@@ -52,6 +52,57 @@ describe('booksApi.listLibraryBooks (#1132)', () => {
   });
 });
 
+describe('booksApi.listLibraryBooks — collapse serialization (#1169)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchApi).mockReset();
+  });
+
+  it('emits collapse=true when collapse is true', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.listLibraryBooks({ collapse: true });
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).toContain('collapse=true');
+  });
+
+  it('omits collapse param when collapse is false', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.listLibraryBooks({ collapse: false });
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).not.toContain('collapse');
+  });
+
+  it('omits collapse param when collapse is undefined', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.listLibraryBooks({});
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).not.toContain('collapse');
+  });
+
+  it('combines collapse with other params', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.listLibraryBooks({ status: 'imported', collapse: true, limit: 10 });
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).toContain('status=imported');
+    expect(path).toContain('collapse=true');
+    expect(path).toContain('limit=10');
+  });
+});
+
+describe('booksApi.getBooks — collapse isolation (#1169)', () => {
+  beforeEach(() => {
+    vi.mocked(fetchApi).mockReset();
+  });
+
+  it('does not serialize collapse param on non-library endpoint', async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ data: [], total: 0 });
+    await booksApi.getBooks({ status: 'wanted' });
+    const [path] = vi.mocked(fetchApi).mock.calls[0]!;
+    expect(path).not.toContain('collapse');
+    expect(path).toContain('/books?');
+    expect(path).not.toContain('/library/');
+  });
+});
+
 describe('booksApi.uploadBookCover', () => {
   beforeEach(() => {
     vi.mocked(fetchMultipart).mockReset();

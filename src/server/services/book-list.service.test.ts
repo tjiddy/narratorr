@@ -623,7 +623,7 @@ describe('BookListService', () => {
   });
 
   describe('getAllForLibrary — collapse (#1169)', () => {
-    function makeRow(overrides: Partial<{ id: number; title: string; seriesName: string | null; seriesPosition: number | null; status: string; createdAt: Date }>) {
+    function makeRow(overrides: Partial<{ id: number; title: string; seriesName: string | null; seriesPosition: number | null; status: string; createdAt: Date; audioTotalSize: number | null; size: number | null; audioDuration: number | null; duration: number | null }>) {
       return {
         id: overrides.id ?? 1,
         title: overrides.title ?? 'Book',
@@ -631,11 +631,11 @@ describe('BookListService', () => {
         status: overrides.status ?? 'imported',
         seriesName: overrides.seriesName ?? null,
         seriesPosition: overrides.seriesPosition ?? null,
-        audioTotalSize: null,
-        size: null,
+        audioTotalSize: overrides.audioTotalSize ?? null,
+        size: overrides.size ?? null,
         audioFileFormat: null,
-        audioDuration: null,
-        duration: null,
+        audioDuration: overrides.audioDuration ?? null,
+        duration: overrides.duration ?? null,
         path: null,
         audioFileCount: null,
         lastGrabGuid: null,
@@ -767,6 +767,25 @@ describe('BookListService', () => {
 
       const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
       expect(result).toEqual({ data: [], total: 0 });
+    });
+
+    it('quality sort with audioDuration=0 falls back to duration field', async () => {
+      // Book 1: 360 MB / (600 min → 36000 sec) ≈ 10 MB/hr (low quality)
+      // Book 2: 100 MB / 3600 sec ≈ 28 MB/hr (higher quality)
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: null, audioTotalSize: 360 * 1024 * 1024, audioDuration: 0, duration: 600 }),
+          makeRow({ id: 2, seriesName: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, {
+        collapse: true, sortField: 'quality', sortDirection: 'asc',
+      });
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0]!.id).toBe(1);
+      expect(result.data[1]!.id).toBe(2);
     });
 
     it('collapse=false returns individual books (non-collapse path)', async () => {
