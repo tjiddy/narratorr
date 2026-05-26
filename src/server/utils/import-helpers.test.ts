@@ -894,5 +894,47 @@ describe('titled-disc import flattening (issue #426)', () => {
       expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3']);
     });
   });
+
+  describe('D-alias disc detection (#1164)', () => {
+    it('sequentially flattens D1/D2 titled-disc folders — Shakespeare for Squirrels regression', async () => {
+      setupDiscLayout([
+        ['Shakespeare for Squirrels (D1)', ['Track01.mp3', 'Track02.mp3']],
+        ['Shakespeare for Squirrels (D2)', ['Track01.mp3', 'Track02.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(4);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3']);
+      // D1 tracks first, then D2
+      const srcPaths = getCopiedSrcPaths();
+      expect(srcPaths[0]).toContain('(D1)');
+      expect(srcPaths[2]).toContain('(D2)');
+    });
+
+    it('sequentially flattens bare D1/D2 folders', async () => {
+      setupDiscLayout([
+        ['D1', ['01.mp3', '02.mp3']],
+        ['D2', ['01.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(3);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3']);
+    });
+
+    it('handles mixed D-alias and CD prefix (D1 + CD2)', async () => {
+      setupDiscLayout([
+        ['D1', ['track.mp3']],
+        ['CD2', ['track.mp3']],
+      ]);
+
+      await copyAudioFiles('/src', '/dest');
+
+      expect(cp).toHaveBeenCalledTimes(2);
+      expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+    });
+  });
 });
 

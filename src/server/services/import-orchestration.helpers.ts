@@ -11,7 +11,7 @@ import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { buildTargetPath, getAudioPathSize } from '../utils/import-helpers.js';
+import { buildTargetPath, getAudioPathSize, COPY_VERIFICATION_THRESHOLD } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -21,8 +21,6 @@ import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
 
-
-const COPY_VERIFICATION_THRESHOLD = 0.99;
 
 export interface ImportPipelineDeps {
   db: Db;

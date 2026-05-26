@@ -303,6 +303,23 @@ describe('discoverBooks', () => {
       expect(result[0]!.path).toBe('/audiobooks/Book');
     });
 
+    it('merges D1/D2 subfolders into the parent book', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Book', isFile: false }],
+        '/audiobooks/Book': [
+          { name: 'D1', isFile: false },
+          { name: 'D2', isFile: false },
+        ],
+        '/audiobooks/Book/D1': [{ name: 'a.mp3', isFile: true, size: 100 }],
+        '/audiobooks/Book/D2': [{ name: 'b.mp3', isFile: true, size: 200 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Book');
+      expect(result[0]!.audioFileCount).toBe(2);
+    });
+
     it('merges case-insensitive disc names (DISC 1, disc 2)', async () => {
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
@@ -477,6 +494,13 @@ describe('discoverBooks', () => {
       },
     );
 
+    it.each(['D1', 'D 2', 'D03', 'd1', 'D 01'])(
+      'matches "%s" (D-alias) as disc folder',
+      async (name) => {
+        expect(await isDiscMerged(name)).toBe(true);
+      },
+    );
+
     it.each([
       'Part 1',
       'Volume 1',
@@ -486,9 +510,11 @@ describe('discoverBooks', () => {
       '01 - Intro',
       'CD',          // no number
       'Disc',        // no number
+      'D',           // no number
       'CD 1234',     // 4 digits (pattern allows 1-3)
       'CD1 bonus',   // trailing text
       'my CD1',      // leading text
+      'D major',     // not a disc folder
     ])(
       'does NOT match "%s" as disc folder',
       async (name) => {
@@ -1466,6 +1492,29 @@ describe('discoverBooks', () => {
       expect(merged.totalSize).toBe(250);
     });
 
+    it('merges titled D-alias folders — Shakespeare for Squirrels (D1)/(D2) regression', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Shakespeare for Squirrels by Christopher Moore', isFile: false }],
+        '/audiobooks/Shakespeare for Squirrels by Christopher Moore': [
+          { name: 'Shakespeare for Squirrels (D1)', isFile: false },
+          { name: 'Shakespeare for Squirrels (D2)', isFile: false },
+        ],
+        '/audiobooks/Shakespeare for Squirrels by Christopher Moore/Shakespeare for Squirrels (D1)': [
+          { name: 'Track01.mp3', isFile: true, size: 1000 },
+          { name: 'Track02.mp3', isFile: true, size: 1000 },
+        ],
+        '/audiobooks/Shakespeare for Squirrels by Christopher Moore/Shakespeare for Squirrels (D2)': [
+          { name: 'Track01.mp3', isFile: true, size: 1000 },
+          { name: 'Track02.mp3', isFile: true, size: 1000 },
+        ],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Shakespeare for Squirrels by Christopher Moore');
+      expect(result[0]!.audioFileCount).toBe(4);
+    });
+
     it('loose audio + titled-disc subfolders merges discs and includes loose files in count', async () => {
       setupFs({
         '/audiobooks': [{ name: 'Book', isFile: false }],
@@ -1850,6 +1899,18 @@ describe('discoverBooks', () => {
         expect(parseTitledDiscFolder('BookTitle (Disk 05)')).toEqual({ title: 'BookTitle', discNumber: 5 });
       });
 
+      it('handles "D" alias — "BookTitle (D1)"', () => {
+        expect(parseTitledDiscFolder('Shakespeare for Squirrels (D1)')).toEqual({ title: 'Shakespeare for Squirrels', discNumber: 1 });
+      });
+
+      it('handles "D" alias with space — "BookTitle (D 2)"', () => {
+        expect(parseTitledDiscFolder('BookTitle (D 2)')).toEqual({ title: 'BookTitle', discNumber: 2 });
+      });
+
+      it('returns null for bare "D1" — handled by DISC_FOLDER_PATTERN', () => {
+        expect(parseTitledDiscFolder('D1')).toBeNull();
+      });
+
       it('returns null for combined parentheticals — disc + narrator', () => {
         // Disc paren is not at end of string, so regex $ anchor rejects
         expect(parseTitledDiscFolder('BookTitle (Disc 01) (Jeff Hays)')).toBeNull();
@@ -2122,6 +2183,8 @@ describe('normalizeAlbumForComparison (#1031)', () => {
     ['Album CD 03', 'Album CD 04'],
     ['Album-Part-01', 'Album_Part_02'],
     ['ALBUM (Disc 1)', 'album (disc 2)'],
+    ['Album (D1)', 'Album (D2)'],
+    ['Album D 1', 'Album D 2'],
   ])('collapses %s and %s to same canonical form', (a, b) => {
     expect(normalizeAlbumForComparison(a)).toBe(normalizeAlbumForComparison(b));
   });
