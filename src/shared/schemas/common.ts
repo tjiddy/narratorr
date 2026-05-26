@@ -24,7 +24,7 @@ export const idParamSchema = z.object({
 
 /** Default page sizes when client omits limit param */
 export const DEFAULT_LIMITS = {
-  books: 100,
+  books: 120,
   blacklist: 100,
   activity: 50,
   eventHistory: 50,

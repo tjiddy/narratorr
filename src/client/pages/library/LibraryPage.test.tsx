@@ -1735,9 +1735,9 @@ describe('LibraryPage — pagination (#183)', () => {
     await user.click(nextButton);
 
     await waitFor(() => {
-      // getBooks should be called with offset=100 for page 2
+      // getBooks should be called with offset=120 for page 2
       expect(vi.mocked(api.listLibraryBooks)).toHaveBeenCalledWith(
-        expect.objectContaining({ offset: 100 }),
+        expect.objectContaining({ offset: 120 }),
       );
     });
   });
@@ -2535,11 +2535,11 @@ describe('LibraryPage — URL param restoration (#352)', () => {
       expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
-    // Page 3 with default limit of 100 → offset 200
+    // Page 3 with default limit of 120 → offset 240
     const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
-      offset: 200,
-      limit: 100,
+      offset: 240,
+      limit: 120,
     });
   });
 

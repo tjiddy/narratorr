@@ -53,7 +53,7 @@ describe('useLibraryFilters', () => {
       search: undefined,
       sortField: 'createdAt',
       sortDirection: 'desc',
-      limit: 100,
+      limit: 120,
       offset: 0,
     });
   });
@@ -363,8 +363,8 @@ describe('useLibraryFilters — URL param initialization', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper('/library?page=3') });
     // Page must be synchronous (no effect flush) so the first API fetch uses the right offset
     expect(result.current.params.pagination.page).toBe(3);
-    expect(result.current.params.pagination.offset).toBe(200);
-    expect(result.current.params.apiParams.offset).toBe(200);
+    expect(result.current.params.pagination.offset).toBe(240);
+    expect(result.current.params.apiParams.offset).toBe(240);
   });
 
   it('falls back to page 1 for ?page=abc', () => {

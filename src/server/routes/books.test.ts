@@ -108,7 +108,7 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
-      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: 100, offset: undefined }, { slim: true });
+      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: 120, offset: undefined }, { slim: true });
     });
 
     it('forwards limit and offset to service', async () => {
@@ -126,7 +126,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 100, offset: undefined },
+        { limit: 120, offset: undefined },
         { slim: true, author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' },
       );
     });
@@ -175,7 +175,7 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, { slim: true });
+      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 120, offset: undefined }, { slim: true });
     });
   });
 
@@ -224,7 +224,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
         undefined,
-        { limit: 100, offset: undefined },
+        { limit: 120, offset: undefined },
         { author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' },
       );
     });
@@ -234,7 +234,7 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/library/books' });
 
-      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: 100, offset: undefined }, {});
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: 120, offset: undefined }, {});
     });
 
     it('rejects ?status=monitored (invalid enum) with 400', async () => {
@@ -2145,7 +2145,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 100, offset: undefined },
+        { limit: 120, offset: undefined },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
       );
     });
@@ -2157,7 +2157,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 100, offset: 50 },
+        { limit: 120, offset: 50 },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
       );
     });
@@ -2184,7 +2184,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 100, offset: undefined },
+        { limit: 120, offset: undefined },
         { slim: true, search: 'tolkien', sortField: undefined, sortDirection: undefined },
       );
     });
@@ -2196,7 +2196,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 100, offset: undefined },
+        { limit: 120, offset: undefined },
         { slim: true, search: undefined, sortField: 'title', sortDirection: 'asc' },
       );
     });

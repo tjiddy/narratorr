@@ -134,7 +134,11 @@ describe('#1103 migration 0004 — data transformations', () => {
   });
 
   afterEach(() => {
-    rmSync(ctx.tmpDir, { recursive: true, force: true });
+    try {
+      rmSync(ctx.tmpDir, { recursive: true, force: true });
+    } catch {
+      // Windows: libsql file handles may linger briefly after close()
+    }
   });
 
   it('drops books.monitor_for_upgrades column and remaps upgraded → imported and scrubs on_upgrade', async () => {
