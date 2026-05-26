@@ -3,6 +3,7 @@ import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
 import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
+import { toSortTitle } from '../../core/utils/naming.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
 
@@ -67,6 +68,54 @@ function pickFilters(options?: { search?: string; author?: string; series?: stri
   if (options?.series !== undefined) out.series = options.series;
   if (options?.narrator !== undefined) out.narrator = options.narrator;
   return out;
+}
+
+function collapsedSortKey(row: LibraryBookListItemRow, field?: BookSortField): string | number | null {
+  const isCollapsed = (row.collapsedCount ?? 0) > 0 || row.collapsedCount === 0;
+  switch (field) {
+    case 'title':
+      if (isCollapsed && row.seriesName) return toSortTitle(row.seriesName);
+      return toSortTitle(row.title);
+    case 'author':
+      return row.authors[0]?.name ?? null;
+    case 'narrator':
+      return row.narrators[0]?.name ?? null;
+    case 'series':
+      return row.seriesName ?? null;
+    case 'quality': {
+      const size = row.audioTotalSize ?? row.size;
+      const dur = row.audioDuration ?? (row.duration != null ? row.duration * 60 : null);
+      if (size == null || dur == null || dur === 0) return null;
+      return size / dur;
+    }
+    case 'size':
+      return row.audioTotalSize ?? row.size ?? null;
+    case 'format':
+      return row.audioFileFormat ?? null;
+    case 'createdAt':
+    default:
+      return row.createdAt.getTime();
+  }
+}
+
+function sortCollapsedRows(rows: LibraryBookListItemRow[], sortField?: BookSortField, sortDirection?: BookSortDirection): void {
+  const dir = sortDirection === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    const aKey = collapsedSortKey(a, sortField);
+    const bKey = collapsedSortKey(b, sortField);
+    if (aKey === null && bKey === null) return 0;
+    if (aKey === null) return 1;
+    if (bKey === null) return -1;
+    let cmp: number;
+    if (typeof aKey === 'string' && typeof bKey === 'string') {
+      cmp = aKey.localeCompare(bKey);
+    } else {
+      cmp = (aKey as number) - (bKey as number);
+    }
+    if (cmp !== 0) return cmp * dir;
+    const idCmp = a.id - b.id;
+    return idCmp * dir;
+  });
 }
 
 export class BookListService {
@@ -219,16 +268,19 @@ export class BookListService {
   async getAllForLibrary(
     status?: BookStatus,
     pagination?: { limit?: number; offset?: number },
-    options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection },
+    options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection; collapse?: boolean },
   ): Promise<LibraryBookListResponseRow> {
     const where = this.buildListWhere(status, pickFilters(options));
+    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
+
+    if (options?.collapse) {
+      return this.getAllForLibraryCollapsed(where, orderClauses, pagination, options.sortField, options.sortDirection);
+    }
 
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(books)
       .where(where);
-
-    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
 
     let query = this.db
       .select({
@@ -269,6 +321,109 @@ export class BookListService {
       return { data: [], total };
     }
 
+    const data = await this.hydrateLibraryRows(rows);
+    return { data, total };
+  }
+
+  private async getAllForLibraryCollapsed(
+    where: SQL | undefined,
+    orderClauses: SQL[],
+    pagination?: { limit?: number; offset?: number },
+    sortField?: BookSortField,
+    sortDirection?: BookSortDirection,
+  ): Promise<LibraryBookListResponseRow> {
+    const allRows = await this.db
+      .select({
+        id: books.id,
+        title: books.title,
+        coverUrl: books.coverUrl,
+        status: books.status,
+        seriesName: books.seriesName,
+        seriesPosition: books.seriesPosition,
+        audioTotalSize: books.audioTotalSize,
+        size: books.size,
+        audioFileFormat: books.audioFileFormat,
+        audioDuration: books.audioDuration,
+        duration: books.duration,
+        path: books.path,
+        audioFileCount: books.audioFileCount,
+        lastGrabGuid: books.lastGrabGuid,
+        lastGrabInfoHash: books.lastGrabInfoHash,
+        createdAt: books.createdAt,
+        updatedAt: books.updatedAt,
+      })
+      .from(books)
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .where(where)
+      .orderBy(...orderClauses);
+
+    if (allRows.length === 0) {
+      return { data: [], total: 0 };
+    }
+
+    const seriesGroups = new Map<string, typeof allRows>();
+    const standaloneRows: typeof allRows = [];
+
+    for (const row of allRows) {
+      if (row.seriesName) {
+        const group = seriesGroups.get(row.seriesName);
+        if (group) {
+          group.push(row);
+        } else {
+          seriesGroups.set(row.seriesName, [row]);
+        }
+      } else {
+        standaloneRows.push(row);
+      }
+    }
+
+    type RowWithCollapse = (typeof allRows)[number] & { collapsedCount?: number };
+    const collapsed: RowWithCollapse[] = [...standaloneRows];
+
+    for (const [, group] of seriesGroups) {
+      const withPosition = group.filter((b) => b.seriesPosition != null);
+      let representative: (typeof group)[number];
+      if (withPosition.length > 0) {
+        representative = withPosition.reduce((best, b) =>
+          b.seriesPosition! < best.seriesPosition! ? b : best,
+        );
+      } else {
+        representative = group[0]!;
+      }
+      collapsed.push({ ...representative, collapsedCount: group.length - 1 });
+    }
+
+    const repIds = collapsed.map((r) => r.id);
+    const hydrated = await this.hydrateLibraryRows(collapsed);
+
+    const hydratedMap = new Map(hydrated.map((h) => [h.id, h]));
+    const hydratedCollapsed: LibraryBookListItemRow[] = repIds.map((id) => hydratedMap.get(id)!);
+    for (let i = 0; i < collapsed.length; i++) {
+      const cc = collapsed[i]!.collapsedCount;
+      if (cc !== undefined) {
+        hydratedCollapsed[i]!.collapsedCount = cc;
+      }
+    }
+
+    sortCollapsedRows(hydratedCollapsed, sortField, sortDirection);
+
+    const total = hydratedCollapsed.length;
+    const offset = pagination?.offset ?? 0;
+    const limit = pagination?.limit;
+    const page = limit !== undefined ? hydratedCollapsed.slice(offset, offset + limit) : hydratedCollapsed.slice(offset);
+
+    return { data: page, total };
+  }
+
+  private async hydrateLibraryRows(rows: Array<{
+    id: number; title: string; coverUrl: string | null; status: string;
+    seriesName: string | null; seriesPosition: number | null;
+    audioTotalSize: number | null; size: number | null; audioFileFormat: string | null;
+    audioDuration: number | null; duration: number | null; path: string | null;
+    audioFileCount: number | null; lastGrabGuid: string | null; lastGrabInfoHash: string | null;
+    createdAt: Date; updatedAt: Date;
+  }>): Promise<LibraryBookListItemRow[]> {
     const bookIds = rows.map((r) => r.id);
 
     const authorResults = await this.db
@@ -295,7 +450,7 @@ export class BookListService {
       narratorsMap.get(r.bookId)!.push({ name: r.name, position: r.position });
     }
 
-    const data: LibraryBookListItemRow[] = rows.map((r) => {
+    return rows.map((r) => {
       const sortedAuthors = (authorsMap.get(r.id) ?? [])
         .sort((a, b) => a.position - b.position)
         .map((a) => ({ name: a.name }));
@@ -325,8 +480,6 @@ export class BookListService {
         updatedAt: r.updatedAt,
       };
     });
-
-    return { data, total };
   }
 
   private buildOrderBy(sortField?: BookSortField, sortDirection?: BookSortDirection): SQL[] {

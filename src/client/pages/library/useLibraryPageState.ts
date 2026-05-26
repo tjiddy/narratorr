@@ -94,12 +94,8 @@ export function useLibraryPageState() {
   useImportPolling(books);
 
   const displayBooks = useMemo((): DisplayBook[] =>
-    applyClientFilters(books, {
-      collapseSeriesEnabled: filters.state.collapseSeriesEnabled,
-      sortField: filters.state.sortField,
-      sortDirection: filters.state.sortDirection,
-    }),
-  [books, filters.state.collapseSeriesEnabled, filters.state.sortField, filters.state.sortDirection]);
+    applyClientFilters(books),
+  [books]);
 
   const bulk = useLibraryBulkActions(displayBooks);
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
