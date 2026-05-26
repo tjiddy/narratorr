@@ -1251,6 +1251,24 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     expect(results).toHaveLength(0);
   });
 
+  it('reject-word gate drops result with reject word in rawTitle even when nzbName is clean', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', rawTitle: 'BANNED Edition', title: 'Good Title' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('reject-word gate drops result with reject word in title even when nzbName and rawTitle are clean', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', rawTitle: 'Clean Raw Title', title: 'BANNED Book' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
   it('reject-word gate passes result with no reject word match in any field', () => {
     const { results } = filterAndRankResults(
       [makeResult({ title: 'Good Book', narrator: 'Great Narrator', author: 'Fine Author' })],

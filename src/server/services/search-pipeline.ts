@@ -96,7 +96,7 @@ function buildQualityGates(
       reason: 'reject-word-match',
       enabled: rejectList.length > 0,
       evaluate: (r) => {
-        const surfaces = [r.nzbName || r.rawTitle || r.title, r.author, r.narrator].filter(Boolean) as string[];
+        const surfaces = [r.nzbName, r.rawTitle, r.title, r.author, r.narrator].filter(Boolean) as string[];
         for (const surface of surfaces) {
           const matched = rejectList.find((word) => matchesRejectWord(surface, word));
           if (matched) return { keep: false, logFields: { matchedWord: matched } };
