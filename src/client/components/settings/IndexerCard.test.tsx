@@ -1092,6 +1092,47 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(payloadSettings).toHaveProperty('mamUsername', 'mamuser');
     });
 
+    it('MAM edit payload preserves hidden wedge settings at their persisted values', async () => {
+      const onFormTest = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 102,
+        name: 'MAM Wedge Persist',
+        type: 'myanonamouse',
+        settings: {
+          mamId: 'mam-secret-2',
+          baseUrl: '',
+          searchLanguages: [1],
+          searchType: 'active',
+          isVip: true,
+          mamUsername: 'wedgeuser',
+          classname: 'VIP',
+          useFreeleechWedge: 'preferred',
+          minWedgeReserve: 5,
+        },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={onFormTest}
+        />,
+      );
+
+      await user.click(screen.getByText('Test'));
+
+      await waitFor(() => {
+        expect(onFormTest).toHaveBeenCalled();
+      });
+
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+      expect(payloadSettings).toHaveProperty('useFreeleechWedge', 'preferred');
+      expect(payloadSettings).toHaveProperty('minWedgeReserve', 5);
+    });
+
     it('Torznab edit Test payload contains no MAM/ABB keys', async () => {
       const onFormTest = vi.fn();
       const user = userEvent.setup();

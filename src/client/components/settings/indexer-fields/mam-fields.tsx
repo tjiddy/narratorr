@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
-import type { WedgeMode } from '../../../../shared/schemas/indexer.js';
+
 import { api } from '@/lib/api';
 import type { IndexerFieldsProps } from './types.js';
 import { getMinDetectionMs } from './mam-detection-timing.js';
@@ -171,13 +171,6 @@ function metadataToMamStatus(metadata: Record<string, unknown>, ip?: string): Ma
   };
 }
 
-function computeReserveOverInventory(wedgeMode: WedgeMode, minReserve: number | undefined, currentWedges: number | undefined): boolean {
-  return wedgeMode !== 'never'
-    && typeof minReserve === 'number'
-    && typeof currentWedges === 'number'
-    && minReserve > currentWedges;
-}
-
 type MamFieldsRegisterProps = Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch'>;
 
 function MamIdField({ register, errors, mamStatus, detectError, detect, watch }: MamFieldsRegisterProps & { mamStatus: MamStatus | null; detectError: string | null; detect: (mamId: string) => void }) {
@@ -236,42 +229,10 @@ function BaseUrlField({ register, errors }: Pick<IndexerFieldsProps, 'register' 
   );
 }
 
-function WedgeFields({ register, wedgeMode, minReserve, currentWedges, reserveOverInventory }: { register: IndexerFieldsProps['register']; wedgeMode: WedgeMode; minReserve: number | undefined; currentWedges: number | undefined; reserveOverInventory: boolean }) {
-  return (
-    <>
-      <div className="sm:col-span-2">
-        <label htmlFor="indexerWedgeMode" className="block text-sm font-medium mb-2">Use Freeleech Wedges</label>
-        <select
-          id="indexerWedgeMode"
-          {...register('settings.useFreeleechWedge')}
-          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-        >
-          <option value="never">Never</option>
-          <option value="preferred">Preferred — spend if available</option>
-          <option value="required">Required — abort grab if spend fails</option>
-        </select>
-        <p className="text-sm text-muted-foreground mt-1">Spend a freeleech wedge on each non-free grab to avoid ratio cost.</p>
-      </div>
-
-      <div className="sm:col-span-2">
-        <label htmlFor="indexerMinWedgeReserve" className="block text-sm font-medium mb-2">Minimum wedge reserve</label>
-        <input
-          id="indexerMinWedgeReserve"
-          type="number"
-          min="0"
-          step="1"
-          disabled={wedgeMode === 'never'}
-          {...register('settings.minWedgeReserve', { valueAsNumber: true })}
-          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-        />
-        {reserveOverInventory ? (
-          <p className="text-sm text-amber-500 mt-1">Reserve ({minReserve}) is above current wedge count ({currentWedges}). No wedge will be spent until inventory recovers.</p>
-        ) : (
-          <p className="text-sm text-muted-foreground mt-1">Stop spending when inventory would drop below this floor. 0 = spend any available wedge.</p>
-        )}
-      </div>
-    </>
-  );
+function WedgeFields({ register }: { register: IndexerFieldsProps['register'] }) {
+  register('settings.useFreeleechWedge');
+  register('settings.minWedgeReserve', { valueAsNumber: true });
+  return null;
 }
 
 export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
@@ -284,17 +245,12 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
     }
   }, [formTestResult, setMamStatus]);
 
-  const wedgeMode: WedgeMode = ((watch ? watch('settings.useFreeleechWedge') : undefined) ?? 'never') as WedgeMode;
-  const minReserve = watch ? watch('settings.minWedgeReserve') : undefined;
-  const currentWedges = mamStatus?.wedges;
-  const reserveOverInventory = computeReserveOverInventory(wedgeMode, minReserve, currentWedges);
-
   return (
     <>
       <MamIdField register={register} errors={errors} watch={watch} mamStatus={mamStatus} detectError={detectError} detect={detect} />
       {isDetecting && <DetectionOverlay />}
       <BaseUrlField register={register} errors={errors} />
-      <WedgeFields register={register} wedgeMode={wedgeMode} minReserve={minReserve} currentWedges={currentWedges} reserveOverInventory={reserveOverInventory} />
+      <WedgeFields register={register} />
     </>
   );
 }

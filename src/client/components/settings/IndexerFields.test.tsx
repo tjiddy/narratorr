@@ -885,53 +885,23 @@ describe('IndexerFields', () => {
       );
     }
 
-    it('renders the Use Freeleech Wedges dropdown with Never/Preferred/Required options', () => {
+    it('does not render the Use Freeleech Wedges dropdown', () => {
       renderWithProviders(<WedgeWrapper mode="preferred" />);
-      const select = screen.getByLabelText('Use Freeleech Wedges') as HTMLSelectElement;
-      expect(select).toBeInTheDocument();
-      const opts = Array.from(select.options).map(o => o.value);
-      expect(opts).toEqual(['never', 'preferred', 'required']);
-      expect(select.value).toBe('preferred');
+      expect(screen.queryByLabelText('Use Freeleech Wedges')).not.toBeInTheDocument();
     });
 
-    it('renders the Minimum wedge reserve number input', () => {
+    it('does not render the Minimum wedge reserve input', () => {
       renderWithProviders(<WedgeWrapper mode="preferred" reserve={3} />);
-      const input = screen.getByLabelText('Minimum wedge reserve') as HTMLInputElement;
-      expect(input).toBeInTheDocument();
-      expect(input.type).toBe('number');
-      expect(input.value).toBe('3');
-      expect(input).not.toBeDisabled();
+      expect(screen.queryByLabelText('Minimum wedge reserve')).not.toBeInTheDocument();
     });
 
-    it('disables the reserve input when mode is Never', () => {
-      renderWithProviders(<WedgeWrapper mode="never" />);
-      const input = screen.getByLabelText('Minimum wedge reserve') as HTMLInputElement;
-      expect(input).toBeDisabled();
-    });
-
-    it('Test button result populates the wedges row on the MAM account card', async () => {
+    it('Test button result still populates the wedges row on the MAM account card', async () => {
       renderWithProviders(<WedgeWrapper status={{ isVip: false, mamUsername: 'TestUser', classname: 'User', wedges: 4 }} />);
       await waitFor(() => {
         expect(screen.getByText('TestUser')).toBeInTheDocument();
       });
       expect(screen.getByText('Wedges')).toBeInTheDocument();
       expect(screen.getByText('4')).toBeInTheDocument();
-    });
-
-    it('renders soft reserve-over-inventory warning when reserve > currentWedges', async () => {
-      renderWithProviders(<WedgeWrapper mode="preferred" reserve={10} status={{ isVip: false, mamUsername: 'U', classname: 'User', wedges: 3 }} />);
-      await waitFor(() => {
-        expect(screen.getByText('U')).toBeInTheDocument();
-      });
-      expect(screen.getByText(/Reserve \(10\) is above current wedge count \(3\)/)).toBeInTheDocument();
-    });
-
-    it('does NOT render the warning when reserve <= currentWedges', async () => {
-      renderWithProviders(<WedgeWrapper mode="preferred" reserve={2} status={{ isVip: false, mamUsername: 'U', classname: 'User', wedges: 5 }} />);
-      await waitFor(() => {
-        expect(screen.getByText('U')).toBeInTheDocument();
-      });
-      expect(screen.queryByText(/is above current wedge count/)).not.toBeInTheDocument();
     });
   });
 });
