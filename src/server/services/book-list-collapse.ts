@@ -1,0 +1,94 @@
+import type { BookSortField, BookSortDirection } from '../../shared/schemas/book.js';
+import type { LibraryBookListItemRow } from './book-list.service.js';
+import { toSortTitle } from '../../core/utils/naming.js';
+
+type SortKeyExtractor = (row: LibraryBookListItemRow) => string | number | null;
+
+function qualitySortKey(row: LibraryBookListItemRow): number | null {
+  const size = row.audioTotalSize ?? row.size;
+  const dur = row.audioDuration ?? (row.duration != null ? row.duration * 60 : null);
+  if (size == null || dur == null || dur === 0) return null;
+  return size / dur;
+}
+
+function titleSortKey(row: LibraryBookListItemRow): string {
+  const isCollapsed = row.collapsedCount != null;
+  if (isCollapsed && row.seriesName) return toSortTitle(row.seriesName);
+  return toSortTitle(row.title);
+}
+
+const SORT_KEY_EXTRACTORS: Record<string, SortKeyExtractor> = {
+  title: titleSortKey,
+  author: (row) => row.authors[0]?.name ?? null,
+  narrator: (row) => row.narrators[0]?.name ?? null,
+  series: (row) => row.seriesName ?? null,
+  quality: qualitySortKey,
+  size: (row) => row.audioTotalSize ?? row.size ?? null,
+  format: (row) => row.audioFileFormat ?? null,
+  createdAt: (row) => row.createdAt.getTime(),
+};
+
+function collapsedSortKey(row: LibraryBookListItemRow, field?: BookSortField): string | number | null {
+  const extractor = (field && SORT_KEY_EXTRACTORS[field]) ?? SORT_KEY_EXTRACTORS.createdAt!;
+  return extractor(row);
+}
+
+export function sortCollapsedRows(rows: LibraryBookListItemRow[], sortField?: BookSortField, sortDirection?: BookSortDirection): void {
+  const dir = sortDirection === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    const aKey = collapsedSortKey(a, sortField);
+    const bKey = collapsedSortKey(b, sortField);
+    if (aKey === null && bKey === null) return 0;
+    if (aKey === null) return 1;
+    if (bKey === null) return -1;
+    let cmp: number;
+    if (typeof aKey === 'string' && typeof bKey === 'string') {
+      cmp = aKey.localeCompare(bKey);
+    } else {
+      cmp = (aKey as number) - (bKey as number);
+    }
+    if (cmp !== 0) return cmp * dir;
+    const idCmp = a.id - b.id;
+    return idCmp * dir;
+  });
+}
+
+export function collapseRows(
+  allRows: Array<{ id: number; seriesName: string | null; seriesPosition: number | null }>,
+): { representativeIndices: number[]; collapsedCounts: Map<number, number> } {
+  const seriesGroups = new Map<string, number[]>();
+  const standaloneIndices: number[] = [];
+
+  for (let i = 0; i < allRows.length; i++) {
+    const row = allRows[i]!;
+    if (row.seriesName) {
+      const group = seriesGroups.get(row.seriesName);
+      if (group) {
+        group.push(i);
+      } else {
+        seriesGroups.set(row.seriesName, [i]);
+      }
+    } else {
+      standaloneIndices.push(i);
+    }
+  }
+
+  const representativeIndices: number[] = [...standaloneIndices];
+  const collapsedCounts = new Map<number, number>();
+
+  for (const [, indices] of seriesGroups) {
+    const withPosition = indices.filter((i) => allRows[i]!.seriesPosition != null);
+    let repIdx: number;
+    if (withPosition.length > 0) {
+      repIdx = withPosition.reduce((bestIdx, idx) =>
+        allRows[idx]!.seriesPosition! < allRows[bestIdx]!.seriesPosition! ? idx : bestIdx,
+      );
+    } else {
+      repIdx = indices[0]!;
+    }
+    representativeIndices.push(repIdx);
+    collapsedCounts.set(allRows[repIdx]!.id, indices.length - 1);
+  }
+
+  return { representativeIndices, collapsedCounts };
+}
