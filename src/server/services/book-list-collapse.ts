@@ -53,8 +53,28 @@ export function sortCollapsedRows(rows: LibraryBookListItemRow[], sortField?: Bo
   });
 }
 
-export function collapseRows(
-  allRows: Array<{ id: number; seriesName: string | null; seriesPosition: number | null }>,
+export function buildFallbackCompare(
+  sortField?: BookSortField,
+  sortDirection?: BookSortDirection,
+): ((a: { audioTotalSize: number | null; size: number | null; audioDuration: number | null; duration: number | null; id: number }, b: typeof a) => number) | undefined {
+  if (sortField !== 'quality') return undefined;
+  const dir = sortDirection === 'asc' ? 1 : -1;
+  return (a, b) => {
+    const aq = resolveBookQualityInputs(a);
+    const bq = resolveBookQualityInputs(b);
+    const aVal = aq.sizeBytes && aq.durationSeconds ? aq.sizeBytes / aq.durationSeconds : null;
+    const bVal = bq.sizeBytes && bq.durationSeconds ? bq.sizeBytes / bq.durationSeconds : null;
+    if (aVal === null && bVal === null) return 0;
+    if (aVal === null) return 1;
+    if (bVal === null) return -1;
+    const cmp = (aVal - bVal) * dir;
+    return cmp !== 0 ? cmp : (a.id - b.id) * dir;
+  };
+}
+
+export function collapseRows<T extends { id: number; seriesName: string | null; seriesPosition: number | null }>(
+  allRows: T[],
+  fallbackCompare?: (a: T, b: T) => number,
 ): { representativeIndices: number[]; collapsedCounts: Map<number, number> } {
   const seriesGroups = new Map<string, number[]>();
   const standaloneIndices: number[] = [];
@@ -83,6 +103,8 @@ export function collapseRows(
       repIdx = withPosition.reduce((bestIdx, idx) =>
         allRows[idx]!.seriesPosition! < allRows[bestIdx]!.seriesPosition! ? idx : bestIdx,
       );
+    } else if (fallbackCompare) {
+      repIdx = [...indices].sort((ai, bi) => fallbackCompare(allRows[ai]!, allRows[bi]!))[0]!;
     } else {
       repIdx = indices[0]!;
     }

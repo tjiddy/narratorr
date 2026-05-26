@@ -788,6 +788,28 @@ describe('BookListService', () => {
       expect(result.data[1]!.id).toBe(2);
     });
 
+    it('no-position quality fallback picks representative using resolveBookQualityInputs semantics', async () => {
+      // Book 1: audioDuration=0 but duration=600 → resolveBookQualityInputs falls back to 36000s → low quality
+      // Book 2: audioDuration=3600 → 3600s → higher quality
+      // DB ORDER BY would treat audioDuration=0 as COALESCE(0, duration)=0 → invalid, so SQL puts it last.
+      // But resolveBookQualityInputs treats 0 as falsy → falls back to duration*60=36000 → valid.
+      // With asc quality sort, book 1 (lower quality) should be representative.
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 2, seriesName: 'S', seriesPosition: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
+          makeRow({ id: 1, seriesName: 'S', seriesPosition: null, audioTotalSize: 360 * 1024 * 1024, audioDuration: 0, duration: 600 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, {
+        collapse: true, sortField: 'quality', sortDirection: 'asc',
+      });
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]!.id).toBe(1);
+      expect(result.data[0]!.collapsedCount).toBe(1);
+    });
+
     it('collapse=false returns individual books (non-collapse path)', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 3 }]))

@@ -3,7 +3,7 @@ import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
 import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
-import { sortCollapsedRows, collapseRows } from './book-list-collapse.js';
+import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-list-collapse.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
 
@@ -236,7 +236,7 @@ export class BookListService {
     const allRows = await this.queryLibraryRows(where, orderClauses);
     if (allRows.length === 0) return { data: [], total: 0 };
 
-    const { representativeIndices, collapsedCounts } = collapseRows(allRows);
+    const { representativeIndices, collapsedCounts } = collapseRows(allRows, buildFallbackCompare(sortField, sortDirection));
     const hydrated = await this.hydrateLibraryRows(representativeIndices.map((i) => allRows[i]!));
     for (const row of hydrated) {
       const cc = collapsedCounts.get(row.id);
