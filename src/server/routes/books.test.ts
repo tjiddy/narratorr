@@ -247,6 +247,47 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it('forwards collapse=true to service as boolean true (#1169)', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books?collapse=true' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        undefined,
+        { limit: 120, offset: undefined },
+        { collapse: true },
+      );
+    });
+
+    it('forwards collapse=false to service as boolean false (#1169)', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books?collapse=false' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        undefined,
+        { limit: 120, offset: undefined },
+        { collapse: false },
+      );
+    });
+
+    it('omits collapse from service options when param is absent (#1169)', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/library/books' });
+
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        undefined,
+        { limit: 120, offset: undefined },
+        {},
+      );
+    });
+
+    it('rejects ?collapse=maybe with 400 (#1169)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?collapse=maybe' });
+      expect(res.statusCode).toBe(400);
+    });
+
     it('does not invoke BookListService.getAll (the full-shape endpoint stays untouched)', async () => {
       (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
       (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });

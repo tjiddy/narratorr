@@ -34,6 +34,8 @@ export const libraryBookListItemSchema = z.object({
   lastGrabGuid: z.string().nullable(),
   lastGrabInfoHash: z.string().nullable(),
 
+  collapsedCount: z.number().optional(),
+
   createdAt: z.string(),
   updatedAt: z.string(),
 });

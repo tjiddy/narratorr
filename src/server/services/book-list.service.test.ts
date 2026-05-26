@@ -622,6 +622,211 @@ describe('BookListService', () => {
     });
   });
 
+  describe('getAllForLibrary — collapse (#1169)', () => {
+    function makeRow(overrides: Partial<{ id: number; title: string; seriesName: string | null; seriesPosition: number | null; status: string; createdAt: Date; audioTotalSize: number | null; size: number | null; audioDuration: number | null; duration: number | null }>) {
+      return {
+        id: overrides.id ?? 1,
+        title: overrides.title ?? 'Book',
+        coverUrl: null,
+        status: overrides.status ?? 'imported',
+        seriesName: overrides.seriesName ?? null,
+        seriesPosition: overrides.seriesPosition ?? null,
+        audioTotalSize: overrides.audioTotalSize ?? null,
+        size: overrides.size ?? null,
+        audioFileFormat: null,
+        audioDuration: overrides.audioDuration ?? null,
+        duration: overrides.duration ?? null,
+        path: null,
+        audioFileCount: null,
+        lastGrabGuid: null,
+        lastGrabInfoHash: null,
+        createdAt: overrides.createdAt ?? new Date('2024-01-01'),
+        updatedAt: new Date('2024-01-01'),
+      };
+    }
+
+    it('groups books by seriesName and returns representative with collapsedCount', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, title: 'Book 1', seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeRow({ id: 2, title: 'Book 2', seriesName: 'Stormlight', seriesPosition: 2 }),
+          makeRow({ id: 3, title: 'Book 3', seriesName: 'Stormlight', seriesPosition: 3 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.total).toBe(1);
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]!.id).toBe(1);
+      expect(result.data[0]!.collapsedCount).toBe(2);
+    });
+
+    it('standalones are returned individually without collapsedCount', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, title: 'Standalone', seriesName: null }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.total).toBe(1);
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]!.collapsedCount).toBeUndefined();
+    });
+
+    it('empty-string seriesName treated as standalone', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, title: 'Empty Series', seriesName: '' }),
+          makeRow({ id: 2, title: 'Null Series', seriesName: null }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.total).toBe(2);
+      expect(result.data).toHaveLength(2);
+    });
+
+    it('single-book series returns collapsedCount 0', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: 'Solo Series', seriesPosition: 1 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.data[0]!.collapsedCount).toBe(0);
+    });
+
+    it('picks lowest non-null seriesPosition as representative', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 3, seriesName: 'WoT', seriesPosition: 3 }),
+          makeRow({ id: 1, seriesName: 'WoT', seriesPosition: 1 }),
+          makeRow({ id: 2, seriesName: 'WoT', seriesPosition: 2 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.data[0]!.id).toBe(1);
+    });
+
+    it('falls back to first-by-sort when no books have seriesPosition', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 5, seriesName: 'NoPos', seriesPosition: null }),
+          makeRow({ id: 3, seriesName: 'NoPos', seriesPosition: null }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.data[0]!.id).toBe(5);
+    });
+
+    it('total reflects collapsed count (series groups + standalones)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: 'Series A', seriesPosition: 1, createdAt: new Date('2024-01-05') }),
+          makeRow({ id: 2, seriesName: 'Series A', seriesPosition: 2, createdAt: new Date('2024-01-04') }),
+          makeRow({ id: 3, seriesName: 'Series B', seriesPosition: 1, createdAt: new Date('2024-01-03') }),
+          makeRow({ id: 4, seriesName: null, createdAt: new Date('2024-01-02') }),
+          makeRow({ id: 5, seriesName: null, createdAt: new Date('2024-01-01') }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result.total).toBe(4);
+    });
+
+    it('pagination operates on collapsed result', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: 'Series A', seriesPosition: 1, createdAt: new Date('2024-01-05') }),
+          makeRow({ id: 2, seriesName: 'Series A', seriesPosition: 2, createdAt: new Date('2024-01-04') }),
+          makeRow({ id: 3, seriesName: null, createdAt: new Date('2024-01-03') }),
+          makeRow({ id: 4, seriesName: null, createdAt: new Date('2024-01-02') }),
+          makeRow({ id: 5, seriesName: null, createdAt: new Date('2024-01-01') }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, { limit: 2, offset: 0 }, { collapse: true });
+      expect(result.total).toBe(4);
+      expect(result.data).toHaveLength(2);
+    });
+
+    it('returns empty result for no matches', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: true });
+      expect(result).toEqual({ data: [], total: 0 });
+    });
+
+    it('quality sort with audioDuration=0 falls back to duration field', async () => {
+      // Book 1: 360 MB / (600 min → 36000 sec) ≈ 10 MB/hr (low quality)
+      // Book 2: 100 MB / 3600 sec ≈ 28 MB/hr (higher quality)
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: null, audioTotalSize: 360 * 1024 * 1024, audioDuration: 0, duration: 600 }),
+          makeRow({ id: 2, seriesName: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, {
+        collapse: true, sortField: 'quality', sortDirection: 'asc',
+      });
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0]!.id).toBe(1);
+      expect(result.data[1]!.id).toBe(2);
+    });
+
+    it('no-position quality fallback picks representative using resolveBookQualityInputs semantics', async () => {
+      // Book 1: audioDuration=0 but duration=600 → resolveBookQualityInputs falls back to 36000s → low quality
+      // Book 2: audioDuration=3600 → 3600s → higher quality
+      // DB ORDER BY would treat audioDuration=0 as COALESCE(0, duration)=0 → invalid, so SQL puts it last.
+      // But resolveBookQualityInputs treats 0 as falsy → falls back to duration*60=36000 → valid.
+      // With asc quality sort, book 1 (lower quality) should be representative.
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 2, seriesName: 'S', seriesPosition: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
+          makeRow({ id: 1, seriesName: 'S', seriesPosition: null, audioTotalSize: 360 * 1024 * 1024, audioDuration: 0, duration: 600 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, {
+        collapse: true, sortField: 'quality', sortDirection: 'asc',
+      });
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0]!.id).toBe(1);
+      expect(result.data[0]!.collapsedCount).toBe(1);
+    });
+
+    it('collapse=false returns individual books (non-collapse path)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 3 }]))
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: 'S', seriesPosition: 1 }),
+          makeRow({ id: 2, seriesName: 'S', seriesPosition: 2 }),
+          makeRow({ id: 3, seriesName: null }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, { collapse: false });
+      expect(result.total).toBe(3);
+      expect(result.data).toHaveLength(3);
+    });
+  });
+
   describe('getIdentifiers', () => {
     it('returns asin, title, and author name for all books', async () => {
       db.select.mockReturnValueOnce(mockDbChain([

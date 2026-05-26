@@ -30,7 +30,7 @@ export interface BookRouteDeps {
   metadataService?: MetadataService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
-import { type z } from 'zod';
+import { z } from 'zod';
 import { triggerImmediateSearch } from './trigger-immediate-search.js';
 import {
   idParamSchema,
@@ -52,6 +52,11 @@ import { registerFixMatchRoute } from './books-fix-match.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
+
+const libraryBooksListQuerySchema = booksListQuerySchema.extend({
+  collapse: z.enum(['true', 'false']).optional().transform(v => v === undefined ? undefined : v === 'true'),
+});
+type LibraryBooksListQuery = z.infer<typeof libraryBooksListQuerySchema>;
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -306,11 +311,12 @@ function registerBookListRoutes(app: FastifyInstance, bookListService: BookRoute
   });
 
   // GET /api/library/books — slim DTO for the library list view (#1132)
-  app.get<{ Querystring: BooksListQuery }>('/api/library/books', { schema: { querystring: booksListQuerySchema } }, async (request) => {
-    const { status, limit, offset } = request.query;
+  app.get<{ Querystring: LibraryBooksListQuery }>('/api/library/books', { schema: { querystring: libraryBooksListQuerySchema } }, async (request) => {
+    const { status, limit, offset, collapse } = request.query;
     request.log.debug({ ...request.query }, 'Fetching library books');
     const pagination = { limit: limit ?? DEFAULT_LIMITS.books, ...(offset !== undefined && { offset }) };
-    return bookListService.getAllForLibrary(status, pagination, pickListOptions(request.query));
+    const opts = pickListOptions(request.query);
+    return bookListService.getAllForLibrary(status, pagination, { ...opts, ...(collapse !== undefined && { collapse }) });
   });
 }
 

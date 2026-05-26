@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { BookListParams, LibraryBookListItem } from '@/lib/api';
-import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, collapseSeries } from './helpers.js';
+import type { LibraryBookListParams, LibraryBookListItem } from '@/lib/api';
+import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs } from './helpers.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 import { usePagination } from '@/hooks/usePagination';
 
@@ -124,18 +124,24 @@ export function useLibraryFilters() {
     pagination.reset();
   }, [pagination]);
 
+  const setCollapseSeries = useCallback((enabled: boolean) => {
+    setCollapseSeriesEnabled(enabled);
+    pagination.reset();
+  }, [pagination]);
+
   // Build API params from filter state (search is debounced)
-  const apiParams: BookListParams = useMemo(() => ({
+  const apiParams: LibraryBookListParams = useMemo(() => ({
     ...(statusFilter !== 'all' && { status: statusFilter }),
     ...(debouncedSearch && { search: debouncedSearch }),
     ...(authorFilter && { author: authorFilter }),
     ...(seriesFilter && { series: seriesFilter }),
     ...(narratorFilter && { narrator: narratorFilter }),
+    ...(collapseSeriesEnabled && { collapse: true }),
     sortField,
     sortDirection,
     limit: pagination.limit,
     offset: pagination.offset,
-  }), [statusFilter, debouncedSearch, authorFilter, seriesFilter, narratorFilter, sortField, sortDirection, pagination.limit, pagination.offset]);
+  }), [statusFilter, debouncedSearch, authorFilter, seriesFilter, narratorFilter, collapseSeriesEnabled, sortField, sortDirection, pagination.limit, pagination.offset]);
 
   const activeFilterCount = (authorFilter ? 1 : 0) + (seriesFilter ? 1 : 0) + (narratorFilter ? 1 : 0);
 
@@ -173,7 +179,7 @@ export function useLibraryFilters() {
       setSortField,
       setSortDirection,
       setFiltersOpen,
-      setCollapseSeriesEnabled,
+      setCollapseSeriesEnabled: setCollapseSeries,
       setSearchQuery,
       clearSearch,
       clearAllFilters,
@@ -189,15 +195,10 @@ export function useLibraryFilters() {
   };
 }
 
-/** Apply series collapse to page data. Author/series/narrator filters are
- *  pushed to the server (#1143) so they don't appear here — only the
- *  collapse-series UI transform remains. */
+/** Server handles collapse when enabled — client just casts to DisplayBook.
+ *  The server returns `collapsedCount` on representative rows. */
 export function applyClientFilters(
   books: LibraryBookListItem[],
-  filters: { collapseSeriesEnabled: boolean; sortField: SortField; sortDirection: SortDirection },
 ): DisplayBook[] {
-  if (filters.collapseSeriesEnabled) {
-    return collapseSeries(books, filters.sortField, filters.sortDirection);
-  }
   return books;
 }

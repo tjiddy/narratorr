@@ -241,6 +241,10 @@ export interface BookListParams {
   offset?: number;
 }
 
+export interface LibraryBookListParams extends BookListParams {
+  collapse?: boolean;
+}
+
 export interface BookStats {
   counts: {
     wanted: number;
@@ -269,11 +273,21 @@ function buildBookListQuery(params?: BookListParams): string {
   return qs ? `?${qs}` : '';
 }
 
+function buildLibraryBookListQuery(params?: LibraryBookListParams): string {
+  if (!params) return '';
+  const base = buildBookListQuery(params);
+  if (params.collapse) {
+    const sep = base ? '&' : '?';
+    return `${base}${sep}collapse=true`;
+  }
+  return base;
+}
+
 export const booksApi = {
   getBooks: (params?: BookListParams) =>
     fetchApi<{ data: BookWithAuthor[]; total: number }>(`/books${buildBookListQuery(params)}`),
-  listLibraryBooks: (params?: BookListParams) =>
-    fetchApi<LibraryBookListResponse>(`/library/books${buildBookListQuery(params)}`),
+  listLibraryBooks: (params?: LibraryBookListParams) =>
+    fetchApi<LibraryBookListResponse>(`/library/books${buildLibraryBookListQuery(params)}`),
   getBookStats: () =>
     fetchApi<BookStats>('/books/stats'),
   getBookIdentifiers: () =>

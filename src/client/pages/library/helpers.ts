@@ -5,7 +5,7 @@ export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported' | 'fail
 export type SortField = 'createdAt' | 'title' | 'author' | 'narrator' | 'series' | 'quality' | 'size' | 'format';
 export type SortDirection = 'asc' | 'desc';
 
-export type DisplayBook = LibraryBookListItem & { collapsedCount?: number };
+export type DisplayBook = LibraryBookListItem;
 
 export const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },

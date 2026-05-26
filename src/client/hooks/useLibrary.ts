@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { api, type BookListParams } from '@/lib/api';
+import { api, type LibraryBookListParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 
-export function useLibrary(params?: BookListParams) {
+export function useLibrary(params?: LibraryBookListParams) {
   return useQuery({
     queryKey: queryKeys.libraryBooks(params),
     queryFn: () => api.listLibraryBooks(params),

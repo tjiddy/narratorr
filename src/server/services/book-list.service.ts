@@ -3,6 +3,7 @@ import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
 import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
+import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-list-collapse.js';
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
 
@@ -22,7 +23,6 @@ export interface LibraryBookListResponseRow {
 type AuthorRow = typeof authors.$inferSelect;
 type NarratorRow = typeof narrators.$inferSelect;
 
-/** Slim select: all book columns except heavy text fields excluded from list views. */
 function getSlimBookColumns() {
   const { description: _description, genres: _genres, ...rest } = getTableColumns(books);
   return rest;
@@ -206,189 +206,132 @@ export class BookListService {
     return { data, total };
   }
 
-  /**
-   * Library list view payload. Projection includes only the fields the
-   * library page reads (LibraryBookCard, LibraryTableView, useLibraryFilters,
-   * useLibraryPageState, the delete-files affordance, and the
-   * library-launched SearchReleasesModal "In library" badge).
-   *
-   * Authors/narrators are joined with a name-only projection. Sort/search/
-   * status semantics match GET /api/books — buildOrderBy and buildListWhere
-   * are reused verbatim so server-side pagination ordering is identical.
-   */
   async getAllForLibrary(
     status?: BookStatus,
     pagination?: { limit?: number; offset?: number },
-    options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection },
+    options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection; collapse?: boolean },
   ): Promise<LibraryBookListResponseRow> {
     const where = this.buildListWhere(status, pickFilters(options));
+    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
+
+    if (options?.collapse) {
+      return this.getAllForLibraryCollapsed(where, orderClauses, pagination, options.sortField, options.sortDirection);
+    }
 
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(books)
       .where(where);
 
-    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
+    const rows = await this.queryLibraryRows(where, orderClauses, pagination);
+    if (rows.length === 0) return { data: [], total };
+    return { data: await this.hydrateLibraryRows(rows), total };
+  }
 
+  private async getAllForLibraryCollapsed(
+    where: SQL | undefined, orderClauses: SQL[],
+    pagination?: { limit?: number; offset?: number },
+    sortField?: BookSortField, sortDirection?: BookSortDirection,
+  ): Promise<LibraryBookListResponseRow> {
+    const allRows = await this.queryLibraryRows(where, orderClauses);
+    if (allRows.length === 0) return { data: [], total: 0 };
+
+    const { representativeIndices, collapsedCounts } = collapseRows(allRows, buildFallbackCompare(sortField, sortDirection));
+    const hydrated = await this.hydrateLibraryRows(representativeIndices.map((i) => allRows[i]!));
+    for (const row of hydrated) {
+      const cc = collapsedCounts.get(row.id);
+      if (cc !== undefined) row.collapsedCount = cc;
+    }
+    sortCollapsedRows(hydrated, sortField, sortDirection);
+
+    const total = hydrated.length;
+    const offset = pagination?.offset ?? 0;
+    const limit = pagination?.limit;
+    const page = limit !== undefined ? hydrated.slice(offset, offset + limit) : hydrated.slice(offset);
+    return { data: page, total };
+  }
+
+  private async queryLibraryRows(where: SQL | undefined, orderClauses: SQL[], pagination?: { limit?: number; offset?: number }) {
     let query = this.db
       .select({
-        id: books.id,
-        title: books.title,
-        coverUrl: books.coverUrl,
-        status: books.status,
-        seriesName: books.seriesName,
-        seriesPosition: books.seriesPosition,
-        audioTotalSize: books.audioTotalSize,
-        size: books.size,
-        audioFileFormat: books.audioFileFormat,
-        audioDuration: books.audioDuration,
-        duration: books.duration,
-        path: books.path,
-        audioFileCount: books.audioFileCount,
-        lastGrabGuid: books.lastGrabGuid,
-        lastGrabInfoHash: books.lastGrabInfoHash,
-        createdAt: books.createdAt,
-        updatedAt: books.updatedAt,
+        id: books.id, title: books.title, coverUrl: books.coverUrl, status: books.status,
+        seriesName: books.seriesName, seriesPosition: books.seriesPosition,
+        audioTotalSize: books.audioTotalSize, size: books.size, audioFileFormat: books.audioFileFormat,
+        audioDuration: books.audioDuration, duration: books.duration, path: books.path,
+        audioFileCount: books.audioFileCount, lastGrabGuid: books.lastGrabGuid,
+        lastGrabInfoHash: books.lastGrabInfoHash, createdAt: books.createdAt, updatedAt: books.updatedAt,
       })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(where)
       .orderBy(...orderClauses);
+    if (pagination?.limit !== undefined) query = query.limit(pagination.limit) as typeof query;
+    if (pagination?.offset !== undefined) query = query.offset(pagination.offset) as typeof query;
+    return query;
+  }
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const rows = await query;
-
-    if (rows.length === 0) {
-      return { data: [], total };
-    }
-
+  private async hydrateLibraryRows(rows: Array<{
+    id: number; title: string; coverUrl: string | null; status: string;
+    seriesName: string | null; seriesPosition: number | null;
+    audioTotalSize: number | null; size: number | null; audioFileFormat: string | null;
+    audioDuration: number | null; duration: number | null; path: string | null;
+    audioFileCount: number | null; lastGrabGuid: string | null; lastGrabInfoHash: string | null;
+    createdAt: Date; updatedAt: Date;
+  }>): Promise<LibraryBookListItemRow[]> {
     const bookIds = rows.map((r) => r.id);
-
-    const authorResults = await this.db
-      .select({ bookId: bookAuthors.bookId, name: authors.name, position: bookAuthors.position })
-      .from(bookAuthors)
-      .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-      .where(inArray(bookAuthors.bookId, bookIds));
-
-    const narratorResults = await this.db
-      .select({ bookId: bookNarrators.bookId, name: narrators.name, position: bookNarrators.position })
-      .from(bookNarrators)
-      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
-      .where(inArray(bookNarrators.bookId, bookIds));
+    const [authorResults, narratorResults] = await Promise.all([
+      this.db.select({ bookId: bookAuthors.bookId, name: authors.name, position: bookAuthors.position })
+        .from(bookAuthors).innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+        .where(inArray(bookAuthors.bookId, bookIds)),
+      this.db.select({ bookId: bookNarrators.bookId, name: narrators.name, position: bookNarrators.position })
+        .from(bookNarrators).innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+        .where(inArray(bookNarrators.bookId, bookIds)),
+    ]);
 
     const authorsMap = new Map<number, Array<{ name: string; position: number }>>();
     for (const r of authorResults) {
       if (!authorsMap.has(r.bookId)) authorsMap.set(r.bookId, []);
       authorsMap.get(r.bookId)!.push({ name: r.name, position: r.position });
     }
-
     const narratorsMap = new Map<number, Array<{ name: string; position: number }>>();
     for (const r of narratorResults) {
       if (!narratorsMap.has(r.bookId)) narratorsMap.set(r.bookId, []);
       narratorsMap.get(r.bookId)!.push({ name: r.name, position: r.position });
     }
 
-    const data: LibraryBookListItemRow[] = rows.map((r) => {
-      const sortedAuthors = (authorsMap.get(r.id) ?? [])
-        .sort((a, b) => a.position - b.position)
-        .map((a) => ({ name: a.name }));
-      const sortedNarrators = (narratorsMap.get(r.id) ?? [])
-        .sort((a, b) => a.position - b.position)
-        .map((n) => ({ name: n.name }));
-
-      return {
-        id: r.id,
-        title: r.title,
-        coverUrl: r.coverUrl,
-        status: r.status as BookStatus,
-        seriesName: r.seriesName,
-        seriesPosition: r.seriesPosition,
-        authors: sortedAuthors,
-        narrators: sortedNarrators,
-        audioTotalSize: r.audioTotalSize,
-        size: r.size,
-        audioFileFormat: r.audioFileFormat,
-        audioDuration: r.audioDuration,
-        duration: r.duration,
-        path: r.path,
-        audioFileCount: r.audioFileCount,
-        lastGrabGuid: r.lastGrabGuid,
-        lastGrabInfoHash: r.lastGrabInfoHash,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-      };
-    });
-
-    return { data, total };
+    return rows.map((r) => ({
+      id: r.id, title: r.title, coverUrl: r.coverUrl, status: r.status as BookStatus,
+      seriesName: r.seriesName, seriesPosition: r.seriesPosition,
+      authors: (authorsMap.get(r.id) ?? []).sort((a, b) => a.position - b.position).map((a) => ({ name: a.name })),
+      narrators: (narratorsMap.get(r.id) ?? []).sort((a, b) => a.position - b.position).map((n) => ({ name: n.name })),
+      audioTotalSize: r.audioTotalSize, size: r.size, audioFileFormat: r.audioFileFormat,
+      audioDuration: r.audioDuration, duration: r.duration, path: r.path,
+      audioFileCount: r.audioFileCount, lastGrabGuid: r.lastGrabGuid,
+      lastGrabInfoHash: r.lastGrabInfoHash, createdAt: r.createdAt, updatedAt: r.updatedAt,
+    }));
   }
 
   private buildOrderBy(sortField?: BookSortField, sortDirection?: BookSortDirection): SQL[] {
     const dir = sortDirection === 'asc' ? asc : desc;
-    const secondaryDir = sortDirection === 'asc' ? asc : desc;
-
     switch (sortField) {
       case 'title':
-        // Strip leading articles (The/A/An) for sort — only at start of title
-        return [
-          dir(sql`CASE
-            WHEN LOWER(${books.title}) LIKE 'the %' THEN SUBSTR(${books.title}, 5)
-            WHEN LOWER(${books.title}) LIKE 'a %' THEN SUBSTR(${books.title}, 3)
-            WHEN LOWER(${books.title}) LIKE 'an %' THEN SUBSTR(${books.title}, 4)
-            ELSE ${books.title}
-          END`),
-          secondaryDir(books.id),
-        ];
+        return [dir(sql`CASE WHEN LOWER(${books.title}) LIKE 'the %' THEN SUBSTR(${books.title}, 5) WHEN LOWER(${books.title}) LIKE 'a %' THEN SUBSTR(${books.title}, 3) WHEN LOWER(${books.title}) LIKE 'an %' THEN SUBSTR(${books.title}, 4) ELSE ${books.title} END`), dir(books.id)];
       case 'author':
-        // Sort by position-0 author (joined in main query)
-        return [
-          sql`CASE WHEN ${authors.name} IS NULL THEN 1 ELSE 0 END`,
-          dir(authors.name),
-          secondaryDir(books.id),
-        ];
+        return [sql`CASE WHEN ${authors.name} IS NULL THEN 1 ELSE 0 END`, dir(authors.name), dir(books.id)];
       case 'narrator':
-        // Sort by position-0 narrator name via subquery
-        return [
-          sql`CASE WHEN (SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1) IS NULL THEN 1 ELSE 0 END`,
-          dir(sql`(SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1)`),
-          secondaryDir(books.id),
-        ];
+        return [sql`CASE WHEN (SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1) IS NULL THEN 1 ELSE 0 END`, dir(sql`(SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1)`), dir(books.id)];
       case 'series':
-        return [
-          sql`CASE WHEN ${books.seriesName} IS NULL THEN 1 ELSE 0 END`,
-          dir(books.seriesName),
-          sql`CASE WHEN ${books.seriesName} IS NULL THEN 0 WHEN ${books.seriesPosition} IS NULL THEN 1 ELSE 0 END`,
-          asc(sql`CASE WHEN ${books.seriesName} IS NOT NULL THEN ${books.seriesPosition} ELSE NULL END`),
-          secondaryDir(books.id),
-        ];
+        return [sql`CASE WHEN ${books.seriesName} IS NULL THEN 1 ELSE 0 END`, dir(books.seriesName), sql`CASE WHEN ${books.seriesName} IS NULL THEN 0 WHEN ${books.seriesPosition} IS NULL THEN 1 ELSE 0 END`, asc(sql`CASE WHEN ${books.seriesName} IS NOT NULL THEN ${books.seriesPosition} ELSE NULL END`), dir(books.id)];
       case 'quality':
-        // MB/hr = (audioTotalSize ?? size) / (audioDuration ?? duration) * 3600 / 1048576
-        return [
-          sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) = 0 THEN 1 ELSE 0 END`,
-          dir(sql`CAST(COALESCE(${books.audioTotalSize}, ${books.size}) AS REAL) / CAST(COALESCE(${books.audioDuration}, ${books.duration}) AS REAL)`),
-          secondaryDir(books.id),
-        ];
+        return [sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) = 0 THEN 1 ELSE 0 END`, dir(sql`CAST(COALESCE(${books.audioTotalSize}, ${books.size}) AS REAL) / CAST(COALESCE(${books.audioDuration}, ${books.duration}) AS REAL)`), dir(books.id)];
       case 'size':
-        return [
-          sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL THEN 1 ELSE 0 END`,
-          dir(sql`COALESCE(${books.audioTotalSize}, ${books.size})`),
-          secondaryDir(books.id),
-        ];
+        return [sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL THEN 1 ELSE 0 END`, dir(sql`COALESCE(${books.audioTotalSize}, ${books.size})`), dir(books.id)];
       case 'format':
-        return [
-          sql`CASE WHEN ${books.audioFileFormat} IS NULL THEN 1 ELSE 0 END`,
-          dir(books.audioFileFormat),
-          secondaryDir(books.id),
-        ];
+        return [sql`CASE WHEN ${books.audioFileFormat} IS NULL THEN 1 ELSE 0 END`, dir(books.audioFileFormat), dir(books.id)];
       case 'createdAt':
       default:
-        return [dir(books.createdAt), secondaryDir(books.id)];
+        return [dir(books.createdAt), dir(books.id)];
     }
   }
 
