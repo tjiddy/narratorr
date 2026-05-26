@@ -14,7 +14,7 @@ export interface DiscoveryLogger {
  * Matches: CD1, CD 1, Disc 1, Disc1, Disk 03, DISC 004, etc.
  * Does NOT match: "01 - Harry Potter", "Part 1", book titles, etc.
  */
-export const DISC_FOLDER_PATTERN = /^(cd|dis[ck])\s*\d{1,3}$/i;
+export const DISC_FOLDER_PATTERN = /^(cd|dis[ck]|d)\s*\d{1,3}$/i;
 
 /**
  * Titled-disc pattern — matches torrent naming conventions where the book title
@@ -27,8 +27,8 @@ export const DISC_FOLDER_PATTERN = /^(cd|dis[ck])\s*\d{1,3}$/i;
 export function parseTitledDiscFolder(name: string): { title: string; discNumber: number } | null {
   if (!name) return null;
 
-  // Pattern 1: "Title (Disc NN)" or "Title (Disk NN)"
-  const discMatch = name.match(/^(.+?)\s*\((dis[ck])\s*(\d{1,3})\)$/i);
+  // Pattern 1: "Title (Disc NN)", "Title (Disk NN)", or "Title (D NN)"
+  const discMatch = name.match(/^(.+?)\s*\((d|dis[ck])\s*(\d{1,3})\)$/i);
   if (discMatch) {
     const title = discMatch[1]!.trim();
     // Bare disc folders like "Disc 01" would have empty title — reject
@@ -400,11 +400,11 @@ export function normalizeAlbumForComparison(album: string): string {
   let s = album.trim();
   // "(N of M)" suffix
   s = s.replace(/\s*\(\s*\d+\s+of\s+\d+\s*\)\s*$/i, '');
-  // Parenthesized disc/cd/part suffix: "(Disc 2)", "(CD 03)", "(Part 1)"
-  s = s.replace(/\s*\(\s*(?:disc|disk|cd|part|pt)[-_.\s]*\d+\s*\)\s*$/i, '');
-  // Trailing "Disc N" / "CD N" / "Part N" / "Pt N" with optional separators
+  // Parenthesized disc/cd/d/part suffix: "(Disc 2)", "(CD 03)", "(D1)", "(Part 1)"
+  s = s.replace(/\s*\(\s*(?:dis[ck]|cd|d|part|pt)[-_.\s]*\d+\s*\)\s*$/i, '');
+  // Trailing "Disc N" / "CD N" / "D N" / "Part N" / "Pt N" with optional separators
   // around BOTH the keyword (Album-Part) AND the digit run (Part-01).
-  s = s.replace(/\s*[-_,]?\s*(?:disc|disk|cd|part|pt)[-_.\s]*\d+\s*$/i, '');
+  s = s.replace(/\s*[-_,]?\s*(?:dis[ck]|cd|d|part|pt)[-_.\s]*\d+\s*$/i, '');
   // Collapse remaining punctuation/whitespace runs and lowercase
   return s.replace(/[\s\W_]+/g, ' ').trim().toLowerCase();
 }

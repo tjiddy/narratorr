@@ -139,9 +139,9 @@ function extractDiscNumber(name: string): number {
 
 /** Collect audio from disc subfolders with sequential renaming, plus non-disc entries. */
 async function collectMultiDiscFiles(
-  source: string,
   discFolders: Array<{ name: string; path: string }>,
-  otherEntries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
+  otherDirs: Array<{ path: string }>,
+  looseFiles: AudioFile[],
 ): Promise<AudioFile[]> {
   // Sort discs by extracted disc number (handles bare, titled, and mixed patterns)
   discFolders.sort((a, b) => extractDiscNumber(a.name) - extractDiscNumber(b.name));
@@ -159,15 +159,10 @@ async function collectMultiDiscFiles(
     name: `${String(i + 1).padStart(padWidth, '0')}${extname(file.name)}`,
   }));
 
-  // Collect non-disc entries (loose files + non-disc subfolders)
-  const nonDiscFiles: AudioFile[] = [];
-  for (const entry of otherEntries) {
-    const fullPath = join(source, entry.name);
-    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      nonDiscFiles.push({ srcPath: fullPath, name: entry.name });
-    } else if (entry.isDirectory()) {
-      nonDiscFiles.push(...await collectAudioFiles(fullPath));
-    }
+  // Collect non-disc entries (loose root files + non-disc subfolders)
+  const nonDiscFiles: AudioFile[] = [...looseFiles];
+  for (const dir of otherDirs) {
+    nonDiscFiles.push(...await collectAudioFiles(dir.path));
   }
   nonDiscFiles.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -196,19 +191,14 @@ async function collectMultiDiscFiles(
   return [...nonDiscFiles, ...sequentialFiles];
 }
 
-/** Collect audio from entries with collision check (standard non-disc path). */
+/** Collect audio from pre-classified entries with collision check (standard non-disc path). */
 async function collectFlatFiles(
-  source: string,
-  entries: Array<{ name: string; isFile: () => boolean; isDirectory: () => boolean }>,
+  dirs: Array<{ path: string }>,
+  looseFiles: AudioFile[],
 ): Promise<AudioFile[]> {
-  const results: AudioFile[] = [];
-  for (const entry of entries) {
-    const fullPath = join(source, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...await collectAudioFiles(fullPath));
-    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      results.push({ srcPath: fullPath, name: entry.name });
-    }
+  const results: AudioFile[] = [...looseFiles];
+  for (const dir of dirs) {
+    results.push(...await collectAudioFiles(dir.path));
   }
   const files = results.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -235,19 +225,28 @@ export async function copyAudioFiles(
   const rootEntries = await readdir(source, { withFileTypes: true });
 
   const discFolders: Array<{ name: string; path: string }> = [];
-  const otherEntries: typeof rootEntries = [];
+  const otherDirs: Array<{ path: string }> = [];
+  const looseFiles: AudioFile[] = [];
 
   for (const entry of rootEntries) {
+    const fullPath = join(source, entry.name);
     if (entry.isDirectory() && (DISC_FOLDER_PATTERN.test(entry.name) || parseTitledDiscFolder(entry.name) !== null)) {
-      discFolders.push({ name: entry.name, path: join(source, entry.name) });
-    } else {
-      otherEntries.push(entry);
+      discFolders.push({ name: entry.name, path: fullPath });
+    } else if (entry.isDirectory()) {
+      otherDirs.push({ path: fullPath });
+    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      looseFiles.push({ srcPath: fullPath, name: entry.name });
     }
   }
 
+  const allDirs = [...otherDirs];
+  if (discFolders.length < 2) {
+    allDirs.push(...discFolders.map(d => ({ path: d.path })));
+  }
+
   const files = discFolders.length >= 2
-    ? await collectMultiDiscFiles(source, discFolders, otherEntries)
-    : await collectFlatFiles(source, rootEntries);
+    ? await collectMultiDiscFiles(discFolders, otherDirs, looseFiles)
+    : await collectFlatFiles(allDirs, looseFiles);
 
   await mkdir(target, { recursive: true });
 
