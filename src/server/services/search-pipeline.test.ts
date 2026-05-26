@@ -1210,6 +1210,110 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     expect(results).toHaveLength(1);
   });
 
+  // ===== #1166 — reject words checked against narrator and author fields =====
+
+  it('reject-word gate drops result with reject word in narrator', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Grave Peril', narrator: 'GraphicAudio' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'GraphicAudio' },
+      log,
+    );
+    expect(results).toHaveLength(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'graphicaudio' }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('reject-word gate drops result with reject word in author', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Some Book', author: 'Banned Author' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'Banned Author' },
+      log,
+    );
+    expect(results).toHaveLength(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'reject-word-match', matchedWord: 'banned author' }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('reject-word gate still drops result with reject word only in title (no regression)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'BANNED Book Title', narrator: 'Good Narrator', author: 'Good Author' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('reject-word gate drops result with reject word in rawTitle even when nzbName is clean', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', rawTitle: 'BANNED Edition', title: 'Good Title' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('reject-word gate drops result with reject word in title even when nzbName and rawTitle are clean', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', rawTitle: 'Clean Raw Title', title: 'BANNED Book' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('reject-word gate passes result with no reject word match in any field', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Good Book', narrator: 'Great Narrator', author: 'Fine Author' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('reject-word gate respects word boundaries in narrator — "GraphicAudio" does not match "GraphicAudiobook"', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Some Book', narrator: 'GraphicAudiobook' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'GraphicAudio' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('reject-word gate does not crash on undefined author and narrator', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Some Book', author: undefined, narrator: undefined })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('reject-word gate does not false-match on empty-string author', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Some Book', author: '' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'BANNED' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('reject-word gate matches case-insensitively in narrator', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Some Book', narrator: 'graphicaudio' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'GraphicAudio' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
   it('required-word gate does not fire when requiredWords is empty', () => {
     const log = createMockLogger();
     // No required words means everything passes — even a result that would
