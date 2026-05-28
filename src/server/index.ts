@@ -85,19 +85,14 @@ import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
 import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser } from './boot-warnings.js';
 import { buildFastifyOptions } from './fastify-options.js';
+import { registerRequestTraceLogging } from './request-trace-logging.js';
 
 async function main() {
   const app = Fastify(buildFastifyOptions()).withTypeProvider<ZodTypeProvider>();
 
-  // Request logging at trace level (Fastify defaults to info which is too noisy)
-  app.addHook('onRequest', (request, _reply, done) => {
-    request.log.trace({ url: request.url, method: request.method, reqId: request.id }, 'incoming request');
-    done();
-  });
-  app.addHook('onResponse', (request, reply, done) => {
-    request.log.trace({ url: request.url, method: request.method, statusCode: reply.statusCode, responseTime: reply.elapsedTime }, 'request completed');
-    done();
-  });
+  // Request logging at trace level (Fastify defaults to info which is too noisy).
+  // request.url is sanitized to strip the query string (?apikey=) before logging.
+  registerRequestTraceLogging(app);
 
   // Set up Zod validation
   app.setValidatorCompiler(validatorCompiler);

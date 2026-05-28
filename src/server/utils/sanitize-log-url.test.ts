@@ -59,6 +59,34 @@ describe('sanitizeLogUrl', () => {
     });
   });
 
+  describe('relative request paths', () => {
+    it('strips ?apikey=secret from a relative path, returning pathname only', () => {
+      expect(sanitizeLogUrl('/api/search?apikey=secret'))
+        .toBe('/api/search');
+    });
+
+    it('strips all query params (incl. apikey) from a relative path', () => {
+      expect(sanitizeLogUrl('/api/search?q=dune&apikey=secret&t=search'))
+        .toBe('/api/search');
+    });
+
+    it('strips hash fragment from a relative path', () => {
+      expect(sanitizeLogUrl('/api/foo#section'))
+        .toBe('/api/foo');
+    });
+
+    it('returns a relative path with no query unchanged', () => {
+      expect(sanitizeLogUrl('/api/foo'))
+        .toBe('/api/foo');
+    });
+
+    it('does not leak the synthetic base origin into the output', () => {
+      const result = sanitizeLogUrl('/api/search?apikey=secret');
+      expect(result).not.toContain('_local');
+      expect(result).not.toContain('http://');
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty string gracefully', () => {
       expect(sanitizeLogUrl('')).toBe('');
