@@ -641,6 +641,76 @@ describe('processRestoreUpload', () => {
     const tmpAfter = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
     expect(tmpAfter.length).toBe(tmpBefore.length);
   });
+
+  it('rejects with OVERSIZED_DB when extracted narratorr.db exceeds the injected cap', async () => {
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.alloc(2048, 0x61) },
+    ]);
+
+    // Inject a tiny 1KB cap so a small zip trips the uncompressed-byte gate
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RestoreUploadError);
+    expect((err as RestoreUploadError).code).toBe('OVERSIZED_DB');
+  });
+
+  it('cleans up temp directory on OVERSIZED_DB overflow', async () => {
+    const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
+
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.alloc(2048, 0x61) },
+    ]);
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    await service.processRestoreUpload(Readable.from(zipBuffer)).catch(() => {});
+
+    const tmpAfter = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
+    expect(tmpAfter.length).toBe(tmpBefore.length);
+  });
+
+  it('settles the overflow path exactly once with no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      const zipBuffer = await createZipBuffer([
+        { name: 'narratorr.db', content: Buffer.alloc(4096, 0x61) },
+      ]);
+
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+      const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
+      expect((err as RestoreUploadError).code).toBe('OVERSIZED_DB');
+
+      // Let any stray post-teardown stream 'error' events flush
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('accepts an entry exactly at the cap and rejects one byte over (strict greater-than)', async () => {
+    // Exactly at cap: extraction succeeds, validateRestore runs and stages
+    mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
+    const atCapZip = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.alloc(1024, 0x61) },
+    ]);
+    const atCapService = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const atCapResult = await atCapService.processRestoreUpload(Readable.from(atCapZip));
+    expect(atCapResult.valid).toBe(true);
+
+    // One byte over: rejects with OVERSIZED_DB
+    const overZip = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.alloc(1025, 0x61) },
+    ]);
+    const overService = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
+    const err = await overService.processRestoreUpload(Readable.from(overZip)).catch((e: unknown) => e);
+    expect((err as RestoreUploadError).code).toBe('OVERSIZED_DB');
+  });
 });
 
 describe('restoreServerBackup', () => {
