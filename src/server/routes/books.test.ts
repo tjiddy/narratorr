@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
+import { DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
@@ -108,7 +109,7 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
-      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: 120, offset: undefined }, { slim: true });
+      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: DEFAULT_LIMITS.books, offset: undefined }, { slim: true });
     });
 
     it('forwards limit and offset to service', async () => {
@@ -126,7 +127,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { slim: true, author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' },
       );
     });
@@ -175,7 +176,7 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 120, offset: undefined }, { slim: true });
+      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: DEFAULT_LIMITS.books, offset: undefined }, { slim: true });
     });
   });
 
@@ -224,17 +225,17 @@ describe('books routes', () => {
 
       expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { author: 'Sanderson', series: 'Stormlight', narrator: 'Kramer' },
       );
     });
 
-    it('defaults to limit=100 when omitted', async () => {
+    it(`defaults to limit=${DEFAULT_LIMITS.books} when omitted`, async () => {
       (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/library/books' });
 
-      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: 120, offset: undefined }, {});
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(undefined, { limit: DEFAULT_LIMITS.books, offset: undefined }, {});
     });
 
     it('rejects ?status=monitored (invalid enum) with 400', async () => {
@@ -254,7 +255,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { collapse: true },
       );
     });
@@ -266,7 +267,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { collapse: false },
       );
     });
@@ -278,7 +279,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         {},
       );
     });
@@ -2179,14 +2180,14 @@ describe('books routes', () => {
 
   // #372 — Default pagination enforcement
   describe('GET /api/books — default pagination', () => {
-    it('applies default limit=100 when no limit param provided', async () => {
+    it(`applies default limit=${DEFAULT_LIMITS.books} when no limit param provided`, async () => {
       (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
       );
     });
@@ -2198,7 +2199,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: 50 },
+        { limit: DEFAULT_LIMITS.books, offset: 50 },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
       );
     });
@@ -2225,7 +2226,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { slim: true, search: 'tolkien', sortField: undefined, sortDirection: undefined },
       );
     });
@@ -2237,7 +2238,7 @@ describe('books routes', () => {
 
       expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
-        { limit: 120, offset: undefined },
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
         { slim: true, search: undefined, sortField: 'title', sortDirection: 'asc' },
       );
     });

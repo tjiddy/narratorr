@@ -5,6 +5,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockLibraryBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
+import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 // Mock api
 vi.mock('@/lib/api', async () => {
@@ -146,12 +147,12 @@ function mockLibraryData(books: LibraryBookListItem[]) {
   vi.mocked(api.getBookStats).mockResolvedValue({ counts, authors, series, narrators });
 }
 
-/** Paged variant: accepts independent total so Pagination renders when total > limit (100).
- * Use total > 100 to trigger Pagination rendering. */
+/** Paged variant: accepts independent total so Pagination renders when total > limit (DEFAULT_LIMITS.books).
+ * Use total > DEFAULT_LIMITS.books to trigger Pagination rendering. */
 function mockPagedLibraryData(books: LibraryBookListItem[], opts: { total: number }) {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     const offset = params?.offset ?? 0;
-    const limit = params?.limit ?? 100;
+    const limit = params?.limit ?? DEFAULT_LIMITS.books;
     const page = books.slice(offset, offset + limit);
     return Promise.resolve({ data: page, total: opts.total });
   });
@@ -1694,7 +1695,7 @@ describe('LibraryPage — pagination (#183)', () => {
   );
 
   it('renders Pagination when total exceeds page limit', async () => {
-    // total=150 > limit=100 → pagination visible
+    // total=150 > limit=DEFAULT_LIMITS.books → pagination visible
     mockPagedLibraryData(pageBooks, { total: 150 });
 
     renderWithProviders(<LibraryPage />);
@@ -1717,7 +1718,7 @@ describe('LibraryPage — pagination (#183)', () => {
       expect(screen.getByText('Book 1')).toBeInTheDocument();
     });
 
-    // No pagination controls since total (4) <= limit (100)
+    // No pagination controls since total (4) <= limit (DEFAULT_LIMITS.books)
     expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
   });
 
@@ -1735,9 +1736,9 @@ describe('LibraryPage — pagination (#183)', () => {
     await user.click(nextButton);
 
     await waitFor(() => {
-      // getBooks should be called with offset=120 for page 2
+      // getBooks should be called with offset=DEFAULT_LIMITS.books for page 2
       expect(vi.mocked(api.listLibraryBooks)).toHaveBeenCalledWith(
-        expect.objectContaining({ offset: 120 }),
+        expect.objectContaining({ offset: DEFAULT_LIMITS.books }),
       );
     });
   });
@@ -2535,11 +2536,11 @@ describe('LibraryPage — URL param restoration (#352)', () => {
       expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
-    // Page 3 with default limit of 120 → offset 240
+    // Page 3 with default limit of DEFAULT_LIMITS.books → offset DEFAULT_LIMITS.books * 2
     const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
-      offset: 240,
-      limit: 120,
+      offset: DEFAULT_LIMITS.books * 2,
+      limit: DEFAULT_LIMITS.books,
     });
   });
 

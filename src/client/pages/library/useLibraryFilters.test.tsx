@@ -5,6 +5,7 @@ import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { useLibraryFilters, applyClientFilters } from './useLibraryFilters';
 import type { LibraryBookListItem } from '@/lib/api';
 import { createMockLibraryBook } from '@/__tests__/factories';
+import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 /** Wrapper that provides Router context with optional initial URL */
 function createWrapper(route = '/library') {
@@ -53,7 +54,7 @@ describe('useLibraryFilters', () => {
       search: undefined,
       sortField: 'createdAt',
       sortDirection: 'desc',
-      limit: 120,
+      limit: DEFAULT_LIMITS.books,
       offset: 0,
     });
   });
@@ -350,8 +351,8 @@ describe('useLibraryFilters — URL param initialization', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper('/library?page=3') });
     // Page must be synchronous (no effect flush) so the first API fetch uses the right offset
     expect(result.current.params.pagination.page).toBe(3);
-    expect(result.current.params.pagination.offset).toBe(240);
-    expect(result.current.params.apiParams.offset).toBe(240);
+    expect(result.current.params.pagination.offset).toBe(DEFAULT_LIMITS.books * 2);
+    expect(result.current.params.apiParams.offset).toBe(DEFAULT_LIMITS.books * 2);
   });
 
   it('falls back to page 1 for ?page=abc', () => {
