@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, scrypt } from 'node:crypto';
 
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = await importOriginal();
-  const mod = actual as Record<string, unknown> & { timingSafeEqual: typeof timingSafeEqual };
-  return { ...mod, timingSafeEqual: vi.fn(mod.timingSafeEqual) };
+  const mod = actual as Record<string, unknown> & {
+    timingSafeEqual: typeof timingSafeEqual;
+    scrypt: typeof scrypt;
+  };
+  return { ...mod, timingSafeEqual: vi.fn(mod.timingSafeEqual), scrypt: vi.fn(mod.scrypt) };
 });
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -110,6 +113,63 @@ describe('AuthService', () => {
       db.select.mockReturnValue(mockDbChain([]));
       const result = await service.verifyCredentials('nobody', 'password123');
       expect(result).toBeNull();
+    });
+
+    // Timing-oracle mitigation (#1179): the `null`-returning branches that
+    // would otherwise skip scrypt must still run a dummy scrypt so login
+    // timing does not distinguish "username exists" from "wrong password".
+    it('runs scrypt on the user-not-found branch (timing-oracle mitigation)', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      vi.mocked(scrypt).mockClear();
+
+      const result = await service.verifyCredentials('nobody', 'password123');
+
+      expect(result).toBeNull();
+      expect(scrypt).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs scrypt on the valid-user branch (parity with user-not-found)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // createUser check
+      await service.createUser('admin', 'password123');
+      const insertChain = db.insert.mock.results[0]!.value;
+      const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
+
+      db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
+      // Clear the createUser setup scrypt call so we only count verifyCredentials.
+      vi.mocked(scrypt).mockClear();
+
+      const result = await service.verifyCredentials('admin', 'password123');
+
+      expect(result).toEqual({ username: 'admin' });
+      expect(scrypt).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs scrypt on the malformed-passwordHash branch', async () => {
+      // passwordHash with no `:` separator — fails the parts.length !== 2 check.
+      db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: 'notavalidhash' }]));
+      vi.mocked(scrypt).mockClear();
+
+      const result = await service.verifyCredentials('admin', 'password123');
+
+      expect(result).toBeNull();
+      expect(scrypt).toHaveBeenCalledTimes(1);
+    });
+
+    it('reuses a process-scoped DUMMY_SALT across user-not-found calls', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      vi.mocked(scrypt).mockClear();
+
+      await service.verifyCredentials('nobody', 'password123');
+      await service.verifyCredentials('alsonobody', 'differentpw');
+
+      expect(scrypt).toHaveBeenCalledTimes(2);
+      // The salt is the second positional arg: scrypt(password, salt, keylen, cb).
+      const firstSalt = vi.mocked(scrypt).mock.calls[0]![1] as Buffer;
+      const secondSalt = vi.mocked(scrypt).mock.calls[1]![1] as Buffer;
+      expect(Buffer.isBuffer(firstSalt)).toBe(true);
+      // AC #3: DUMMY_SALT is a 16-byte Buffer (matches the real createUser salt size).
+      expect(firstSalt.length).toBe(16);
+      expect((firstSalt as Buffer).equals(secondSalt)).toBe(true);
     });
   });
 

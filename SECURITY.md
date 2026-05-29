@@ -57,6 +57,7 @@ When `AUTH_BYPASS=true` is combined with an existing user account, the server em
 ### User Passwords
 - Hashed with **scrypt** (64-byte key length) using a unique random 16-byte salt per password
 - Password comparison uses `crypto.timingSafeEqual` to prevent timing attacks
+- `verifyCredentials` runs a throwaway scrypt against a process-scoped dummy salt on the user-not-found and malformed-hash branches, so login response time does not distinguish "username exists" from "wrong password" (username-enumeration timing oracle)
 - The session secret is generated at initialization via `crypto.randomBytes(32)` and never exposed to the client
 
 ### API Keys
