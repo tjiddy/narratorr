@@ -16,8 +16,8 @@ Search for a book → Add to library as "wanted"
 
 ## What Narratorr Is Not
 
-- **Not a media server.** Narratorr does not play audiobooks. Audiobookshelf, Plex, Jellyfin, or whatever the user prefers handles playback.
-- **Not a library browser.** The library view exists to manage acquisition status (wanted, downloading, imported), not to be a rich browsing experience. The media server does that better.
+- **Not a media server.** Listening happens in Audiobookshelf, Plex, Jellyfin, or wherever the user prefers.
+- **Not a consumption library.** Narratorr does have rich browsing — discovery suggestions, series and author views, filtering, full-text search — but all of it serves *acquisition*: what to add next, what completes a series, what's worth grabbing. The library is organized around acquisition status (wanted, downloading, imported), not around what you feel like hearing next. The media server owns the listening experience and does it better.
 - **Not an audiobook database.** Metadata is fetched from external providers to support search, matching, and file organization. Narratorr is not trying to be a metadata catalog.
 
 ## Where It Fits in the Stack
@@ -69,7 +69,7 @@ Metadata from providers is noisy (see: genre normalization). The principle is: c
 
 ### Extensibility through adapters
 
-Indexers, download clients, metadata providers, and notifiers all follow the adapter pattern. Each type has an interface; implementations are pluggable. Adding a new indexer (Torznab), download client (Transmission), or notifier (Discord) means writing one adapter class that implements the interface. The rest of the system doesn't change.
+Indexers, download clients, metadata providers, notifiers, and import lists all follow the adapter pattern. Each type has an interface; implementations are pluggable. Adding a new indexer (Torznab), download client (Transmission), notifier (Discord), or import list (Audiobookshelf) means writing one adapter class that implements the interface. The rest of the system doesn't change.
 
 This keeps the core thin and the integration surface wide.
 

@@ -1,6 +1,5 @@
 # e2e/assets
 
-Reserved for Phase 2+ test fixtures (sample audiobook files, cover images,
-import-list payloads, etc.).
+Static fixtures used by the E2E specs.
 
-Empty in Phase 1 by design — see issue #612.
+- `silent.m4b` — 10-second silent audiobook (~4KB, AAC), used by the import critical-path specs as a real file the scanner and tagger can process.

@@ -90,17 +90,21 @@ e2e/
 │   └── seed.test.ts              # vitest
 ├── fakes/
 │   ├── torrent.ts                # minimal bencode builder + info_hash computer
+│   ├── torrent.test.ts           # vitest
 │   ├── mam.ts                    # MyAnonamouse fake (Fastify, :4100)
 │   ├── mam.test.ts               # vitest
 │   ├── qbit.ts                   # qBittorrent WebUI fake (Fastify, :4200)
-│   └── qbit.test.ts              # vitest
+│   ├── qbit.test.ts              # vitest
+│   ├── audible.ts                # Audible catalog fake (Fastify, :4300)
+│   └── audible.test.ts           # vitest
 ├── assets/
 │   └── silent.m4b                # 10-second silent fixture (~4KB, AAC)
 └── tests/
     ├── smoke/
     │   └── library.spec.ts       # Playwright — library page smoke
     └── critical-path/
-        └── search-grab-import.spec.ts  # Playwright — full pipeline
+        ├── search-grab-import.spec.ts  # Playwright — search → grab → import
+        └── manual-import.spec.ts       # Playwright — manual import flow
 ```
 
 ## Debugging a CI failure

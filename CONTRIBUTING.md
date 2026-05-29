@@ -1,6 +1,6 @@
 # Contributing to Narratorr
 
-> **Note:** This guide is a work in progress and will be expanded before the 1.0 release. If something looks thin or missing, please open an issue.
+> If something here looks thin or out of date, please open an issue or PR.
 
 ## Getting Started
 
@@ -68,6 +68,8 @@ src/
 
 **Frontend** uses React Router (routes in `App.tsx`), nav items in `Layout.tsx`, TanStack Query for server state, Tailwind for styling.
 
+**Database** changes go through Drizzle: edit `db/schema.ts`, run `pnpm db:generate`, and commit the whole `drizzle/` folder — the generated SQL file plus the `meta/` journal and snapshot are co-required (committing only the SQL silently skips the migration in CI). See `CLAUDE.md` for the migration gotchas.
+
 ## Testing
 
 All new/changed code must include tests.
@@ -82,6 +84,15 @@ All new/changed code must include tests.
 
 Global test setup: `src/client/__tests__/setup.ts`
 Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
+
+### End-to-end tests
+
+| Kind | Location | Runner | Command |
+|------|----------|--------|---------|
+| Server integration (real Fastify + DB) | `src/server/__tests__/*.e2e.test.ts` | Vitest | `pnpm test` |
+| Browser end-to-end | `e2e/` (critical-path + smoke specs) | Playwright | `pnpm test:e2e` (`pnpm test:e2e:ui` for the UI runner) |
+
+See [e2e/README.md](e2e/README.md) for the Playwright harness, fakes, and fixtures.
 
 ## Code Style
 

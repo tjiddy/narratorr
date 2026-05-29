@@ -1,6 +1,6 @@
 # Download Client State Mapping Reference
 
-Last updated: 2026-04-06
+Last updated: 2026-05-29
 
 ## Client Source Repos
 
@@ -158,11 +158,16 @@ NZBGet uses a degradation model — multiple post-processing fields that each in
 | `ScriptStatus` | `SUCCESS`, `NONE` | Post-processing script failed |
 | `DeleteStatus` | (empty) | `HEALTH`, `DUPE`, `SCAN`, `COPY`, `BAD` = failed; others = warning |
 
-### Our mapping (needs fixing)
+### Our mapping
 
-Current code defaults unknown history status to `'completed'` (line 259) — same bug as old SABnzbd. Should default to `'downloading'`.
+History status is mapped in `mapHistoryStatus` (`nzbget.ts`):
 
-Should also check `ParStatus`, `UnpackStatus`, `MoveStatus` for degradation.
+- `FAILURE/*` or `DELETED/*` → `'error'`
+- Anything not starting with `SUCCESS` → `'downloading'` (in-progress/unknown defaults to downloading, not completed — avoids the premature-import bug)
+- `SUCCESS/*`, then degraded by post-processing failures: `ParStatus` or `UnpackStatus` failure → `'error'`; `MoveStatus` failure → `'downloading'`
+- Otherwise → `'completed'`
+
+We check `ParStatus`, `UnpackStatus`, and `MoveStatus`. Radarr/Sonarr additionally degrade on `ScriptStatus` and `DeleteStatus` (see below) — we don't, so an NZBGet post-processing-script failure or a delete-health flag still maps to `'completed'`. Accepted for our use; revisit if it bites.
 
 ### Radarr/Sonarr approach
 
@@ -209,7 +214,7 @@ elif status.moving_storage:
     self.state = 'Moving'
 ```
 
-This is triggered during `move_storage()` operations (e.g., move-on-complete). The `is_finished` flag remains true during moves, so Radarr/Sonarr's `IsFinished && state !== Checking` check would still report completed during a move. This means our adapter should also check for the `Moving` state explicitly and return `'downloading'` — same as we do for qBT's `moving`.
+This is triggered during `move_storage()` operations (e.g., move-on-complete). The `is_finished` flag remains true during moves, so Radarr/Sonarr's `IsFinished && state !== Checking` check would still report completed during a move. Our adapter handles this: `mapState` (`deluge.ts`) returns `'downloading'` for the `Moving` state and excludes `Moving` from the `is_finished` completed check — same as we do for qBT's `moving`.
 
 Full state list from Deluge source:
 - `Checking` (queued_for_checking, checking_files, checking_resume_data)

@@ -1,8 +1,10 @@
 # e2e/fakes
 
-Reserved for Phase 2+ fake external service implementations (MAM, SAB, qBit,
-Audible, etc.). Fakes will `import type` from `src/core/indexers/types.ts` /
-`src/core/download-clients/types.ts` so type-level contract drift fails the
-E2E typecheck.
+Fake external-service implementations the harness boots so E2E runs stay hermetic:
 
-Empty in Phase 1 by design — see issue #612.
+- `torrent.ts` — minimal bencode builder + info_hash computer
+- `mam.ts` — MyAnonamouse indexer fake (Fastify, :4100)
+- `qbit.ts` — qBittorrent WebUI fake (Fastify, :4200)
+- `audible.ts` — Audible catalog fake (Fastify, :4300)
+
+Each fake has a `*.test.ts` sibling run under vitest (`pnpm test`).
