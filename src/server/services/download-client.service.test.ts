@@ -498,6 +498,16 @@ describe('DownloadClientService', () => {
       expect(result.categories).toEqual([]);
       expect(result.error).toBe('ECONNREFUSED');
     });
+
+    it('#1180 propagates the Zod error for a malformed saved row (construction precedes the try, no catch-and-return)', async () => {
+      // Valid type, but settings omit the required `host`. Adapter construction in
+      // getCategories(id) happens before the try, so the ZodError propagates rather
+      // than being converted to { categories: [], error } — unlike getCategoriesFromConfig.
+      const badClient = { ...mockClient, id: 12, settings: { port: 8080 } };
+      db.select.mockReturnValue(mockDbChain([badClient]));
+
+      await expect(service.getCategories(12)).rejects.toThrow(/host/);
+    });
   });
 
   describe('getCategoriesFromConfig', () => {
@@ -759,6 +769,14 @@ describe('DownloadClientService', () => {
       db.select.mockReturnValue(mockDbChain([unknownClient]));
 
       await expect(service.getAdapter(10)).rejects.toThrow('Unknown download client type');
+    });
+
+    it('#1180 throws a Zod-flavored error naming the missing field when persisted settings are malformed', async () => {
+      // Valid type 'qbittorrent', but settings omit the required `host` — a drifted/hand-edited row.
+      const badClient = { ...mockClient, id: 11, settings: { port: 8080 } };
+      db.select.mockReturnValue(mockDbChain([badClient]));
+
+      await expect(service.getAdapter(11)).rejects.toThrow(/host/);
     });
   });
 });

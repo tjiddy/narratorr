@@ -9,7 +9,8 @@ import {
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
-import type { IndexerSettings } from '../../shared/schemas/indexer.js';
+import { indexerSettingsSchemas, type IndexerSettings } from '../../shared/schemas/indexer.js';
+import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -212,11 +213,16 @@ export class IndexerService {
   }
 
   private createAdapter(indexer: IndexerRow, proxyUrl?: string): IndexerAdapter {
-    const settings = indexer.settings as IndexerSettings;
     const factory = INDEXER_ADAPTER_FACTORIES[indexer.type as keyof typeof INDEXER_ADAPTER_FACTORIES];
     if (!factory) {
       throw new Error(`Unknown indexer type: ${indexer.type}`);
     }
+
+    const settings = parseEntitySettings<IndexerSettings>(
+      indexerSettingsSchemas,
+      indexer.type,
+      indexer.settings as Record<string, unknown>,
+    );
 
     // Resolve effective proxy URL: only pass when indexer has useProxy enabled
     // FlareSolverr takes precedence at the adapter level — we still pass proxyUrl,

@@ -9,7 +9,8 @@ import {
   type EventPayload,
 } from '../../core/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import type { NotifierSettings } from '../../shared/schemas/notifier.js';
+import { notifierSettingsSchemas, type NotifierSettings } from '../../shared/schemas/notifier.js';
+import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -194,7 +195,11 @@ export class NotifierService {
     const factory = ADAPTER_FACTORIES[notifier.type as keyof typeof ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown notifier type: ${notifier.type}`);
 
-    const settings = notifier.settings as NotifierSettings;
+    const settings = parseEntitySettings<NotifierSettings>(
+      notifierSettingsSchemas,
+      notifier.type,
+      notifier.settings as Record<string, unknown>,
+    );
 
     // Log warning for malformed webhook headers (factory silently ignores them)
     if (notifier.type === 'webhook') {

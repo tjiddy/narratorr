@@ -214,6 +214,13 @@ describe('NotifierService', () => {
       fetchSpy.mockRestore();
     });
 
+    it('#1180 throws a Zod-flavored error naming the missing field when persisted settings are malformed', () => {
+      // Valid type, but settings omit the required `url` — a drifted/hand-edited row.
+      const badNotifier = createMockDbNotifier({ settings: { headers: '{}' } });
+
+      expect(() => service.getAdapter(badNotifier as never)).toThrow(/url/);
+    });
+
     it('resolves without throwing when all matching notifiers fail simultaneously', async () => {
       const notifier1 = createMockDbNotifier({ id: 1, name: 'Webhook 1', events: ['on_grab'] });
       const notifier2 = createMockDbNotifier({ id: 2, name: 'Webhook 2', events: ['on_grab'] });
