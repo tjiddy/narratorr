@@ -74,11 +74,11 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
       let buffer: Buffer;
       try {
         buffer = await data.toBuffer();
-      } catch (error) {
+      } catch (error: unknown) {
         // @fastify/multipart throws RequestFileTooLargeError (FST_REQ_FILE_TOO_LARGE)
         // when the per-request fileSize limit is exceeded. That class is not in
         // ERROR_REGISTRY, so letting it propagate would surface as 500; handle it here.
-        if ((error as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
+        if (error instanceof Error && (error as { code?: string }).code === 'FST_REQ_FILE_TOO_LARGE') {
           return reply.status(400).send({ error: 'Cover image must be under 10 MB' });
         }
         throw error;
