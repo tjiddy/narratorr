@@ -248,6 +248,13 @@ describe('IndexerService', () => {
 
       await expect(service.getAdapter(badIndexer)).rejects.toThrow('Unknown indexer type');
     });
+
+    it('#1180 throws a Zod-flavored error naming the missing field when persisted settings are malformed', async () => {
+      // Valid type 'abb', but settings omit the required `hostname` — a drifted/hand-edited row.
+      const badIndexer = createMockDbIndexer({ settings: { pageLimit: 2 } });
+
+      await expect(service.getAdapter(badIndexer)).rejects.toThrow(/hostname/);
+    });
   });
 
   describe('test', () => {

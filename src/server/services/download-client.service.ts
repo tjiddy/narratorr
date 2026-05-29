@@ -11,7 +11,8 @@ import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import type { DownloadClientSettings } from '../../shared/schemas/download-client.js';
+import { downloadClientSettingsSchemas, type DownloadClientSettings } from '../../shared/schemas/download-client.js';
+import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { DownloadClientRow } from './types.js';
 
@@ -170,11 +171,16 @@ export class DownloadClientService {
   }
 
   private createAdapter(client: DownloadClientRow): DownloadClientAdapter {
-    const settings = client.settings as DownloadClientSettings;
     const factory = DOWNLOAD_CLIENT_ADAPTER_FACTORIES[client.type as keyof typeof DOWNLOAD_CLIENT_ADAPTER_FACTORIES];
     if (!factory) {
       throw new Error(`Unknown download client type: ${client.type}`);
     }
+
+    const settings = parseEntitySettings<DownloadClientSettings>(
+      downloadClientSettingsSchemas,
+      client.type,
+      client.settings as Record<string, unknown>,
+    );
     this.log.debug({ client: client.name, type: client.type }, 'Creating download client adapter');
     return factory(settings, { onWarn: (msg: string) => this.log.warn(msg) });
   }
