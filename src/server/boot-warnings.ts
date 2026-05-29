@@ -56,3 +56,22 @@ export async function warnIfReverseProxyMisconfigured(
     );
   }
 }
+
+/**
+ * Boot orchestration for the reverse-proxy misconfiguration warning (#1174).
+ *
+ * Reads persisted auth status (must run AFTER `authService.initialize()`) and
+ * forwards `mode`, `localBypass`, and the configured `trustedProxies` to
+ * `warnIfReverseProxyMisconfigured`. Extracted from `main()` so the status read
+ * and field mapping are unit-testable — the call site in `index.ts` is a single
+ * line that TypeScript checks for field names, but the wiring (reading
+ * `getStatus()` and passing the right values) is exercised here.
+ */
+export async function checkReverseProxyBootConfig(
+  authService: Pick<AuthService, 'getStatus'>,
+  trustedProxies: boolean | string[],
+  log: FastifyBaseLogger,
+): Promise<void> {
+  const status = await authService.getStatus();
+  await warnIfReverseProxyMisconfigured(status.mode, status.localBypass, trustedProxies, log);
+}

@@ -83,7 +83,7 @@ import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
 import { applyPendingRestore } from './services/backup.service.js';
 import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
 import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
-import { warnIfAuthBypassWithUser, warnIfReverseProxyMisconfigured } from './boot-warnings.js';
+import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-warnings.js';
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
 
@@ -156,13 +156,7 @@ async function main() {
   await warnIfAuthBypassWithUser(config.authBypass, services.auth, app.log);
 
   // Warn when reverse-proxy auth features are active but TRUSTED_PROXIES is unset (#1174).
-  const authStatus = await services.auth.getStatus();
-  await warnIfReverseProxyMisconfigured(
-    authStatus.mode,
-    authStatus.localBypass,
-    config.trustedProxies,
-    app.log,
-  );
+  await checkReverseProxyBootConfig(services.auth, config.trustedProxies, app.log);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);
