@@ -12,10 +12,15 @@ import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-function settingsServiceWith(apiKey: string): SettingsService {
+/** Settings stub returning an arbitrary `metadata` shape from `get('metadata')`. */
+function settingsServiceWithMetadata(metadata: Record<string, unknown>): SettingsService {
   return inject<SettingsService>({
-    get: vi.fn().mockResolvedValue({ hardcoverApiKey: apiKey }),
+    get: vi.fn().mockResolvedValue(metadata),
   });
+}
+
+function settingsServiceWith(apiKey: string): SettingsService {
+  return settingsServiceWithMetadata({ hardcoverApiKey: apiKey });
 }
 
 async function seedBookWithSeries(db: Db, opts: {
@@ -205,10 +210,14 @@ describe('SeriesCardService — unit', () => {
 
   describe('Hardcover failure → library-only fallback', () => {
     it.each([
-      { label: '401 unauthorized', makeFetch: () => vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 })) },
-      { label: '500 server error', makeFetch: () => vi.fn().mockResolvedValue(new Response('boom', { status: 500 })) },
-      { label: 'thrown network error', makeFetch: () => vi.fn().mockRejectedValue(new Error('ECONNRESET')) },
-    ])('degrades to library-only and does not persist a partial row on $label', async ({ makeFetch }) => {
+      // The mapped error type proves serializeError() ran: 401 → MetadataError,
+      // 5xx and network throws → TransientError (see hardcover.ts mapHttpError /
+      // mapNetworkError). A raw `Error` logged as `{ error }` would have neither
+      // a `.type` field nor the mapped name, and would still be an Error instance.
+      { label: '401 unauthorized', expectedType: 'MetadataError', makeFetch: () => vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 })) },
+      { label: '500 server error', expectedType: 'TransientError', makeFetch: () => vi.fn().mockResolvedValue(new Response('boom', { status: 500 })) },
+      { label: 'thrown network error', expectedType: 'TransientError', makeFetch: () => vi.fn().mockRejectedValue(new Error('ECONNRESET')) },
+    ])('degrades to library-only and does not persist a partial row on $label', async ({ makeFetch, expectedType }) => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       globalThis.fetch = makeFetch() as typeof globalThis.fetch;
 
@@ -225,14 +234,21 @@ describe('SeriesCardService — unit', () => {
       // No partial cache row persisted on failure.
       expect(await db.select().from(series)).toHaveLength(0);
 
-      // Error logged via serializeError() — the warn meta carries a serialized
-      // (object) error value, never a raw catch binding.
+      // Error logged via serializeError() — assert the serialized contract, not
+      // just "is an object". Deleting `serializeError(error)` from the catch
+      // would log the raw Error (an Error instance with no `.type`/`.message`
+      // own-enumerable serialized shape), failing these assertions.
       expect(rawLog.warn).toHaveBeenCalled();
       const warnedWithError = (rawLog.warn as ReturnType<typeof vi.fn>).mock.calls.find(
         ([meta]) => typeof meta === 'object' && meta !== null && 'error' in (meta as object),
       );
       expect(warnedWithError).toBeDefined();
-      expect(typeof (warnedWithError![0] as { error: unknown }).error).toBe('object');
+      const logged = (warnedWithError![0] as { error: unknown }).error;
+      expect(logged).not.toBeInstanceOf(Error);
+      const serialized = logged as { type?: unknown; message?: unknown; stack?: unknown };
+      expect(serialized.type).toBe(expectedType);
+      expect(typeof serialized.message).toBe('string');
+      expect(typeof serialized.stack).toBe('string');
     });
   });
 
@@ -246,6 +262,28 @@ describe('SeriesCardService — unit', () => {
       globalThis.fetch = fetchSpy as typeof globalThis.fetch;
 
       const svc = new SeriesCardService(db, log, settingsServiceWith(apiKey));
+      const card = await svc.getSeriesForBook(bookId);
+
+      expect(card!.id).toBeNull();
+      expect(card!.hardcoverSeriesId).toBeNull();
+      expect(card!.members.map((m) => m.title)).toEqual(['Kings of the Wyld', 'Bloody Rose']);
+      expect(card!.members.every((m) => m.inLibrary)).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { label: 'the hardcoverApiKey field is absent', metadata: {} },
+      { label: 'hardcoverApiKey is explicitly undefined', metadata: { hardcoverApiKey: undefined } },
+    ])('getSeriesForBook degrades without a Hardcover fetch when $label', async ({ metadata }) => {
+      // Guards the `(metadata.hardcoverApiKey ?? '')` nullish coalesce: a
+      // regression to `metadata.hardcoverApiKey.trim()` would throw here on an
+      // absent/undefined key instead of degrading to library-only.
+      const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+      await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWithMetadata(metadata));
       const card = await svc.getSeriesForBook(bookId);
 
       expect(card!.id).toBeNull();
@@ -409,17 +447,27 @@ describe('SeriesCardService — unit', () => {
       expect(after.authorName).toBe('New Author');
     });
 
-    it('runScheduledRefresh resolves a null-id row via its lowest-id linked book with an author', async () => {
+    it('runScheduledRefresh resolves a null-id row via its lowest-books.id linked book', async () => {
       const [row] = await db.insert(series).values({
-        name: 'The Band', normalizedName: 'the band', hardcoverSeriesId: null, authorName: null,
+        name: 'Shared Series', normalizedName: 'shared series', hardcoverSeriesId: null, authorName: null,
         lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
       }).returning();
-      const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      await db.insert(seriesMembers).values({
-        seriesId: row!.id, bookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2, source: 'local',
-      });
+      // Two linked books with observably distinct seriesName + author. The
+      // lower-id book is inserted first; the resolver issues a by-name request
+      // whose variables prove WHICH book `orderBy(asc(books.id))` selected.
+      // Reversing or removing that ordering would send the higher-id book's
+      // name/author and fail the assertions below.
+      const lowerBookId = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'Lower Series Name', seriesPosition: 1, authorName: 'Lower Author' });
+      const higherBookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'Higher Series Name', seriesPosition: 2, authorName: 'Higher Author' });
+      expect(lowerBookId).toBeLessThan(higherBookId);
+      // Insert series_members in the OPPOSITE order from books.id, so the
+      // load-bearing signal is the query's orderBy, not member insertion order.
+      await db.insert(seriesMembers).values([
+        { seriesId: row!.id, bookId: higherBookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Higher Author', position: 2, source: 'local' },
+        { seriesId: row!.id, bookId: lowerBookId, title: 'Kings of the Wyld', normalizedTitle: 'kings of the wyld', authorName: 'Lower Author', position: 1, source: 'local' },
+      ]);
       const fetchMock = mockFetchOnce(hardcoverSeriesPayload({
-        id: 5523, name: 'The Band', author: 'Nicholas Eames', members: [{ position: 2, id: 1002, slug: 'bloody', title: 'Bloody Rose' }],
+        id: 5523, name: 'Lower Series Name', author: 'Lower Author', members: [{ position: 1, id: 1001, slug: 'kings', title: 'Kings of the Wyld' }],
       }));
 
       const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
@@ -429,10 +477,9 @@ describe('SeriesCardService — unit', () => {
       const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
       expect(body.query).toContain('GetSeriesMembers');
       expect(body.query).not.toContain('GetSeriesMembersById');
-      expect(body.variables.name).toBe('The Band');
-      expect(body.variables.author).toBe('Nicholas Eames');
-      const after = (await db.select().from(series).where(eq(series.id, row!.id)))[0]!;
-      expect(after.hardcoverSeriesId).toBe(5523);
+      // Variables MUST come from the lower-books.id book.
+      expect(body.variables.name).toBe('Lower Series Name');
+      expect(body.variables.author).toBe('Lower Author');
     });
 
     it('runScheduledRefresh counts a null-id row with no qualifying linked book as skipped', async () => {
