@@ -48,6 +48,15 @@ export interface SessionVerifyResult {
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const SCRYPT_KEYLEN = 64;
 
+// Generated once at module load, stable for the process lifetime. Used to run a
+// throwaway scrypt on the `null`-returning branches of verifyCredentials that
+// would otherwise skip hashing, so login timing does not distinguish
+// "username exists" from "wrong password" (username-enumeration oracle). The
+// value is cryptographically irrelevant — it is never compared against
+// anything; it only makes the work proportional to a real verification. 16
+// bytes matches the real salt size used in createUser (randomBytes(16)).
+const DUMMY_SALT = randomBytes(16);
+
 function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, SCRYPT_KEYLEN, (err, derivedKey) => {
@@ -224,6 +233,10 @@ export class AuthService {
       .limit(1);
 
     if (result.length === 0) {
+      // Defeat the username-enumeration timing oracle — run scrypt with a fixed
+      // salt and discard the result so this branch costs the same wall-clock
+      // time as a real verification (which calls hashPassword at line ~256).
+      await hashPassword(password, DUMMY_SALT);
       this.log.debug({ username }, 'Auth: user not found');
       return null;
     }
@@ -238,6 +251,9 @@ export class AuthService {
       // distinguishing "user exists with corrupt hash" from "wrong password".
       // Logged at warn so operators see it; this should never happen with
       // hashes produced by hashPassword().
+      // Run the dummy scrypt before returning so this branch does not
+      // reintroduce the timing distinction the user-not-found branch closes.
+      await hashPassword(password, DUMMY_SALT);
       this.log.warn({ username }, 'Auth: malformed passwordHash in DB');
       return null;
     }

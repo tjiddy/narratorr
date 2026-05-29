@@ -11,10 +11,13 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
-// Mock crypto.randomUUID for deterministic job IDs
-vi.mock('node:crypto', () => ({
-  randomUUID: vi.fn().mockReturnValue('test-job-id'),
-}));
+// Mock crypto.randomUUID for deterministic job IDs. Preserve the rest of
+// node:crypto — auth.service.ts (pulled in transitively via the service chain)
+// calls randomBytes() at module load to build its DUMMY_SALT.
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return { ...actual, randomUUID: vi.fn().mockReturnValue('test-job-id') };
+});
 
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { randomUUID } from 'node:crypto';
