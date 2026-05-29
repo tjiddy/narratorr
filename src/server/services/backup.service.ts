@@ -10,6 +10,10 @@ import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { BYTES_PER_GB } from '../../shared/constants.js';
+
+/** Default cap on the uncompressed size of the extracted narratorr.db (1 GB; cf. MAX_COVER_SIZE). */
+const MAX_UNCOMPRESSED_DB_SIZE = BYTES_PER_GB;
 
 
 export interface BackupMetadata {
@@ -41,6 +45,7 @@ export class BackupService {
     private dbPath: string,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
+    private maxRestoreDbSize: number = MAX_UNCOMPRESSED_DB_SIZE,
   ) {}
 
   private get backupsDir(): string {
@@ -207,29 +212,61 @@ export class BackupService {
 
       await new Promise<void>((resolve, reject) => {
         const zipStream = source.pipe(unzipper.Parse());
-        zipStream.on('entry', (entry: { path: string; autodrain: () => void; pipe: (dest: NodeJS.WritableStream) => void }) => {
+        let aborted = false;
+        // Route every reject site through a single guarded helper so the cap check,
+        // writeStream 'error', and zipStream 'error' settle the promise exactly once —
+        // destroying streams on overflow can emit follow-up 'error' events post-teardown.
+        const failOnce = (error: Error) => {
+          if (aborted) return;
+          aborted = true;
+          reject(error);
+        };
+        zipStream.on('entry', (entry: {
+          path: string;
+          autodrain: () => void;
+          pipe: (dest: NodeJS.WritableStream) => void;
+          on: (event: string, cb: (chunk: Buffer) => void) => void;
+          destroy?: () => void;
+        }) => {
           if (entry.path === 'narratorr.db') {
             found = true;
             const writeStream = fss.createWriteStream(tempDbPath);
+            let bytesWritten = 0;
+
+            entry.on('data', (chunk: Buffer) => {
+              if (aborted) return;
+              bytesWritten += chunk.length;
+              if (bytesWritten > this.maxRestoreDbSize) {
+                // Destroy streams (release the temp-file handle) before rejecting; the
+                // catch block performs the single fs.rm cleanup for all error paths.
+                writeStream.destroy();
+                entry.destroy?.();
+                zipStream.destroy?.();
+                failOnce(new RestoreUploadError(
+                  `Uncompressed DB exceeds ${this.maxRestoreDbSize} byte cap (possible zip bomb)`,
+                  'OVERSIZED_DB',
+                ));
+              }
+            });
             entry.pipe(writeStream);
-            writeStream.on('finish', () => {});
-            writeStream.on('error', reject);
+            writeStream.on('error', failOnce);
           } else {
             entry.autodrain();
           }
         });
         zipStream.on('close', resolve);
-        zipStream.on('error', reject);
+        zipStream.on('error', failOnce);
       });
 
       if (!found) {
-        await fs.rm(tempDir, { recursive: true }).catch(() => {});
         throw new RestoreUploadError('Zip does not contain narratorr.db', 'MISSING_DB');
       }
 
       return { tempDir, tempDbPath };
     } catch (error: unknown) {
-      if (error instanceof RestoreUploadError) throw error;
+      // Unconditional cleanup: streams are destroyed at the overflow site before this
+      // runs, so the temp-file handle is released and rm succeeds for RestoreUploadError
+      // (OVERSIZED_DB, MISSING_DB) as well as system I/O errors.
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
       throw error;
     }
@@ -367,7 +404,7 @@ export class BackupService {
 export class RestoreUploadError extends Error {
   constructor(
     message: string,
-    public code: 'MISSING_DB' | 'INVALID_DB' | 'INVALID_ZIP',
+    public code: 'MISSING_DB' | 'INVALID_DB' | 'INVALID_ZIP' | 'OVERSIZED_DB',
   ) {
     super(message);
     this.name = 'RestoreUploadError';
