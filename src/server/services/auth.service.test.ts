@@ -167,6 +167,8 @@ describe('AuthService', () => {
       const firstSalt = vi.mocked(scrypt).mock.calls[0]![1] as Buffer;
       const secondSalt = vi.mocked(scrypt).mock.calls[1]![1] as Buffer;
       expect(Buffer.isBuffer(firstSalt)).toBe(true);
+      // AC #3: DUMMY_SALT is a 16-byte Buffer (matches the real createUser salt size).
+      expect(firstSalt.length).toBe(16);
       expect((firstSalt as Buffer).equals(secondSalt)).toBe(true);
     });
   });
