@@ -1,250 +1,104 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, copyFileSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { fileURLToPath } from 'node:url';
 
 // Resolve the production drizzle/ folder from this test file's URL.
 // __dirname for tests run via vitest points at src/db/__tests__/, so go up
 // two levels to reach the repo root then into drizzle/.
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PROD_DRIZZLE = join(__dirname, '..', '..', '..', 'drizzle');
-const NEW_MIGRATION_TAG = '0004_colossal_george_stacy';
-const NEW_MIGRATION_IDX = 4;
 
-interface JournalEntry {
-  idx: number;
-  version: string;
-  when: number;
-  tag: string;
-  breakpoints: boolean;
-}
-interface Journal {
-  version: string;
-  dialect: string;
-  entries: JournalEntry[];
-}
+// Tables the application depends on existing after the baseline migration.
+// Not exhaustive (the schema grows); this is a representative core set that
+// must always be present, plus the migrator bookkeeping table.
+const CORE_TABLES = [
+  'authors',
+  'books',
+  'book_authors',
+  'book_events',
+  'downloads',
+  'indexers',
+  'download_clients',
+  'notifiers',
+  'import_lists',
+  'series',
+  'series_members',
+  'settings',
+  'users',
+];
 
-function readJournal(path: string): Journal {
-  return JSON.parse(readFileSync(path, 'utf8')) as Journal;
-}
-
-function writeJournal(path: string, j: Journal) {
-  writeFileSync(path, JSON.stringify(j, null, 2) + '\n', 'utf8');
-}
-
-/**
- * Build a temporary drizzle migration folder containing only migrations
- * 0000..0003 (i.e. the pre-#1103 schema, with monitor_for_upgrades + 'upgraded'
- * event-type + 'on_upgrade' notifier-event). The new 0004 SQL file and its
- * journal entry / snapshot are withheld so they can be applied in a second
- * pass after pre-migration rows are seeded.
- */
-function setupSplitMigrationsFolder(): {
-  tmpDir: string;
-  migrationsFolder: string;
-  applyNewMigration: () => Promise<void>;
-  dbPath: string;
-} {
-  const tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-migration-test-'));
-  const migrationsFolder = join(tmpDir, 'drizzle');
-  mkdirSync(migrationsFolder, { recursive: true });
-  mkdirSync(join(migrationsFolder, 'meta'), { recursive: true });
-
-  // Copy SQL files for migrations strictly before NEW_MIGRATION_IDX. Drizzle's
-  // migrator tracks the highest applied idx; staging anything at-or-after the
-  // target tag would short-circuit re-applying the target itself.
-  const numericPrefix = /^(\d+)_/;
-  const fileIdx = (name: string): number | null => {
-    const m = name.match(numericPrefix);
-    return m ? parseInt(m[1]!, 10) : null;
-  };
-  const files = readdirSync(PROD_DRIZZLE);
-  for (const file of files) {
-    if (file === 'meta') continue;
-    const idx = fileIdx(file);
-    if (idx !== null && idx >= NEW_MIGRATION_IDX) continue;
-    copyFileSync(join(PROD_DRIZZLE, file), join(migrationsFolder, file));
-  }
-  const metaFiles = readdirSync(join(PROD_DRIZZLE, 'meta'));
-  for (const file of metaFiles) {
-    if (file === '_journal.json') continue;
-    const idx = fileIdx(file);
-    if (idx !== null && idx >= NEW_MIGRATION_IDX) continue;
-    copyFileSync(join(PROD_DRIZZLE, 'meta', file), join(migrationsFolder, 'meta', file));
-  }
-
-  // Write a truncated journal that omits the new migration's entry AND any
-  // entry with idx >= NEW_MIGRATION_IDX so the pre-migration phase stages
-  // strictly the pre-target schema.
-  const realJournal = readJournal(join(PROD_DRIZZLE, 'meta', '_journal.json'));
-  const truncatedJournal: Journal = {
-    ...realJournal,
-    entries: realJournal.entries.filter((e) => e.idx < NEW_MIGRATION_IDX),
-  };
-  writeJournal(join(migrationsFolder, 'meta', '_journal.json'), truncatedJournal);
-
-  const dbPath = join(tmpDir, 'test.db');
-
-  async function applyNewMigration() {
-    // Stage 2: restore the new migration SQL and append its journal entry, then
-    // re-run the migrator. Because the journal is checksum-tracked by Drizzle,
-    // only the new entry will run.
-    copyFileSync(join(PROD_DRIZZLE, `${NEW_MIGRATION_TAG}.sql`), join(migrationsFolder, `${NEW_MIGRATION_TAG}.sql`));
-    const snapshotFile = readdirSync(join(PROD_DRIZZLE, 'meta')).find((f) => f.startsWith('0004_'));
-    if (snapshotFile) {
-      copyFileSync(join(PROD_DRIZZLE, 'meta', snapshotFile), join(migrationsFolder, 'meta', snapshotFile));
-    }
-    const newEntry = realJournal.entries.find((e) => e.tag === NEW_MIGRATION_TAG);
-    if (!newEntry) throw new Error(`Could not locate journal entry for ${NEW_MIGRATION_TAG} in production journal`);
-    const fullJournal: Journal = { ...realJournal, entries: [...truncatedJournal.entries, newEntry] };
-    writeJournal(join(migrationsFolder, 'meta', '_journal.json'), fullJournal);
-
-    const client = createClient({ url: `file:${dbPath}` });
-    const db = drizzle(client);
-    try {
-      await migrate(db, { migrationsFolder });
-    } finally {
-      client.close();
-    }
-  }
-
-  return { tmpDir, migrationsFolder, applyNewMigration, dbPath };
-}
-
-async function applyPreMigration(migrationsFolder: string, dbPath: string): Promise<void> {
+async function tableNames(dbPath: string): Promise<Set<string>> {
   const client = createClient({ url: `file:${dbPath}` });
-  const db = drizzle(client);
   try {
-    await migrate(db, { migrationsFolder });
+    const result = await client.execute(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    );
+    return new Set(result.rows.map((r) => r.name as string));
   } finally {
     client.close();
   }
 }
 
-describe('#1103 migration 0004 — data transformations', () => {
-  let ctx: ReturnType<typeof setupSplitMigrationsFolder>;
-
-  beforeEach(async () => {
-    ctx = setupSplitMigrationsFolder();
-    await applyPreMigration(ctx.migrationsFolder, ctx.dbPath);
-  });
+describe('drizzle baseline migration', () => {
+  let tmpDir: string;
 
   afterEach(() => {
     try {
-      rmSync(ctx.tmpDir, { recursive: true, force: true });
+      rmSync(tmpDir, { recursive: true, force: true });
     } catch {
       // Windows: libsql file handles may linger briefly after close()
     }
   });
 
-  it('drops books.monitor_for_upgrades column and remaps upgraded → imported and scrubs on_upgrade', async () => {
-    // ── Seed pre-migration rows (pre-state has monitor_for_upgrades column, 'upgraded' event type, on_upgrade events) ──
-    const seedClient = createClient({ url: `file:${ctx.dbPath}` });
+  it('applies cleanly to an empty database and creates the expected tables', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-baseline-test-'));
+    const dbPath = join(tmpDir, 'test.db');
+
+    const client = createClient({ url: `file:${dbPath}` });
     try {
-      // books with monitor_for_upgrades flag
-      await seedClient.execute({
-        sql: `INSERT INTO books (id, title, monitor_for_upgrades, status, enrichment_status) VALUES (?, ?, ?, ?, ?)`,
-        args: [1, 'Monitored Book', 1, 'imported', 'enriched'],
-      });
-      await seedClient.execute({
-        sql: `INSERT INTO books (id, title, monitor_for_upgrades, status, enrichment_status) VALUES (?, ?, ?, ?, ?)`,
-        args: [2, 'Unmonitored Book', 0, 'wanted', 'pending'],
-      });
-
-      // book_events including the 'upgraded' type
-      await seedClient.execute({
-        sql: `INSERT INTO book_events (book_id, book_title, event_type, source) VALUES (?, ?, ?, ?)`,
-        args: [1, 'Monitored Book', 'upgraded', 'auto'],
-      });
-      await seedClient.execute({
-        sql: `INSERT INTO book_events (book_id, book_title, event_type, source) VALUES (?, ?, ?, ?)`,
-        args: [1, 'Monitored Book', 'imported', 'auto'],
-      });
-      await seedClient.execute({
-        sql: `INSERT INTO book_events (book_id, book_title, event_type, source) VALUES (?, ?, ?, ?)`,
-        args: [2, 'Unmonitored Book', 'merged', 'manual'],
-      });
-
-      // notifiers with events arrays that include on_upgrade
-      await seedClient.execute({
-        sql: `INSERT INTO notifiers (id, name, type, enabled, events, settings) VALUES (?, ?, ?, ?, ?, ?)`,
-        args: [1, 'Mixed Notifier', 'discord', 1, JSON.stringify(['on_upgrade', 'on_grab']), '{}'],
-      });
-      await seedClient.execute({
-        sql: `INSERT INTO notifiers (id, name, type, enabled, events, settings) VALUES (?, ?, ?, ?, ?, ?)`,
-        args: [2, 'Upgrade-only Notifier', 'discord', 1, JSON.stringify(['on_upgrade']), '{}'],
-      });
-      await seedClient.execute({
-        sql: `INSERT INTO notifiers (id, name, type, enabled, events, settings) VALUES (?, ?, ?, ?, ?, ?)`,
-        args: [3, 'Untouched Notifier', 'discord', 1, JSON.stringify(['on_grab']), '{}'],
-      });
+      await migrate(drizzle(client), { migrationsFolder: PROD_DRIZZLE });
     } finally {
-      seedClient.close();
+      client.close();
     }
 
-    // ── Apply the 0004 migration via the actual Drizzle migrator ──
-    await ctx.applyNewMigration();
-
-    // ── Assert post-state ──
-    const verifyClient = createClient({ url: `file:${ctx.dbPath}` });
-    try {
-      // books table: monitor_for_upgrades column is gone
-      const cols = await verifyClient.execute('PRAGMA table_info(books)');
-      const colNames = cols.rows.map((r) => (r as Record<string, unknown>).name);
-      expect(colNames).not.toContain('monitor_for_upgrades');
-
-      // book_events: 'upgraded' rows remapped to 'imported'; existing 'imported' + 'merged' untouched
-      const events = await verifyClient.execute('SELECT book_title, event_type FROM book_events ORDER BY id');
-      expect(events.rows).toHaveLength(3);
-      expect(events.rows[0]!.event_type).toBe('imported'); // was 'upgraded' → remapped
-      expect(events.rows[1]!.event_type).toBe('imported');
-      expect(events.rows[2]!.event_type).toBe('merged');
-
-      // notifiers: scrub + disable
-      const notifiers = await verifyClient.execute('SELECT id, name, enabled, events FROM notifiers ORDER BY id');
-      expect(notifiers.rows).toHaveLength(3);
-      const parseEvents = (row: Record<string, unknown>) => JSON.parse(row.events as string) as string[];
-      // Mixed Notifier: ['on_upgrade', 'on_grab'] → ['on_grab'], enabled stays 1
-      expect(parseEvents(notifiers.rows[0]!)).toEqual(['on_grab']);
-      expect(notifiers.rows[0]!.enabled).toBe(1);
-      // Upgrade-only Notifier: ['on_upgrade'] → [], enabled flipped to 0
-      expect(parseEvents(notifiers.rows[1]!)).toEqual([]);
-      expect(notifiers.rows[1]!.enabled).toBe(0);
-      // Untouched Notifier: ['on_grab'] → ['on_grab'], enabled stays 1
-      expect(parseEvents(notifiers.rows[2]!)).toEqual(['on_grab']);
-      expect(notifiers.rows[2]!.enabled).toBe(1);
-    } finally {
-      verifyClient.close();
+    const names = await tableNames(dbPath);
+    for (const t of CORE_TABLES) {
+      expect(names.has(t), `expected table "${t}" to exist after baseline migration`).toBe(true);
     }
+    // The migrator records what it applied; the baseline must be present.
+    expect(names.has('__drizzle_migrations')).toBe(true);
   });
 
-  it('is idempotent — re-running the migrator after applying 0004 is a no-op', async () => {
-    // Seed minimal data, apply migration, then apply again — should not error
-    const seedClient = createClient({ url: `file:${ctx.dbPath}` });
-    try {
-      await seedClient.execute({
-        sql: `INSERT INTO notifiers (name, type, enabled, events, settings) VALUES (?, ?, ?, ?, ?)`,
-        args: ['Test', 'discord', 1, JSON.stringify(['on_grab']), '{}'],
-      });
-    } finally {
-      seedClient.close();
-    }
+  it('is idempotent — re-running the migrator is a no-op', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-baseline-test-'));
+    const dbPath = join(tmpDir, 'test.db');
 
-    await ctx.applyNewMigration();
-    // Second invocation — should not throw or re-apply
-    await ctx.applyNewMigration();
+    const run = async () => {
+      const client = createClient({ url: `file:${dbPath}` });
+      try {
+        await migrate(drizzle(client), { migrationsFolder: PROD_DRIZZLE });
+      } finally {
+        client.close();
+      }
+    };
 
-    const verifyClient = createClient({ url: `file:${ctx.dbPath}` });
+    await run();
+    // Second invocation must not throw or re-apply.
+    await expect(run()).resolves.not.toThrow();
+
+    // Exactly one migration recorded — proves the baseline stays flat and the
+    // second run was a genuine no-op (not a duplicate application).
+    const client = createClient({ url: `file:${dbPath}` });
     try {
-      const rows = await verifyClient.execute('SELECT enabled FROM notifiers');
-      expect(rows.rows).toHaveLength(1);
-      expect(rows.rows[0]!.enabled).toBe(1);
+      const applied = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
+      expect(Number(applied.rows[0]!.count)).toBe(1);
     } finally {
-      verifyClient.close();
+      client.close();
     }
   });
 });

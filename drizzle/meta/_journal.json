@@ -5,64 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1777938164928,
-      "tag": "0000_lame_proteus",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1778040913358,
-      "tag": "0001_dizzy_joseph",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1778484978237,
-      "tag": "0002_unknown_ego",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1778511903882,
-      "tag": "0003_wild_wallflower",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1778714813250,
-      "tag": "0004_colossal_george_stacy",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1778883959557,
-      "tag": "0005_add_metadata_fixed_event_enum",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1779059966152,
-      "tag": "0006_replace_series_with_hardcover",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1779436440276,
-      "tag": "0007_living_psynapse",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "6",
-      "when": 1779541487241,
-      "tag": "0008_add_grab_failed_event_enum",
+      "when": 1780072995413,
+      "tag": "0000_perpetual_supernaut",
       "breakpoints": true
     }
   ]

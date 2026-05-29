@@ -95,7 +95,6 @@ CREATE TABLE `books` (
 	`audio_duration` integer,
 	`last_grab_guid` text,
 	`last_grab_info_hash` text,
-	`monitor_for_upgrades` integer DEFAULT false NOT NULL,
 	`import_list_id` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
@@ -134,6 +133,7 @@ CREATE TABLE `downloads` (
 	`error_message` text,
 	`guid` text,
 	`output_path` text,
+	`book_status_at_grab` text,
 	`added_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`completed_at` integer,
 	`progress_updated_at` integer,
@@ -222,9 +222,52 @@ CREATE TABLE `remote_path_mappings` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_remote_path_mappings_client` ON `remote_path_mappings` (`download_client_id`);--> statement-breakpoint
+CREATE TABLE `series` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`hardcover_series_id` integer,
+	`name` text NOT NULL,
+	`normalized_name` text NOT NULL,
+	`author_name` text,
+	`description` text,
+	`image_url` text,
+	`last_fetched_at` integer,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_series_hardcover_series_id_unique` ON `series` (`hardcover_series_id`) WHERE hardcover_series_id IS NOT NULL;--> statement-breakpoint
+CREATE INDEX `idx_series_normalized_name` ON `series` (`normalized_name`);--> statement-breakpoint
+CREATE TABLE `series_members` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`series_id` integer NOT NULL,
+	`book_id` integer,
+	`hardcover_book_id` integer,
+	`slug` text,
+	`image_url` text,
+	`title` text NOT NULL,
+	`normalized_title` text NOT NULL,
+	`author_name` text,
+	`position` real,
+	`source` text DEFAULT 'hardcover' NOT NULL,
+	`last_seen_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
+	FOREIGN KEY (`series_id`) REFERENCES `series`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE set null
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_series_members_hardcover_book_unique` ON `series_members` (`series_id`,`hardcover_book_id`) WHERE hardcover_book_id IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_series_members_local_unique` ON `series_members` (`series_id`,`book_id`) WHERE hardcover_book_id IS NULL;--> statement-breakpoint
+CREATE INDEX `idx_series_members_series_id` ON `series_members` (`series_id`);--> statement-breakpoint
+CREATE INDEX `idx_series_members_book_id` ON `series_members` (`book_id`);--> statement-breakpoint
 CREATE TABLE `settings` (
 	`key` text PRIMARY KEY NOT NULL,
 	`value` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `settings_migrations` (
+	`id` text PRIMARY KEY NOT NULL,
+	`applied_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `suggestions` (
