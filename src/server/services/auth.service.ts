@@ -254,7 +254,23 @@ export class AuthService {
     return { username: user.username };
   }
 
-  async changePassword(username: string, currentPassword: string, newPassword: string, newUsername?: string): Promise<void> {
+  /**
+   * Change the user's password (and optionally username), then rotate the
+   * session secret so every previously-issued cookie fails HMAC verification.
+   *
+   * Returns the *effective* username (`newUsername ?? username`) so the route
+   * can reissue a replacement cookie with the authoritative identity — the
+   * forms middleware trusts the cookie payload username directly, so a renamed
+   * user must not receive a cookie carrying the stale name.
+   *
+   * Rotation happens **after** the credential update succeeds: a wrong current
+   * password throws before any write, so a failed change never rotates the
+   * secret. If the rotation write itself fails after the credential update has
+   * landed, the error propagates (surfacing as a 500) rather than being
+   * swallowed — the brief partial state (credentials changed, secret not yet
+   * rotated) is an accepted single-user limitation.
+   */
+  async changePassword(username: string, currentPassword: string, newPassword: string, newUsername?: string): Promise<string> {
     const verified = await this.verifyCredentials(username, currentPassword);
     if (!verified) {
       throw new IncorrectPasswordError();
@@ -264,6 +280,7 @@ export class AuthService {
     const hash = await hashPassword(newPassword, salt);
     const passwordHash = `${salt.toString('hex')}:${hash.toString('hex')}`;
 
+    const effectiveUsername = newUsername && newUsername !== username ? newUsername : username;
     const updates: Record<string, string> = { passwordHash };
     if (newUsername && newUsername !== username) {
       updates.username = newUsername;
@@ -274,6 +291,17 @@ export class AuthService {
       .set(updates)
       .where(eq(users.username, username));
     this.log.info({ username, newUsername: newUsername || username }, 'Credentials updated');
+
+    // Rotate the session secret so all previously-issued cookies (including the
+    // caller's own) fail HMAC verification on their next use. Mirrors the
+    // existing getAuthConfig/setAuthConfig read-modify-write; the route reissues
+    // a fresh cookie in forms mode so the caller stays signed in on this device.
+    const config = await this.getAuthConfig();
+    config.sessionSecret = randomBytes(32).toString('hex');
+    await this.setAuthConfig(config);
+    this.log.info({ username: effectiveUsername }, 'Session secret rotated on credential change');
+
+    return effectiveUsername;
   }
 
   // ─── API Key ───────────────────────────────────────────────────────
