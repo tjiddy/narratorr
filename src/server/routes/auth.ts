@@ -1,4 +1,4 @@
-import { type FastifyInstance } from 'fastify';
+import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
@@ -9,6 +9,30 @@ import { sessionCookieOptions } from '../utils/cookie-options.js';
 
 const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
+/**
+ * After a credential change rotates the session secret, reissue a fresh cookie
+ * in forms mode so the caller stays signed in on this device. The cookie is
+ * signed with the rotated secret and carries the effective (possibly renamed)
+ * username — the forms middleware trusts the cookie payload username directly,
+ * so a renamed user must not receive a cookie with the stale name. Basic mode
+ * has no session cookie to reissue; none/api-key paths don't reach here with a
+ * forms-cookie identity. Mode is determined the same way the middleware does.
+ */
+async function reissueSessionCookie(
+  authService: AuthService,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  effectiveUsername: string,
+): Promise<void> {
+  const status = await authService.getStatus();
+  if (status.mode !== 'forms') return;
+  const secret = await authService.getSessionSecret();
+  const cookie = authService.createSessionCookie(effectiveUsername, secret);
+  reply.setCookie('narratorr_session', cookie, {
+    ...sessionCookieOptions(config, request),
+    maxAge: SESSION_MAX_AGE_S,
+  });
+}
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
   // GET /api/auth/status — public, minimal payload (#742): only { mode, authenticated }.
@@ -164,8 +188,13 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
           return await reply.status(401).send({ error: 'Authentication required' });
         }
 
-        await authService.changePassword(user.username, currentPassword, newPassword, newUsername);
+        const effectiveUsername = await authService.changePassword(user.username, currentPassword, newPassword, newUsername);
         request.log.info({ username: user.username, newUsername }, 'Credentials updated');
+
+        // changePassword rotated the session secret, invalidating the caller's
+        // current cookie — reissue a fresh one in forms mode (see helper).
+        await reissueSessionCookie(authService, request, reply, effectiveUsername);
+
         return { success: true };
       } catch (error: unknown) {
         if (error instanceof IncorrectPasswordError) {

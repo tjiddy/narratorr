@@ -11,7 +11,6 @@ import type { Services } from './index.js';
 import { authRoutes } from './auth.js';
 import { settingsRoutes } from './settings.js';
 import authPlugin from '../plugins/auth.js';
-import type { AuthService } from '../services/auth.service.js';
 
 vi.mock('../config.js', () => ({
   config: {
@@ -20,7 +19,7 @@ vi.mock('../config.js', () => ({
 }));
 
 import { config } from '../config.js';
-import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
+import { AuthService, UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 
 /** Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user. */
 async function createAuthTestApp(
@@ -442,7 +441,8 @@ describe('auth routes', () => {
     });
 
     it('accepts 1-char newPassword', async () => {
-      (services.auth.changePassword as Mock).mockResolvedValue(undefined);
+      (services.auth.changePassword as Mock).mockResolvedValue('admin');
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
 
       const res = await app.inject({
         method: 'PUT',
@@ -462,6 +462,63 @@ describe('auth routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
+    });
+
+    it('forms mode: reissues a session cookie signed with the rotated secret (AC#4)', async () => {
+      (services.auth.changePassword as Mock).mockResolvedValue('admin');
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
+      (services.auth.getSessionSecret as Mock).mockResolvedValue('rotated-secret');
+      (services.auth.createSessionCookie as Mock).mockReturnValue('new-cookie-value');
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        payload: { currentPassword: 'old', newPassword: 'newpassword1' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      // Cookie is signed with the rotated secret and carries the 7-day Max-Age.
+      expect(services.auth.createSessionCookie).toHaveBeenCalledWith('admin', 'rotated-secret');
+      const setCookie = String(res.headers['set-cookie']);
+      expect(setCookie).toContain('narratorr_session=new-cookie-value');
+      expect(setCookie).toContain('Max-Age=604800');
+    });
+
+    it('forms mode + username change: reissued cookie carries the NEW username (AC#6)', async () => {
+      // changePassword returns the effective (renamed) username.
+      (services.auth.changePassword as Mock).mockResolvedValue('newadmin');
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
+      (services.auth.getSessionSecret as Mock).mockResolvedValue('rotated-secret');
+      (services.auth.createSessionCookie as Mock).mockImplementation((u: string) => `cookie-for-${u}`);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        payload: { currentPassword: 'old', newPassword: 'newpassword1', newUsername: 'newadmin' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.auth.changePassword).toHaveBeenCalledWith('admin', 'old', 'newpassword1', 'newadmin');
+      // The reissued cookie must use the effective username, never the stale 'admin'.
+      expect(services.auth.createSessionCookie).toHaveBeenCalledWith('newadmin', 'rotated-secret');
+      expect(String(res.headers['set-cookie'])).toContain('narratorr_session=cookie-for-newadmin');
+    });
+
+    it('basic mode: rotates the secret but does NOT set a session cookie (AC#4)', async () => {
+      (services.auth.changePassword as Mock).mockResolvedValue('admin');
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'basic', hasUser: true, localBypass: false });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        payload: { currentPassword: 'old', newPassword: 'newpassword1' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['set-cookie']).toBeUndefined();
+      // No cookie reissue path runs in basic mode.
+      expect(services.auth.getSessionSecret).not.toHaveBeenCalled();
+      expect(services.auth.createSessionCookie).not.toHaveBeenCalled();
     });
   });
 
@@ -832,6 +889,105 @@ describe('auth routes', () => {
         url: '/api/auth/logout',
       });
       expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe('PUT /api/auth/password — forms-mode session reissue (real authPlugin)', () => {
+    let formsApp: FastifyInstance;
+    let formsServices: Services;
+    let crypto: AuthService;
+    let currentSecret: string;
+
+    beforeAll(async () => {
+      // Borrow the real (pure) cookie HMAC helpers — createSessionCookie /
+      // verifySessionCookie don't touch the injected db; verify only logs on failure.
+      const noopLog = { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, trace() {}, child() { return this; } };
+      crypto = new AuthService(undefined as never, noopLog as never);
+
+      formsServices = createMockServices();
+      const authSvc = formsServices.auth as unknown as Record<string, Mock>;
+      authSvc.getStatus = vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
+      authSvc.validateApiKey = vi.fn().mockResolvedValue(false);
+      authSvc.getSessionSecret = vi.fn().mockImplementation(async () => currentSecret);
+      authSvc.createSessionCookie = vi.fn().mockImplementation((u: string, s: string) => crypto.createSessionCookie(u, s));
+      authSvc.verifySessionCookie = vi.fn().mockImplementation((c: string, s: string) => crypto.verifySessionCookie(c, s));
+      // changePassword rotates the secret (as the real service does) and returns the effective username.
+      authSvc.changePassword = vi.fn().mockImplementation(async (_u: string, _c: string, _n: string, newUsername?: string) => {
+        currentSecret = 'secret-v2';
+        return newUsername ?? 'admin';
+      });
+      authSvc.getConfig = vi.fn().mockResolvedValue({ mode: 'forms', apiKey: 'k', localBypass: false });
+
+      formsApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+      formsApp.setValidatorCompiler(validatorCompiler);
+      formsApp.setSerializerCompiler(serializerCompiler);
+      await formsApp.register(cookie);
+      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+      await formsApp.register(errorHandlerPlugin);
+      await formsApp.register(authPlugin, { authService: formsServices.auth as unknown as AuthService });
+      await authRoutes(formsApp, formsServices.auth as Parameters<typeof authRoutes>[1]);
+      await formsApp.ready();
+    });
+
+    afterAll(async () => { await formsApp.close(); });
+
+    beforeEach(() => { currentSecret = 'secret-v1'; });
+
+    it('old cookie is rejected (401) after change while the reissued cookie authenticates (AC#1, AC#4)', async () => {
+      const oldCookie = crypto.createSessionCookie('admin', 'secret-v1');
+
+      const change = await formsApp.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        headers: { cookie: `narratorr_session=${oldCookie}` },
+        payload: { currentPassword: 'old', newPassword: 'newpassword1' },
+      });
+      expect(change.statusCode).toBe(200);
+
+      const match = String(change.headers['set-cookie']).match(/narratorr_session=([^;]+)/);
+      expect(match).not.toBeNull();
+      const newCookie = match![1]!;
+
+      // Old cookie (signed with secret-v1) no longer authenticates — secret rotated to v2.
+      const withOld = await formsApp.inject({
+        method: 'GET',
+        url: '/api/auth/config',
+        headers: { cookie: `narratorr_session=${oldCookie}` },
+      });
+      expect(withOld.statusCode).toBe(401);
+
+      // The reissued cookie (signed with secret-v2) authenticates.
+      const withNew = await formsApp.inject({
+        method: 'GET',
+        url: '/api/auth/config',
+        headers: { cookie: `narratorr_session=${newCookie}` },
+      });
+      expect(withNew.statusCode).toBe(200);
+    });
+
+    it('username change: the reissued cookie authenticates as the new username (AC#6)', async () => {
+      const oldCookie = crypto.createSessionCookie('admin', 'secret-v1');
+      const change = await formsApp.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        headers: { cookie: `narratorr_session=${oldCookie}` },
+        payload: { currentPassword: 'old', newPassword: 'newpassword1', newUsername: 'newadmin' },
+      });
+      expect(change.statusCode).toBe(200);
+      const newCookie = String(change.headers['set-cookie']).match(/narratorr_session=([^;]+)/)![1]!;
+
+      // The reissued cookie verifies under the rotated secret and carries the NEW username.
+      const verified = crypto.verifySessionCookie(newCookie, 'secret-v2');
+      expect(verified).not.toBeNull();
+      expect(verified!.payload.username).toBe('newadmin');
+
+      // A subsequent protected request with it authenticates (no 401 on a stale/missing username).
+      const withNew = await formsApp.inject({
+        method: 'GET',
+        url: '/api/auth/config',
+        headers: { cookie: `narratorr_session=${newCookie}` },
+      });
+      expect(withNew.statusCode).toBe(200);
     });
   });
 

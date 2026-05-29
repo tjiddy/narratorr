@@ -151,17 +151,109 @@ describe('AuthService', () => {
   });
 
   describe('changePassword', () => {
-    it('succeeds with correct current password', async () => {
+    /** Auth config row returned to changePassword's getAuthConfig (rotation read). */
+    const rotationConfig = (sessionSecret = 'old-session-secret') => ({
+      key: 'auth',
+      value: { mode: 'forms' as const, apiKey: 'api-key-123', sessionSecret, localBypass: false },
+    });
+
+    it('succeeds with correct current password and returns the effective username', async () => {
       // Create user
       db.select.mockReturnValueOnce(mockDbChain([]));
       await service.createUser('admin', 'oldpassword');
       const insertChain = db.insert.mock.results[0]!.value;
       const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
 
-      // changePassword calls verifyCredentials first (select), then update
-      db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
+      // changePassword: verifyCredentials (select user) → update → getAuthConfig (select auth) → setAuthConfig (insert)
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]))
+        .mockReturnValueOnce(mockDbChain([rotationConfig()]));
+      db.insert.mockReturnValue(mockDbChain(undefined));
 
-      await expect(service.changePassword('admin', 'oldpassword', 'newpassword')).resolves.not.toThrow();
+      await expect(service.changePassword('admin', 'oldpassword', 'newpassword')).resolves.toBe('admin');
+      expect(db.update).toHaveBeenCalled();
+    });
+
+    it('returns the new username as the effective username when renamed', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      await service.createUser('admin', 'oldpassword');
+      const storedHash = db.insert.mock.results[0]!.value.values.mock.calls[0][0].passwordHash;
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]))
+        .mockReturnValueOnce(mockDbChain([rotationConfig()]));
+      db.insert.mockReturnValue(mockDbChain(undefined));
+
+      await expect(service.changePassword('admin', 'oldpassword', 'newpassword', 'newadmin')).resolves.toBe('newadmin');
+    });
+
+    it('rotates sessionSecret so a cookie signed with the old secret no longer verifies (AC#1, AC#2)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      await service.createUser('admin', 'oldpassword');
+      const storedHash = db.insert.mock.results[0]!.value.values.mock.calls[0][0].passwordHash;
+
+      const oldSecret = 'old-session-secret';
+      const oldCookie = service.createSessionCookie('admin', oldSecret);
+      // Sanity: the cookie verifies under the pre-rotation secret.
+      expect(service.verifySessionCookie(oldCookie, oldSecret)).not.toBeNull();
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]))
+        .mockReturnValueOnce(mockDbChain([rotationConfig(oldSecret)]));
+      db.insert.mockClear();
+      db.insert.mockReturnValue(mockDbChain(undefined));
+
+      await service.changePassword('admin', 'oldpassword', 'newpassword');
+
+      // setAuthConfig persisted the rotated config (insert...onConflict).
+      const storedConfig = db.insert.mock.results[0]!.value.values.mock.calls[0][0].value as { sessionSecret: string; apiKey: string };
+      // AC#2: sessionSecret is persisted encrypted, not just held in memory.
+      expect(isEncrypted(storedConfig.sessionSecret)).toBe(true);
+      const decrypted = decryptFields('auth', { ...storedConfig }, TEST_KEY) as { sessionSecret: string; apiKey: string };
+      const newSecret = decrypted.sessionSecret;
+      expect(newSecret).not.toBe(oldSecret);
+      // AC#3: API key untouched by rotation.
+      expect(decrypted.apiKey).toBe('api-key-123');
+
+      // AC#1: the old cookie no longer verifies under the rotated secret.
+      expect(service.verifySessionCookie(oldCookie, newSecret)).toBeNull();
+      // Reissue path is sound: a fresh cookie under the new secret verifies.
+      const newCookie = service.createSessionCookie('admin', newSecret);
+      expect(service.verifySessionCookie(newCookie, newSecret)).not.toBeNull();
+    });
+
+    it('does NOT rotate the secret when the current password is wrong (AC#5)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      await service.createUser('admin', 'oldpassword');
+      const storedHash = db.insert.mock.results[0]!.value.values.mock.calls[0][0].passwordHash;
+
+      db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
+      db.update.mockClear();
+      db.insert.mockClear();
+
+      await expect(service.changePassword('admin', 'wrongpassword', 'newpassword'))
+        .rejects.toThrow('Current password is incorrect');
+
+      // No credential update and no setAuthConfig write → secret unchanged.
+      expect(db.update).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('propagates a rotation-write failure after the credential update (AC#7)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      await service.createUser('admin', 'oldpassword');
+      const storedHash = db.insert.mock.results[0]!.value.values.mock.calls[0][0].passwordHash;
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]))
+        .mockReturnValueOnce(mockDbChain([rotationConfig()]));
+      db.update.mockClear();
+      db.update.mockReturnValue(mockDbChain(undefined)); // credential update succeeds
+      db.insert.mockReturnValue(mockDbChain(undefined, { error: new Error('rotation write failed') })); // setAuthConfig rejects
+
+      await expect(service.changePassword('admin', 'oldpassword', 'newpassword'))
+        .rejects.toThrow('rotation write failed');
+      // The credential update already landed before the rotation write failed.
       expect(db.update).toHaveBeenCalled();
     });
 
