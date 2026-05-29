@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { idParamSchema, paginationParamsSchema } from './common.js';
+import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from './common.js';
 
 describe('idParamSchema', () => {
   it('transforms valid numeric string to number', () => {
@@ -107,5 +107,13 @@ describe('paginationParamsSchema', () => {
   it('accepts offset = 0', () => {
     const result = paginationParamsSchema.safeParse({ offset: 0 });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('DEFAULT_LIMITS.books grid invariant', () => {
+  // The library grid renders 2/3/4/5/6 columns across breakpoints. The page size
+  // must be divisible by each column count so every page fills complete rows.
+  it.each([2, 3, 4, 5, 6])('books page size is divisible by %i columns', (columns) => {
+    expect(DEFAULT_LIMITS.books % columns).toBe(0);
   });
 });
