@@ -10,7 +10,7 @@ Narratorr supports three authentication modes:
 
 - **None** — No authentication (default on first run). Suitable for isolated environments.
 - **Basic** — HTTP Basic Auth. Browser prompts for credentials on each session.
-- **Forms** — Cookie-based session auth with a login page. Sessions are HMAC-SHA256 signed with a server-generated secret, `httpOnly`, `sameSite: lax`, and conditionally `secure` (set when `NODE_ENV=production` AND the request is detected as HTTPS via `request.protocol === 'https'`; this requires `TRUSTED_PROXIES` to be configured so Fastify can read `X-Forwarded-Proto` from a TLS-terminating reverse proxy). The cookie `Path` honors `URL_BASE` when the app is mounted under a sub-path. TTL is 7 days with sliding renewal.
+- **Forms** — Cookie-based session auth with a login page. Sessions are HMAC-SHA256 signed with a server-generated secret, `httpOnly`, `sameSite: lax`, and conditionally `secure` (set when `NODE_ENV=production` AND the request is detected as HTTPS via `request.protocol === 'https'`; this requires `TRUSTED_PROXIES` to be configured so Fastify can read `X-Forwarded-Proto` from a TLS-terminating reverse proxy). The cookie `Path` honors `URL_BASE` when the app is mounted under a sub-path. TTL is 7 days with sliding renewal. Changing the account password or username rotates the server-side session secret, invalidating every previously issued session cookie; the active session is immediately re-issued a fresh cookie so the operator stays logged in while any stolen or stale cookies are revoked.
 
 ### Protected Endpoints
 
@@ -70,13 +70,14 @@ All sensitive configuration values (API keys, passwords, proxy URLs) are encrypt
 - **Key management:** 32-byte encryption key loaded from (in priority order):
   1. `NARRATORR_SECRET_KEY` environment variable
   2. `secret.key` file in the config directory (auto-generated on first run with `0600` permissions)
-- **Encrypted entities:** Indexer API keys + indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), download client passwords/API keys, Prowlarr API keys, import list API keys, proxy URLs, session secrets, notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
+- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts`): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; Prowlarr API keys; import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
 - **Sentinel pattern:** API responses mask secrets with `********`. Updates that include the sentinel value preserve the existing encrypted value (no re-encryption of unchanged secrets)
 - **Storage format:** `$ENC$<base64(iv + authTag + ciphertext)>` — encrypted values are distinguishable from plaintext
 
 ### Credential Redaction
 - All credential fields are masked (`********`) in API responses — encrypted values never leave the server
 - Proxy URLs are redacted before logging (credentials stripped from URL string)
+- Request-trace logging passes URLs through a sanitizer that strips the query string, so credentials supplied as query parameters (e.g. `?apikey=`) do not appear in request logs
 - Log output never contains decrypted credentials
 
 ## API Key Authentication
@@ -126,6 +127,8 @@ TRUSTED_PROXIES=loopback
 When unset (default), Fastify ignores `X-Forwarded-For` and `request.ip` is the socket peer — preserving today's behavior for direct-exposure deploys.
 
 **Critical:** list **every** proxy in the chain. `@fastify/proxy-addr` walks `X-Forwarded-For` right-to-left, returning the first address that is NOT in the trust list. If any intermediate hop is untrusted, `request.ip` falls back to that intermediate hop — and in a Docker/private-subnet deploy that hop is itself likely a private IP, which re-enables local-bypass for external clients. Trust the entire chain or none of it.
+
+**Boot warning:** when forms-auth or local-network bypass is active and `TRUSTED_PROXIES` is unset, the server emits a `warn`-level log line at startup. If you run behind a reverse proxy, treat this as the signal to set `TRUSTED_PROXIES` — left unset, the forms-auth session cookie may be issued without the `Secure` attribute, and local-network bypass may treat every external client as local.
 
 ## User-Configured Scripts
 
@@ -188,7 +191,7 @@ Three outbound code paths follow attacker-influenced URLs and route through the 
 
 ## Dependencies
 
-Dependency vulnerabilities are tracked via `pnpm audit`. As of 2026-04-30 (v747.04 — dependency modernization sweep), `pnpm audit` reports **zero vulnerabilities** at any severity. The earlier transitive `esbuild` (drizzle-kit, dev-only) and `file-type` (music-metadata) findings have been resolved.
+Dependency vulnerabilities are tracked via `pnpm audit`. As of 2026-05-29, `pnpm audit` reports **zero vulnerabilities** at any severity. Where a transitive advisory has no fixed release from its direct parent yet, the patched version is pinned via `pnpm.overrides` in `package.json` (current pins include `esbuild`, `ajv`, `minimatch`, `file-type`, `fast-uri`, `ip-address`, `ws`, and `brace-expansion`).
 
 Supply-chain hardening: `pnpm` 10's lifecycle scripts are restricted via `pnpm.onlyBuiltDependencies` in `package.json`, which limits postinstall script execution to an explicit allowlist. Re-run `pnpm audit` after dependency changes; new findings are filed and tracked in the issue queue.
 

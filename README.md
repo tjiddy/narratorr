@@ -12,7 +12,7 @@ Narratorr is a self-hosted audiobook acquisition and organization application. S
 - **Automated Pipeline** — Scheduled search for wanted books, RSS polling for wanted books, retry with blacklisting.
 - **Quality Gate** — Auto-import the first release for a wanted book, hold questionable releases for review, auto-reject low-quality re-downloads. Imported books are never automatically replaced.
 - **Library Management** — Configurable folder/file naming, audio enrichment from file tags, grid and list views with filtering and bulk actions.
-- **Discovery** — AI-powered book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
+- **Discovery** — Personalized book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
 - **Audio Processing** — Optional FFmpeg-based conversion, merging, ID3 tag embedding, and cover art embedding.
 - **Notifications** — Discord, Slack, Telegram, Pushover, Gotify, Ntfy, email, and generic webhooks.
 - **Import Lists** — Sync wanted books from external sources.
@@ -101,11 +101,16 @@ src/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | Server port |
-| `NODE_ENV` | `development` | Environment |
+| `NODE_ENV` | `development` | Environment (`production` enables security headers and restricts CORS) |
 | `CONFIG_PATH` | `./config` | Config and database directory |
-| `DATABASE_URL` | `file:./config/narratorr.db` | SQLite database path |
-| `URL_BASE` | `/` | Subpath for reverse proxy deployments |
-| `NARRATORR_SECRET_KEY` | (auto-generated) | 32-byte hex encryption key for credentials at rest |
+| `DATABASE_URL` | `./config/narratorr.db` | SQLite database path (`file:` prefix optional) |
+| `URL_BASE` | `/` | Subpath for reverse-proxy deployments |
+| `CORS_ORIGIN` | `http://localhost:5173` | Allowed browser origin in production |
+| `TRUSTED_PROXIES` | (unset) | Comma-separated reverse-proxy IPs/CIDRs so the real client IP is read from `X-Forwarded-For`. Set this when behind a proxy — required for forms-auth `Secure` cookies and local-network bypass. See [SECURITY.md](SECURITY.md) |
+| `AUTH_BYPASS` | `false` | Disable authentication globally; isolated environments only |
+| `LOG_LEVEL` | `info` | Log verbosity: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent` |
+| `MONITOR_INTERVAL_CRON` | `*/30 * * * * *` | Download-monitor poll cadence (cron expression) |
+| `NARRATORR_SECRET_KEY` | (auto-generated) | 32-byte hex key encrypting credentials at rest |
 
 ## Development
 
@@ -115,6 +120,7 @@ pnpm build          # Build for production
 pnpm test           # Run tests
 pnpm typecheck      # Type check
 pnpm lint           # Lint
+pnpm verify         # Lint + test + typecheck + build (run before pushing)
 pnpm db:generate    # Generate new database migration
 ```
 
