@@ -15,7 +15,7 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
 // node:crypto — auth.service.ts (pulled in transitively via the service chain)
 // calls randomBytes() at module load to build its DUMMY_SALT.
 vi.mock('node:crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:crypto')>();
+  const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, randomUUID: vi.fn().mockReturnValue('test-job-id') };
 });
 
