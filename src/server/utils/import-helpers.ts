@@ -123,7 +123,10 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
 async function collectAudioFiles(
   dir: string,
 ): Promise<Array<{ srcPath: string; name: string }>> {
-  const paths = await collectSortedAudioFiles(dir, { recursive: true, sort: 'locale' });
+  // locale-numeric so unpadded source filenames (Track1…Track10) order numerically
+  // before collectMultiDiscFiles assigns sequential padded names — 'locale' alone
+  // would mis-order Track10 ahead of Track2 (#1192).
+  const paths = await collectSortedAudioFiles(dir, { recursive: true, sort: 'locale-numeric' });
   return paths.map(p => ({ srcPath: p, name: basename(p) }));
 }
 

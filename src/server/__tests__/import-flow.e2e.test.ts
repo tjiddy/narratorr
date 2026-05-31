@@ -155,10 +155,12 @@ describe('Import flow E2E', () => {
 
     // Files actually copied to library
     const targetFiles = await readdir(expectedTarget);
-    // Files renamed using fileFormat template '{author} - {title}'
+    // Files renamed using fileFormat template '{author} - {title}'. The format
+    // carries no per-file token, so rendered stems collide → every file (including
+    // the first) gets a zero-padded sequential ordinal (#1192), no bare file.
     expect(targetFiles.sort()).toEqual([
+      'Brandon Sanderson - The Way of Kings (1).m4b',
       'Brandon Sanderson - The Way of Kings (2).m4b',
-      'Brandon Sanderson - The Way of Kings.m4b',
     ]);
 
     // Book record: status + path + enrichment fields from mock scan result

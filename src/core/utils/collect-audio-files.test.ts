@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { join } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
-import { collectAudioFilePaths, collectSortedAudioFiles } from './collect-audio-files.js';
+import { collectAudioFilePaths, collectSortedAudioFiles, compareAudioNames } from './collect-audio-files.js';
 
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(),
@@ -260,5 +260,26 @@ describe('collectSortedAudioFiles', () => {
     const result = await collectSortedAudioFiles('/dir');
 
     expect(result).toEqual([]);
+  });
+});
+
+describe('compareAudioNames', () => {
+  it('orders zero-padded names numerically (001 < 010 < 100)', () => {
+    const sorted = ['100.mp3', '010.mp3', '001.mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['001.mp3', '010.mp3', '100.mp3']);
+  });
+
+  it('orders unpadded track names numerically, not lexicographically (Track2 < Track10)', () => {
+    const sorted = ['Track10.mp3', 'Track2.mp3', 'Track1.mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['Track1.mp3', 'Track2.mp3', 'Track10.mp3']);
+  });
+
+  it('orders parenthesized suffixes numerically ((2) < (10) < (100)), not by char code', () => {
+    const sorted = ['Title (100).mp3', 'Title (10).mp3', 'Title (2).mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['Title (2).mp3', 'Title (10).mp3', 'Title (100).mp3']);
+  });
+
+  it('compares on basename, ignoring directory components', () => {
+    expect(compareAudioNames('/a/b/Track2.mp3', '/z/Track10.mp3')).toBeLessThan(0);
   });
 });

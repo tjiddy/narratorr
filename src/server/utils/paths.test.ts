@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
 import { basename } from 'node:path';
-import { renameFilesWithTemplate, assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { renameFilesWithTemplate, planFileRenames, padWidth, assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
 
 vi.mock('node:fs/promises', async () => ({
@@ -309,6 +309,168 @@ describe('renameFilesWithTemplate', () => {
         rollbackError,
         file: completedTwoRenderedFile,
       });
+    });
+  });
+});
+
+describe('padWidth', () => {
+  it('returns digit count for sequential-ordinal zero padding', () => {
+    expect(padWidth(99)).toBe(2);
+    expect(padWidth(100)).toBe(3);
+    expect(padWidth(999)).toBe(3);
+    expect(padWidth(1000)).toBe(4);
+  });
+});
+
+describe('planFileRenames', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function mockFiles(names: string[]): Promise<void> {
+    const { readdir } = await import('node:fs/promises');
+    vi.mocked(readdir).mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
+  }
+
+  describe('colliding format → number all', () => {
+    it('numbers every file including the first, zero-padded, with no bare file', async () => {
+      await mockFiles(['x.mp3', 'y.mp3', 'z.mp3']);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      const tos = renames.map(r => r.to);
+      expect(tos).toEqual([
+        'Author - Test Book (1).mp3',
+        'Author - Test Book (2).mp3',
+        'Author - Test Book (3).mp3',
+      ]);
+      // No bare/unnumbered file, all unique
+      expect(tos.every(t => /\(\d+\)\.mp3$/.test(t))).toBe(true);
+      expect(new Set(tos).size).toBe(3);
+    });
+
+    it('renames a 100-file colliding book to 3-digit padded ordinals (001…100)', async () => {
+      const sources = Array.from({ length: 100 }, (_, i) => `Track${i + 1}.mp3`);
+      await mockFiles(sources);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      expect(renames).toHaveLength(100);
+      // Numeric sort: Track1…Track100 → ordinals 001…100, consistent 3-digit width
+      expect(renames[0]!.to).toBe('Author - Test Book (001).mp3');
+      expect(renames[99]!.to).toBe('Author - Test Book (100).mp3');
+      expect(renames.every(r => /\(\d{3}\)\.mp3$/.test(r.to))).toBe(true);
+    });
+
+    it('orders already-suffixed (N) stems numerically, not lexicographically', async () => {
+      // Lexicographic sort would order (10) < (100) < (2) because ')' < '0'.
+      // Numeric sort must order (2) < (10) < (100), so re-numbering follows play order.
+      await mockFiles(['Title (100).mp3', 'Title (2).mp3', 'Title (10).mp3']);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      expect(byFrom['Title (2).mp3']).toBe('Author - Test Book (1).mp3');
+      expect(byFrom['Title (10).mp3']).toBe('Author - Test Book (2).mp3');
+      expect(byFrom['Title (100).mp3']).toBe('Author - Test Book (3).mp3');
+    });
+  });
+
+  describe('already-unique format → untouched', () => {
+    it('leaves {partName} stems untouched — no forced ordinal appended', async () => {
+      const sources = Array.from({ length: 10 }, (_, i) => `${String(i + 1).padStart(3, '0')}.mp3`);
+      await mockFiles(sources);
+
+      const renames = await planFileRenames('/t', '{title} - {partName}', book, 'Author');
+
+      expect(renames[0]!.to).toBe('Test Book - 001.mp3');
+      expect(renames[9]!.to).toBe('Test Book - 010.mp3');
+      // No file gets a forced " (NN)" ordinal appended
+      expect(renames.every(r => !/ \(\d+\)\.mp3$/.test(r.to))).toBe(true);
+    });
+
+    it('renders {trackNumber:000} as the post-sort play-order position, no double ordinal', async () => {
+      const sources = Array.from({ length: 100 }, (_, i) => `Track${i + 1}.mp3`);
+      await mockFiles(sources);
+
+      const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      expect(byFrom['Track1.mp3']).toBe('001.mp3');
+      expect(byFrom['Track10.mp3']).toBe('010.mp3');
+      expect(byFrom['Track100.mp3']).toBe('100.mp3');
+      // Token path renders unique stems → no appended " (NN)" ordinal
+      expect(renames.every(r => !/\(\d+\)\.mp3$/.test(r.to))).toBe(true);
+    });
+  });
+
+  describe('idempotence & ordering', () => {
+    it('returns no renames when files are already correctly named ({trackNumber:000})', async () => {
+      const correct = Array.from({ length: 10 }, (_, i) => `${String(i + 1).padStart(3, '0')}.mp3`);
+      await mockFiles(correct);
+
+      const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+
+      expect(renames).toHaveLength(0);
+    });
+
+    it('keeps track 1 at position 1 when re-running after a colliding pass', async () => {
+      // After a colliding pass the files are "<stem> (001)…(254)"; re-rendering with
+      // {trackNumber:000} must keep play order (001 first), not reorder lexicographically.
+      const afterCollision = Array.from({ length: 254 }, (_, i) => `Author - Test Book (${String(i + 1).padStart(3, '0')}).mp3`);
+      await mockFiles(afterCollision);
+
+      const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      expect(byFrom['Author - Test Book (001).mp3']).toBe('001.mp3');
+      expect(byFrom['Author - Test Book (254).mp3']).toBe('254.mp3');
+    });
+  });
+
+  describe('254-track multi-disc regression', () => {
+    it('renames padded 001…254 to sequential play order on the colliding format', async () => {
+      const sources = Array.from({ length: 254 }, (_, i) => `${String(i + 1).padStart(3, '0')}.mp3`);
+      await mockFiles(sources);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      // Real track 1 stays at position 1, padded to 3 digits
+      expect(byFrom['001.mp3']).toBe('Author - Test Book (001).mp3');
+      expect(byFrom['254.mp3']).toBe('Author - Test Book (254).mp3');
+      expect(new Set(renames.map(r => r.to)).size).toBe(254);
+    });
+
+    it('renames unpadded sources to sequential 001…254 on the token format', async () => {
+      const sources = Array.from({ length: 254 }, (_, i) => `Track${i + 1}.mp3`);
+      await mockFiles(sources);
+
+      const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      expect(byFrom['Track1.mp3']).toBe('001.mp3');
+      expect(byFrom['Track254.mp3']).toBe('254.mp3');
+    });
+  });
+
+  describe('single-file books', () => {
+    it('does not force a track ordinal on a single-file book', async () => {
+      await mockFiles(['audiobook.mp3']);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Author - Test Book.mp3' }]);
+    });
+  });
+
+  describe('ordering source', () => {
+    it('does not import metadata/tag readers on the rename path (filenames only, no ID3)', async () => {
+      const { readFile } = await import('node:fs/promises');
+      const source = await readFile(new URL('./paths.ts', import.meta.url), 'utf-8');
+      expect(source).not.toMatch(/music-metadata/);
+      expect(source).not.toMatch(/retag-plan/);
+      expect(source).not.toMatch(/audio-scanner/);
+      expect(source).not.toMatch(/chapter-resolver/);
     });
   });
 });

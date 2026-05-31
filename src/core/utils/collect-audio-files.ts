@@ -39,6 +39,20 @@ export async function collectAudioFilePaths(
   return results;
 }
 
+/**
+ * Pure comparator for audio file names — locale-aware numeric ordering on basename.
+ *
+ * Use to sort an in-memory `string[]` the same way `collectSortedAudioFiles`'s
+ * `locale-numeric` mode sorts a directory read from disk. Numeric-aware, so
+ * `Track2 < Track10`, `001 < 010 < 100`, and `(2) < (10) < (100)` — NOT the
+ * lexicographic ordering of a bare `Array.sort()` (where `)` 0x29 < `0` 0x30).
+ *
+ * Shared by `collectSortedAudioFiles` (directory sort) and `planFileRenames`
+ * (in-memory array sort) so import-time and rename-time ordering never drift.
+ */
+export const compareAudioNames = (a: string, b: string): number =>
+  basename(a).localeCompare(basename(b), undefined, { numeric: true, sensitivity: 'base' });
+
 /** Sort mode for collectSortedAudioFiles. */
 export type AudioFileSortMode = 'lexicographic' | 'locale' | 'locale-numeric';
 
@@ -68,8 +82,6 @@ export async function collectSortedAudioFiles(
     case 'locale':
       return files.sort((a, b) => basename(a).localeCompare(basename(b)));
     case 'locale-numeric':
-      return files.sort((a, b) =>
-        basename(a).localeCompare(basename(b), undefined, { numeric: true, sensitivity: 'base' }),
-      );
+      return files.sort(compareAudioNames);
   }
 }
