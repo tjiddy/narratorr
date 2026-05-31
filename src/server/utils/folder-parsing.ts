@@ -4,7 +4,7 @@
 
 import { extname } from 'node:path';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
-import { tryTitleDashSeriesBook, tryCrossSegmentAgreement } from './folder-parsing-patterns.js';
+import { tryTitleDashSeriesBook, tryCrossSegmentAgreement, trySeriesParen } from './folder-parsing-patterns.js';
 
 /**
  * Strip a recognized audio extension from a path segment. Used for single-file
@@ -259,6 +259,15 @@ function parseSingleFolder(folder: string): {
   // Series–NN–Title — short-circuit before pattern matching.
   if (isAllNumericSegments(input)) {
     return { title: input, author: null, series: null, ...asinTail };
+  }
+
+  // Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren — strip it, parse the
+  // remainder normally (author/title), then overlay the extracted series + position. Runs
+  // before the author/title branches so the series paren never leaks into the author field.
+  const seriesParen = trySeriesParen(input);
+  if (seriesParen) {
+    const base = parseSingleFolder(seriesParen.remainder);
+    return { ...base, series: cleanName(seriesParen.series), seriesPosition: seriesParen.seriesPosition, ...asinTail };
   }
 
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
@@ -524,6 +533,14 @@ function parseSingleFolderRaw(folder: string): {
 
   if (isAllNumericSegments(input)) {
     return { title: input, author: null, series: null, ...asinTail };
+  }
+
+  // Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren — raw mirror of the
+  // cleaned branch: strip, parse remainder, overlay raw series + position (no cleanName).
+  const seriesParen = trySeriesParen(input);
+  if (seriesParen) {
+    const base = parseSingleFolderRaw(seriesParen.remainder);
+    return { ...base, series: seriesParen.series, seriesPosition: seriesParen.seriesPosition, ...asinTail };
   }
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
