@@ -298,6 +298,35 @@ function applySeriesParen(
   return { ...parser(sp.remainder), series: transform(sp.series), seriesPosition: sp.seriesPosition, ...asinTail };
 }
 
+/**
+ * Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren overlay for the multi-part
+ * branches (2-part / 3+-part), where the author lives in a separate folder segment. Strips the
+ * paren from the title segment, keeps the supplied folder-derived `author`, and takes the
+ * position from the paren. Series-name precedence: the folder-derived series name (`folderSeries`)
+ * wins when present; the paren only supplies the name when the folder produced none. Returns null
+ * when no series paren is present, so callers fall through to the existing pattern chain unchanged.
+ *
+ * Unlike `applySeriesParen`, this does NOT re-parse the remainder as a single folder — the author
+ * is already a separate folder segment, so re-parsing would wrongly re-split it.
+ */
+function applyTitleSegmentSeriesParen(
+  titleSegment: string,
+  author: string | null,
+  folderSeries: string | null,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+): ParsedFolder | null {
+  const sp = trySeriesParen(titleSegment);
+  if (!sp) return null;
+  return {
+    title: transform(sp.remainder),
+    author,
+    series: folderSeries ?? transform(sp.series),
+    seriesPosition: sp.seriesPosition,
+    ...asinTail,
+  };
+}
+
 function parseSingleFolder(folder: string): ParsedFolder {
   // Extract ASIN bracket before any other pattern matching
   const { asin, cleaned } = extractASIN(folder);
@@ -425,6 +454,10 @@ export function parseFolderStructure(parts: string[]): ParsedFolder {
       };
     }
     const asinTail = asin !== undefined ? { asin } : {};
+    // Trailing `(Series Book N)` paren wins first — strip before the dash/cross-segment chain so
+    // those patterns operate on the paren-free remainder. Folder series name (P8) stays authoritative.
+    const titleParen = applyTitleSegmentSeriesParen(titleSegment, p8Author, p8Series, asinTail, cleanName);
+    if (titleParen) return titleParen;
     // SERIES_NUMBER_TITLE in title segment wins over P8's series-from-author
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, cleanName);
@@ -441,11 +474,17 @@ export function parseFolderStructure(parts: string[]): ParsedFolder {
   const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
   const { asin, cleaned } = extractASIN(lastSegment);
   const titleSegment = cleaned || lastSegment;
+  const asinTail = asin !== undefined ? { asin } : {};
+  const folderSeries = cleanName(parts[parts.length - 2]!);
+  // Trailing `(Series Book N)` paren: strip from the title, take its position; the folder series
+  // segment stays authoritative for the name (folder wins even if the paren names a different series).
+  const titleParen = applyTitleSegmentSeriesParen(titleSegment, cleanName(parts[0]!), folderSeries, asinTail, cleanName);
+  if (titleParen) return titleParen;
   return {
     title: cleanName(titleSegment),
     author: cleanName(parts[0]!),
-    series: cleanName(parts[parts.length - 2]!),
-    ...(asin !== undefined && { asin }),
+    series: folderSeries,
+    ...asinTail,
   };
 }
 
@@ -490,6 +529,9 @@ export function parseFolderStructureRaw(parts: string[]): ParsedFolder {
       return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
     }
     const asinTail = asin !== undefined ? { asin } : {};
+    // Trailing `(Series Book N)` paren — mirrors the cleaned 2-part branch with `identity`.
+    const titleParen = applyTitleSegmentSeriesParen(titleSegment, p8Author, p8Series, asinTail, identity);
+    if (titleParen) return titleParen;
     const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
     if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, identity);
     // P10-precheck (raw 2-part) — mirrors the cleaned branch.
@@ -502,11 +544,17 @@ export function parseFolderStructureRaw(parts: string[]): ParsedFolder {
   const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
   const { asin, cleaned } = extractASIN(lastSegment);
   const titleSegment = cleaned || lastSegment;
+  const asinTail = asin !== undefined ? { asin } : {};
+  const folderSeries = parts[parts.length - 2]!;
+  // Trailing `(Series Book N)` paren — mirrors the cleaned 3+-part branch with `identity` (raw
+  // series name is NOT run through cleanName). Folder series segment stays authoritative for the name.
+  const titleParen = applyTitleSegmentSeriesParen(titleSegment, parts[0]!, folderSeries, asinTail, identity);
+  if (titleParen) return titleParen;
   return {
     title: titleSegment,
     author: parts[0]!,
-    series: parts[parts.length - 2]!,
-    ...(asin !== undefined && { asin }),
+    series: folderSeries,
+    ...asinTail,
   };
 }
 

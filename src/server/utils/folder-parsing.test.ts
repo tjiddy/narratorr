@@ -848,6 +848,115 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
+    describe('trailing "(Series Book N)" paren extraction — 2-part / 3-part layouts (issue #1196)', () => {
+      it('2-part Book N — Jim Butcher / Academ\'s Fury (Codex Alera Book 2)', () => {
+        expect(parseFolderStructure(["Jim Butcher", "Academ's Fury (Codex Alera Book 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      it('3-part Book N — Jim Butcher / Codex Alera / Academ\'s Fury (Codex Alera Book 2)', () => {
+        expect(parseFolderStructure(["Jim Butcher", 'Codex Alera', "Academ's Fury (Codex Alera Book 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      it('2-part hash form — Brandon Sanderson / Mistborn (Mistborn #1)', () => {
+        expect(parseFolderStructure(['Brandon Sanderson', 'Mistborn (Mistborn #1)'])).toEqual({
+          title: 'Mistborn', author: 'Brandon Sanderson', series: 'Mistborn', seriesPosition: 1,
+        });
+      });
+
+      it('4+-part nested layout uses the same 3+-part branch — Author/SubDir/Series/Title (Series Book 2)', () => {
+        expect(parseFolderStructure(['Jim Butcher', 'SubDir', 'Codex Alera', "Academ's Fury (Codex Alera Book 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      describe('series-name precedence (folder name wins, paren supplies position)', () => {
+        it('2-part P8 conflict — Neil Gaiman - American Gods / Anansi Boys (American Gods Book 2)', () => {
+          expect(parseFolderStructure(['Neil Gaiman - American Gods', 'Anansi Boys (American Gods Book 2)'])).toEqual({
+            title: 'Anansi Boys', author: 'Neil Gaiman', series: 'American Gods', seriesPosition: 2,
+          });
+        });
+
+        it('3-part name/position split — Neil Gaiman / American Gods / Anansi Boys (Codex Alera Book 2)', () => {
+          expect(parseFolderStructure(['Neil Gaiman', 'American Gods', 'Anansi Boys (Codex Alera Book 2)'])).toEqual({
+            title: 'Anansi Boys', author: 'Neil Gaiman', series: 'American Gods', seriesPosition: 2,
+          });
+        });
+      });
+
+      describe('no-op when no series paren — falls through to existing chain', () => {
+        it('2-part cross-segment agreement still fires (Reacher / Reacher 00.15-Second Son)', () => {
+          expect(parseFolderStructure(['Reacher', 'Reacher 00.15-Second Son'])).toEqual({
+            title: 'Second Son', author: null, series: 'Reacher', seriesPosition: 0.15,
+          });
+        });
+      });
+
+      describe('negative guards — must NOT extract series (2-part / 3-part)', () => {
+        it('2-part year paren — Jim Butcher / Academ\'s Fury (2006)', () => {
+          const result = parseFolderStructure(['Jim Butcher', "Academ's Fury (2006)"]);
+          expect(result.author).toBe('Jim Butcher');
+          expect(result.title).toBe("Academ's Fury");
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+
+        it('3-part year paren — folder series kept, no paren position', () => {
+          const result = parseFolderStructure(['Jim Butcher', 'Codex Alera', "Academ's Fury (2006)"]);
+          expect(result.series).toBe('Codex Alera');
+          expect(result.seriesPosition).toBeUndefined();
+        });
+
+        it('2-part codec paren — (Unabridged) not a series', () => {
+          const result = parseFolderStructure(['Jim Butcher', "Academ's Fury (Unabridged)"]);
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+
+        it('2-part edition paren — (2nd Edition) not a series', () => {
+          const result = parseFolderStructure(['Jim Butcher', "Academ's Fury (2nd Edition)"]);
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+
+        it('2-part narrator paren — 1-3 word name not a series', () => {
+          const result = parseFolderStructure(['Jim Butcher', "Academ's Fury (Kate Reading)"]);
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+      });
+
+      describe('raw parity (parseFolderStructureRaw)', () => {
+        it('raw 2-part — Jim Butcher / Academ\'s Fury (Codex Alera Book 2)', () => {
+          expect(parseFolderStructureRaw(["Jim Butcher", "Academ's Fury (Codex Alera Book 2)"])).toEqual({
+            title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+
+        it('raw 3-part — Jim Butcher / Codex Alera / Academ\'s Fury (Codex Alera Book 2)', () => {
+          expect(parseFolderStructureRaw(["Jim Butcher", 'Codex Alera', "Academ's Fury (Codex Alera Book 2)"])).toEqual({
+            title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+
+        it('raw 2-part hash form — Brandon Sanderson / Mistborn (Mistborn #1)', () => {
+          expect(parseFolderStructureRaw(['Brandon Sanderson', 'Mistborn (Mistborn #1)'])).toEqual({
+            title: 'Mistborn', author: 'Brandon Sanderson', series: 'Mistborn', seriesPosition: 1,
+          });
+        });
+
+        it('raw 2-part guard — (Unabridged) preserved in raw title, no series created', () => {
+          const result = parseFolderStructureRaw(['Jim Butcher', "Academ's Fury (Unabridged)"]);
+          expect(result.title).toBe("Academ's Fury (Unabridged)");
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+      });
+    });
+
     describe('cross-segment agreement (2-part Series-folder + series-prefixed filename) (issue #1034)', () => {
       it('AC17: Roman + underscore — Dune Saga / Dune Chronicles I_ Dune', () => {
         expect(parseFolderStructure(['Dune Saga', 'Dune Chronicles I_ Dune'])).toEqual({
