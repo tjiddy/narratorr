@@ -2,6 +2,7 @@ import { readdir, rename, rmdir } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { compareAudioNames } from '../../core/utils/collect-audio-files.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
 import { serializeError } from './serialize-error.js';
@@ -74,8 +75,29 @@ export async function cleanEmptyParents(
 }
 
 /**
+ * Number of digits needed to zero-pad sequential ordinals for `count` items.
+ * `padWidth(99) === 2`, `padWidth(100) === 3`, `padWidth(1000) === 4`.
+ * Mirrors the width logic in `collectMultiDiscFiles` (import-helpers.ts).
+ */
+export function padWidth(count: number): number {
+  return String(count).length;
+}
+
+/**
  * Pure planner: list audio files in `targetPath` and compute the `{from, to}[]`
  * filename pairs the apply path would produce, without touching disk.
+ *
+ * Ordering is filename-based and numeric (via the shared `compareAudioNames`
+ * comparator), matching the import-time sort so the import-baked sequential
+ * numbering is preserved at rename time — never re-derived from array index over
+ * a lexicographically-sorted list, and never from ID3 tags.
+ *
+ * When the rendered stems do not all disambiguate the book's files (the format
+ * carries no per-file token, e.g. `{author} - {title}`, so multiple files render
+ * to the same stem), a zero-padded sequential ordinal is appended to *every*
+ * file including the first — `<stem> (001)`, `<stem> (002)`, … — in numeric-sort
+ * order. Formats that already render unique stems (`{partName}`, `{trackNumber}`)
+ * are left untouched.
  *
  * Returned pairs are bare filenames (no path component) to match the apply path's
  * `rename(join(targetPath, from), join(targetPath, to))` call site below.
@@ -91,7 +113,7 @@ export async function planFileRenames(
   const audioFiles = entries
     .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
     .map(e => e.name)
-    .sort();
+    .sort(compareAudioNames);
 
   if (audioFiles.length === 0) return [];
 
@@ -109,26 +131,38 @@ export async function planFileRenames(
     year: extractYear(book.publishedDate),
   };
 
-  const renames: { from: string; to: string }[] = [];
-  const seen = new Set<string>();
+  const isMultiFile = audioFiles.length > 1;
 
-  for (let i = 0; i < audioFiles.length; i++) {
-    const fileName = audioFiles[i]!;
+  // Render every stem first (in numeric-sort order). trackNumber follows the
+  // sorted position, so once the array is numeric-sorted it is the authoritative
+  // play-order ordinal feeding both {trackNumber} renders and the fallback below.
+  const stems = audioFiles.map((fileName, i) => {
     const ext = extname(fileName);
     const tokens = {
       ...baseTokens,
-      ...(audioFiles.length > 1 && {
+      ...(isMultiFile && {
         trackNumber: i + 1,
         trackTotal: audioFiles.length,
         partName: basename(fileName, ext),
       }),
     };
-    let newStem = renderFilename(fileFormat, tokens, options);
+    return renderFilename(fileFormat, tokens, options);
+  });
 
-    if (seen.has(newStem.toLowerCase())) {
-      newStem = `${newStem} (${i + 1})`;
-    }
-    seen.add(newStem.toLowerCase());
+  // Forced sequential numbering is keyed off rendered-stem *collisions*, not the
+  // absence of {trackNumber}. If any two stems collide (case-insensitive), the
+  // format does not disambiguate the book's files — number them all.
+  const uniqueStemCount = new Set(stems.map(s => s.toLowerCase())).size;
+  const stemsCollide = isMultiFile && uniqueStemCount !== stems.length;
+  const width = padWidth(audioFiles.length);
+
+  const renames: { from: string; to: string }[] = [];
+  for (let i = 0; i < audioFiles.length; i++) {
+    const fileName = audioFiles[i]!;
+    const ext = extname(fileName);
+    const newStem = stemsCollide
+      ? `${stems[i]!} (${String(i + 1).padStart(width, '0')})`
+      : stems[i]!;
 
     const newName = `${newStem}${ext}`;
     if (newName !== fileName) {

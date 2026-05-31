@@ -486,11 +486,12 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        // 3 forward renames; collisions on '{title}' → 'Test Book', 'Test Book (2)', 'Test Book (3)'.
+        // 3 forward renames; stems collide on '{title}' → every file gets a padded
+        // sequential ordinal incl. the first (#1192): 'Test Book (1/2/3)'.
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(3);
         const calls = vi.mocked(fs.rename).mock.calls;
         expect(calls[0]!.map(normPath)).toEqual(
-          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (1).mp3`]);
         expect(calls[1]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
         expect(calls[2]!.map(normPath)).toEqual(
@@ -607,14 +608,14 @@ describe('ManualImportAdapter', () => {
       it('rename rollback: Nth fs.rename rejects, helper rewinds completed renames in reverse', async () => {
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3', 'b.mp3', 'c.mp3']);
-        // Forward renames produce: a→Test Book, b→Test Book (2), c→Test Book (3).
-        // Rollback after 3rd fails: reverses b→Test Book (2) and a→Test Book (only the completed pair).
+        // Forward renames produce: a→Test Book (1), b→Test Book (2), c→Test Book (3).
+        // Rollback after 3rd fails: reverses b→Test Book (2) and a→Test Book (1) (only the completed pair).
         vi.mocked(fs.rename)
-          .mockResolvedValueOnce(undefined) // a.mp3 → Test Book.mp3
+          .mockResolvedValueOnce(undefined) // a.mp3 → Test Book (1).mp3
           .mockResolvedValueOnce(undefined) // b.mp3 → Test Book (2).mp3
           .mockRejectedValueOnce(new Error('ENOSPC')) // c.mp3 → Test Book (3).mp3 fails
           .mockResolvedValueOnce(undefined) // rollback: Test Book (2).mp3 → b.mp3
-          .mockResolvedValueOnce(undefined); // rollback: Test Book.mp3 → a.mp3
+          .mockResolvedValueOnce(undefined); // rollback: Test Book (1).mp3 → a.mp3
 
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
@@ -629,7 +630,7 @@ describe('ManualImportAdapter', () => {
         const calls = vi.mocked(fs.rename).mock.calls;
         // Forward calls
         expect(calls[0]!.map(normPath)).toEqual(
-          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (1).mp3`]);
         expect(calls[1]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
         expect(calls[2]!.map(normPath)).toEqual(
@@ -638,7 +639,7 @@ describe('ManualImportAdapter', () => {
         expect(calls[3]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/Test Book (2).mp3`, `${TARGET_PATH}/b.mp3`]);
         expect(calls[4]!.map(normPath)).toEqual(
-          [`${TARGET_PATH}/Test Book.mp3`, `${TARGET_PATH}/a.mp3`]);
+          [`${TARGET_PATH}/Test Book (1).mp3`, `${TARGET_PATH}/a.mp3`]);
       });
 
       it('mode=copy + fileFormat set + renameFilesWithTemplate throws: adapter catches, marks failed, re-throws', async () => {

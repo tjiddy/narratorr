@@ -438,6 +438,41 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     expect(srcPaths[2]).toContain('03 - Third.mp3');
   });
 
+  it('orders unpadded tracks within each disc numerically — Track2 before Track10 (#1192)', async () => {
+    // Multi-disc (>=2) path: within-disc order comes straight from the locale-numeric
+    // collectAudioFiles sort, which then drives sequential numbering.
+    setupDiscLayout([
+      ['Disc 01', ['Track10.mp3', 'Track2.mp3', 'Track1.mp3']],
+      ['Disc 02', ['Track2.mp3', 'Track1.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    // locale-numeric source ordering → Track1, Track2, Track10 (NOT alphabetic Track1, Track10, Track2)
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]!.split('\\').join('/')).toBe('/src/Disc 01/Track1.mp3');
+    expect(srcPaths[1]!.split('\\').join('/')).toBe('/src/Disc 01/Track2.mp3');
+    expect(srcPaths[2]!.split('\\').join('/')).toBe('/src/Disc 01/Track10.mp3');
+    expect(srcPaths[3]!.split('\\').join('/')).toBe('/src/Disc 02/Track1.mp3');
+    expect(srcPaths[4]!.split('\\').join('/')).toBe('/src/Disc 02/Track2.mp3');
+    // 5 tracks → padWidth=1 → sequential 1..5 in play order
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3', '5.mp3']);
+  });
+
+  it('keeps padded multi-disc sources correctly ordered (no regression)', async () => {
+    setupDiscLayout([
+      ['Disc 01', ['003.mp3', '001.mp3', '002.mp3']],
+      ['Disc 02', ['001.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('001.mp3');
+    expect(srcPaths[1]).toContain('002.mp3');
+    expect(srcPaths[2]).toContain('003.mp3');
+  });
+
   it('handles common disc patterns: CD 1, Disk 2, disc01, DISC 004, cd1', async () => {
     // Each pattern should be detected as a disc folder
     for (const discName of ['CD 1', 'Disk 2', 'disc01', 'DISC 004', 'cd1']) {
