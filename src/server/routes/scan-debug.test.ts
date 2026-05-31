@@ -310,6 +310,29 @@ describe('POST /api/library/scan-debug', () => {
       expect(step.output).toBe('Dune');
     });
 
+    it('extracts trailing "(Series Book N)" paren into series + position (issue #1194)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: "Academ's Fury by Jim Butcher (Codex Alera Book 2)" },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(res.statusCode).toBe(200);
+      // The series paren is no longer swept into the author — corrected fields surface in the trace.
+      expect(body.parsing.raw.author).toBe('Jim Butcher');
+      expect(body.parsing.raw.title).toBe("Academ's Fury");
+      expect(body.parsing.raw.series).toBe('Codex Alera');
+      expect(body.parsing.raw.seriesPosition).toBe(2);
+      // Cleaned author drives the search query — must be the clean author, not author+paren.
+      expect(body.cleaning.author.result).toBe('Jim Butcher');
+      expect(body.cleaning.seriesPosition).toBeUndefined();
+      expect(body.search.initialQuery).toBe("Academ's Fury Jim Butcher");
+    });
+
     it('P4: routes "Discworld, Book 16 - Soul Music" through parsing as series + title (issue #980)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);

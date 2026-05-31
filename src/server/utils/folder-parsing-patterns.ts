@@ -55,6 +55,37 @@ export function tryTitleDashSeriesBook(
 }
 
 /**
+ * Trailing parenthetical series marker: `(Series Name Book N)`, `(Series Name Vol|Volume N)`,
+ * or `(Series Name #N)`. Series name is the non-greedy left capture (group 1); position is
+ * either the Book/Vol number (group 2, Arabic decimal or Roman) or the hash number (group 3).
+ * Anchored at end-of-string so it only consumes a true trailing paren.
+ */
+const SERIES_PAREN_REGEX =
+  /\s*\((.+?)\s+(?:(?:book|vol(?:ume)?)\s+(\d+(?:\.\d+)?|[ivxlcdm]+)|#\s*(\d+(?:\.\d+)?))\)\s*$/i;
+
+/**
+ * Extract a trailing `(Series Name Book|Vol|Volume N)` / `(Series Name #N)` paren from an
+ * input, returning the paren-stripped remainder plus the raw series name and numeric position.
+ * Returns null when the paren is absent, when the captured series name is actually a codec
+ * (`Unabridged`) or edition (`2nd Edition`) label rather than a series, when the position can't
+ * be parsed, or when stripping the paren would leave nothing. Callers apply their own
+ * cleanName/identity transform to the returned series name.
+ */
+export function trySeriesParen(
+  input: string,
+): { remainder: string; series: string; seriesPosition: number } | null {
+  const m = input.match(SERIES_PAREN_REGEX);
+  if (!m) return null;
+  const series = m[1]!.trim();
+  if (!series || CODEC_TEST_REGEX.test(series) || isEditionParen(series)) return null;
+  const position = parseRomanOrArabicPosition(m[2] ?? m[3]!);
+  if (position === undefined) return null;
+  const remainder = input.replace(SERIES_PAREN_REGEX, '').trim();
+  if (!remainder) return null;
+  return { remainder, series, seriesPosition: position };
+}
+
+/**
  * Cross-segment agreement: `<series-prefix> <position> <separator> <title>`.
  * Position can be Arabic (1, 01, 0.15) or Roman (I, IV, XII). Separator is
  * hyphen, en-dash, em-dash, underscore, or colon, with optional whitespace.

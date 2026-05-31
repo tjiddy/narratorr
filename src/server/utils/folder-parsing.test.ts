@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { parseTitledDiscFolder } from '../../core/utils/book-discovery.js';
 import {
   parseFolderStructure,
   parseFolderStructureRaw,
@@ -684,6 +685,166 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.title).toBe('Mistborn');
         expect(result.series).toBe('Mistborn');
         expect(result.author).toBeNull();
+      });
+    });
+
+    describe('trailing "(Series Book N)" paren extraction (issue #1194)', () => {
+      it('primary repro — Academ\'s Fury by Jim Butcher (Codex Alera Book 2)', () => {
+        expect(parseFolderStructure(["Academ's Fury by Jim Butcher (Codex Alera Book 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      it('Author - Title (Series Book N) shape — Jim Butcher - Academ\'s Fury (Codex Alera Book 2)', () => {
+        expect(parseFolderStructure(["Jim Butcher - Academ's Fury (Codex Alera Book 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      it('Vol keyword — … (Codex Alera Vol 2)', () => {
+        expect(parseFolderStructure(["Academ's Fury by Jim Butcher (Codex Alera Vol 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      it('Volume keyword — … (Codex Alera Volume 2)', () => {
+        expect(parseFolderStructure(["Academ's Fury by Jim Butcher (Codex Alera Volume 2)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+        });
+      });
+
+      it('hash form — The Colour of Magic by Terry Pratchett (Discworld #16)', () => {
+        expect(parseFolderStructure(['The Colour of Magic by Terry Pratchett (Discworld #16)'])).toEqual({
+          title: 'The Colour of Magic', author: 'Terry Pratchett', series: 'Discworld', seriesPosition: 16,
+        });
+      });
+
+      it('multi-word series not truncated by narrator cap — The Way of Kings by Brandon Sanderson (The Stormlight Archive Book 1)', () => {
+        expect(parseFolderStructure(['The Way of Kings by Brandon Sanderson (The Stormlight Archive Book 1)'])).toEqual({
+          title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+        });
+      });
+
+      it('Roman-numeral position — … (Codex Alera Book IV)', () => {
+        expect(parseFolderStructure(["Academ's Fury by Jim Butcher (Codex Alera Book IV)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 4,
+        });
+      });
+
+      it('decimal position — … (Codex Alera Book 1.5)', () => {
+        expect(parseFolderStructure(["Academ's Fury by Jim Butcher (Codex Alera Book 1.5)"])).toEqual({
+          title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 1.5,
+        });
+      });
+
+      it('title-only with series paren — Mistborn (The Cosmere Book 1)', () => {
+        expect(parseFolderStructure(['Mistborn (The Cosmere Book 1)'])).toEqual({
+          title: 'Mistborn', author: null, series: 'The Cosmere', seriesPosition: 1,
+        });
+      });
+
+      describe('negative cases — must NOT extract series', () => {
+        it('year paren — Academ\'s Fury by Jim Butcher (2006)', () => {
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher (2006)"]);
+          expect(result.author).toBe('Jim Butcher');
+          expect(result.title).toBe("Academ's Fury");
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+
+        it('edition paren — Academ\'s Fury by Jim Butcher (2nd Edition)', () => {
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher (2nd Edition)"]);
+          expect(result.author).toBe('Jim Butcher');
+          expect(result.series).toBeNull();
+        });
+
+        it('edition paren — Academ\'s Fury by Jim Butcher (Anniversary Edition)', () => {
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher (Anniversary Edition)"]);
+          expect(result.author).toBe('Jim Butcher');
+          expect(result.series).toBeNull();
+        });
+
+        it('narrator paren — Academ\'s Fury by Jim Butcher (Read by Kate Reading)', () => {
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher (Read by Kate Reading)"]);
+          expect(result.author).toBe('Jim Butcher');
+          expect(result.series).toBeNull();
+        });
+
+        it('year inside a series-shaped paren is not a position — … (Some Series 2020)', () => {
+          // No Book/Vol/# marker → series paren regex never fires; 2020 is not treated as a position.
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher (Some Series 2020)"]);
+          expect(result.series).toBeNull();
+          expect(result.seriesPosition).toBeUndefined();
+        });
+
+        it('codec keyword as series name is rejected — … (Unabridged Book 1)', () => {
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher (Unabridged Book 1)"]);
+          expect(result.series).not.toBe('Unabridged');
+          expect(result.series).toBeNull();
+        });
+      });
+
+      describe('no-regression on the four-case set', () => {
+        it('Academ\'s Fury by Jim Butcher', () => {
+          const result = parseFolderStructure(["Academ's Fury by Jim Butcher"]);
+          expect(result).toEqual({ title: "Academ's Fury", author: 'Jim Butcher', series: null });
+        });
+
+        it("Jim Butcher - Academ's Fury", () => {
+          const result = parseFolderStructure(["Jim Butcher - Academ's Fury"]);
+          expect(result).toEqual({ title: "Academ's Fury", author: 'Jim Butcher', series: null });
+        });
+
+        it("Codex Alera - 02 - Academ's Fury", () => {
+          const result = parseFolderStructure(["Codex Alera - 02 - Academ's Fury"]);
+          expect(result).toEqual({ title: "Academ's Fury", author: null, series: 'Codex Alera', seriesPosition: 2 });
+        });
+
+        it("Jim Butcher - Codex Alera 02 - Academ's Fury", () => {
+          const result = parseFolderStructure(["Jim Butcher - Codex Alera 02 - Academ's Fury"]);
+          expect(result.author).toBe('Jim Butcher');
+          expect(result.series).toBe('Codex Alera');
+          expect(result.seriesPosition).toBe(2);
+          expect(result.title).toBe("Academ's Fury");
+        });
+      });
+
+      describe('disc + series interaction (parseTitledDiscFolder unaffected)', () => {
+        it('disc paren is split off by parseTitledDiscFolder, leaving a series-paren title that parses to series', () => {
+          // Discovery strips the trailing "(Disc N)" via parseTitledDiscFolder; the residual
+          // title still carries the series paren, which parseFolderStructure then extracts.
+          const disc = parseTitledDiscFolder("Academ's Fury by Jim Butcher (Codex Alera Book 2) (Disc 1)");
+          expect(disc).toEqual({ title: "Academ's Fury by Jim Butcher (Codex Alera Book 2)", discNumber: 1 });
+
+          const parsed = parseFolderStructure([disc!.title]);
+          expect(parsed).toEqual({
+            title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+
+        it('series paren alone is not mistaken for a disc folder', () => {
+          expect(parseTitledDiscFolder("Academ's Fury by Jim Butcher (Codex Alera Book 2)")).toBeNull();
+        });
+      });
+
+      describe('raw parity (parseFolderStructureRaw)', () => {
+        it("raw: Academ's Fury by Jim Butcher (Codex Alera Book 2)", () => {
+          expect(parseFolderStructureRaw(["Academ's Fury by Jim Butcher (Codex Alera Book 2)"])).toEqual({
+            title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+
+        it("raw: Jim Butcher - Academ's Fury (Codex Alera Book 2)", () => {
+          expect(parseFolderStructureRaw(["Jim Butcher - Academ's Fury (Codex Alera Book 2)"])).toEqual({
+            title: "Academ's Fury", author: 'Jim Butcher', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+
+        it('raw: hash form preserves multi-word series', () => {
+          expect(parseFolderStructureRaw(['The Way of Kings by Brandon Sanderson (The Stormlight Archive #1)'])).toEqual({
+            title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
+          });
+        });
       });
     });
 
