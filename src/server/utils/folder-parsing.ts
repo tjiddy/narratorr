@@ -242,13 +242,63 @@ export function extractASIN(input: string): { asin: string | undefined; cleaned:
 
 // ─── Folder Structure Parsing ───────────────────────────────────────
 
-function parseSingleFolder(folder: string): {
+/** Parsed single-folder / folder-structure shape (title + optional author/series/position/asin). */
+export type ParsedFolder = {
   title: string;
   author: string | null;
   series: string | null;
   seriesPosition?: number;
   asin?: string;
-} {
+};
+
+/**
+ * Tail patterns shared by the cleaned and raw single-folder parsers: `Author - Title`
+ * (skipped when the left side is a bare number) then `Title by Author`. Returns null when
+ * neither fires. `transform` is cleanName (cleaned) or identity (raw); applyP10Postprocess
+ * runs on the resolved title in both.
+ */
+function tryAuthorTitleForms(
+  input: string,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+): ParsedFolder | null {
+  // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
+  const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
+  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
+    const author = applyLastFirstSwap(transform(dashMatch[1]!));
+    return applyP10Postprocess(transform(dashMatch[2]!), author, asinTail, transform);
+  }
+  // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
+  const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
+  if (byMatch) {
+    const left = byMatch[1]!.trim();
+    const right = byMatch[2]!.trim();
+    // Guard: left side must not be just numbers, right side must be non-empty
+    if (right && !/^\d+$/.test(left)) {
+      return applyP10Postprocess(transform(left), applyLastFirstSwap(transform(right)), asinTail, transform);
+    }
+  }
+  return null;
+}
+
+/**
+ * Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren overlay: strip the paren,
+ * parse the remainder with `parser`, then overlay the extracted series + position. The series
+ * paren is removed before the author/title branches run, so it never leaks into the author.
+ * Returns null when no series paren is present.
+ */
+function applySeriesParen(
+  input: string,
+  asinTail: { asin?: string },
+  parser: (folder: string) => ParsedFolder,
+  transform: (s: string) => string,
+): ParsedFolder | null {
+  const sp = trySeriesParen(input);
+  if (!sp) return null;
+  return { ...parser(sp.remainder), series: transform(sp.series), seriesPosition: sp.seriesPosition, ...asinTail };
+}
+
+function parseSingleFolder(folder: string): ParsedFolder {
   // Extract ASIN bracket before any other pattern matching
   const { asin, cleaned } = extractASIN(folder);
   // Use cleaned input for pattern matching; fall back to original if cleaned is empty
@@ -261,38 +311,16 @@ function parseSingleFolder(folder: string): {
     return { title: input, author: null, series: null, ...asinTail };
   }
 
-  // Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren — strip it, parse the
-  // remainder normally (author/title), then overlay the extracted series + position. Runs
-  // before the author/title branches so the series paren never leaks into the author field.
-  const seriesParen = trySeriesParen(input);
-  if (seriesParen) {
-    const base = parseSingleFolder(seriesParen.remainder);
-    return { ...base, series: cleanName(seriesParen.series), seriesPosition: seriesParen.seriesPosition, ...asinTail };
-  }
+  const seriesParen = applySeriesParen(input, asinTail, parseSingleFolder, cleanName);
+  if (seriesParen) return seriesParen;
 
   // Pattern: "Series – NN – Title" or "Series - NN - Title"
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
-  if (seriesNumberMatch) {
-    return {
-      title: cleanName(seriesNumberMatch[3]!),
-      author: null,
-      series: cleanName(seriesNumberMatch[1]!),
-      seriesPosition: parseFloat(seriesNumberMatch[2]!),
-      ...asinTail,
-    };
-  }
+  if (seriesNumberMatch) return seriesPosResult(seriesNumberMatch, null, asinTail, cleanName);
 
   // P4: "Series, Book NN - Title" — left of FIRST ` - ` ends with `, Book NN`.
   const seriesBookMatch = matchFirstDashOnly(input, SERIES_BOOK_DASH_TITLE_REGEX);
-  if (seriesBookMatch) {
-    return {
-      title: cleanName(seriesBookMatch[3]!),
-      author: null,
-      series: cleanName(seriesBookMatch[1]!),
-      seriesPosition: parseFloat(seriesBookMatch[2]!),
-      ...asinTail,
-    };
-  }
+  if (seriesBookMatch) return seriesPosResult(seriesBookMatch, null, asinTail, cleanName);
 
   const titleDashSeries = tryTitleDashSeriesBook(input, asinTail, cleanName);
   if (titleDashSeries) return titleDashSeries;
@@ -304,36 +332,10 @@ function parseSingleFolder(folder: string): {
 
   // P10-precheck (no-author path): "<series> NN - <title>" with no ` - ` in series
   const p10Pre = matchFirstDashOnly(input, WORDS_NUM_DASH_TITLE_REGEX);
-  if (p10Pre) {
-    return {
-      title: cleanName(p10Pre[3]!),
-      author: null,
-      series: cleanName(p10Pre[1]!),
-      seriesPosition: parseFloat(p10Pre[2]!),
-      ...asinTail,
-    };
-  }
+  if (p10Pre) return seriesPosResult(p10Pre, null, asinTail, cleanName);
 
-  // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
-  const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
-  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
-    const author = applyLastFirstSwap(cleanName(dashMatch[1]!));
-    const title = cleanName(dashMatch[2]!);
-    return applyP10Postprocess(title, author, asinTail, cleanName);
-  }
-
-  // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
-  const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
-  if (byMatch) {
-    const left = byMatch[1]!.trim();
-    const right = byMatch[2]!.trim();
-    // Guard: left side must not be just numbers, right side must be non-empty
-    if (right && !/^\d+$/.test(left)) {
-      const author = applyLastFirstSwap(cleanName(right));
-      const title = cleanName(left);
-      return applyP10Postprocess(title, author, asinTail, cleanName);
-    }
-  }
+  const authorTitle = tryAuthorTitleForms(input, asinTail, cleanName);
+  if (authorTitle) return authorTitle;
 
   // Just a title — use original folder if cleaned was empty (ASIN-only input)
   return {
@@ -394,13 +396,7 @@ function applyP10Postprocess(
  * - Series – NN – Title
  * - Title only
  */
-export function parseFolderStructure(parts: string[]): {
-  title: string;
-  author: string | null;
-  series: string | null;
-  seriesPosition?: number;
-  asin?: string;
-} {
+export function parseFolderStructure(parts: string[]): ParsedFolder {
   if (parts.length === 0) {
     return { title: 'Unknown', author: null, series: null };
   }
@@ -474,13 +470,7 @@ function splitAuthorSegment(
  * Used by the scan-debug endpoint to build cleaning traces from the actual
  * raw segments rather than the already-cleaned parser output.
  */
-export function parseFolderStructureRaw(parts: string[]): {
-  title: string;
-  author: string | null;
-  series: string | null;
-  seriesPosition?: number;
-  asin?: string;
-} {
+export function parseFolderStructureRaw(parts: string[]): ParsedFolder {
   if (parts.length === 0) {
     return { title: 'Unknown', author: null, series: null };
   }
@@ -520,13 +510,7 @@ export function parseFolderStructureRaw(parts: string[]): {
   };
 }
 
-function parseSingleFolderRaw(folder: string): {
-  title: string;
-  author: string | null;
-  series: string | null;
-  seriesPosition?: number;
-  asin?: string;
-} {
+function parseSingleFolderRaw(folder: string): ParsedFolder {
   const { asin, cleaned } = extractASIN(folder);
   const input = cleaned || folder;
   const asinTail = asin !== undefined ? { asin } : {};
@@ -535,36 +519,15 @@ function parseSingleFolderRaw(folder: string): {
     return { title: input, author: null, series: null, ...asinTail };
   }
 
-  // Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren — raw mirror of the
-  // cleaned branch: strip, parse remainder, overlay raw series + position (no cleanName).
-  const seriesParen = trySeriesParen(input);
-  if (seriesParen) {
-    const base = parseSingleFolderRaw(seriesParen.remainder);
-    return { ...base, series: seriesParen.series, seriesPosition: seriesParen.seriesPosition, ...asinTail };
-  }
+  const seriesParen = applySeriesParen(input, asinTail, parseSingleFolderRaw, identity);
+  if (seriesParen) return seriesParen;
 
   const seriesNumberMatch = input.match(SERIES_NUMBER_TITLE_REGEX);
-  if (seriesNumberMatch) {
-    return {
-      title: seriesNumberMatch[3]!,
-      author: null,
-      series: seriesNumberMatch[1]!,
-      seriesPosition: parseFloat(seriesNumberMatch[2]!),
-      ...asinTail,
-    };
-  }
+  if (seriesNumberMatch) return seriesPosResult(seriesNumberMatch, null, asinTail, identity);
 
   // P4: "Series, Book NN - Title" — raw substrings preserved.
   const seriesBookMatch = matchFirstDashOnly(input, SERIES_BOOK_DASH_TITLE_REGEX);
-  if (seriesBookMatch) {
-    return {
-      title: seriesBookMatch[3]!,
-      author: null,
-      series: seriesBookMatch[1]!,
-      seriesPosition: parseFloat(seriesBookMatch[2]!),
-      ...asinTail,
-    };
-  }
+  if (seriesBookMatch) return seriesPosResult(seriesBookMatch, null, asinTail, identity);
 
   const titleDashSeries = tryTitleDashSeriesBook(input, asinTail, identity);
   if (titleDashSeries) return titleDashSeries;
@@ -576,31 +539,10 @@ function parseSingleFolderRaw(folder: string): {
 
   // P10-precheck (no-author path)
   const p10Pre = matchFirstDashOnly(input, WORDS_NUM_DASH_TITLE_REGEX);
-  if (p10Pre) {
-    return {
-      title: p10Pre[3]!,
-      author: null,
-      series: p10Pre[1]!,
-      seriesPosition: parseFloat(p10Pre[2]!),
-      ...asinTail,
-    };
-  }
+  if (p10Pre) return seriesPosResult(p10Pre, null, asinTail, identity);
 
-  const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
-  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
-    const author = applyLastFirstSwap(dashMatch[1]!);
-    return applyP10Postprocess(dashMatch[2]!, author, asinTail, identity);
-  }
-
-  const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
-  if (byMatch) {
-    const left = byMatch[1]!.trim();
-    const right = byMatch[2]!.trim();
-    if (right && !/^\d+$/.test(left)) {
-      const author = applyLastFirstSwap(right);
-      return applyP10Postprocess(left, author, asinTail, identity);
-    }
-  }
+  const authorTitle = tryAuthorTitleForms(input, asinTail, identity);
+  if (authorTitle) return authorTitle;
 
   return { title: cleaned ? input : folder, author: null, series: null, ...asinTail };
 }
