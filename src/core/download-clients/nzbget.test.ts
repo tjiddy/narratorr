@@ -1130,7 +1130,7 @@ describe('NZBGetClient', () => {
       expect(item!.status).toBe('error');
     });
 
-    it('degrades to downloading when MoveStatus is FAILURE (still moving)', async () => {
+    it('degrades to error when MoveStatus is FAILURE (terminal item)', async () => {
       server.use(
         rpcHandler({
           listgroups: () => [],
@@ -1139,7 +1139,7 @@ describe('NZBGetClient', () => {
       );
 
       const item = await client.getDownload('456');
-      expect(item!.status).toBe('downloading');
+      expect(item!.status).toBe('error');
     });
 
     it('does not degrade when ParStatus/UnpackStatus/MoveStatus are NONE', async () => {
@@ -1175,6 +1175,100 @@ describe('NZBGetClient', () => {
       );
 
       const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('degrades to error when ScriptStatus is FAILURE (even if main status is SUCCESS)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS', ScriptStatus: 'FAILURE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('error');
+    });
+
+    it('does not degrade when ScriptStatus is SUCCESS', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS', ScriptStatus: 'SUCCESS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('does not degrade when ScriptStatus is NONE or absent', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS', ScriptStatus: 'NONE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+  });
+
+  describe('mapHistoryStatus — WARNING/* terminal handling', () => {
+    it.each([
+      ['WARNING/HEALTH'],
+      ['WARNING/REPAIRABLE'],
+      ['WARNING/DAMAGED'],
+    ])('maps %s with clean post-proc to completed (never downloading)', async (status) => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: status, ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS', ScriptStatus: 'NONE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).not.toBe('downloading');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('maps WARNING/SPACE with UnpackStatus SPACE to error', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'WARNING/SPACE', ParStatus: 'SUCCESS', UnpackStatus: 'SPACE', MoveStatus: 'SUCCESS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).not.toBe('downloading');
+      expect(item!.status).toBe('error');
+    });
+
+    it('maps WARNING/SCRIPT with ScriptStatus FAILURE to error', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'WARNING/SCRIPT', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS', ScriptStatus: 'FAILURE' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).not.toBe('downloading');
+      expect(item!.status).toBe('error');
+    });
+
+    it('maps WARNING/SCRIPT with clean/absent ScriptStatus to completed', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'WARNING/SCRIPT', ParStatus: 'SUCCESS', UnpackStatus: 'SUCCESS', MoveStatus: 'SUCCESS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).not.toBe('downloading');
       expect(item!.status).toBe('completed');
     });
   });

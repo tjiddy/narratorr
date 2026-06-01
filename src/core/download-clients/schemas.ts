@@ -191,4 +191,5 @@ export const nzbgetHistorySchema = z.object({
   ParStatus: z.string().optional(),
   UnpackStatus: z.string().optional(),
   MoveStatus: z.string().optional(),
+  ScriptStatus: z.string().optional(),
 }).passthrough();
