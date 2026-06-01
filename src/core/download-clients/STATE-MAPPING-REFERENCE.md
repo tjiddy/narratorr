@@ -163,11 +163,10 @@ NZBGet uses a degradation model — multiple post-processing fields that each in
 History status is mapped in `mapHistoryStatus` (`nzbget.ts`):
 
 - `FAILURE/*` or `DELETED/*` → `'error'`
-- Anything not starting with `SUCCESS` → `'downloading'` (in-progress/unknown defaults to downloading, not completed — avoids the premature-import bug)
-- `SUCCESS/*`, then degraded by post-processing failures: `ParStatus` or `UnpackStatus` failure → `'error'`; `MoveStatus` failure → `'downloading'`
-- Otherwise → `'completed'`
+- `SUCCESS/*` **or** `WARNING/*` are both terminal → classified through one shared post-processing degradation gate over `ParStatus`, `UnpackStatus`, `MoveStatus`, and `ScriptStatus`: if **any** is failed (present and not `SUCCESS`/`NONE`) → `'error'`; otherwise → `'completed'`. The `WARNING` detail substring (`/HEALTH`, `/SPACE`, `/SCRIPT`, …) is **not** branched on — the post-proc fields carry the failure signal (e.g. `WARNING/SPACE` co-sets `UnpackStatus: 'SPACE'`, `WARNING/SCRIPT` co-sets a failed `ScriptStatus`).
+- Any genuinely-unknown `Status` (none of the four known categories) → `'downloading'` (the defensive default — avoids the premature-import bug on an unrecognized future status). This is the only non-terminal return left on the history path.
 
-We check `ParStatus`, `UnpackStatus`, and `MoveStatus`. Radarr/Sonarr additionally degrade on `ScriptStatus` and `DeleteStatus` (see below) — we don't, so an NZBGet post-processing-script failure or a delete-health flag still maps to `'completed'`. Accepted for our use; revisit if it bites.
+We check `ParStatus`, `UnpackStatus`, `MoveStatus`, and `ScriptStatus`. A failed `MoveStatus` on a terminal item now maps to `'error'` (previously `'downloading'`, which could strand a terminal item forever). `DeleteStatus` is **not** folded into the gate — its success/failure model differs (success = empty, with split failed/warning details) so it needs its own predicate; tracked as optional follow-up. Radarr/Sonarr additionally degrade on `DeleteStatus` (see below) — we don't yet.
 
 ### Radarr/Sonarr approach
 

@@ -335,13 +335,24 @@ export class NZBGetClient implements DownloadClientAdapter {
   private mapHistoryStatus(item: NZBGetHistoryItem): DownloadItemInfo['status'] {
     const upper = item.Status.toUpperCase();
     if (upper.startsWith('FAILURE') || upper.startsWith('DELETED')) return 'error';
-    if (!upper.startsWith('SUCCESS')) return 'downloading';
 
-    // Degradation model: SUCCESS can be downgraded by post-processing failures
-    if (postProcFailed(item.ParStatus) || postProcFailed(item.UnpackStatus)) return 'error';
-    if (postProcFailed(item.MoveStatus)) return 'downloading';
+    // SUCCESS/* and WARNING/* are both terminal — classify through the shared
+    // post-processing degradation gate (the WARNING detail substring is never
+    // branched on; the post-proc fields carry the failure signal).
+    if (upper.startsWith('SUCCESS') || upper.startsWith('WARNING')) {
+      if (
+        postProcFailed(item.ParStatus) ||
+        postProcFailed(item.UnpackStatus) ||
+        postProcFailed(item.MoveStatus) ||
+        postProcFailed(item.ScriptStatus)
+      )
+        return 'error';
+      return 'completed';
+    }
 
-    return 'completed';
+    // Genuinely-unknown statuses keep the defensive default — never auto-import
+    // a possibly-bad file behind an unrecognized future status.
+    return 'downloading';
   }
 }
 
