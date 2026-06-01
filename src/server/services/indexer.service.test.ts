@@ -974,6 +974,47 @@ describe('IndexerService', () => {
         expect(setPayload.settings.proxyUrl).toBe('socks5://proxy:1080');
       });
 
+      it('strips Readarr echo-only keys from a dirty existing row on upsert (#1198 layer 3)', async () => {
+        // A row persisted by the pre-fix translation path carries echo-only keys
+        // (categories/minimumSeeders/seedCriteria.*) in its stored settings. The
+        // merge must NOT carry them forward — otherwise the strict Torznab/Newznab
+        // adapter schema rejects the row on later construction.
+        const existing = createMockDbIndexer({
+          id: 3,
+          source: 'prowlarr',
+          sourceIndexerId: 10,
+          settings: {
+            apiUrl: 'http://old/',
+            apiKey: 'oldkey',
+            categories: [3030],
+            minimumSeeders: 0,
+            'seedCriteria.seedRatio': null,
+            'seedCriteria.seedTime': null,
+          },
+        });
+        db.select.mockReturnValue(mockDbChain([existing]));
+        const updateChain = mockDbChain([existing]);
+        db.update.mockReturnValue(updateChain);
+
+        await service.createOrUpsertProwlarr({
+          name: 'Synced Name',
+          type: 'torznab',
+          enabled: true,
+          priority: 50,
+          // Incoming payload is already sanitized by the route translation boundary.
+          settings: { apiUrl: 'http://new/', apiKey: 'newkey' },
+          sourceIndexerId: 10,
+        });
+
+        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+        for (const key of ['categories', 'minimumSeeders', 'seedCriteria.seedRatio', 'seedCriteria.seedTime']) {
+          expect(setPayload.settings).not.toHaveProperty(key);
+        }
+        // Adapter-accepted keys survive the merge (secret fields encrypted, #742).
+        expect(isEncrypted(setPayload.settings.apiUrl)).toBe(true);
+        expect(isEncrypted(setPayload.settings.apiKey)).toBe(true);
+      });
+
       it('always inserts when sourceIndexerId is null', async () => {
         const newRow = createMockDbIndexer({ id: 7, source: 'prowlarr', sourceIndexerId: null });
         db.insert.mockReturnValue(mockDbChain([newRow]));

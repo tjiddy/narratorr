@@ -897,6 +897,30 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(payload.detailedDescription).toBeDefined();
     });
 
+    it('fails closed on a missing apiKey: forwards sanitized settings to testConfig → 400 (#1198)', async () => {
+      // /test does NOT call validateReadarrDomain — it relies on the strict
+      // adapter-settings schema (proven directly in indexer.test.ts) to reject
+      // missing/empty creds. Here we assert the route-level contract: it forwards
+      // the translated settings and returns 400 when testConfig reports failure.
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: false, message: 'apiKey is required' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer/test',
+        payload: {
+          implementation: 'Torznab',
+          fields: [
+            { name: 'baseUrl', value: 'http://localhost:9696/1/', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.indexer.testConfig).toHaveBeenCalledTimes(1);
+      const callArgs = (services.indexer.testConfig as Mock).mock.calls[0]![0];
+      expect(callArgs.settings).not.toHaveProperty('apiKey');
+    });
+
     it('returns 400 with standard validation envelope when implementation is missing (Zod path)', async () => {
       const res = await app.inject({
         method: 'POST',
@@ -1126,14 +1150,26 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
     });
 
-    it('POST: extra unknown top-level key (randomKey) → 400 standard envelope (.strict())', async () => {
+    it('POST: extra unknown top-level key (randomKey) → accepted and silently stripped (Zod .strip())', async () => {
+      // #1198: the compat surface must be liberal in what it accepts. An unknown
+      // top-level key is dropped by Zod's default .strip(), NOT rejected — and it
+      // must not be passed through into the forwarded settings (a .passthrough()
+      // mis-implementation would satisfy the status check but fail the args check).
+      (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
+        row: mockTorznabIndexer,
+        upserted: false,
+      });
+
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/indexer',
         payload: { ...validTorznabBody, randomKey: 'x' },
       });
-      expectStandardEnvelope(res);
-      expect(services.indexer.createOrUpsertProwlarr).not.toHaveBeenCalled();
+
+      expect(res.statusCode).toBe(201);
+      const callArgs = (services.indexer.createOrUpsertProwlarr as Mock).mock.calls[0]![0];
+      expect(callArgs.settings).not.toHaveProperty('randomKey');
+      expect(callArgs).not.toHaveProperty('randomKey');
     });
 
     it('POST: missing fields entirely → 400 standard envelope (no longer 500)', async () => {
@@ -1241,6 +1277,98 @@ describe('Prowlarr-compatible API v1 routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
+    });
+  });
+
+  describe('#1198 Prowlarr echo-only field tolerance (layers 1 + 2)', () => {
+    // The exact key set Prowlarr sends (captured from the bug report), present
+    // BOTH as top-level keys and inside fields[].
+    const ECHO_ONLY_KEYS = ['categories', 'minimumSeeders', 'seedCriteria.seedRatio', 'seedCriteria.seedTime'];
+
+    const prowlarrPayload = {
+      name: 'My Tracker',
+      implementation: 'Torznab',
+      enableRss: true,
+      enableAutomaticSearch: true,
+      enableInteractiveSearch: true,
+      priority: 50,
+      // Layer 1: top-level echo-only keys that .strict() used to 400 on.
+      categories: [3030],
+      minimumSeeders: 0,
+      'seedCriteria.seedRatio': null,
+      'seedCriteria.seedTime': null,
+      fields: [
+        { name: 'baseUrl', value: 'http://prowlarr:9696/1/', type: 'textbox' },
+        { name: 'apiKey', value: 'abc123', type: 'textbox' },
+        // Layer 2: same echo-only keys echoed back inside fields[].
+        { name: 'categories', value: [3030], type: 'tag' },
+        { name: 'minimumSeeders', value: 0, type: 'number' },
+        { name: 'seedCriteria.seedRatio', value: null, type: 'number' },
+        { name: 'seedCriteria.seedTime', value: null, type: 'number' },
+      ],
+    };
+
+    /** Adapter-accepted keys for a Torznab/Newznab indexer. */
+    function assertAdapterAcceptedSettings(settings: Record<string, unknown>) {
+      // Required adapter keys survive.
+      expect(settings.apiUrl).toBe('http://prowlarr:9696/1/');
+      expect(settings.apiKey).toBe('abc123');
+      // Echo-only keys are absent from the service-facing settings (layer 2).
+      for (const key of ECHO_ONLY_KEYS) {
+        expect(settings).not.toHaveProperty(key);
+      }
+      // Only adapter-accepted keys remain (apiUrl/apiKey + optional proxy fields).
+      const allowed = new Set(['apiUrl', 'apiKey', 'flareSolverrUrl', 'useProxy']);
+      for (const key of Object.keys(settings)) {
+        expect(allowed.has(key)).toBe(true);
+      }
+    }
+
+    it('POST /api/v1/indexer/test: Prowlarr two-layer payload → 200, echo-only keys stripped from settings', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'OK' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer/test',
+        payload: prowlarrPayload,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({});
+      const callArgs = (services.indexer.testConfig as Mock).mock.calls[0]![0];
+      assertAdapterAcceptedSettings(callArgs.settings);
+    });
+
+    it('POST /api/v1/indexer: Prowlarr two-layer payload → 201, echo-only keys stripped from settings', async () => {
+      (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
+        row: mockTorznabIndexer,
+        upserted: false,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: prowlarrPayload,
+      });
+
+      expect(res.statusCode).toBe(201);
+      const callArgs = (services.indexer.createOrUpsertProwlarr as Mock).mock.calls[0]![0];
+      assertAdapterAcceptedSettings(callArgs.settings);
+    });
+
+    it('PUT /api/v1/indexer/:id: Prowlarr two-layer payload → 200, echo-only keys stripped from settings', async () => {
+      (services.indexer.getByIdProwlarrManaged as Mock).mockResolvedValue(mockTorznabIndexer);
+      (services.indexer.update as Mock).mockResolvedValue(mockTorznabIndexer);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/indexer/1',
+        payload: prowlarrPayload,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const callArgs = (services.indexer.update as Mock).mock.calls[0]![1];
+      assertAdapterAcceptedSettings(callArgs.settings);
     });
   });
 
