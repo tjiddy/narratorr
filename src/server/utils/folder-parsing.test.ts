@@ -895,6 +895,28 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         });
       });
 
+      describe('paren strip feeds the paren-free remainder through the existing 2-part chain (F1)', () => {
+        it('cleaned — Series - 2 - Title (Series Book 2): SERIES_NUMBER_TITLE resolves the stripped remainder', () => {
+          // Without feed-through the title would keep "Codex Alera - 2 - Academ's Fury"; the chain
+          // must run on the paren-free remainder so SERIES_NUMBER_TITLE_REGEX resolves the real title.
+          expect(parseFolderStructure(['Author', "Codex Alera - 2 - Academ's Fury (Codex Alera Book 2)"])).toEqual({
+            title: "Academ's Fury", author: 'Author', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+
+        it('cleaned — P10 split survives the paren strip (Mistborn 01 - The Final Empire (Mistborn #1))', () => {
+          expect(parseFolderStructure(['Brandon Sanderson', 'Mistborn 01 - The Final Empire (Mistborn #1)'])).toEqual({
+            title: 'The Final Empire', author: 'Brandon Sanderson', series: 'Mistborn', seriesPosition: 1,
+          });
+        });
+
+        it('raw — Series - 2 - Title (Series Book 2) feeds the raw chain', () => {
+          expect(parseFolderStructureRaw(['Author', "Codex Alera - 2 - Academ's Fury (Codex Alera Book 2)"])).toEqual({
+            title: "Academ's Fury", author: 'Author', series: 'Codex Alera', seriesPosition: 2,
+          });
+        });
+      });
+
       describe('negative guards — must NOT extract series (2-part / 3-part)', () => {
         it('2-part year paren — Jim Butcher / Academ\'s Fury (2006)', () => {
           const result = parseFolderStructure(['Jim Butcher', "Academ's Fury (2006)"]);

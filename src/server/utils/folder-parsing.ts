@@ -299,32 +299,57 @@ function applySeriesParen(
 }
 
 /**
- * Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren overlay for the multi-part
+ * Trailing `(Series Name Book|Vol N)` / `(Series Name #N)` paren handling for the multi-part
  * branches (2-part / 3+-part), where the author lives in a separate folder segment. Strips the
- * paren from the title segment, keeps the supplied folder-derived `author`, and takes the
- * position from the paren. Series-name precedence: the folder-derived series name (`folderSeries`)
- * wins when present; the paren only supplies the name when the folder produced none. Returns null
- * when no series paren is present, so callers fall through to the existing pattern chain unchanged.
+ * paren from the title segment, runs `chain` on the paren-FREE remainder (so downstream patterns —
+ * `SERIES_NUMBER_TITLE_REGEX`, the P10 pre-check, cross-segment agreement — operate on the stripped
+ * remainder and don't double-handle the paren), then overlays the paren's position and fills the
+ * series name only when neither the folder nor the chain produced one. When no series paren is
+ * present, returns `chain(titleSegment)` unchanged so callers behave exactly as before.
  *
  * Unlike `applySeriesParen`, this does NOT re-parse the remainder as a single folder — the author
  * is already a separate folder segment, so re-parsing would wrongly re-split it.
  */
-function applyTitleSegmentSeriesParen(
+function withTitleSegmentSeriesParen(
   titleSegment: string,
-  author: string | null,
-  folderSeries: string | null,
   asinTail: { asin?: string },
   transform: (s: string) => string,
-): ParsedFolder | null {
+  chain: (remainder: string) => ParsedFolder,
+): ParsedFolder {
   const sp = trySeriesParen(titleSegment);
-  if (!sp) return null;
+  const base = chain(sp ? sp.remainder : titleSegment);
+  if (!sp) return base;
   return {
-    title: transform(sp.remainder),
-    author,
-    series: folderSeries ?? transform(sp.series),
+    ...base,
+    series: base.series ?? transform(sp.series),
     seriesPosition: sp.seriesPosition,
     ...asinTail,
   };
+}
+
+/**
+ * Shared 2-part title-segment pattern chain: `SERIES_NUMBER_TITLE_REGEX` (wins over P8's
+ * series-from-author) → P10 pre-check → cross-segment agreement → fallback (folder-derived series).
+ * `transform` selects cleaned (`cleanName`) vs raw (`identity`). Callers strip any trailing series
+ * paren BEFORE invoking this via `withTitleSegmentSeriesParen`, so the chain sees the paren-free
+ * remainder.
+ */
+function parseTwoPartTitleSegment(
+  authorSegment: string,
+  titleSegment: string,
+  p8Author: string,
+  p8Series: string | null,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+): ParsedFolder {
+  const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
+  if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, transform);
+  // P10-precheck (2-part): mirrors parseSingleFolder's p10Pre so flat-pack splits
+  // like 'Sanderson/Mistborn 01 - The Final Empire.mp3' resolve series+position+title.
+  const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
+  if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, transform);
+  const cs = tryCrossSegmentAgreement(authorSegment, titleSegment, asinTail, transform);
+  return cs ?? { title: transform(titleSegment), author: p8Author, series: p8Series, ...asinTail };
 }
 
 function parseSingleFolder(folder: string): ParsedFolder {
@@ -454,19 +479,11 @@ export function parseFolderStructure(parts: string[]): ParsedFolder {
       };
     }
     const asinTail = asin !== undefined ? { asin } : {};
-    // Trailing `(Series Book N)` paren wins first — strip before the dash/cross-segment chain so
-    // those patterns operate on the paren-free remainder. Folder series name (P8) stays authoritative.
-    const titleParen = applyTitleSegmentSeriesParen(titleSegment, p8Author, p8Series, asinTail, cleanName);
-    if (titleParen) return titleParen;
-    // SERIES_NUMBER_TITLE in title segment wins over P8's series-from-author
-    const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
-    if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, cleanName);
-    // P10-precheck (2-part): mirrors parseSingleFolder's p10Pre so flat-pack splits
-    // like 'Sanderson/Mistborn 01 - The Final Empire.mp3' resolve series+position+title.
-    const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
-    if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, cleanName);
-    const cs = tryCrossSegmentAgreement(parts[0]!, titleSegment, asinTail, cleanName);
-    return cs ?? { title: cleanName(titleSegment), author: p8Author, series: p8Series, ...asinTail };
+    // Strip any trailing `(Series Book N)` paren first, then run the existing dash/P10/cross-segment
+    // chain on the paren-free remainder, overlaying the paren's position. Folder series name (P8)
+    // stays authoritative; the paren only fills the name when neither folder nor chain produced one.
+    return withTitleSegmentSeriesParen(titleSegment, asinTail, cleanName, (remainder) =>
+      parseTwoPartTitleSegment(parts[0]!, remainder, p8Author, p8Series, asinTail, cleanName));
   }
 
   // Three or more folders: Author/Series/Title (take first, second-to-last, last)
@@ -478,14 +495,12 @@ export function parseFolderStructure(parts: string[]): ParsedFolder {
   const folderSeries = cleanName(parts[parts.length - 2]!);
   // Trailing `(Series Book N)` paren: strip from the title, take its position; the folder series
   // segment stays authoritative for the name (folder wins even if the paren names a different series).
-  const titleParen = applyTitleSegmentSeriesParen(titleSegment, cleanName(parts[0]!), folderSeries, asinTail, cleanName);
-  if (titleParen) return titleParen;
-  return {
-    title: cleanName(titleSegment),
+  return withTitleSegmentSeriesParen(titleSegment, asinTail, cleanName, (remainder) => ({
+    title: cleanName(remainder),
     author: cleanName(parts[0]!),
     series: folderSeries,
     ...asinTail,
-  };
+  }));
 }
 
 /**
@@ -529,16 +544,10 @@ export function parseFolderStructureRaw(parts: string[]): ParsedFolder {
       return { title: titleSegment, author: p8Author, series: p8Series, ...(asin !== undefined && { asin }) };
     }
     const asinTail = asin !== undefined ? { asin } : {};
-    // Trailing `(Series Book N)` paren — mirrors the cleaned 2-part branch with `identity`.
-    const titleParen = applyTitleSegmentSeriesParen(titleSegment, p8Author, p8Series, asinTail, identity);
-    if (titleParen) return titleParen;
-    const seriesMatch = titleSegment.match(SERIES_NUMBER_TITLE_REGEX);
-    if (seriesMatch) return seriesPosResult(seriesMatch, p8Author, asinTail, identity);
-    // P10-precheck (raw 2-part) — mirrors the cleaned branch.
-    const p10TwoPart = matchFirstDashOnly(titleSegment, WORDS_NUM_DASH_TITLE_REGEX);
-    if (p10TwoPart) return seriesPosResult(p10TwoPart, p8Author, asinTail, identity);
-    const cs = tryCrossSegmentAgreement(parts[0]!, titleSegment, asinTail, identity);
-    return cs ?? { title: titleSegment, author: p8Author, series: p8Series, ...asinTail };
+    // Trailing `(Series Book N)` paren — mirrors the cleaned 2-part branch with `identity`: strip,
+    // run the chain on the paren-free remainder, overlay the paren position.
+    return withTitleSegmentSeriesParen(titleSegment, asinTail, identity, (remainder) =>
+      parseTwoPartTitleSegment(parts[0]!, remainder, p8Author, p8Series, asinTail, identity));
   }
 
   const lastSegment = stripAudioExtension(parts[parts.length - 1]!);
@@ -548,14 +557,12 @@ export function parseFolderStructureRaw(parts: string[]): ParsedFolder {
   const folderSeries = parts[parts.length - 2]!;
   // Trailing `(Series Book N)` paren — mirrors the cleaned 3+-part branch with `identity` (raw
   // series name is NOT run through cleanName). Folder series segment stays authoritative for the name.
-  const titleParen = applyTitleSegmentSeriesParen(titleSegment, parts[0]!, folderSeries, asinTail, identity);
-  if (titleParen) return titleParen;
-  return {
-    title: titleSegment,
+  return withTitleSegmentSeriesParen(titleSegment, asinTail, identity, (remainder) => ({
+    title: remainder,
     author: parts[0]!,
     series: folderSeries,
     ...asinTail,
-  };
+  }));
 }
 
 function parseSingleFolderRaw(folder: string): ParsedFolder {
