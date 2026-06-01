@@ -11,6 +11,7 @@ import type { SettingsService } from './settings.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { indexerSettingsSchemas, type IndexerSettings } from '../../shared/schemas/indexer.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
+import { stripReadarrEchoOnlyFields } from '../utils/readarr-echo-fields.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -165,7 +166,11 @@ export class IndexerService {
         // Upsert: overwrite Prowlarr-managed fields, preserve local-only fields
         // Merge settings: incoming Prowlarr keys overwrite, but local-only keys are kept
         const existingSettings = (existing.settings ?? {}) as Record<string, unknown>;
-        const mergedSettings = { ...existingSettings, ...data.settings };
+        // Strip Readarr echo-only keys from the merged result so a row that was
+        // persisted dirty by the pre-fix translation path is cleaned on upsert,
+        // rather than merging stale echo-only keys forward into settings the
+        // strict Torznab/Newznab adapter schema would later reject (#1198).
+        const mergedSettings = stripReadarrEchoOnlyFields({ ...existingSettings, ...data.settings });
         const updated = await this.update(existing.id, {
           name: data.name,
           type: data.type,

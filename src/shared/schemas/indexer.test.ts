@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createIndexerFormSchema, createIndexerSchema, updateIndexerSchema, mamSettingsSchema } from './indexer.js';
+import { createIndexerFormSchema, createIndexerSchema, updateIndexerSchema, mamSettingsSchema, torznabSettingsSchema, newznabSettingsSchema } from './indexer.js';
 import { coerceSearchType } from '../indexer-registry.js';
 
 describe('createIndexerFormSchema — flareSolverrUrl validation', () => {
@@ -813,4 +813,37 @@ describe('#744 — coerceSearchType remains lenient for persisted/UI data', () =
   it('returns "active" for undefined', () => {
     expect(coerceSearchType(undefined)).toBe('active');
   });
+});
+
+describe('#1198 — torznab/newznab adapter-settings schema fail-closed contract', () => {
+  // Proves the CAUSAL path the mocked /test route cannot establish: the strict
+  // adapter-settings schema is what fails closed on missing creds and accepts the
+  // echo-only-stripped shape. This is why /test returns { success: false } → 400.
+  for (const [name, schema] of [['torznab', torznabSettingsSchema], ['newznab', newznabSettingsSchema]] as const) {
+    describe(`${name}SettingsSchema`, () => {
+      it('rejects settings missing apiKey', () => {
+        expect(schema.safeParse({ apiUrl: 'http://prowlarr:9696/1/' }).success).toBe(false);
+      });
+
+      it('rejects settings with empty apiUrl', () => {
+        expect(schema.safeParse({ apiUrl: '', apiKey: 'abc123' }).success).toBe(false);
+      });
+
+      it('accepts settings stripped of echo-only keys (only apiUrl/apiKey)', () => {
+        expect(schema.safeParse({ apiUrl: 'http://prowlarr:9696/1/', apiKey: 'abc123' }).success).toBe(true);
+      });
+
+      it('rejects settings that still carry Readarr echo-only keys', () => {
+        const result = schema.safeParse({
+          apiUrl: 'http://prowlarr:9696/1/',
+          apiKey: 'abc123',
+          categories: [3030],
+          minimumSeeders: 0,
+          'seedCriteria.seedRatio': null,
+          'seedCriteria.seedTime': null,
+        });
+        expect(result.success).toBe(false);
+      });
+    });
+  }
 });

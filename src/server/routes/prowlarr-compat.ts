@@ -5,6 +5,7 @@ import type { IndexerRow } from '../services/types.js';
 import type { IndexerType } from '../../shared/indexer-registry.js';
 import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
+import { READARR_ECHO_ONLY_FIELDS } from '../utils/readarr-echo-fields.js';
 
 // ── Types ──
 
@@ -50,7 +51,15 @@ const readarrBodySchema = z.object({
   downloadClientId: z.number().int().optional(),
   tags: z.array(z.number().int()).optional(),
   fields: z.array(readarrFieldSchema),
-}).strict();
+  // NOT .strict(): this is a compatibility shim impersonating Readarr's API, so
+  // it must be liberal in what it accepts. Prowlarr sends top-level echo-only
+  // keys (`categories`, `minimumSeeders`, `seedCriteria.*`) that narratorr never
+  // consumes. Zod's default `.strip()` silently drops unknown top-level keys
+  // before any handler code runs (no mass-assignment vector — handlers read only
+  // named fields), where `.strict()` would 400 and break Prowlarr indexer sync.
+  // Do NOT allowlist unanticipated Readarr fields here — that is whack-a-mole
+  // (see prowlarr-compat.test.ts "compat regression" tests).
+});
 
 type ReadarrBody = z.infer<typeof readarrBodySchema>;
 
@@ -115,8 +124,10 @@ export function fromReadarrFields(fields: ReadonlyArray<{ name: string; value?: 
   for (const field of fields) {
     if (field.name === 'baseUrl') {
       settings.apiUrl = field.value;
-    } else if (field.name === 'apiPath') {
-      // Echo-only: not stored, not used at runtime
+    } else if (field.name === 'apiPath' || READARR_ECHO_ONLY_FIELDS.has(field.name)) {
+      // Echo-only: not stored, not used at runtime. These would otherwise reach
+      // the strict Torznab/Newznab adapter-settings schema and throw on
+      // construction.
       continue;
     } else {
       settings[field.name] = field.value;
@@ -227,13 +238,11 @@ function parseReadarrBody(body: ReadarrBody) {
   const baseUrl = (settings.apiUrl as string) ?? '';
   const sourceIndexerId = extractSourceIndexerId(baseUrl);
 
-  // Apply defaults for fields not provided
-  for (const [key, defaultValue] of Object.entries(FIELD_DEFAULTS)) {
-    if (key !== 'apiPath' && settings[key] === undefined) {
-      settings[key] = defaultValue;
-    }
-  }
-
+  // Note: Readarr echo-only fields (categories/minimumSeeders/seedCriteria.*)
+  // are intentionally NOT injected into settings here — fromReadarrFields strips
+  // them, and they must stay out of the service-facing settings so the strict
+  // Torznab/Newznab adapter-settings schema accepts the shape. FIELD_DEFAULTS is
+  // still used for the echo direction (toReadarrFields / makeSchemaTemplate).
   return { impl, mapping, settings, sourceIndexerId };
 }
 
