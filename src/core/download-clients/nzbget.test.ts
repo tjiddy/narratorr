@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { join } from 'node:path';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NZBGetClient } from './nzbget.js';
@@ -227,6 +228,139 @@ describe('NZBGetClient', () => {
 
       expect(items).toHaveLength(2); // activeGroup + historyItem (both audiobooks)
       expect(items.every((i) => i.id !== '999')).toBe(true);
+    });
+  });
+
+  describe('savePath/name derivation from DestDir', () => {
+    // `path.join()` uses '\' on Windows; normalize to POSIX before comparing to literals.
+    const normPath = (s: string): string => s.split('\\').join('/');
+
+    it('history item: savePath is the parent and join round-trips to DestDir', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [
+            {
+              ...historyItem,
+              DestDir: '/downloads/completed/Audiobooks/Book Title',
+              Name: 'Book Title',
+            },
+          ],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+
+      expect(item).not.toBeNull();
+      expect(item!.savePath).toBe('/downloads/completed/Audiobooks');
+      expect(item!.name).toBe('Book Title');
+      expect(normPath(join(item!.savePath, item!.name))).toBe(
+        '/downloads/completed/Audiobooks/Book Title',
+      );
+    });
+
+    it('active group: savePath is the parent and join round-trips to DestDir', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [
+            {
+              ...activeGroup,
+              DestDir: '/downloads/Audiobooks/Book Title',
+              NZBName: 'Book Title',
+            },
+          ],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+
+      expect(item).not.toBeNull();
+      expect(item!.savePath).toBe('/downloads/Audiobooks');
+      expect(item!.name).toBe('Book Title');
+      expect(normPath(join(item!.savePath, item!.name))).toBe(
+        '/downloads/Audiobooks/Book Title',
+      );
+    });
+
+    it('empty DestDir (history): savePath is "" (not ".") and name falls back to Name', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, DestDir: '', Name: 'Fallback Name' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+
+      expect(item).not.toBeNull();
+      expect(item!.savePath).toBe('');
+      expect(item!.savePath).not.toBe('.');
+      expect(item!.name).toBe('Fallback Name');
+    });
+
+    it('empty DestDir (active group): savePath is "" (not ".") and name falls back to NZBName', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, DestDir: '', NZBName: 'Fallback Name' }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+
+      expect(item).not.toBeNull();
+      expect(item!.savePath).toBe('');
+      expect(item!.savePath).not.toBe('.');
+      expect(item!.name).toBe('Fallback Name');
+    });
+
+    it('dupe-rename (history): name is the DestDir basename, not Name', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [
+            {
+              ...historyItem,
+              DestDir: '/downloads/Audiobooks/Book Title.2',
+              Name: 'Book Title',
+            },
+          ],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+
+      expect(item).not.toBeNull();
+      expect(item!.savePath).toBe('/downloads/Audiobooks');
+      expect(item!.name).toBe('Book Title.2');
+      expect(normPath(join(item!.savePath, item!.name))).toBe(
+        '/downloads/Audiobooks/Book Title.2',
+      );
+    });
+
+    it('dupe-rename (active group): name is the DestDir basename, not NZBName', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [
+            {
+              ...activeGroup,
+              DestDir: '/downloads/Audiobooks/Book Title.2',
+              NZBName: 'Book Title',
+            },
+          ],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+
+      expect(item).not.toBeNull();
+      expect(item!.savePath).toBe('/downloads/Audiobooks');
+      expect(item!.name).toBe('Book Title.2');
+      expect(normPath(join(item!.savePath, item!.name))).toBe(
+        '/downloads/Audiobooks/Book Title.2',
+      );
     });
   });
 

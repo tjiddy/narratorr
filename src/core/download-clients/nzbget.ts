@@ -1,3 +1,4 @@
+import { dirname, basename } from 'node:path';
 import { nzbgetRpcResponseSchema, nzbgetGroupSchema, nzbgetHistorySchema } from './schemas.js';
 import type {
   DownloadClientAdapter,
@@ -23,6 +24,19 @@ import { z } from 'zod';
 
 type NZBGetGroup = z.infer<typeof nzbgetGroupSchema>;
 type NZBGetHistoryItem = z.infer<typeof nzbgetHistorySchema>;
+
+/**
+ * NZBGet's `DestDir` is the full per-download folder (`<MainDir>/<Category>/<NzbName>`),
+ * not the parent. The import pipeline expects `savePath` (parent) + `name` (child) joined
+ * together (see `monitor.ts`, `download-path.ts`). Split `DestDir` into parent/basename to
+ * match that contract — mirroring SABnzbd's `splitStorage`. Guard the empty case before
+ * calling `dirname`/`basename`, because `path.dirname('')` returns `'.'` (a truthy value),
+ * so an `|| ''` fallback after `dirname` would never fire and `savePath` would become `'.'`.
+ */
+function splitDest(dest: string | undefined, fallbackName: string): { savePath: string; name: string } {
+  if (!dest) return { savePath: '', name: fallbackName };
+  return { savePath: dirname(dest), name: basename(dest) };
+}
 
 export class NZBGetClient implements DownloadClientAdapter {
   readonly type = 'nzbget';
@@ -260,12 +274,14 @@ export class NZBGetClient implements DownloadClientAdapter {
       ? Math.round(speedMbps * 1024 * 1024)
       : undefined;
 
+    const { savePath, name } = splitDest(group.DestDir, group.NZBName);
+
     return {
       id: String(group.NZBID),
-      name: group.NZBName,
+      name,
       progress,
       status: this.mapGroupStatus(group.Status),
-      savePath: group.DestDir || '',
+      savePath,
       size,
       downloaded,
       uploaded: 0,
@@ -284,13 +300,14 @@ export class NZBGetClient implements DownloadClientAdapter {
   private mapHistoryItem(item: NZBGetHistoryItem): DownloadItemInfo {
     const size = Math.round((item.FileSizeMB || 0) * 1024 * 1024);
     const status = this.mapHistoryStatus(item);
+    const { savePath, name } = splitDest(item.DestDir, item.Name);
 
     return {
       id: String(item.NZBID),
-      name: item.Name,
+      name,
       progress: status === 'error' ? 0 : 100,
       status,
-      savePath: item.DestDir || '',
+      savePath,
       size,
       downloaded: size,
       uploaded: 0,
