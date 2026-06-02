@@ -8,7 +8,7 @@ import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
-import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
+import { mapHardcoverError } from '../utils/hardcover-error.js';
 
 
 function redactProxyUrl(proxyUrl: string): string {
@@ -62,32 +62,6 @@ const testProxySchema = z.object({
 const testHardcoverSchema = z.object({
   apiKey: z.string().optional(),
 });
-
-function mapHardcoverError(error: unknown): string {
-  if (error instanceof RateLimitError) {
-    const seconds = Math.ceil(error.retryAfterMs / 1000);
-    return `Hardcover is rate-limiting requests. Try again in ${seconds}s.`;
-  }
-  if (error instanceof TransientError) {
-    return "Couldn't reach Hardcover. Check your network and try again.";
-  }
-  if (error instanceof MetadataError) {
-    // Hardcover's GraphQL endpoint typically returns HTTP 200 with the auth
-    // failure buried in the response envelope ("Malformed Authorization header",
-    // "Could not verify JWT: ..."). The HTTP 401/403 substring branch still
-    // covers the network-layer failure mode; the regex covers the GraphQL one.
-    // Both branches return the same Bearer-prefix hint — see #1138 Bug 2.
-    if (
-      error.message.includes('401') ||
-      error.message.includes('403') ||
-      /malformed authorization|could not verify jwt|invalid.+token|unauthorized/i.test(error.message)
-    ) {
-      return 'Invalid Hardcover API key. (If you copied from the Hardcover docs, drop the "Bearer " prefix.)';
-    }
-    return error.message;
-  }
-  return getErrorMessage(error);
-}
 
 export async function settingsRoutes(
   app: FastifyInstance,
