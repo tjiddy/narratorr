@@ -13,7 +13,6 @@ const mockAudibleProvider = {
   searchSeries: vi.fn().mockResolvedValue([]),
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
-  getSeriesRelationships: vi.fn().mockResolvedValue([]),
   test: vi.fn().mockResolvedValue({ success: true }),
 };
 
@@ -49,7 +48,6 @@ describe('MetadataService', () => {
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
     mockAudibleProvider.getBookDetailed.mockReset();
-    mockAudibleProvider.getSeriesRelationships.mockReset();
     mockAudibleProvider.test.mockReset();
     mockAudnexus.getBook.mockReset();
     mockAudnexus.getBookDetailed.mockReset();
@@ -59,7 +57,6 @@ describe('MetadataService', () => {
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
     mockAudibleProvider.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
-    mockAudibleProvider.getSeriesRelationships.mockResolvedValue([]);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getBookDetailed.mockResolvedValue({ kind: 'not_found' });
