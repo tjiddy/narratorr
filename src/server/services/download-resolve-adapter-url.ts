@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { IndexerAdapter, DownloadProtocol, ResolveDownloadContext, ResolveDownloadResult, WedgeOutcome } from '../../core/index.js';
+import type { IndexerAdapter, DownloadProtocol, ResolveDownloadContext, ResolveDownloadResult } from '../../core/index.js';
 import { IndexerError } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 
@@ -67,10 +67,10 @@ export async function resolveAdapterDownloadUrl(
     throw error;
   }
 
-  log.debug({ ...buildLogPayload(params), wedgeOutcome: result.wedgeOutcome, hasDownloadUrl: !!result.downloadUrl }, 'resolveAdapterDownloadUrl: adapter returned');
+  log.debug({ ...buildLogPayload(params), wedgeRequested: result.wedgeRequested ?? false, hasDownloadUrl: !!result.downloadUrl }, 'resolveAdapterDownloadUrl: adapter returned');
 
-  if (result.wedgeOutcome !== undefined) {
-    logWedgeOutcome(log, result.wedgeOutcome, result.wedgeCause, params);
+  if (result.wedgeRequested) {
+    log.debug({ ...buildLogPayload(params), wedgeRequested: true }, 'MAM freeleech wedge requested (&fl sent)');
   }
   return result.downloadUrl;
 }
@@ -80,40 +80,10 @@ function logHookError(
   error: IndexerError,
   params: { indexerId?: number | undefined; guid?: string | undefined; title: string },
 ): void {
-  const carriedOutcome = error.wedgeOutcome;
   const cause = error.cause instanceof Error ? error.cause.message : undefined;
-  const logPayload = {
+  log.warn({
     ...buildLogPayload(params),
-    ...(carriedOutcome !== undefined && { wedgeOutcome: carriedOutcome }),
     ...(cause !== undefined && { cause }),
     error: error.message,
-  };
-  if (carriedOutcome === 'spent') {
-    log.error(logPayload, 'MAM wedge spent but torrent fetch failed — wedge is lost (no refund API)');
-  } else {
-    log.warn(logPayload, 'Indexer resolveDownloadUrl failed');
-  }
-}
-
-function logWedgeOutcome(
-  log: FastifyBaseLogger,
-  outcome: WedgeOutcome,
-  wedgeCause: string | undefined,
-  params: { indexerId?: number | undefined; guid?: string | undefined; title: string; isFreeleech?: boolean | undefined },
-): void {
-  if (outcome === 'skipped-mode-never') return;
-
-  if (outcome === 'spent') {
-    log.info(buildLogPayload(params), 'MAM freeleech wedge spent');
-    return;
-  }
-  if (outcome === 'skipped-no-inventory' || outcome === 'skipped-fetch-failed' || outcome === 'failed-spend') {
-    log.warn({
-      ...buildLogPayload(params),
-      wedgeOutcome: outcome,
-      ...(wedgeCause !== undefined && { wedgeCause }),
-    }, 'MAM freeleech wedge not applied');
-    return;
-  }
-  log.debug({ ...buildLogPayload(params), wedgeOutcome: outcome, isFreeleech: params.isFreeleech ?? false }, 'MAM wedge decision');
+  }, 'Indexer resolveDownloadUrl failed');
 }

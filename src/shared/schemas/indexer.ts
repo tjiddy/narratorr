@@ -28,7 +28,7 @@ const mamSearchTypeServerSchema = z.union([
   }),
 ]);
 
-export const wedgeModeSchema = z.enum(['never', 'preferred', 'required']);
+export const wedgeModeSchema = z.enum(['never', 'preferred']);
 export type WedgeMode = z.infer<typeof wedgeModeSchema>;
 
 export const mamSettingsSchema = z.object({
@@ -42,7 +42,6 @@ export const mamSettingsSchema = z.object({
   useProxy: z.boolean().optional(),
   flareSolverrUrl: z.string().optional(),
   useFreeleechWedge: wedgeModeSchema.default('never'),
-  minWedgeReserve: z.number().int().min(0).default(0),
 }).strict();
 
 export const abbSettingsSchema = z.object({
@@ -147,7 +146,6 @@ export const createIndexerFormSchema = z.object({
     mamUsername: z.string().optional(),
     classname: z.string().optional(),
     useFreeleechWedge: wedgeModeSchema.optional(),
-    minWedgeReserve: z.number().int().min(0).optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = INDEXER_REGISTRY[data.type];

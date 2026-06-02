@@ -75,7 +75,7 @@ export const INDEXER_REGISTRY = {
   },
   myanonamouse: {
     label: 'MyAnonamouse',
-    defaultSettings: { mamId: '', baseUrl: '', useProxy: false, searchLanguages: [1], useFreeleechWedge: 'never', minWedgeReserve: 0 },
+    defaultSettings: { mamId: '', baseUrl: '', useProxy: false, searchLanguages: [1], useFreeleechWedge: 'never' },
     requiredFields: [
       { path: 'mamId', message: 'MAM ID is required' },
     ],
