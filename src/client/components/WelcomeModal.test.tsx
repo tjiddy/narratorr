@@ -282,6 +282,18 @@ describe('WelcomeModal', () => {
     );
   });
 
+  // Onboarding-copy contract (F1) — the description must communicate BOTH the optional
+  // free Hardcover key AND the library-only fallback, per AC. Guard the full string so
+  // dropping the fallback (or the "free key" framing) fails the build.
+  it('Series Metadata card description states the optional free Hardcover key and the library-only fallback', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    expect(
+      screen.getByText(
+        'Add a free Hardcover key to fill Series cards with canonical members — without it, only library books show.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   // Grid-balance AC (F3) — 5 cards must tile without an orphaned row: single-column
   // until lg, then 5-across. No intermediate grid-cols-2/3/4 step.
   it('Features grid drops sm:grid-cols-4 and uses lg:grid-cols-5 so 5 cards never orphan a row', () => {
