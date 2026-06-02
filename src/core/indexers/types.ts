@@ -81,22 +81,6 @@ export interface IndexerSearchResponse {
 }
 
 /**
- * Legacy wedge-spend outcome taxonomy. Retained for `IndexerError.wedgeOutcome`
- * and any future adapter that implements a client-side wedge spend. MAM no
- * longer emits these — it appends the server-side `&fl` flag and reports a
- * single `ResolveDownloadResult.wedgeRequested` boolean instead.
- */
-export type WedgeOutcome =
-  | 'spent'
-  | 'skipped-mode-never'
-  | 'skipped-already-free'
-  | 'skipped-already-vip'
-  | 'skipped-idempotent'
-  | 'skipped-no-inventory'
-  | 'skipped-fetch-failed'
-  | 'failed-spend';
-
-/**
  * Explicit context passed to `IndexerAdapter.resolveDownloadUrl`. The
  * dispatch path satisfies all fields; `guid` is optional to match
  * `GrabParams.guid`. `isFreeleech` is required at the type level — callers
