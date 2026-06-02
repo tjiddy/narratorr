@@ -183,10 +183,10 @@ describe('WelcomeModal', () => {
   });
 
   // Clickable cards (AC4)
-  it('all 10 cards render as <a> links with target="_blank" and rel="noopener noreferrer"', () => {
+  it('all 11 cards render as <a> links with target="_blank" and rel="noopener noreferrer"', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(10);
+    expect(links).toHaveLength(11);
     for (const link of links) {
       expect(link).toHaveAttribute('target', '_blank');
       expect(link).toHaveAttribute('rel', 'noopener noreferrer');
@@ -272,6 +272,33 @@ describe('WelcomeModal', () => {
       'href',
       'https://docs.narratorr.dev/guides/discovery/',
     );
+  });
+
+  it('Series Metadata card links to https://docs.narratorr.dev/configuration/settings/#metadata', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    expect(screen.getByRole('link', { name: /series metadata/i })).toHaveAttribute(
+      'href',
+      'https://docs.narratorr.dev/configuration/settings/#metadata',
+    );
+  });
+
+  // Grid-balance AC (F3) — 5 cards must tile without an orphaned row: single-column
+  // until lg, then 5-across. No intermediate grid-cols-2/3/4 step.
+  it('Features grid drops sm:grid-cols-4 and uses lg:grid-cols-5 so 5 cards never orphan a row', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    const heading = screen.getByText('Features Worth Knowing');
+    const grid = heading.parentElement!.querySelector('div.grid')!;
+    expect(grid.className).not.toContain('sm:grid-cols-4');
+    expect(grid.className).toContain('lg:grid-cols-5');
+    expect(grid.className).not.toMatch(/grid-cols-2|grid-cols-3|grid-cols-4/);
+  });
+
+  // Preserved hidden behavior (F3) — FeaturesSection must keep its max-height hide
+  it('Features section preserves the [@media(max-height:60rem)]:hidden behavior', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    const heading = screen.getByText('Features Worth Knowing');
+    const section = heading.closest('section')!;
+    expect(section.className).toContain('[@media(max-height:60rem)]:hidden');
   });
 
   it('clicking a card link does not call onDismiss', async () => {
