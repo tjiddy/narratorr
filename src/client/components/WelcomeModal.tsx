@@ -59,7 +59,7 @@ function FeaturesSection() {
       <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
         Features Worth Knowing
       </h3>
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <InfoCard href="https://docs.narratorr.dev/guides/import-lists/" icon={<ListIcon className="w-5 h-5 text-primary" />} title="List Importing" description="Bulk-import books from lists and monitor them automatically." />
         <InfoCard href="https://docs.narratorr.dev/guides/audio-processing/" icon={<CpuIcon className="w-5 h-5 text-primary" />} title="Post Processing" description="Auto-convert to M4B after import. Chapters, cover art, and more." />
         <InfoCard href="https://docs.narratorr.dev/configuration/indexers/" icon={<NetworkIcon className="w-5 h-5 text-primary" />} title="Prowlarr Support" description="Connect Prowlarr to manage all your indexers from one place." />

@@ -294,15 +294,16 @@ describe('WelcomeModal', () => {
     ).toBeInTheDocument();
   });
 
-  // Grid-balance AC (F3) — 5 cards must tile without an orphaned row: single-column
-  // until lg, then 5-across. No intermediate grid-cols-2/3/4 step.
-  it('Features grid drops sm:grid-cols-4 and uses lg:grid-cols-5 so 5 cards never orphan a row', () => {
+  // Grid layout — 5 cards tile at the same comfortable width as the "Read This
+  // First" / "First Steps" rows (sm:grid-cols-3 → a 3+2 wrap), NOT a cramped
+  // single 5-across row where long titles like "Recommendations" overflow into
+  // the neighbouring card.
+  it('Features grid uses sm:grid-cols-3 so 5 cards tile as 3+2 at readable width', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const heading = screen.getByText('Features Worth Knowing');
     const grid = heading.parentElement!.querySelector('div.grid')!;
-    expect(grid.className).not.toContain('sm:grid-cols-4');
-    expect(grid.className).toContain('lg:grid-cols-5');
-    expect(grid.className).not.toMatch(/grid-cols-2|grid-cols-3|grid-cols-4/);
+    expect(grid.className).toContain('sm:grid-cols-3');
+    expect(grid.className).not.toContain('grid-cols-5');
   });
 
   // Preserved hidden behavior (F3) — FeaturesSection must keep its max-height hide
