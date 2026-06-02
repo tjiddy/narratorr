@@ -1,10 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { BookWithAuthor, BookMetadata } from '@/lib/api';
 import { api, ApiError, type FixMatchPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { XIcon, ArrowLeftIcon, BookOpenIcon } from '@/components/icons';
@@ -70,7 +69,6 @@ function IdentityComparisonRow({ label, oldValue, newValue }: { label: string; o
 }
 
 export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatchModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>('search');
   const [selected, setSelected] = useState<BookMetadata | null>(null);
@@ -81,8 +79,6 @@ export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatch
   const prefill = [book.title, book.authors[0]?.name ?? ''].filter(Boolean).join(' ').trim();
   const [searchQuery, setSearchQuery] = useState(prefill);
   const { searchResults, hasSearched, searchError, isPending, search } = useAudnexusSearch();
-
-  useEscapeKey(isOpen, onClose, modalRef);
 
   const fixMatch = useMutation({
     mutationFn: (payload: FixMatchPayload) => api.fixMatchBook(book.id, payload),
@@ -142,9 +138,8 @@ export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatch
   };
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
+    <Modal onClose={onClose} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="book-fix-match-modal-title"

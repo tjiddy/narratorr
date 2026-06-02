@@ -251,7 +251,7 @@ describe('Show Welcome Message — local-only toggle (#165)', () => {
     expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
-  it('pressing Escape while the manually reopened modal is open does not close it', async () => {
+  it('pressing Escape dismisses the manually reopened modal (Escape now closes Welcome)', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
@@ -264,6 +264,6 @@ describe('Show Welcome Message — local-only toggle (#165)', () => {
 
     await user.keyboard('{Escape}');
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

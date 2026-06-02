@@ -220,7 +220,7 @@ describe('#296 modal behavior', () => {
     expect(mockedApi.addBook).not.toHaveBeenCalled();
   });
 
-  it('backdrop click does NOT close modal (closeOnBackdropClick={false})', async () => {
+  it('backdrop click does NOT close modal (backdrop-click dismissal removed)', async () => {
     const user = userEvent.setup();
     renderBooksTab([]);
 

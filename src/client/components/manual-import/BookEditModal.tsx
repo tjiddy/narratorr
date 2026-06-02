@@ -1,7 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { type BookMetadata, type DiscoveredBook } from '@/lib/api';
 import { formatBytes } from '@/lib/api';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { resolveUrl } from '@/lib/url-utils';
 import { isBookInLibrary } from '@/lib/helpers';
@@ -33,7 +32,6 @@ interface BookEditModalProps {
 
 // eslint-disable-next-line max-lines-per-function, complexity -- metadata edit form with preview, search, and multi-field validation
 export function BookEditModal({ book, initial, confidence, alternatives, onSave, onClose, isOpen = true }: BookEditModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const { data: libraryBooks } = useBookIdentifiers();
   const [title, setTitle] = useState(initial.title);
   const [author, setAuthor] = useState(initial.author);
@@ -54,8 +52,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   })();
 
   const { searchResults, hasSearched, isPending, search } = useAudnexusSearch({ initialResults });
-
-  useEscapeKey(isOpen, onClose, modalRef);
 
   if (!isOpen) return null;
 
@@ -105,9 +101,8 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   };
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg flex flex-col max-h-[85vh]">
+    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="book-edit-modal-title"

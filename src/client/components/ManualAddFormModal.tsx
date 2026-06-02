@@ -1,7 +1,6 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Modal } from '@/components/Modal';
 import { ManualAddForm } from '@/components/ManualAddForm';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { XIcon } from '@/components/icons';
 
 interface ManualAddFormModalProps {
@@ -11,21 +10,19 @@ interface ManualAddFormModalProps {
 }
 
 export function ManualAddFormModal({ isOpen, onClose, defaultTitle }: ManualAddFormModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const [isPending, setIsPending] = useState(false);
 
-  const handleEscape = useCallback(() => {
+  // Guarded close routed through the base Modal's Escape handling — Escape must not
+  // discard form state mid-submit (the X button carries the same inline guard).
+  const guardedClose = useCallback(() => {
     if (!isPending) onClose();
   }, [isPending, onClose]);
-
-  useEscapeKey(isOpen, handleEscape, modalRef);
 
   if (!isOpen) return null;
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg">
+    <Modal onClose={guardedClose} className="w-full max-w-lg">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="manual-add-form-title"

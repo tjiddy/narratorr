@@ -268,7 +268,7 @@ describe('SearchReleasesModal', () => {
     });
   });
 
-  it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
+  it('does not call onClose when backdrop is clicked (backdrop-click dismissal removed)', async () => {
     setStreamResults([]);
     const onClose = vi.fn();
     const user = userEvent.setup();

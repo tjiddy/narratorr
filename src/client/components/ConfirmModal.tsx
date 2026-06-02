@@ -1,5 +1,4 @@
-import { useRef, type ReactNode } from 'react';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { type ReactNode } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 
@@ -45,15 +44,11 @@ export function ConfirmModal({
   onCancel,
   children,
 }: ConfirmModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen, onCancel, modalRef);
-
   if (!isOpen) return null;
 
   return (
     <Modal onClose={onCancel} className="w-full max-w-md p-6">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"

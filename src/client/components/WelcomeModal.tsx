@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   AlertTriangleIcon as AlertIcon,
   HeadphonesIcon,
@@ -82,6 +82,12 @@ function WarningBadge() {
 export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const scrollableRef = useRef<HTMLDivElement>(null);
+  // Guarded close: Escape dismisses the welcome screen, but only when not mid-dismiss —
+  // a raw onDismiss would let Escape re-fire the dismiss mutation while the first is in
+  // flight (the same double-submit the disabled Get Started button guards against).
+  const guardedDismiss = useCallback(() => {
+    if (!isPending) onDismiss();
+  }, [isPending, onDismiss]);
   // Scroll lock: prevent background page from scrolling behind the modal
   useEffect(() => {
     if (!isOpen) return;
@@ -107,7 +113,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
   }, [isOpen, isPending]);
   if (!isOpen) return null;
   return (
-    <Modal className="w-full max-w-4xl flex flex-col max-h-[85vh]">
+    <Modal onClose={guardedDismiss} className="w-full max-w-4xl flex flex-col max-h-[85vh]">
       <div
         ref={modalRef}
         role="dialog"

@@ -131,7 +131,7 @@ describe('DirectoryBrowserModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('does not close on backdrop click (closeOnBackdropClick={false})', async () => {
+  it('does not close on backdrop click (backdrop-click dismissal removed)', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
 
@@ -189,7 +189,7 @@ describe('DirectoryBrowserModal', () => {
     });
   });
 
-  it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
+  it('does not call onClose when backdrop is clicked (backdrop-click dismissal removed)', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     renderModal({ onClose });

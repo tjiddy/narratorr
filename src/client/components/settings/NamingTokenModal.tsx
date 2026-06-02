@@ -1,7 +1,6 @@
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { Modal } from '@/components/Modal';
 import { XIcon } from '@/components/icons';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { renderTemplate, renderFilename, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP } from '@core/utils/index.js';
 import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
 
@@ -24,9 +23,6 @@ export function NamingTokenModal({
   previewTokens,
   namingOptions,
 }: NamingTokenModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen, onClose, modalRef);
-
   const groups: readonly TokenGroup[] = useMemo(() => {
     return scope === 'file' ? [...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP] : FOLDER_TOKEN_GROUPS;
   }, [scope]);
@@ -42,9 +38,8 @@ export function NamingTokenModal({
   if (!isOpen) return null;
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg" scrollable>
+    <Modal onClose={onClose} className="w-full max-w-lg" scrollable>
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="naming-token-modal-title"
