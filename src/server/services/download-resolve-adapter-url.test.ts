@@ -40,8 +40,22 @@ describe('download-resolve-adapter-url', () => {
     log = makeMockLog();
   });
 
-  it('skipped-mode-never does not emit any log', async () => {
-    const adapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'data:torrent', wedgeOutcome: 'skipped-mode-never' as const }) };
+  it('wedgeRequested=true emits a single debug "&fl sent" line and no info/warn/error', async () => {
+    const adapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'data:torrent', wedgeRequested: true }) };
+    const indexerService = makeIndexerServiceMock(adapter);
+
+    await resolveAdapterDownloadUrl(baseParams, log, indexerService as never);
+
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.error).not.toHaveBeenCalled();
+    const wedgeCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls.find(c => c[1] === 'MAM freeleech wedge requested (&fl sent)');
+    expect(wedgeCall).toBeTruthy();
+    expect(wedgeCall![0]).toMatchObject({ indexerId: 1, title: 'Test Book', guid: '12345', wedgeRequested: true });
+  });
+
+  it('wedgeRequested=false emits nothing wedge-specific', async () => {
+    const adapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'data:torrent', wedgeRequested: false }) };
     const indexerService = makeIndexerServiceMock(adapter);
 
     await resolveAdapterDownloadUrl(baseParams, log, indexerService as never);
@@ -50,109 +64,38 @@ describe('download-resolve-adapter-url', () => {
     expect(log.warn).not.toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
     const debugMsgs = (log.debug as ReturnType<typeof vi.fn>).mock.calls.map(c => c[1]);
-    expect(debugMsgs).not.toContain('MAM wedge decision');
+    expect(debugMsgs).not.toContain('MAM freeleech wedge requested (&fl sent)');
   });
 
-  it('logWedgeOutcome for failed-spend includes wedgeCause in log payload', async () => {
-    const adapter = {
-      resolveDownloadUrl: vi.fn().mockResolvedValue({
-        downloadUrl: 'data:torrent',
-        wedgeOutcome: 'failed-spend' as const,
-        wedgeCause: 'Network timeout after 10s',
-      }),
-    };
+  it('missing wedgeRequested (non-MAM adapter) emits nothing wedge-specific', async () => {
+    const adapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'data:torrent' }) };
     const indexerService = makeIndexerServiceMock(adapter);
 
     await resolveAdapterDownloadUrl(baseParams, log, indexerService as never);
 
-    expect(log.warn).toHaveBeenCalledTimes(1);
-    const payload = (log.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(payload).toMatchObject({
-      indexerId: 1,
-      title: 'Test Book',
-      guid: '12345',
-      wedgeOutcome: 'failed-spend',
-      wedgeCause: 'Network timeout after 10s',
-    });
+    expect(log.warn).not.toHaveBeenCalled();
+    const debugMsgs = (log.debug as ReturnType<typeof vi.fn>).mock.calls.map(c => c[1]);
+    expect(debugMsgs).not.toContain('MAM freeleech wedge requested (&fl sent)');
   });
 
-  it('logHookError for Required-mode failed-spend includes cause from IndexerError.cause', async () => {
+  it('thrown IndexerError logs a single warn "Indexer resolveDownloadUrl failed" with cause', async () => {
     const innerCause = new Error('Transport failed: ECONNREFUSED');
-    const indexerError = new IndexerError('MAM', 'MAM wedge spend failed in Required mode (failed-spend) for tid=12345', {
-      wedgeOutcome: 'failed-spend',
-      cause: innerCause,
-    });
+    const indexerError = new IndexerError('MAM', 'MAM torrent fetch failed for tid=12345', { cause: innerCause });
     const adapter = { resolveDownloadUrl: vi.fn().mockRejectedValue(indexerError) };
     const indexerService = makeIndexerServiceMock(adapter);
 
     await expect(resolveAdapterDownloadUrl(baseParams, log, indexerService as never)).rejects.toThrow();
 
+    expect(log.error).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledTimes(1);
-    const payload = (log.warn as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    const [payload, msg] = (log.warn as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(msg).toBe('Indexer resolveDownloadUrl failed');
     expect(payload).toMatchObject({
       indexerId: 1,
       title: 'Test Book',
       guid: '12345',
-      wedgeOutcome: 'failed-spend',
       cause: 'Transport failed: ECONNREFUSED',
-    });
-  });
-
-  it('buildLogPayload produces correct { indexerId, title, guid } shape in logWedgeOutcome', async () => {
-    const adapter = {
-      resolveDownloadUrl: vi.fn().mockResolvedValue({
-        downloadUrl: 'data:torrent',
-        wedgeOutcome: 'spent' as const,
-      }),
-    };
-    const indexerService = makeIndexerServiceMock(adapter);
-
-    await resolveAdapterDownloadUrl(baseParams, log, indexerService as never);
-
-    expect(log.info).toHaveBeenCalledTimes(1);
-    const payload = (log.info as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(payload).toEqual({ indexerId: 1, title: 'Test Book', guid: '12345' });
-  });
-
-  it('buildLogPayload produces correct shape in logHookError with spread fields', async () => {
-    const indexerError = new IndexerError('MAM', 'Torrent fetch failed', { wedgeOutcome: 'spent' });
-    const adapter = { resolveDownloadUrl: vi.fn().mockRejectedValue(indexerError) };
-    const indexerService = makeIndexerServiceMock(adapter);
-
-    await expect(resolveAdapterDownloadUrl(baseParams, log, indexerService as never)).rejects.toThrow();
-
-    expect(log.error).toHaveBeenCalledTimes(1);
-    const payload = (log.error as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(payload).toMatchObject({
-      indexerId: 1,
-      title: 'Test Book',
-      guid: '12345',
-      wedgeOutcome: 'spent',
-      error: 'Torrent fetch failed',
-    });
-  });
-
-  it('logWedgeOutcome for skipped-already-free includes isFreeleech and wedgeOutcome in debug payload', async () => {
-    const adapter = {
-      resolveDownloadUrl: vi.fn().mockResolvedValue({
-        downloadUrl: 'data:torrent',
-        wedgeOutcome: 'skipped-already-free' as const,
-      }),
-    };
-    const indexerService = makeIndexerServiceMock(adapter);
-    const params = { ...baseParams, isFreeleech: true };
-
-    await resolveAdapterDownloadUrl(params, log, indexerService as never);
-
-    const outcomeCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls.find(c => c[1] === 'MAM wedge decision');
-    expect(outcomeCall).toBeTruthy();
-    const payload = outcomeCall![0];
-    expect(payload).toMatchObject({
-      indexerId: 1,
-      title: 'Test Book',
-      guid: '12345',
-      wedgeOutcome: 'skipped-already-free',
-      isFreeleech: true,
+      error: 'MAM torrent fetch failed for tid=12345',
     });
   });
 });

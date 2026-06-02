@@ -1816,194 +1816,119 @@ describe('MyAnonamouseIndexer', () => {
   });
 
   describe('resolveDownloadUrl — wedge logic (#1156)', () => {
-    function makeWedgeIndexer(overrides: Partial<{ useFreeleechWedge: 'never' | 'preferred' | 'required'; minWedgeReserve: number; baseUrl: string }> = {}) {
+    function makeWedgeIndexer(overrides: Partial<{ useFreeleechWedge: 'never' | 'preferred'; baseUrl: string }> = {}) {
       return new MyAnonamouseIndexer({
         mamId: 'test-mam-id',
         baseUrl: overrides.baseUrl ?? MAM_BASE,
         searchLanguages: [1],
         searchType: 'active',
         useFreeleechWedge: overrides.useFreeleechWedge ?? 'preferred',
-        minWedgeReserve: overrides.minWedgeReserve ?? 0,
       });
     }
 
-    function stubJsonLoadWedges(s: ReturnType<typeof useMswServer>, wedges: number) {
-      s.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 'User', wedges })));
+    /** Capture the download.php fetch URL while serving valid torrent bytes. */
+    function stubCapturingTorrentDownload(s: ReturnType<typeof useMswServer>, base = MAM_BASE) {
+      const captured: { url: string } = { url: '' };
+      s.use(
+        http.get(`${base}/tor/download.php`, ({ request }) => {
+          captured.url = request.url;
+          return new HttpResponse(Buffer.from('fake-torrent'), {
+            headers: { 'Content-Type': 'application/x-bittorrent' },
+          });
+        }),
+      );
+      return captured;
     }
 
-    function stubBonusBuy(s: ReturnType<typeof useMswServer>, body: Record<string, unknown>, status = 200) {
-      s.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.json(body, { status })));
+    /** Fail the grab if either deleted purchase endpoint is hit. */
+    function failOnPurchaseEndpoints(s: ReturnType<typeof useMswServer>) {
+      const hits = { jsonLoad: false, bonusBuy: false };
+      s.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => { hits.jsonLoad = true; return HttpResponse.json({}); }),
+        http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => { hits.bonusBuy = true; return HttpResponse.json({ success: true }); }),
+      );
+      return hits;
     }
 
-    it('useFreeleechWedge=never short-circuits to skipped-mode-never, no /jsonLoad fetch', async () => {
-      let jsonLoadHit = false;
-      server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => { jsonLoadHit = true; return HttpResponse.json({}); }));
-      stubTorrentDownload(server);
+    it('preferred mode + not-already-freeleech appends bare &fl and sets wedgeRequested=true', async () => {
+      const captured = stubCapturingTorrentDownload(server);
+      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
 
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'never' });
       const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
 
-      expect(result.wedgeOutcome).toBe('skipped-mode-never');
-      expect(jsonLoadHit).toBe(false);
+      expect(result.wedgeRequested).toBe(true);
+      expect(captured.url).toContain('/tor/download.php?tid=12345');
+      // Bare &fl flag (no =1)
+      expect(captured.url).toMatch(/[?&]fl(?:&|$)/);
+      expect(captured.url).not.toContain('fl=1');
       expect(result.downloadUrl).toMatch(/^data:application\/x-bittorrent;base64,/);
     });
 
-    it('ctx.isFreeleech=true short-circuits to skipped-already-free, no /jsonLoad fetch', async () => {
-      let jsonLoadHit = false;
-      server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => { jsonLoadHit = true; return HttpResponse.json({}); }));
-      stubTorrentDownload(server);
-
+    it('preferred mode + already-freeleech does NOT append &fl and sets wedgeRequested=false', async () => {
+      const captured = stubCapturingTorrentDownload(server);
       const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
+
       const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: true });
 
-      expect(result.wedgeOutcome).toBe('skipped-already-free');
-      expect(jsonLoadHit).toBe(false);
+      expect(result.wedgeRequested).toBe(false);
+      expect(captured.url).not.toContain('fl');
     });
 
-    it('Preferred + reserve denies spend → skipped-no-inventory (downloadUrl still returned)', async () => {
-      stubJsonLoadWedges(server, 3);
-      let bonusBuyHit = false;
-      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => { bonusBuyHit = true; return HttpResponse.json({ success: true }); }));
-      stubTorrentDownload(server);
+    it('never mode never appends &fl and sets wedgeRequested=false (isFreeleech=false)', async () => {
+      const captured = stubCapturingTorrentDownload(server);
+      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'never' });
 
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred', minWedgeReserve: 3 });
       const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
 
-      expect(result.wedgeOutcome).toBe('skipped-no-inventory');
-      expect(bonusBuyHit).toBe(false);
+      expect(result.wedgeRequested).toBe(false);
+      expect(captured.url).not.toContain('fl');
     });
 
-    it('Required + reserve denies spend → throws IndexerError carrying wedgeOutcome', async () => {
-      stubJsonLoadWedges(server, 0);
-      stubTorrentDownload(server);
+    it('never mode never appends &fl and sets wedgeRequested=false (isFreeleech=true)', async () => {
+      const captured = stubCapturingTorrentDownload(server);
+      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'never' });
 
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'required', minWedgeReserve: 0 });
-      const err = await wedgeIndexer
-        .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false })
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(IndexerError);
-      expect((err as IndexerError).wedgeOutcome).toBe('skipped-no-inventory');
+      const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: true });
+
+      expect(result.wedgeRequested).toBe(false);
+      expect(captured.url).not.toContain('fl');
     });
 
-    it('minWedgeReserve=0 honors a 0 reserve (spends when wedges > 0)', async () => {
-      stubJsonLoadWedges(server, 1);
-      stubBonusBuy(server, { success: true });
-      stubTorrentDownload(server);
+    it('returned data URI decodes to the torrent bytes and no &fl leaks into the artifact URI', async () => {
+      stubCapturingTorrentDownload(server);
+      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
 
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred', minWedgeReserve: 0 });
       const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('spent');
-    });
 
-    it('reserve check uses currentWedges - minWedgeReserve < 1 (denies when equal to reserve)', async () => {
-      stubJsonLoadWedges(server, 2);
-      stubBonusBuy(server, { success: true });
-      stubTorrentDownload(server);
-
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred', minWedgeReserve: 2 });
-      const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('skipped-no-inventory');
-    });
-
-    it('spend URL uses this.baseUrl (resolves F6)', async () => {
-      const customBase = 'http://mam.local';
-      let postedUrl = '';
-      server.use(
-        http.get(`${customBase}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 'User', wedges: 5 })),
-        http.get(`${customBase}/json/bonusBuy.php/:ts`, ({ request }) => { postedUrl = request.url; return HttpResponse.json({ success: true }); }),
-        http.get(`${customBase}/tor/download.php`, () => new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } })),
-      );
-
-      const wedgeIndexer = makeWedgeIndexer({ baseUrl: customBase });
-      await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(postedUrl).toContain(`${customBase}/json/bonusBuy.php/`);
-    });
-
-    it('recognizes "This Torrent is VIP" as skipped-already-vip', async () => {
-      stubJsonLoadWedges(server, 5);
-      stubBonusBuy(server, { success: false, error: 'This Torrent is VIP only' });
-      stubTorrentDownload(server);
-
-      const result = await makeWedgeIndexer().resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('skipped-already-vip');
-    });
-
-    it('recognizes "This is already a personal freeleech" as skipped-idempotent', async () => {
-      stubJsonLoadWedges(server, 5);
-      stubBonusBuy(server, { success: false, error: 'This is already a personal freeleech, no spend' });
-      stubTorrentDownload(server);
-
-      const result = await makeWedgeIndexer().resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('skipped-idempotent');
-    });
-
-    it('generic bonusBuy failure → failed-spend (Preferred proceeds)', async () => {
-      stubJsonLoadWedges(server, 5);
-      stubBonusBuy(server, { success: false, error: 'Some MAM-side error' });
-      stubTorrentDownload(server);
-
-      const result = await makeWedgeIndexer({ useFreeleechWedge: 'preferred' }).resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('failed-spend');
       expect(result.downloadUrl).toMatch(/^data:application\/x-bittorrent;base64,/);
+      const base64 = result.downloadUrl.replace(/^data:application\/x-bittorrent;base64,/, '');
+      expect(Buffer.from(base64, 'base64').toString()).toBe('fake-torrent');
+      expect(result.downloadUrl).not.toContain('fl');
     });
 
-    it('generic bonusBuy failure under Required → throws IndexerError(wedgeOutcome=failed-spend)', async () => {
-      stubJsonLoadWedges(server, 5);
-      stubBonusBuy(server, { success: false, error: 'Some MAM-side error' });
+    it('no bonusBuy.php / jsonLoad.php request is made on the grab path (preferred mode)', async () => {
+      const hits = failOnPurchaseEndpoints(server);
+      stubCapturingTorrentDownload(server);
 
-      const err = await makeWedgeIndexer({ useFreeleechWedge: 'required' })
-        .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false })
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(IndexerError);
-      expect((err as IndexerError).wedgeOutcome).toBe('failed-spend');
-    });
+      await makeWedgeIndexer({ useFreeleechWedge: 'preferred' })
+        .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
 
-    it('/jsonLoad.php non-200 → skipped-fetch-failed (Preferred proceeds)', async () => {
-      server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => new HttpResponse(null, { status: 500 })));
-      stubTorrentDownload(server);
-
-      const result = await makeWedgeIndexer({ useFreeleechWedge: 'preferred' }).resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('skipped-fetch-failed');
-    });
-
-    it('/jsonLoad.php non-200 → IndexerError under Required', async () => {
-      server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => new HttpResponse(null, { status: 500 })));
-
-      const err = await makeWedgeIndexer({ useFreeleechWedge: 'required' })
-        .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false })
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(IndexerError);
-      expect((err as IndexerError).wedgeOutcome).toBe('skipped-fetch-failed');
+      expect(hits.jsonLoad).toBe(false);
+      expect(hits.bonusBuy).toBe(false);
     });
 
     it('ctx.guid undefined + sentinel downloadUrl → extracts tid from sentinel', async () => {
-      stubJsonLoadWedges(server, 5);
-      let postedQuery = '';
-      server.use(
-        http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, ({ request }) => {
-          postedQuery = new URL(request.url).search;
-          return HttpResponse.json({ success: true });
-        }),
-      );
-      stubTorrentDownload(server);
+      const captured = stubCapturingTorrentDownload(server);
 
       await makeWedgeIndexer().resolveDownloadUrl({ downloadUrl: 'mam-torrent://77777', protocol: 'torrent', isFreeleech: false });
-      expect(postedQuery).toContain('torrentid=77777');
+      expect(captured.url).toContain('tid=77777');
     });
 
     it('ctx.guid set takes precedence over the downloadUrl sentinel parse', async () => {
-      stubJsonLoadWedges(server, 5);
-      let postedQuery = '';
-      server.use(
-        http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, ({ request }) => {
-          postedQuery = new URL(request.url).search;
-          return HttpResponse.json({ success: true });
-        }),
-      );
-      stubTorrentDownload(server);
+      const captured = stubCapturingTorrentDownload(server);
 
       await makeWedgeIndexer().resolveDownloadUrl({ guid: '999', downloadUrl: 'mam-torrent://77777', protocol: 'torrent', isFreeleech: false });
-      expect(postedQuery).toContain('torrentid=999');
+      expect(captured.url).toContain('tid=999');
     });
 
     it('malformed downloadUrl + missing guid → throws IndexerError', async () => {
@@ -2012,101 +1937,20 @@ describe('MyAnonamouseIndexer', () => {
       ).rejects.toBeInstanceOf(IndexerError);
     });
 
-    it('torrent fetch failure after a successful spend → IndexerError carries wedgeOutcome="spent"', async () => {
-      stubJsonLoadWedges(server, 5);
-      stubBonusBuy(server, { success: true });
+    it('torrent fetch failure → throws IndexerError', async () => {
       server.use(http.get(`${MAM_BASE}/tor/download.php`, () => new HttpResponse(null, { status: 500 })));
 
-      const err = await makeWedgeIndexer()
+      const err = await makeWedgeIndexer({ useFreeleechWedge: 'preferred' })
         .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false })
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(IndexerError);
-      expect((err as IndexerError).wedgeOutcome).toBe('spent');
     });
 
-    it('torrent fetch failure under Never (no spend) → IndexerError without spent outcome', async () => {
-      server.use(http.get(`${MAM_BASE}/tor/download.php`, () => new HttpResponse(null, { status: 500 })));
-
-      const err = await makeWedgeIndexer({ useFreeleechWedge: 'never' })
-        .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false })
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(IndexerError);
-      expect((err as IndexerError).wedgeOutcome).not.toBe('spent');
-    });
-
-    it('fetchCurrentWedges with null wedges → skipped-fetch-failed via decideWedgeSpend', async () => {
-      server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 'User', wedges: null })));
-      stubTorrentDownload(server);
-
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
-      const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('skipped-fetch-failed');
-    });
-
-    it('fetchCurrentWedges with valid numeric wedges via consolidated mamUserStatusSchema', async () => {
-      server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.json({ username: 'u', classname: 'User', wedges: 10 })));
-      stubBonusBuy(server, { success: true });
-      stubTorrentDownload(server);
-
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred', minWedgeReserve: 0 });
-      const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('spent');
-    });
-
-    it('spendWedge transport failure includes cause in failed-spend (Preferred proceeds with wedgeCause)', async () => {
-      stubJsonLoadWedges(server, 5);
-      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.error()));
-      stubTorrentDownload(server);
-
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
-      const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('failed-spend');
-      expect(result.wedgeCause).toEqual(expect.stringMatching(/failed|abort|error|refused|reset/i));
-    });
-
-    it('spendWedge JSON parse failure includes cause (Preferred proceeds with wedgeCause)', async () => {
-      stubJsonLoadWedges(server, 5);
-      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => new HttpResponse('not-json', { headers: { 'Content-Type': 'text/plain' } })));
-      stubTorrentDownload(server);
-
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'preferred' });
-      const result = await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(result.wedgeOutcome).toBe('failed-spend');
-      expect(result.wedgeCause).toEqual(expect.stringContaining('not-json'));
-    });
-
-    it('Required mode failed-spend threads cause into IndexerError.cause', async () => {
-      stubJsonLoadWedges(server, 5);
-      server.use(http.get(`${MAM_BASE}/json/bonusBuy.php/:ts`, () => HttpResponse.error()));
-
-      const wedgeIndexer = makeWedgeIndexer({ useFreeleechWedge: 'required' });
-      const err = await wedgeIndexer
-        .resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false })
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(IndexerError);
-      expect((err as IndexerError).wedgeOutcome).toBe('failed-spend');
-      const cause = (err as IndexerError).cause;
-      expect(cause).toBeInstanceOf(Error);
-      expect((cause as Error).message).toEqual(expect.stringMatching(/failed|abort|error|refused|reset/i));
-    });
-
-    it('wedgeCfg() invariant throws IndexerError when baseUrl is empty', async () => {
-      const wedgeIndexer = makeWedgeIndexer();
-      // Force baseUrl empty after construction to exercise the wedgeCfg invariant directly
-      (wedgeIndexer as unknown as { baseUrl: string }).baseUrl = '';
-
-      await expect(
-        wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false }),
-      ).rejects.toThrow('baseUrl is empty');
-    });
-
-    it('empty-string baseUrl in constructor falls back to DEFAULT_BASE_URL for wedge requests', async () => {
+    it('empty-string baseUrl in constructor falls back to DEFAULT_BASE_URL for the torrent fetch', async () => {
       const defaultBase = 'https://www.myanonamouse.net';
-      let jsonLoadUrl = '';
+      let downloadUrl = '';
       server.use(
-        http.get(`${defaultBase}/jsonLoad.php`, ({ request }) => { jsonLoadUrl = request.url; return HttpResponse.json({ username: 'u', classname: 'User', wedges: 5 }); }),
-        http.get(`${defaultBase}/json/bonusBuy.php/:ts`, () => HttpResponse.json({ success: true })),
-        http.get(`${defaultBase}/tor/download.php`, () => new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } })),
+        http.get(`${defaultBase}/tor/download.php`, ({ request }) => { downloadUrl = request.url; return new HttpResponse(Buffer.from('t'), { headers: { 'Content-Type': 'application/x-bittorrent' } }); }),
       );
 
       const wedgeIndexer = new MyAnonamouseIndexer({
@@ -2118,7 +1962,7 @@ describe('MyAnonamouseIndexer', () => {
       });
 
       await wedgeIndexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: false });
-      expect(jsonLoadUrl).toContain(defaultBase);
+      expect(downloadUrl).toContain(defaultBase);
     });
   });
 

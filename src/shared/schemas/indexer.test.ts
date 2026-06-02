@@ -198,9 +198,9 @@ describe('mamSettingsSchema — wedge fields (#1156)', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts useFreeleechWedge: "required"', () => {
+  it('rejects useFreeleechWedge: "required" (narrowed enum, #1207)', () => {
     const result = mamSettingsSchema.safeParse({ mamId: 'id', useFreeleechWedge: 'required' });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it('rejects invalid useFreeleechWedge enum value', () => {
@@ -214,29 +214,8 @@ describe('mamSettingsSchema — wedge fields (#1156)', () => {
     if (result.success) expect(result.data.useFreeleechWedge).toBe('never');
   });
 
-  it('applies documented default minWedgeReserve=0 when field is omitted (#1156 F1)', () => {
-    const result = mamSettingsSchema.safeParse({ mamId: 'id' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.minWedgeReserve).toBe(0);
-  });
-
-  it('accepts minWedgeReserve: 0', () => {
+  it('rejects minWedgeReserve as an unknown key on the strict schema (#1207)', () => {
     const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 0 });
-    expect(result.success).toBe(true);
-  });
-
-  it('accepts minWedgeReserve: positive integer', () => {
-    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 5 });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects negative minWedgeReserve', () => {
-    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: -1 });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects non-integer minWedgeReserve', () => {
-    const result = mamSettingsSchema.safeParse({ mamId: 'id', minWedgeReserve: 1.5 });
     expect(result.success).toBe(false);
   });
 });
@@ -249,15 +228,14 @@ describe('createIndexerFormSchema — wedge fields (#1156)', () => {
     priority: 50,
   };
 
-  it('accepts both new fields without unknown-key validation failures', () => {
+  it('accepts useFreeleechWedge at the form level without unknown-key validation failures', () => {
     const result = createIndexerFormSchema.safeParse({
       ...mamBase,
-      settings: { mamId: 'id', useFreeleechWedge: 'preferred', minWedgeReserve: 2 },
+      settings: { mamId: 'id', useFreeleechWedge: 'preferred' },
     });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.settings.useFreeleechWedge).toBe('preferred');
-      expect(result.data.settings.minWedgeReserve).toBe(2);
     }
   });
 
@@ -265,6 +243,14 @@ describe('createIndexerFormSchema — wedge fields (#1156)', () => {
     const result = createIndexerFormSchema.safeParse({
       ...mamBase,
       settings: { mamId: 'id', useFreeleechWedge: 'maybe' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects "required" useFreeleechWedge at form level (#1207)', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { mamId: 'id', useFreeleechWedge: 'required' },
     });
     expect(result.success).toBe(false);
   });
@@ -276,9 +262,9 @@ describe('INDEXER_REGISTRY.myanonamouse defaultSettings (#1156)', () => {
     expect(INDEXER_REGISTRY.myanonamouse.defaultSettings.useFreeleechWedge).toBe('never');
   });
 
-  it('includes minWedgeReserve with default 0', async () => {
+  it('does not include minWedgeReserve in defaults (#1207)', async () => {
     const { INDEXER_REGISTRY } = await import('../indexer-registry.js');
-    expect(INDEXER_REGISTRY.myanonamouse.defaultSettings.minWedgeReserve).toBe(0);
+    expect(INDEXER_REGISTRY.myanonamouse.defaultSettings).not.toHaveProperty('minWedgeReserve');
   });
 });
 

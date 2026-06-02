@@ -858,15 +858,16 @@ describe('IndexerFields', () => {
     });
   });
 
-  describe('#1156 — freeleech wedge fields', () => {
-    function WedgeWrapper({ mode = 'never', reserve, status }: { mode?: 'never' | 'preferred' | 'required'; reserve?: number; status?: { isVip: boolean; mamUsername: string; classname?: string; wedges?: number } } = {}) {
+  describe('#1207 — freeleech wedge dropdown', () => {
+    const WEDGE_LABEL = 'Attempt to use wedges when downloading';
+
+    function WedgeWrapper({ mode = 'never', status }: { mode?: 'never' | 'preferred'; status?: { isVip: boolean; mamUsername: string; classname?: string; wedges?: number } } = {}) {
       const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
         defaultValues: {
           name: '', type: 'myanonamouse', enabled: true, priority: 50,
           settings: {
             mamId: 'test-id', searchLanguages: [1], searchType: 'active',
             useFreeleechWedge: mode,
-            ...(reserve !== undefined && { minWedgeReserve: reserve }),
             ...(status?.isVip !== undefined && { isVip: status.isVip }),
             ...(status?.mamUsername !== undefined && { mamUsername: status.mamUsername }),
             ...(status?.classname !== undefined && { classname: status.classname }),
@@ -885,14 +886,23 @@ describe('IndexerFields', () => {
       );
     }
 
-    it('does not render the Use Freeleech Wedges dropdown', () => {
+    it('renders the two-option Never/Prefer dropdown with the documented label', () => {
       renderWithProviders(<WedgeWrapper mode="preferred" />);
-      expect(screen.queryByLabelText('Use Freeleech Wedges')).not.toBeInTheDocument();
+      const select = screen.getByLabelText(WEDGE_LABEL) as HTMLSelectElement;
+      expect(select.tagName).toBe('SELECT');
+      const optionValues = Array.from(select.options).map(o => o.value);
+      expect(optionValues).toEqual(['never', 'preferred']);
     });
 
-    it('does not render the Minimum wedge reserve input', () => {
-      renderWithProviders(<WedgeWrapper mode="preferred" reserve={3} />);
-      expect(screen.queryByLabelText('Minimum wedge reserve')).not.toBeInTheDocument();
+    it('reflects the persisted useFreeleechWedge value as the selected option', () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" />);
+      const select = screen.getByLabelText(WEDGE_LABEL) as HTMLSelectElement;
+      expect(select.value).toBe('preferred');
+    });
+
+    it('does not render a minimum wedge reserve input', () => {
+      renderWithProviders(<WedgeWrapper mode="preferred" />);
+      expect(screen.queryByLabelText(/wedge reserve/i)).not.toBeInTheDocument();
     });
 
     it('Test button result still populates the wedges row on the MAM account card', async () => {
@@ -904,13 +914,13 @@ describe('IndexerFields', () => {
       expect(screen.getByText('4')).toBeInTheDocument();
     });
 
-    it('hidden wedge fields are registered with react-hook-form', () => {
+    it('registers settings.useFreeleechWedge and not settings.minWedgeReserve', () => {
       const registeredNames: Array<{ name: string; options?: Record<string, unknown> }> = [];
       function SpyWrapper() {
         const form = useForm<CreateIndexerFormData>({
           defaultValues: {
             name: '', type: 'myanonamouse', enabled: true, priority: 50,
-            settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', useFreeleechWedge: 'preferred', minWedgeReserve: 5 } as Record<string, unknown>,
+            settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', useFreeleechWedge: 'preferred' } as Record<string, unknown>,
           },
         });
         const originalRegister = form.register;
@@ -931,19 +941,8 @@ describe('IndexerFields', () => {
         );
       }
       renderWithProviders(<SpyWrapper />);
-      const wedgeModeEntry = registeredNames.find(r => r.name === 'settings.useFreeleechWedge');
-      const reserveEntry = registeredNames.find(r => r.name === 'settings.minWedgeReserve');
-      expect(wedgeModeEntry).toBeDefined();
-      expect(reserveEntry).toBeDefined();
-      expect(reserveEntry!.options).toEqual(expect.objectContaining({ valueAsNumber: true }));
-    });
-
-    it('does not render the reserve-over-inventory warning when reserve > currentWedges', async () => {
-      renderWithProviders(<WedgeWrapper mode="preferred" reserve={10} status={{ isVip: false, mamUsername: 'U', classname: 'User', wedges: 3 }} />);
-      await waitFor(() => {
-        expect(screen.getByText('U')).toBeInTheDocument();
-      });
-      expect(screen.queryByText(/is above current wedge count/)).not.toBeInTheDocument();
+      expect(registeredNames.find(r => r.name === 'settings.useFreeleechWedge')).toBeDefined();
+      expect(registeredNames.find(r => r.name === 'settings.minWedgeReserve')).toBeUndefined();
     });
   });
 });

@@ -1990,7 +1990,7 @@ describe('DownloadService', () => {
     }
 
     it('invokes adapter.resolveDownloadUrl with explicit ctx including isFreeleech coerced from params', async () => {
-      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeOutcome: 'skipped-mode-never' as const }) };
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeRequested: false }) };
       const indexerService = makeIndexerServiceMock(indexerAdapter);
       service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
       setupGrabHappyPath(service);
@@ -2082,10 +2082,10 @@ describe('DownloadService', () => {
       expect(insertCall.downloadUrl).toBe('magnet:?xt=urn:btih:ccf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
     });
 
-    it('emits warn log on Preferred non-success wedge outcome (skipped-no-inventory)', async () => {
+    it('emits a debug "&fl sent" log and no info/warn when wedgeRequested is true', async () => {
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
-      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeOutcome: 'skipped-no-inventory' as const }) };
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeRequested: true }) };
       const indexerService = makeIndexerServiceMock(indexerAdapter);
       svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
       setupGrabHappyPath(svc);
@@ -2097,16 +2097,20 @@ describe('DownloadService', () => {
         skipDuplicateCheck: true,
       });
 
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ wedgeOutcome: 'skipped-no-inventory' }),
-        expect.stringMatching(/wedge not applied/i),
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ wedgeRequested: true }),
+        expect.stringMatching(/wedge requested.*&fl sent/i),
+      );
+      expect(log.info).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringMatching(/wedge/i),
       );
     });
 
-    it('emits info log when wedge is spent', async () => {
+    it('emits nothing wedge-specific when wedgeRequested is false', async () => {
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
-      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeOutcome: 'spent' as const }) };
+      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockResolvedValue({ downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d', wedgeRequested: false }) };
       const indexerService = makeIndexerServiceMock(indexerAdapter);
       svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
       setupGrabHappyPath(svc);
@@ -2118,39 +2122,15 @@ describe('DownloadService', () => {
         skipDuplicateCheck: true,
       });
 
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ indexerId: 1, title: 'Book' }),
-        expect.stringMatching(/wedge spent/i),
+      const wedgeDebug = (log.debug as Mock).mock.calls.find(c => /wedge requested/i.test(String(c[1])));
+      expect(wedgeDebug).toBeUndefined();
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringMatching(/wedge/i),
       );
     });
 
-    it('thrown IndexerError with wedgeOutcome=spent emits error-level log', async () => {
-      const { IndexerError } = await import('../../core/index.js');
-      const log = createMockLogger();
-      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
-      const err = new IndexerError('MAM', 'fetch failed after spend', { wedgeOutcome: 'spent' });
-      const indexerAdapter = { resolveDownloadUrl: vi.fn().mockRejectedValue(err) };
-      const indexerService = makeIndexerServiceMock(indexerAdapter);
-      svc.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
-      // Even though duplicate check is skipped, the hook throws — no insert is reached.
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
-
-      await expect(
-        svc.grab({
-          downloadUrl: 'mam-torrent://12345',
-          title: 'Book',
-          indexerId: 1,
-          skipDuplicateCheck: true,
-        }),
-      ).rejects.toBeInstanceOf(IndexerError);
-
-      expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ wedgeOutcome: 'spent' }),
-        expect.stringMatching(/wedge spent but torrent fetch failed/i),
-      );
-    });
-
-    it('thrown IndexerError without wedgeOutcome=spent emits warn-level log', async () => {
+    it('thrown IndexerError emits warn-level log', async () => {
       const { IndexerError } = await import('../../core/index.js');
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));

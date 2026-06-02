@@ -1092,7 +1092,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(payloadSettings).toHaveProperty('mamUsername', 'mamuser');
     });
 
-    it('MAM edit payload preserves hidden wedge settings at their persisted values', async () => {
+    it('MAM edit payload preserves useFreeleechWedge and drops the removed minWedgeReserve key', async () => {
       const onFormTest = vi.fn();
       const user = userEvent.setup();
       const mamIndexer: Indexer = createMockIndexer({
@@ -1108,6 +1108,8 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
           mamUsername: 'wedgeuser',
           classname: 'VIP',
           useFreeleechWedge: 'preferred',
+          // Simulate a stray persisted minWedgeReserve — the form schema no longer
+          // declares it, so zod must strip it from the submitted payload (#1207).
           minWedgeReserve: 5,
         },
       });
@@ -1130,7 +1132,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
       expect(payloadSettings).toHaveProperty('useFreeleechWedge', 'preferred');
-      expect(payloadSettings).toHaveProperty('minWedgeReserve', 5);
+      expect(payloadSettings).not.toHaveProperty('minWedgeReserve');
     });
 
     it('Torznab edit Test payload contains no MAM/ABB keys', async () => {
