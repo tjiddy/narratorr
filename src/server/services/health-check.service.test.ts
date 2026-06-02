@@ -435,6 +435,15 @@ describe('HealthCheckService', () => {
       expect(results.find((r) => r.checkName === 'hardcover')).toMatchObject({ state: 'healthy' });
     });
 
+    it('probes Hardcover with the literal "test" query', async () => {
+      const searchSeries = vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockResolvedValue([]);
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      await service.runAllChecks();
+      expect(searchSeries).toHaveBeenCalledWith('test');
+    });
+
     it('returns healthy when searchSeries resolves an empty array (empty is success)', async () => {
       vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockResolvedValue([]);
       const { service } = createService({
