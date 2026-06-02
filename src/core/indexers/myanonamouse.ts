@@ -8,7 +8,6 @@ import {
   type ResolveDownloadResult,
   type SearchOptions,
   type SearchResult,
-  type WedgeOutcome,
 } from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
@@ -21,8 +20,6 @@ import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
 import { parseDoubleEncodedNames, parseMamSize } from './mam-helpers.js';
 import {
   MAM_TORRENT_SENTINEL_PREFIX,
-  decideWedgeSpend,
-  isWedgeFailureOutcome,
   parseTorrentIdFromContext,
 } from './mam-wedge.js';
 import {
@@ -39,7 +36,6 @@ export interface MAMConfig {
   searchType: string;
   isVip?: boolean | undefined;
   useFreeleechWedge?: WedgeMode | undefined;
-  minWedgeReserve?: number | undefined;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -59,7 +55,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private searchType: string;
   private isVip?: boolean;
   private useFreeleechWedge: WedgeMode;
-  private minWedgeReserve: number;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
@@ -69,7 +64,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     this.searchType = config.searchType;
     if (config.isVip !== undefined) this.isVip = config.isVip;
     this.useFreeleechWedge = config.useFreeleechWedge ?? 'never';
-    this.minWedgeReserve = config.minWedgeReserve ?? 0;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -370,11 +364,11 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
 
   /**
-   * Grab-time hook. Optionally spends a freeleech wedge based on configured
-   * mode + reserve floor, then fetches the torrent bytes. Returns the data URL
-   * plus a typed `wedgeOutcome` for the service layer to log. Throws
-   * `IndexerError` when (a) Required-mode and the spend decision failed, or
-   * (b) the torrent fetch itself failed (uniform contract — both modes).
+   * Grab-time hook. Appends the server-side `&fl` freeleech flag when the
+   * configured mode is `preferred` and the item isn't already freeleech — MAM
+   * applies the wedge itself at download time — then fetches the torrent bytes.
+   * Returns the data URL plus `wedgeRequested` (the one bit the service logs).
+   * Throws `IndexerError` when the torrent id can't be derived or the fetch fails.
    */
   async resolveDownloadUrl(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult> {
     const tid = parseTorrentIdFromContext(ctx);
@@ -382,47 +376,35 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       throw new IndexerError(this.name, `MAM resolveDownloadUrl: unable to derive torrent id from guid=${ctx.guid ?? 'undefined'} url=${ctx.downloadUrl}`);
     }
 
-    const decision = await decideWedgeSpend(this.wedgeCfg(), this.useFreeleechWedge, this.minWedgeReserve, tid, ctx.isFreeleech);
-    if (this.useFreeleechWedge === 'required' && isWedgeFailureOutcome(decision.outcome)) {
-      throw new IndexerError(this.name, `MAM wedge spend failed in Required mode (${decision.outcome}) for tid=${tid}`, {
-        wedgeOutcome: decision.outcome,
-        cause: decision.cause ? new Error(decision.cause) : undefined,
-      });
-    }
-
-    return this.fetchTorrentForResolve(tid, decision.outcome, decision.cause);
+    const applyWedge = this.useFreeleechWedge === 'preferred' && !ctx.isFreeleech;
+    return this.fetchTorrentForResolve(tid, applyWedge);
   }
 
-  private wedgeCfg() {
-    if (!this.baseUrl) {
-      throw new IndexerError(this.name, 'MAM wedge config: baseUrl is empty');
-    }
-    return { baseUrl: this.baseUrl, mamId: this.mamId, proxyUrl: this.proxyUrl, indexerName: this.name };
-  }
-
-  private async fetchTorrentForResolve(tid: number, wedgeOutcome: WedgeOutcome, wedgeCause?: string): Promise<ResolveDownloadResult> {
+  private async fetchTorrentForResolve(tid: number, applyWedge: boolean): Promise<ResolveDownloadResult> {
     let downloadUrl: string | undefined;
     try {
-      downloadUrl = await this.fetchTorrentAsDataUri(tid);
+      downloadUrl = await this.fetchTorrentAsDataUri(tid, applyWedge);
     } catch (error: unknown) {
       throw new IndexerError(
         this.name,
         `MAM torrent fetch failed for tid=${tid}: ${getErrorMessage(error)}`,
-        { cause: error instanceof Error ? error : undefined, wedgeOutcome },
+        { cause: error instanceof Error ? error : undefined },
       );
     }
     if (!downloadUrl) {
-      throw new IndexerError(this.name, `MAM torrent fetch returned no data for tid=${tid}`, { wedgeOutcome });
+      throw new IndexerError(this.name, `MAM torrent fetch returned no data for tid=${tid}`);
     }
-    return { downloadUrl, wedgeOutcome, ...(wedgeCause !== undefined && { wedgeCause }) };
+    return { downloadUrl, wedgeRequested: applyWedge };
   }
 
   /**
-   * Fetch .torrent file bytes and encode as a data: URI.
+   * Fetch .torrent file bytes and encode as a data: URI. Appends the bare `&fl`
+   * freeleech flag to the MAM fetch URL (not the resulting data: URI) when
+   * `applyWedge` is set — MAM applies the personal-freeleech wedge server-side.
    * Returns undefined on failure (result is kept but not grabbable).
    */
-  private async fetchTorrentAsDataUri(torrentId: number, callerSignal?: AbortSignal): Promise<string | undefined> {
-    const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}`;
+  private async fetchTorrentAsDataUri(torrentId: number, applyWedge = false, callerSignal?: AbortSignal): Promise<string | undefined> {
+    const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}${applyWedge ? '&fl' : ''}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal

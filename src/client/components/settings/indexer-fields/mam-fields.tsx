@@ -3,6 +3,7 @@ import type { UseFormWatch, UseFormSetValue } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../../shared/schemas.js';
 
 import { api } from '@/lib/api';
+import { SelectWithChevron } from '../SelectWithChevron';
 import type { IndexerFieldsProps } from './types.js';
 import { getMinDetectionMs } from './mam-detection-timing.js';
 
@@ -230,9 +231,21 @@ function BaseUrlField({ register, errors }: Pick<IndexerFieldsProps, 'register' 
 }
 
 function WedgeFields({ register }: { register: IndexerFieldsProps['register'] }) {
-  register('settings.useFreeleechWedge');
-  register('settings.minWedgeReserve', { valueAsNumber: true });
-  return null;
+  return (
+    <div className="sm:col-span-2">
+      <SelectWithChevron
+        id="indexerUseFreeleechWedge"
+        label="Attempt to use wedges when downloading"
+        {...register('settings.useFreeleechWedge')}
+      >
+        <option value="never">Never</option>
+        <option value="preferred">Prefer</option>
+      </SelectWithChevron>
+      <p className="text-sm text-muted-foreground mt-1">
+        Prefer applies a personal freeleech wedge at download time for torrents that aren&apos;t already freeleech
+      </p>
+    </div>
+  );
 }
 
 export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {

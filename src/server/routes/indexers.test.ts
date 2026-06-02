@@ -250,10 +250,10 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // mamSettingsSchema materializes useFreeleechWedge/minWedgeReserve defaults (#1156 F1).
+      // mamSettingsSchema materializes the useFreeleechWedge default (#1156 F1).
       expect(services.indexer.testConfig).toHaveBeenCalledWith({
         type: 'myanonamouse',
-        settings: { mamId: '********', useFreeleechWedge: 'never', minWedgeReserve: 0 },
+        settings: { mamId: '********', useFreeleechWedge: 'never' },
         id: 5,
       });
     });
@@ -274,10 +274,10 @@ describe('indexers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // mamSettingsSchema materializes useFreeleechWedge/minWedgeReserve defaults (#1156 F1).
+      // mamSettingsSchema materializes the useFreeleechWedge default (#1156 F1).
       expect(services.indexer.testConfig).toHaveBeenCalledWith({
         type: 'myanonamouse',
-        settings: { mamId: 'real-id', useFreeleechWedge: 'never', minWedgeReserve: 0 },
+        settings: { mamId: 'real-id', useFreeleechWedge: 'never' },
       });
     });
 

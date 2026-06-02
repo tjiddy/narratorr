@@ -81,8 +81,10 @@ export interface IndexerSearchResponse {
 }
 
 /**
- * Outcome of an adapter's `resolveDownloadUrl` wedge-decision step. Adapters
- * that don't implement wedge logic return `undefined` for `wedgeOutcome`.
+ * Legacy wedge-spend outcome taxonomy. Retained for `IndexerError.wedgeOutcome`
+ * and any future adapter that implements a client-side wedge spend. MAM no
+ * longer emits these — it appends the server-side `&fl` flag and reports a
+ * single `ResolveDownloadResult.wedgeRequested` boolean instead.
  */
 export type WedgeOutcome =
   | 'spent'
@@ -109,8 +111,13 @@ export interface ResolveDownloadContext {
 
 export interface ResolveDownloadResult {
   downloadUrl: string;
-  wedgeOutcome?: WedgeOutcome;
-  wedgeCause?: string;
+  /**
+   * MAM-only: `true` when the adapter appended the server-side `&fl` freeleech
+   * flag to the download fetch (Prefer mode + not-already-freeleech). Optional
+   * so adapters that never apply a wedge leave it unset. The service logs this
+   * one bit; MAM does not know inline whether the wedge was actually applied.
+   */
+  wedgeRequested?: boolean;
 }
 
 export interface IndexerAdapter {
