@@ -8,6 +8,8 @@ import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { getInProgressStatuses } from '../../shared/download-status-registry.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { mapHardcoverError } from '../utils/hardcover-error.js';
+import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -65,6 +67,7 @@ export class HealthCheckService {
         () => this.checkLibraryRoot(),
         () => this.checkDiskSpace(),
         () => this.checkFfmpeg(),
+        () => this.checkHardcover(),
         () => this.checkStuckDownloads(),
       ];
 
@@ -259,6 +262,25 @@ export class HealthCheckService {
       return [{ checkName: 'ffmpeg', state: 'healthy', target }];
     } catch {
       return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not found at: ${ffmpegPath}`, target }];
+    }
+  }
+
+  private async checkHardcover(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'settings', path: 'search' };
+    const metadataSettings = await this.settingsService.get('metadata');
+    const apiKey = metadataSettings?.hardcoverApiKey?.trim();
+
+    if (!apiKey) {
+      return []; // Skip check if no Hardcover API key is configured
+    }
+
+    try {
+      // Live probe — same request the settings Test button uses. An empty
+      // results array is still success; resolving without throwing is the signal.
+      await new HardcoverClient(apiKey).searchSeries('test');
+      return [{ checkName: 'hardcover', state: 'healthy', target }];
+    } catch (error: unknown) {
+      return [{ checkName: 'hardcover', state: 'error', message: mapHardcoverError(error), target }];
     }
   }
 

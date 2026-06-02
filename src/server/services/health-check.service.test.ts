@@ -1,5 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { HealthCheckService } from './health-check.service.js';
+import { HardcoverClient } from '../../core/metadata/hardcover.js';
+import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
 import { inject, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -394,6 +396,123 @@ describe('HealthCheckService', () => {
       });
       const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
       expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'post-processing' });
+    });
+  });
+
+  describe('checkHardcover', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('skips check and returns no result when no API key is configured', async () => {
+      const searchSeries = vi.spyOn(HardcoverClient.prototype, 'searchSeries');
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: '' } }),
+      });
+      const results = await service.runAllChecks();
+      expect(results.find((r) => r.checkName === 'hardcover')).toBeUndefined();
+      expect(searchSeries).not.toHaveBeenCalled();
+    });
+
+    it('skips check (no probe) when API key is whitespace-only', async () => {
+      const searchSeries = vi.spyOn(HardcoverClient.prototype, 'searchSeries');
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: '   ' } }),
+      });
+      const results = await service.runAllChecks();
+      expect(results.find((r) => r.checkName === 'hardcover')).toBeUndefined();
+      expect(searchSeries).not.toHaveBeenCalled();
+    });
+
+    it('returns healthy when searchSeries resolves a non-empty array', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockResolvedValue([
+        { id: 1 } as never,
+      ]);
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      const results = await service.runAllChecks();
+      expect(results.find((r) => r.checkName === 'hardcover')).toMatchObject({ state: 'healthy' });
+    });
+
+    it('returns healthy when searchSeries resolves an empty array (empty is success)', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockResolvedValue([]);
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      const results = await service.runAllChecks();
+      expect(results.find((r) => r.checkName === 'hardcover')).toMatchObject({ state: 'healthy' });
+    });
+
+    it('returns error with the Bearer-prefix hint for an invalid-key MetadataError', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover search error: Could not verify JWT: signature mismatch'),
+      );
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'bad-key' } }),
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'hardcover');
+      expect(check).toMatchObject({ state: 'error' });
+      expect(check!.message).toContain('Invalid Hardcover API key');
+    });
+
+    it('returns error with the unreachable hint for a TransientError', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(
+        new TransientError('hardcover', 'ECONNRESET'),
+      );
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'hardcover');
+      expect(check).toMatchObject({ state: 'error' });
+      expect(check!.message).toContain("Couldn't reach Hardcover");
+    });
+
+    it('returns error with the rate-limit hint for a RateLimitError', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(
+        new RateLimitError(5000, 'hardcover'),
+      );
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'hardcover');
+      expect(check).toMatchObject({ state: 'error' });
+      expect(check!.message).toContain('rate-limiting');
+    });
+
+    it('populates target settings:search on healthy and error paths', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockResolvedValue([]);
+      const { service: healthy } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'hardcover');
+      expect(healthyCheck?.target).toEqual({ kind: 'settings', path: 'search' });
+
+      vi.restoreAllMocks();
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(
+        new TransientError('hardcover', 'ECONNRESET'),
+      );
+      const { service: error } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'valid-key' } }),
+      });
+      const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'hardcover');
+      expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'search' });
+    });
+
+    it('does not fire on_health_issue for hardcover when no key is configured', async () => {
+      const { service, notifier } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: '' } }),
+      });
+      await service.runAllChecks();
+      const hardcoverCalls = (notifier.notify as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === 'on_health_issue' &&
+          (c[1] as { health?: { checkName?: string } })?.health?.checkName === 'hardcover',
+      );
+      expect(hardcoverCalls).toHaveLength(0);
     });
   });
 
