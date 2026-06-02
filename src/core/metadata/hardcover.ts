@@ -276,15 +276,23 @@ export class HardcoverClient {
 
 /**
  * Hardcover's `search` API returns its results envelope as a free-form JSON
- * payload (Algolia-style `{ hits: [...] }`). Extract the candidates defensively
- * — accept either an array, or a `hits` / `results` array inside an object.
+ * payload. Extract the candidates defensively — accept either an array, or a
+ * `hits` / `results` array inside an object.
+ *
+ * Each hit is unwrapped per-hit: Hardcover migrated search from Algolia (fields
+ * top-level on the hit) to Typesense (every field nested under a `document` key,
+ * alongside `highlight` / `text_match` siblings). Read fields from `hit.document`
+ * when present, falling back to `hit` itself so legacy/Algolia hits still parse.
  */
 function extractSearchCandidates(raw: unknown): HardcoverSearchCandidate[] {
   const hits = extractHitsArray(raw);
   const out: HardcoverSearchCandidate[] = [];
   for (const hit of hits) {
     if (typeof hit !== 'object' || hit === null) continue;
-    const obj = hit as Record<string, unknown>;
+    const envelope = hit as Record<string, unknown>;
+    const obj = (typeof envelope.document === 'object' && envelope.document !== null
+      ? envelope.document
+      : envelope) as Record<string, unknown>;
     const id = pickNumber(obj.id);
     const name = typeof obj.name === 'string' ? obj.name : null;
     if (id === null || !name) continue;
@@ -312,6 +320,10 @@ function extractAuthorName(hit: Record<string, unknown>): string | null {
     const name = (author as Record<string, unknown>).name;
     if (typeof name === 'string' && name.length > 0) return name;
   }
+  // Typesense exposes the author as a singular `author_name` string alongside
+  // (or instead of) the nested `author` object.
+  const authorName = hit.author_name;
+  if (typeof authorName === 'string' && authorName.length > 0) return authorName;
   const authorNames = hit.author_names;
   if (Array.isArray(authorNames) && authorNames.length > 0) {
     const first = authorNames[0];

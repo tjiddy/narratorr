@@ -150,6 +150,94 @@ describe('HardcoverClient', () => {
     });
   });
 
+  describe('searchSeries — Typesense / Algolia hit extraction', () => {
+    function buildSearchResponse(results: unknown): Response {
+      return buildJsonResponse({ data: { search: { results } } });
+    }
+
+    // Primary: Hardcover migrated search from Algolia to Typesense, which nests
+    // every field under a `document` key alongside `highlight` / `text_match`
+    // siblings, and returns `id` as a string. See #1206.
+    it('unwraps a Typesense `document`-enveloped hit and coerces the string id', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        {
+          document: {
+            id: '3384',
+            name: 'Star Wars: Aftermath',
+            author: { id: 252077, name: 'Chuck Wendig', slug: 'chuck-wendig' },
+            author_name: 'Chuck Wendig',
+            books_count: 10,
+            primary_books_count: 12,
+            slug: 'star-wars-aftermath',
+          },
+          highlight: {},
+          highlights: [],
+          text_match: 2312633571820437500,
+          text_match_info: {},
+        },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('star wars aftermath');
+      expect(candidates).toEqual([
+        { id: 3384, name: 'Star Wars: Aftermath', slug: 'star-wars-aftermath', authorName: 'Chuck Wendig', booksCount: 10 },
+      ]);
+      // id is coerced from the string "3384" to the number 3384.
+      expect(typeof candidates[0]!.id).toBe('number');
+    });
+
+    it('resolves authorName from singular `author_name` when no `author` object is present', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { document: { id: '7', name: 'Solo Series', author_name: 'Lone Writer', books_count: 3, slug: 'solo-series' } },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('solo');
+      expect(candidates[0]!.authorName).toBe('Lone Writer');
+    });
+
+    it('still maps a legacy Algolia top-level hit (no `document` key)', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { id: 5523, name: 'The Band', author: { name: 'Nicholas Eames' }, books_count: 3, slug: 'the-band' },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('the band');
+      expect(candidates).toEqual([
+        { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3 },
+      ]);
+    });
+
+    it('still resolves authorName from the legacy `author_names` plural array', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { id: 9, name: 'Plural Series', author_names: ['Array Author'], books_count: 2, slug: 'plural-series' },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('plural');
+      expect(candidates[0]!.authorName).toBe('Array Author');
+    });
+
+    it('parses `{ hits: [...] }` and `{ results: [...] }` array-level envelopes', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse({ hits: [{ document: { id: '1', name: 'H', slug: 'h' } }] }));
+      const fromHits = await new HardcoverClient('K').searchSeries('h');
+      expect(fromHits[0]!.id).toBe(1);
+
+      fetchMock.mockResolvedValueOnce(buildSearchResponse({ results: [{ document: { id: '2', name: 'R', slug: 'r' } }] }));
+      const fromResults = await new HardcoverClient('K').searchSeries('r');
+      expect(fromResults[0]!.id).toBe(2);
+    });
+
+    it('drops a hit missing id or name', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { document: { name: 'No Id', slug: 'no-id' } },
+        { document: { id: '50', slug: 'no-name' } },
+        { document: { id: '51', name: 'Keeper', slug: 'keeper', books_count: 1 } },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('partial');
+      expect(candidates).toEqual([
+        { id: 51, name: 'Keeper', slug: 'keeper', authorName: null, booksCount: 1 },
+      ]);
+    });
+
+    it('returns [] for an empty results array', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([]));
+      expect(await new HardcoverClient('K').searchSeries('nothing')).toEqual([]);
+    });
+  });
+
   describe('Error mapping', () => {
     it('maps HTTP 429 to RateLimitError', async () => {
       fetchMock.mockResolvedValueOnce(new Response('rate-limited', { status: 429, headers: { 'Retry-After': '30' } }));
