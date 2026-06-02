@@ -1331,6 +1331,98 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     );
   });
 
+  // ===== #1168 — required-word gate mirrors reject gate: all surfaces + word-boundary =====
+
+  it('required-word gate keeps result when required word is only in rawTitle (nzbName populated, non-matching)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', rawTitle: 'The Book Unabridged Edition', title: 'Good Title' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'unabridged' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('required-word gate keeps result when required word is only in title (nzbName populated, non-matching)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', rawTitle: 'Clean Raw Title', title: 'The Book Unabridged' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'unabridged' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('required-word gate keeps result when required word is only in author (nzbName populated, non-matching)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', title: 'Good Title', author: 'Brandon Sanderson' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'Sanderson' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('required-word gate keeps result when required word is only in narrator (nzbName populated, non-matching)', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Clean.NZB.Name', title: 'Good Title', narrator: 'Michael Kramer' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'Kramer' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('required-word gate does NOT match "abridged" inside "unabridged" (word boundary)', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Dune.Unabridged.M4B', nzbName: 'Dune.Unabridged.M4B' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'abridged' },
+      log,
+    );
+    expect(results).toHaveLength(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'required-word-missing', dropped: true }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('required-word gate matches "mp3" at word boundary in "Sample.Audiobook.MP3"', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Sample.Audiobook.MP3', nzbName: 'Sample.Audiobook.MP3' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'mp3' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('required-word gate drops and logs result with no required word on any surface', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ nzbName: 'Plain NZB', rawTitle: 'Plain Raw', title: 'Plain Title', author: 'Plain Author', narrator: 'Plain Narrator' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'unabridged' },
+      log,
+    );
+    expect(results).toHaveLength(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'required-word-missing', dropped: true }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('required-word gate does not fire when requiredWords is undefined', () => {
+    const log = createMockLogger();
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Plain title' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+      log,
+    );
+    expect(results).toHaveLength(1);
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'required-word-missing' }),
+      expect.any(String),
+    );
+  });
+
   it('max-size gate does not fire when maxDownloadSize is 0', () => {
     const log = createMockLogger();
     filterAndRankResults(
