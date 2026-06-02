@@ -680,7 +680,7 @@ describe('BookMetadataModal', () => {
     });
   });
 
-  it('does not call onClose when the backdrop is clicked (closeOnBackdropClick={false})', async () => {
+  it('does not call onClose when the backdrop is clicked (backdrop-click dismissal removed)', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     renderModal({ onClose });

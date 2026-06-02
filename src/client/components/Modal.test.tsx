@@ -30,20 +30,36 @@ describe('Modal', () => {
     expect(screen.getByText('hello')).toBeInTheDocument();
   });
 
-  it('calls onClose when backdrop area is clicked and onClose is provided', async () => {
+  it('does not call onClose when the backdrop is clicked (backdrop-click dismissal removed)', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     render(<Modal onClose={onClose}><div>content</div></Modal>);
     await user.click(screen.getByTestId('modal-backdrop'));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('does not throw when backdrop is clicked and onClose is not provided', async () => {
+  it('does not throw when the backdrop is clicked and onClose is not provided', async () => {
     const user = userEvent.setup();
-    // Should not throw — WelcomeModal omits onClose intentionally
+    // Should not throw — backdrop click is a no-op now that dismissal is removed
     expect(() => render(<Modal><div>content</div></Modal>)).not.toThrow();
     await user.click(screen.getByTestId('modal-backdrop'));
     // No assertion on call — just verify no error thrown
+  });
+
+  it('calls onClose when Escape is pressed and onClose is provided', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<Modal onClose={onClose}><div>content</div></Modal>);
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('does not throw and stays open when Escape is pressed and onClose is omitted', async () => {
+    const user = userEvent.setup();
+    render(<Modal><div data-testid="child">content</div></Modal>);
+    await user.keyboard('{Escape}');
+    // No onClose to call — Escape is a no-op, modal remains rendered
+    expect(screen.getByTestId('child')).toBeInTheDocument();
   });
 
   it('does not call onClose when clicking inside the modal panel', async () => {
@@ -107,7 +123,7 @@ describe('Modal', () => {
       expect(screen.getAllByTestId('modal-backdrop')).toHaveLength(2);
     });
 
-    it('clicking inner backdrop closes only the inner modal, outer onClose NOT called', async () => {
+    it('clicking the inner backdrop does NOT close either modal (backdrop-click dismissal removed)', async () => {
       const outerClose = vi.fn();
       const innerClose = vi.fn();
       const user = userEvent.setup();
@@ -119,42 +135,8 @@ describe('Modal', () => {
       );
       const backdrops = screen.getAllByTestId('modal-backdrop');
       await user.click(backdrops[1]!);
-      expect(innerClose).toHaveBeenCalledOnce();
+      expect(innerClose).not.toHaveBeenCalled();
       expect(outerClose).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('closeOnBackdropClick prop', () => {
-    it('does not call onClose when backdrop is clicked and closeOnBackdropClick={false}', async () => {
-      const onClose = vi.fn();
-      const user = userEvent.setup();
-      render(<Modal onClose={onClose} closeOnBackdropClick={false}><div>content</div></Modal>);
-      await user.click(screen.getByTestId('modal-backdrop'));
-      expect(onClose).not.toHaveBeenCalled();
-    });
-
-    it('calls onClose when backdrop is clicked and closeOnBackdropClick={true}', async () => {
-      const onClose = vi.fn();
-      const user = userEvent.setup();
-      render(<Modal onClose={onClose} closeOnBackdropClick={true}><div>content</div></Modal>);
-      await user.click(screen.getByTestId('modal-backdrop'));
-      expect(onClose).toHaveBeenCalledOnce();
-    });
-
-    it('calls onClose when backdrop is clicked and closeOnBackdropClick is omitted (default true)', async () => {
-      const onClose = vi.fn();
-      const user = userEvent.setup();
-      render(<Modal onClose={onClose}><div>content</div></Modal>);
-      await user.click(screen.getByTestId('modal-backdrop'));
-      expect(onClose).toHaveBeenCalledOnce();
-    });
-
-    it('does not call onClose when panel is clicked regardless of closeOnBackdropClick value', async () => {
-      const onClose = vi.fn();
-      const user = userEvent.setup();
-      render(<Modal onClose={onClose} closeOnBackdropClick={false}><div data-testid="panel-content">inside</div></Modal>);
-      await user.click(screen.getByTestId('panel-content'));
-      expect(onClose).not.toHaveBeenCalled();
     });
   });
 

@@ -1,9 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import {
   XIcon,
   FolderIcon,
@@ -44,11 +43,8 @@ function parseBreadcrumbs(path: string): { label: string; path: string }[] {
  * This avoids the "setState in useEffect" lint issue by using mount
  * lifecycle to initialize state from initialPath.
  */
-function DirectoryBrowserContent({ isOpen = true, initialPath, onSelect, onClose }: DirectoryBrowserModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
+function DirectoryBrowserContent({ initialPath, onSelect, onClose }: DirectoryBrowserModalProps) {
   const [currentPath, setCurrentPath] = useState(initialPath || '/');
-
-  useEscapeKey(isOpen, onClose, modalRef);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.filesystem.browse(currentPath),
@@ -72,9 +68,8 @@ function DirectoryBrowserContent({ isOpen = true, initialPath, onSelect, onClose
   const breadcrumbs = parseBreadcrumbs(currentPath);
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg flex flex-col max-h-[80vh]">
+    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[80vh]">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="directory-browser-modal-title"

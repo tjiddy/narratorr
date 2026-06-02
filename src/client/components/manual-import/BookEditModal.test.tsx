@@ -244,7 +244,7 @@ describe('BookEditModal', () => {
       });
     });
 
-    it('does not call onClose when backdrop clicked (closeOnBackdropClick={false})', async () => {
+    it('does not call onClose when backdrop clicked (backdrop-click dismissal removed)', async () => {
       const onClose = vi.fn();
       renderModal({ onClose });
 
@@ -429,7 +429,7 @@ describe('BookEditModal', () => {
     });
   });
 
-  it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
+  it('does not call onClose when backdrop is clicked (backdrop-click dismissal removed)', async () => {
     const onClose = vi.fn();
     renderModal({ onClose });
     await userEvent.click(screen.getByTestId('modal-backdrop'));

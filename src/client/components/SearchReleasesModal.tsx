@@ -8,7 +8,6 @@ import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { XIcon, RefreshIcon } from '@/components/icons';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { Modal } from '@/components/Modal';
 import { SearchReleasesContent } from '@/components/SearchReleasesContent';
 import { useSearchStream } from '@/hooks/useSearchStream';
@@ -189,15 +188,11 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     });
   };
 
-  const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen, onClose, modalRef);
-
   if (!isOpen) return null;
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-4xl max-h-[85vh] flex flex-col">
+    <Modal onClose={onClose} className="w-full max-w-4xl max-h-[85vh] flex flex-col">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="search-releases-modal-title"

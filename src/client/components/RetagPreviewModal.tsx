@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
@@ -10,7 +10,6 @@ import {
   type RetagPlanFileDiff,
 } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/icons';
@@ -56,9 +55,6 @@ function buildConfirmPayload(excludeSet: Set<RetagExcludableField>, overrides: A
 }
 
 export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagPreviewModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen, onClose, modalRef);
-
   const [excludeSet, setExcludeSet] = useState<Set<RetagExcludableField>>(() => new Set());
   // `null` = user has not touched the control. `userMode`/`userEmbedCover` hold
   // the user's selection regardless of whether it matches the settings default;
@@ -109,7 +105,6 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
   return (
     <Modal onClose={onClose} className="w-full max-w-3xl p-6" scrollable>
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="retag-preview-modal-title"

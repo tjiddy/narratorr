@@ -1,6 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import type { BookWithAuthor, UpdateBookPayload, BookMetadata } from '@/lib/api';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { XIcon, ArrowLeftIcon } from '@/components/icons';
 import { Modal } from '@/components/Modal';
@@ -18,7 +17,6 @@ interface BookMetadataModalProps {
 }
 
 export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true }: BookMetadataModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
   const [title, setTitle] = useState(book.title);
   const [seriesName, setSeriesName] = useState(book.seriesName ?? '');
   const [seriesPosition, setSeriesPosition] = useState(book.seriesPosition?.toString() ?? '');
@@ -28,8 +26,6 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
   const [view, setView] = useState<SearchView>('edit');
   const [searchQuery, setSearchQuery] = useState('');
   const { searchResults, hasSearched, searchError, isPending, search } = useAudnexusSearch();
-
-  useEscapeKey(isOpen, onClose, modalRef);
 
   if (!isOpen) return null;
 
@@ -92,9 +88,8 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
   };
 
   return (
-    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg flex flex-col max-h-[85vh]">
+    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="book-metadata-modal-title"

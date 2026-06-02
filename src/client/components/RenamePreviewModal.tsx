@@ -1,9 +1,7 @@
-import { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, RenameConflictError, type RenamePreviewResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/icons';
@@ -17,9 +15,6 @@ interface RenamePreviewModalProps {
 }
 
 export function RenamePreviewModal({ bookId, isOpen, onClose, onConfirm }: RenamePreviewModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
-  useEscapeKey(isOpen, onClose, modalRef);
-
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.bookRenamePreview(bookId),
     queryFn: () => api.getBookRenamePreview(bookId),
@@ -40,7 +35,6 @@ export function RenamePreviewModal({ bookId, isOpen, onClose, onConfirm }: Renam
   return (
     <Modal onClose={onClose} className="w-full max-w-2xl p-6" scrollable>
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="rename-preview-modal-title"

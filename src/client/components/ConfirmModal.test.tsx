@@ -105,11 +105,11 @@ describe('ConfirmModal', () => {
     expect(cancelBtn).not.toHaveClass('bg-destructive');
   });
 
-  it('calls onCancel when the backdrop is clicked', () => {
+  it('does not call onCancel when the backdrop is clicked (backdrop-click dismissal removed)', () => {
     const onCancel = vi.fn();
     render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
     fireEvent.click(screen.getByTestId('modal-backdrop'));
-    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it('calls onCancel when Escape is pressed', async () => {
@@ -129,10 +129,11 @@ describe('ConfirmModal', () => {
   });
 
   describe('focus trap coexistence with base Modal (#551)', () => {
-    it('initial focus lands on inner dialog wrapper (useEscapeKey autofocus overrides base Modal trap)', () => {
+    it('initial focus lands on the base Modal panel (base Modal now owns the focus trap)', () => {
       render(<ConfirmModal {...defaultProps} />);
       const dialog = screen.getByRole('dialog');
-      expect(document.activeElement).toBe(dialog);
+      const panel = dialog.parentElement!;
+      expect(document.activeElement).toBe(panel);
     });
 
     it('Tab cycles through Cancel and Delete buttons within the modal', async () => {

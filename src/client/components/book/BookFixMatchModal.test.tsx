@@ -265,4 +265,36 @@ describe('BookFixMatchModal (#1129)', () => {
       });
     });
   });
+
+  describe('dismissal via base Modal (#1219)', () => {
+    function renderWithOnClose(onClose: () => void) {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <BookFixMatchModal book={mockBook} onClose={onClose} />
+        </QueryClientProvider>,
+      );
+    }
+
+    it('pressing Escape calls onClose (dismissal centralized in base Modal)', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithOnClose(onClose);
+
+      await user.keyboard('{Escape}');
+
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('clicking the backdrop does NOT call onClose and leaves the dialog open', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      renderWithOnClose(onClose);
+
+      await user.click(screen.getByTestId('modal-backdrop'));
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+  });
 });

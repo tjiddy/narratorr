@@ -162,7 +162,7 @@ describe('NamingTokenModal', () => {
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('does not close when backdrop is clicked (closeOnBackdropClick={false})', () => {
+    it('does not close when backdrop is clicked (backdrop-click dismissal removed)', () => {
       const onClose = vi.fn();
       renderWithProviders(<NamingTokenModal {...defaultProps} onClose={onClose} />);
       fireEvent.click(screen.getByTestId('modal-backdrop'));
@@ -197,10 +197,10 @@ describe('NamingTokenModal', () => {
       expect(heading!.tagName).toBe('H2');
     });
 
-    it('dialog element receives focus on open via modalRef', () => {
+    it('base Modal panel receives focus on open (base Modal now owns the focus trap)', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} />);
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toHaveFocus();
+      const panel = screen.getByRole('dialog').parentElement!;
+      expect(panel).toHaveFocus();
     });
   });
 

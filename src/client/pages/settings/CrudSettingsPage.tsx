@@ -1,6 +1,6 @@
 // Does not use useSettingsForm: manages entity CRUD lifecycles (create/edit/delete/test),
 // not single-category settings patches.
-import { useCallback, useRef, type ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import type { TestResult } from '@/lib/api';
 import { Modal } from '@/components/Modal';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -8,7 +8,6 @@ import {
   LoadingSpinner,
   PlusIcon,
 } from '@/components/icons';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useCrudSettings, type CrudSettingsConfig } from '@/hooks/useCrudSettings';
 import type { IdTestResult } from '@/hooks/useConnectionTest';
 
@@ -72,7 +71,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
   const { createMutation, updateMutation, deleteMutation } = mutations;
   const { testingId, testResult, testingForm, formTestResult, handleTest, handleFormTest } = tests;
 
-  const modalRef = useRef<HTMLDivElement>(null);
   const isModalOpen = modal === true && (showForm || editingId !== null);
   const isMutationPending = createMutation.isPending || updateMutation.isPending;
 
@@ -81,8 +79,6 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
     if (showForm) handleToggleForm();
     else if (editingId !== null) handleCancelEdit();
   }, [isMutationPending, showForm, editingId, handleToggleForm, handleCancelEdit]);
-
-  useEscapeKey(isModalOpen, handleModalClose, modalRef);
 
   return (
     <div className="space-y-6">
@@ -171,11 +167,10 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
         return (
           <Modal
             onClose={handleModalClose}
-            closeOnBackdropClick={false}
             scrollable
             className="w-full max-w-3xl"
           >
-            <div ref={modalRef} tabIndex={-1} className="p-6 overflow-y-auto">
+            <div tabIndex={-1} className="p-6 overflow-y-auto">
               {showForm && renderForm({
                 onSubmit: (data) => createMutation.mutate(data),
                 onFormTest: handleFormTest,

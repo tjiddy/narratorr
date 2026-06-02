@@ -803,7 +803,7 @@ describe('BookDetails', () => {
       expect(api.renameBook).not.toHaveBeenCalled();
     });
 
-    it('backdrop click closes the modal without calling api.renameBook', async () => {
+    it('backdrop click does NOT close the modal and does NOT call api.renameBook', async () => {
       const user = userEvent.setup();
       (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -812,10 +812,10 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-      // Click the backdrop (fixed overlay behind the modal panel)
+      // Click the backdrop (fixed overlay behind the modal panel) — backdrop dismissal removed
       await user.click(document.querySelector('.fixed.inset-0')!);
 
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.renameBook).not.toHaveBeenCalled();
     });
   });
@@ -936,7 +936,7 @@ describe('BookDetails', () => {
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 
-    it('backdrop click closes the modal without calling api.retagBook', async () => {
+    it('backdrop click does NOT close the modal and does NOT call api.retagBook', async () => {
       const user = userEvent.setup();
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -946,9 +946,10 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
+      // backdrop dismissal removed — clicking the backdrop is a no-op
       await user.click(document.querySelector('.fixed.inset-0')!);
 
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 

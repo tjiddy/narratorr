@@ -63,9 +63,18 @@ describe('WelcomeModal', () => {
     expect(screen.getByRole('button', { name: /get started/i })).toHaveAttribute('type', 'button');
   });
 
-  it('pressing Escape does NOT close the modal (onboarding requires explicit Get Started)', async () => {
+  it('pressing Escape dismisses the modal (calls onDismiss) when not pending', async () => {
     const user = userEvent.setup();
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+
+    await user.keyboard('{Escape}');
+
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it('pressing Escape does NOT call onDismiss while isPending (guards against double-submit)', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen isPending onDismiss={onDismiss} />);
 
     await user.keyboard('{Escape}');
 
