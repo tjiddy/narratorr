@@ -16,7 +16,7 @@ import { recordGrabFailedEvent } from '../utils/download-side-effects.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
-import { parseWordList, matchesRejectWord } from '../../shared/parse-word-list.js';
+import { parseWordList, matchesWord } from '../../shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '../../shared/constants.js';
 import { cleanIndexerQuery } from './indexer-query.js';
 
@@ -98,7 +98,7 @@ function buildQualityGates(
       evaluate: (r) => {
         const surfaces = [r.nzbName, r.rawTitle, r.title, r.author, r.narrator].filter(Boolean) as string[];
         for (const surface of surfaces) {
-          const matched = rejectList.find((word) => matchesRejectWord(surface, word));
+          const matched = rejectList.find((word) => matchesWord(surface, word));
           if (matched) return { keep: false, logFields: { matchedWord: matched } };
         }
         return { keep: true };
@@ -109,7 +109,7 @@ function buildQualityGates(
       enabled: requiredList.length > 0,
       evaluate: (r) => {
         const surfaces = [r.nzbName, r.rawTitle, r.title, r.author, r.narrator].filter(Boolean) as string[];
-        return requiredList.some((word) => surfaces.some((s) => matchesRejectWord(s, word))) ? { keep: true } : { keep: false };
+        return requiredList.some((word) => surfaces.some((s) => matchesWord(s, word))) ? { keep: true } : { keep: false };
       },
     },
     {

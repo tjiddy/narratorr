@@ -5,14 +5,16 @@ export function parseWordList(csv: string | undefined): string[] {
 }
 
 /**
- * Word-boundary, case-insensitive match of a reject-word phrase against a surface.
- * Prevents substring collisions like "abridged" matching "unabridged".
+ * Word-boundary, case-insensitive match of a word/phrase against a surface.
+ * Prevents substring collisions like "abridged" matching "unabridged". Used by
+ * both the reject-word and required-word search filters.
  *
  * `\b` in JS only recognizes ASCII word boundaries — fine for the English-language
- * scope of rejectWords. Multi-word phrases (e.g. "Behind the Scenes") still work
- * because escaping leaves internal spaces literal and `\b` anchors at the outer ends.
+ * scope of these word lists. Multi-word phrases (e.g. "Behind the Scenes") still
+ * work because escaping leaves internal spaces literal and `\b` anchors at the
+ * outer ends.
  */
-export function matchesRejectWord(surface: string, word: string): boolean {
+export function matchesWord(surface: string, word: string): boolean {
   if (!word) return false;
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`\\b${escaped}\\b`, 'i').test(surface);

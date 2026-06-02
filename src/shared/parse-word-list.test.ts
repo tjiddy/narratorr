@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchesRejectWord, parseWordList } from './parse-word-list.js';
+import { matchesWord, parseWordList } from './parse-word-list.js';
 
 describe('parseWordList', () => {
   it('returns empty array for undefined input', () => {
@@ -35,72 +35,72 @@ describe('parseWordList', () => {
   });
 });
 
-describe('matchesRejectWord', () => {
+describe('matchesWord', () => {
   describe('word-boundary semantics', () => {
     it('matches when word is delimited by dots', () => {
-      expect(matchesRejectWord('Sample.Audiobook.MP3', 'Sample')).toBe(true);
+      expect(matchesWord('Sample.Audiobook.MP3', 'Sample')).toBe(true);
     });
 
     it('does not match inside a longer word (suffix)', () => {
-      expect(matchesRejectWord('Sampleyana', 'Sample')).toBe(false);
+      expect(matchesWord('Sampleyana', 'Sample')).toBe(false);
     });
 
     it('matches when word is delimited by spaces on both sides', () => {
-      expect(matchesRejectWord('Foo Sample Bar', 'Sample')).toBe(true);
+      expect(matchesWord('Foo Sample Bar', 'Sample')).toBe(true);
     });
 
     it('does not match when there is no leading boundary (CamelCase prefix)', () => {
-      expect(matchesRejectWord('FooSample', 'Sample')).toBe(false);
+      expect(matchesWord('FooSample', 'Sample')).toBe(false);
     });
 
     it('does not match when there is no trailing boundary (CamelCase suffix)', () => {
-      expect(matchesRejectWord('SampleFoo', 'Sample')).toBe(false);
+      expect(matchesWord('SampleFoo', 'Sample')).toBe(false);
     });
 
     it('does not match "abridged" inside "unabridged" (canonical collision case)', () => {
-      expect(matchesRejectWord('unabridged', 'abridged')).toBe(false);
+      expect(matchesWord('unabridged', 'abridged')).toBe(false);
     });
 
     it('does not match "Abridged" inside dotted "Unabridged"', () => {
-      expect(matchesRejectWord('Dune.Unabridged.M4B', 'Abridged')).toBe(false);
+      expect(matchesWord('Dune.Unabridged.M4B', 'Abridged')).toBe(false);
     });
   });
 
   describe('case-insensitivity', () => {
     it('matches uppercase surface against lowercase word', () => {
-      expect(matchesRejectWord('SAMPLE CHAPTERS', 'sample')).toBe(true);
+      expect(matchesWord('SAMPLE CHAPTERS', 'sample')).toBe(true);
     });
 
     it('matches lowercase surface against uppercase word', () => {
-      expect(matchesRejectWord('sample chapters', 'SAMPLE')).toBe(true);
+      expect(matchesWord('sample chapters', 'SAMPLE')).toBe(true);
     });
   });
 
   describe('multi-word phrases', () => {
     it('matches multi-word phrase at start of surface', () => {
-      expect(matchesRejectWord('Behind the Scenes Featurette', 'Behind the Scenes')).toBe(true);
+      expect(matchesWord('Behind the Scenes Featurette', 'Behind the Scenes')).toBe(true);
     });
 
     it('matches multi-word phrase later in surface', () => {
-      expect(matchesRejectWord('Right Behind the Scenes', 'Behind the Scenes')).toBe(true);
+      expect(matchesWord('Right Behind the Scenes', 'Behind the Scenes')).toBe(true);
     });
 
     it('does not match multi-word phrase against CamelCase concatenation', () => {
-      expect(matchesRejectWord('BehindTheScenes', 'Behind the Scenes')).toBe(false);
+      expect(matchesWord('BehindTheScenes', 'Behind the Scenes')).toBe(false);
     });
   });
 
   describe('empty / edge inputs', () => {
     it('returns false for empty word (short-circuit, avoids \\b\\b regex)', () => {
-      expect(matchesRejectWord('foo', '')).toBe(false);
+      expect(matchesWord('foo', '')).toBe(false);
     });
 
     it('returns false for empty surface', () => {
-      expect(matchesRejectWord('', 'foo')).toBe(false);
+      expect(matchesWord('', 'foo')).toBe(false);
     });
 
     it('returns false when both inputs are empty', () => {
-      expect(matchesRejectWord('', '')).toBe(false);
+      expect(matchesWord('', '')).toBe(false);
     });
   });
 
@@ -123,13 +123,13 @@ describe('matchesRejectWord', () => {
       ['pipe treated literally (not alternation)', 'foo a bar', 'a|b', false],
       ['backslash', 'foo a\\b bar', 'a\\b', true],
     ] as const)('%s', (_label, surface, word, expected) => {
-      expect(matchesRejectWord(surface, word)).toBe(expected);
+      expect(matchesWord(surface, word)).toBe(expected);
     });
   });
 
   describe('ASCII-boundary limitation (documented per JSDoc)', () => {
     it('does not match a word ending in a non-ASCII letter (\\b only fires at ASCII transitions)', () => {
-      expect(matchesRejectWord('café au lait', 'café')).toBe(false);
+      expect(matchesWord('café au lait', 'café')).toBe(false);
     });
   });
 });
