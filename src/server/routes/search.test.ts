@@ -218,7 +218,7 @@ describe('filterAndRankResults', () => {
       expect(filtered).toHaveLength(1);
     });
 
-    it('matching is case-insensitive substring', () => {
+    it('matching is case-insensitive at word boundaries', () => {
       const results = [makeResult({ title: 'Book m4b format' })];
       const { results: filtered } = filterAndRankResults(results, ONE_HOUR, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' });
       expect(filtered).toHaveLength(1);

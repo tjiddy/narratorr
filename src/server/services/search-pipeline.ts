@@ -108,8 +108,8 @@ function buildQualityGates(
       reason: 'required-word-missing',
       enabled: requiredList.length > 0,
       evaluate: (r) => {
-        const sourceTitle = (r.nzbName || r.rawTitle || r.title).toLowerCase();
-        return requiredList.some((word) => sourceTitle.includes(word)) ? { keep: true } : { keep: false };
+        const surfaces = [r.nzbName, r.rawTitle, r.title, r.author, r.narrator].filter(Boolean) as string[];
+        return requiredList.some((word) => surfaces.some((s) => matchesRejectWord(s, word))) ? { keep: true } : { keep: false };
       },
     },
     {
