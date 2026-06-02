@@ -183,10 +183,10 @@ describe('WelcomeModal', () => {
   });
 
   // Clickable cards (AC4)
-  it('all 11 cards render as <a> links with target="_blank" and rel="noopener noreferrer"', () => {
+  it('all 10 cards render as <a> links with target="_blank" and rel="noopener noreferrer"', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(11);
+    expect(links).toHaveLength(10);
     for (const link of links) {
       expect(link).toHaveAttribute('target', '_blank');
       expect(link).toHaveAttribute('rel', 'noopener noreferrer');
@@ -266,14 +266,6 @@ describe('WelcomeModal', () => {
     );
   });
 
-  it('Recommendations card links to https://docs.narratorr.dev/guides/discovery/', () => {
-    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(screen.getByRole('link', { name: /recommendations/i })).toHaveAttribute(
-      'href',
-      'https://docs.narratorr.dev/guides/discovery/',
-    );
-  });
-
   it('Series Metadata card links to https://docs.narratorr.dev/configuration/settings/#metadata', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(screen.getByRole('link', { name: /series metadata/i })).toHaveAttribute(
@@ -294,16 +286,19 @@ describe('WelcomeModal', () => {
     ).toBeInTheDocument();
   });
 
-  // Grid layout — 5 cards tile at the same comfortable width as the "Read This
-  // First" / "First Steps" rows (sm:grid-cols-3 → a 3+2 wrap), NOT a cramped
-  // single 5-across row where long titles like "Recommendations" overflow into
-  // the neighbouring card.
-  it('Features grid uses sm:grid-cols-3 so 5 cards tile as 3+2 at readable width', () => {
+  // Grid layout — 4 feature cards tile in a single 4-across row (sm:grid-cols-4)
+  // at the original width: no scroll, no orphaned card.
+  it('Features grid uses sm:grid-cols-4 for a single 4-across row', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const heading = screen.getByText('Features Worth Knowing');
     const grid = heading.parentElement!.querySelector('div.grid')!;
-    expect(grid.className).toContain('sm:grid-cols-3');
+    expect(grid.className).toContain('sm:grid-cols-4');
     expect(grid.className).not.toContain('grid-cols-5');
+  });
+
+  it('does not render a Recommendations card (Discovery is on by default)', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    expect(screen.queryByRole('link', { name: /recommendations/i })).toBeNull();
   });
 
   // Preserved hidden behavior (F3) — FeaturesSection must keep its max-height hide
@@ -378,13 +373,6 @@ describe('WelcomeModal', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(
       screen.getByText('Bulk-import books from lists and monitor them automatically.'),
-    ).toBeInTheDocument();
-  });
-
-  it('Recommendations card description reads "Personalised suggestions based on your library. Discover what to read next."', () => {
-    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(
-      screen.getByText('Personalised suggestions based on your library. Discover what to read next.'),
     ).toBeInTheDocument();
   });
 

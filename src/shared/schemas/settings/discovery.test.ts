@@ -24,7 +24,7 @@ describe('Discovery Settings Schema', () => {
   it('applies correct defaults', () => {
     const result = discoverySettingsSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
@@ -62,7 +62,7 @@ describe('Discovery Settings Schema', () => {
   it('is registered in settingsRegistry with correct defaults', () => {
     expect(settingsRegistry.discovery).toBeDefined();
     expect(settingsRegistry.discovery.defaults).toEqual({
-      enabled: false,
+      enabled: true,
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
@@ -73,7 +73,7 @@ describe('Discovery Settings Schema', () => {
 
   it('appears in DEFAULT_SETTINGS', () => {
     expect(DEFAULT_SETTINGS.discovery).toEqual({
-      enabled: false,
+      enabled: true,
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,

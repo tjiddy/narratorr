@@ -10,7 +10,6 @@ import {
   ListIcon,
   CpuIcon,
   NetworkIcon,
-  SparklesIcon,
   LibraryIcon,
 } from '@/components/icons.js';
 import { Modal } from '@/components/Modal';
@@ -59,12 +58,11 @@ function FeaturesSection() {
       <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
         Features Worth Knowing
       </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <InfoCard href="https://docs.narratorr.dev/guides/import-lists/" icon={<ListIcon className="w-5 h-5 text-primary" />} title="List Importing" description="Bulk-import books from lists and monitor them automatically." />
-        <InfoCard href="https://docs.narratorr.dev/guides/audio-processing/" icon={<CpuIcon className="w-5 h-5 text-primary" />} title="Post Processing" description="Auto-convert to M4B after import. Chapters, cover art, and more." />
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <InfoCard href="https://docs.narratorr.dev/configuration/indexers/" icon={<NetworkIcon className="w-5 h-5 text-primary" />} title="Prowlarr Support" description="Connect Prowlarr to manage all your indexers from one place." />
-        <InfoCard href="https://docs.narratorr.dev/guides/discovery/" icon={<SparklesIcon className="w-5 h-5 text-primary" />} title="Recommendations" description="Personalised suggestions based on your library. Discover what to read next." />
         <InfoCard href="https://docs.narratorr.dev/configuration/settings/#metadata" icon={<LibraryIcon className="w-5 h-5 text-primary" />} title="Series Metadata" description="Add a free Hardcover key to fill Series cards with canonical members — without it, only library books show." />
+        <InfoCard href="https://docs.narratorr.dev/guides/audio-processing/" icon={<CpuIcon className="w-5 h-5 text-primary" />} title="Post Processing" description="Auto-convert to M4B after import. Chapters, cover art, and more." />
+        <InfoCard href="https://docs.narratorr.dev/guides/import-lists/" icon={<ListIcon className="w-5 h-5 text-primary" />} title="List Importing" description="Bulk-import books from lists and monitor them automatically." />
       </div>
     </section>
   );
@@ -147,17 +145,17 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
               badge={<WarningBadge />}
             />
             <InfoCard
-              href="https://docs.narratorr.dev/configuration/metadata/"
-              icon={<GlobeIcon className="w-5 h-5 text-primary" />}
-              title={"Region: US\nLanguage: English"}
-              description={<>Metadata defaults to US region and English language. Change in <span className="whitespace-nowrap">Settings → Search → Filtering</span>.</>}
-              badge={<WarningBadge />}
-            />
-            <InfoCard
               href="https://docs.narratorr.dev/configuration/library/"
               icon={<AlertIcon className="w-5 h-5 text-primary" />}
               title="Library path: /audiobooks"
               description={<>Files are stored at /audiobooks. If your Docker mount differs, update it in <span className="whitespace-nowrap">Settings → Library</span>.</>}
+              badge={<WarningBadge />}
+            />
+            <InfoCard
+              href="https://docs.narratorr.dev/configuration/metadata/"
+              icon={<GlobeIcon className="w-5 h-5 text-primary" />}
+              title={"Region: US\nLanguage: English"}
+              description={<>Metadata defaults to US region and English language. Change in <span className="whitespace-nowrap">Settings → Search → Filtering</span>.</>}
               badge={<WarningBadge />}
             />
           </div>
@@ -176,16 +174,16 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
               description="Already have audiobooks? Scan your existing folders to add them to your library."
             />
             <InfoCard
-              href="https://docs.narratorr.dev/guides/manual-import/"
-              icon={<FolderInputIcon className="w-5 h-5 text-primary" />}
-              title="Manual Import"
-              description="Import from a specific folder — useful for one-off additions outside your library path."
-            />
-            <InfoCard
               href="https://docs.narratorr.dev/getting-started/first-run/"
               icon={<SearchPlusIcon className="w-5 h-5 text-primary" />}
               title="Add a Book"
               description="Search for a book and send it to your download client directly from narratorr."
+            />
+            <InfoCard
+              href="https://docs.narratorr.dev/guides/manual-import/"
+              icon={<FolderInputIcon className="w-5 h-5 text-primary" />}
+              title="Manual Import"
+              description="Import from a specific folder — useful for one-off additions outside your library path."
             />
           </div>
         </section>
