@@ -103,9 +103,14 @@ export function NetworkSettingsSection() {
           {errors.proxyUrl ? (
             <p className="text-sm text-destructive mt-1">{errors.proxyUrl.message}</p>
           ) : (
-            <p className="text-sm text-muted-foreground mt-2">
-              Route indexer search and test traffic through an HTTP or SOCKS5 proxy. Enable per-indexer in Settings &gt; Indexers.
-            </p>
+            <>
+              <p className="text-sm text-muted-foreground mt-2">
+                Applies to indexer search and test traffic only — not metadata, cover art, or other outbound requests.
+              </p>
+              <p className="text-sm text-amber-500 mt-1">
+                Has no effect on its own — you must also turn on <span className="font-medium">Route through proxy</span> for each indexer that should use it (Settings &gt; Indexers).
+              </p>
+            </>
           )}
         </div>
 
