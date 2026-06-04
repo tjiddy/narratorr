@@ -3,8 +3,8 @@ import { NAMING_PRESETS, detectPreset } from './naming-presets.js';
 import { renderTemplate, renderFilename } from './naming.js';
 
 describe('NAMING_PRESETS', () => {
-  it('has exactly 4 presets', () => {
-    expect(NAMING_PRESETS).toHaveLength(4);
+  it('has exactly 5 presets', () => {
+    expect(NAMING_PRESETS).toHaveLength(5);
   });
 
   it('contains Standard preset with correct formats', () => {
@@ -13,6 +13,14 @@ describe('NAMING_PRESETS', () => {
     expect(preset!.name).toBe('Standard');
     expect(preset!.folderFormat).toBe('{author}/{title}');
     expect(preset!.fileFormat).toBe('{author} - {title}');
+  });
+
+  it('contains Detailed preset with correct formats', () => {
+    const preset = NAMING_PRESETS.find(p => p.id === 'detailed');
+    expect(preset).toBeDefined();
+    expect(preset!.name).toBe('Detailed');
+    expect(preset!.folderFormat).toBe('{author}/{series}/{seriesPosition:00? - }{title}');
+    expect(preset!.fileFormat).toBe('{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}');
   });
 
   it('contains Audiobookshelf preset with correct formats', () => {
@@ -96,6 +104,7 @@ describe('Plex preset with prefix conditional syntax', () => {
 describe('detectPreset', () => {
   it('returns preset id when both fields match a defined preset', () => {
     expect(detectPreset('{author}/{title}', '{author} - {title}')).toBe('standard');
+    expect(detectPreset('{author}/{series}/{seriesPosition:00? - }{title}', '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}')).toBe('detailed');
     expect(detectPreset('{author}/{series?/}{title}', '{title}')).toBe('audiobookshelf');
     expect(detectPreset('{authorLastFirst}/{titleSort}', '{authorLastFirst} - {titleSort}')).toBe('last-first');
   });
