@@ -225,6 +225,7 @@ export class BulkOperationService {
     if (!processingSettings.ffmpegPath?.trim()) {
       throw new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED');
     }
+    const targetFormat = processingSettings.outputFormat ?? 'm4b';
     const id = randomUUID();
     const job = new BulkJob(id, 'convert', this.log, async (setTotal, tick) => {
       const rows = await this.db
@@ -233,7 +234,7 @@ export class BulkOperationService {
         .where(
           and(
             eq(books.status, 'imported'),
-            or(isNull(books.audioFileFormat), sql`LOWER(${books.audioFileFormat}) != 'm4b'`),
+            or(isNull(books.audioFileFormat), sql`LOWER(${books.audioFileFormat}) != ${targetFormat}`),
           ),
         );
 
@@ -305,7 +306,7 @@ export class BulkOperationService {
     bookId: number,
     bookPath: string,
     bookTitle: string,
-    processingSettings: { ffmpegPath: string; outputFormat?: 'm4b' | 'mp3'; bitrate?: number | null },
+    processingSettings: { ffmpegPath: string; outputFormat?: 'm4b' | 'mp3'; mergeBehavior?: 'always' | 'multi-file-only' | 'never'; bitrate?: number | null },
   ): Promise<void> {
     const stagingDir = bookPath + '.convert-tmp';
     const book = await this.bookService.getById(bookId);
@@ -327,8 +328,8 @@ export class BulkOperationService {
         stagingDir,
         {
           ffmpegPath: processingSettings.ffmpegPath,
-          outputFormat: 'm4b',
-          mergeBehavior: 'always',
+          outputFormat: processingSettings.outputFormat ?? 'm4b',
+          mergeBehavior: processingSettings.mergeBehavior ?? 'always',
           bitrate: targetBitrateKbps,
           sourceBitrateKbps,
         },

@@ -226,7 +226,7 @@ export class MergeService {
 
     try {
       this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
+      const stagedOutput = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
 
       // Check abort signal before committing (cooperative cancel during verifying)
       if (controller.signal.aborted) {
@@ -234,7 +234,7 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'committing');
-      const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
+      const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId);
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
@@ -244,8 +244,8 @@ export class MergeService {
         this.log.warn({ bookId }, 'Post-merge enrichment did not enrich — merge succeeded on disk, but DB audio fields may be stale');
       }
 
-      this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged to M4B');
-      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`;
+      this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged');
+      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
       this.emitMergeComplete(bookId, book.title, message, enrichmentWarning);
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
     } catch (error: unknown) {
@@ -260,12 +260,12 @@ export class MergeService {
     }
   }
 
-  /** Steps 1-5: copy to staging, process, verify. Returns the staged M4B filename. */
+  /** Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension follows outputFormat). */
   private async runStaging(
     stagingDir: string,
     book: { path: string; title: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
     audioFiles: string[],
-    processingSettings: { ffmpegPath: string; keepOriginalBitrate?: boolean; bitrate?: number },
+    processingSettings: { ffmpegPath: string; outputFormat?: 'm4b' | 'mp3'; keepOriginalBitrate?: boolean; bitrate?: number },
     bookId: number,
     bookTitle: string,
     signal?: AbortSignal,
@@ -286,11 +286,15 @@ export class MergeService {
 
     this.emitMergeProgress(bookId, bookTitle, 'processing');
 
+    const outputFormat = processingSettings.outputFormat ?? 'm4b';
     const processingResult = await processAudioFiles(stagingDir, {
       ffmpegPath: processingSettings.ffmpegPath,
-      outputFormat: 'm4b',
+      outputFormat,
       ...(targetBitrateKbps !== undefined && { bitrate: targetBitrateKbps }),
       ...(sourceBitrateKbps !== undefined && { sourceBitrateKbps }),
+      // Manual Merge always merges by design (decision (a)): the user explicitly clicked
+      // "Merge", so honoring mergeBehavior 'never'/'multi-file-only' here would make the
+      // button silently do nothing. mergeBehavior is consulted only on the bulk Convert path.
       mergeBehavior: 'always',
     }, {
       author: authorName,
@@ -317,28 +321,29 @@ export class MergeService {
       onDebug: (msg, payload) => this.log.debug(payload, msg),
     });
     if (!scanResult) {
-      throw new Error('Staged M4B failed verification — audio scan returned null');
+      throw new Error('Staged output failed verification — audio scan returned null');
     }
 
+    const outputExt = outputFormat === 'mp3' ? '.mp3' : '.m4b';
     const stagingEntries = await readdir(stagingDir);
-    const stagedM4b = stagingEntries.find((f) => extname(f).toLowerCase() === '.m4b');
-    if (!stagedM4b) {
-      throw new Error('Staged M4B not found after processing');
+    const stagedOutput = stagingEntries.find((f) => extname(f).toLowerCase() === outputExt);
+    if (!stagedOutput) {
+      throw new Error('Staged output not found after processing');
     }
 
-    return stagedM4b;
+    return stagedOutput;
   }
 
-  /** Step 7: move M4B to book.path, update DB size, delete originals, clean staging. */
+  /** Step 7: move the staged output to book.path, update DB size, delete originals, clean staging. */
   private async commitMerge(
     stagingDir: string,
-    stagedM4b: string,
+    stagedOutput: string,
     bookPath: string,
     originalsToDelete: string[],
     bookId: number,
   ): Promise<string> {
-    const outputPath = join(bookPath, stagedM4b);
-    await rename(join(stagingDir, stagedM4b), outputPath);
+    const outputPath = join(bookPath, stagedOutput);
+    await rename(join(stagingDir, stagedOutput), outputPath);
 
     // Update DB immediately after the first irreversible step (rename).
     // If this fails, the merged M4B is still valid at outputPath; originals remain untouched.
@@ -346,7 +351,7 @@ export class MergeService {
     await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
 
     for (const file of originalsToDelete) {
-      if (file === stagedM4b) continue; // skip: this is the output file we just moved in
+      if (file === stagedOutput) continue; // skip: this is the output file we just moved in
       try {
         await unlink(join(bookPath, file));
       } catch {

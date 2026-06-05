@@ -221,6 +221,28 @@ describe('processAudioFiles', () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
+  it('re-encodes single m4b input to mp3 when outputFormat is mp3 (does not short-circuit)', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'book.m4b', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'book.m4b'), title: 'Ch 1', trackNumber: 1 },
+    ]);
+    mockSpawnSuccess();
+
+    const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3' };
+    const result = await processAudioFiles('/lib/book', config, defaultContext);
+
+    // The single-m4b skip must NOT apply for an mp3 target — convert path runs.
+    expect(mockSpawn).toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outputFiles).toEqual([join('/lib/book', 'book.mp3')]);
+    }
+    // Original .m4b removed after re-encode to a differently-named .mp3.
+    expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', 'book.m4b'));
+  });
+
   it('returns empty output for directory with no audio files', async () => {
     mockReaddir.mockResolvedValue([
       { name: 'readme.txt', isFile: () => true, isDirectory: () => false },

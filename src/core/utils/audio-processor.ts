@@ -98,8 +98,14 @@ export async function processAudioFiles(
     return { success: true, outputFiles: [] };
   }
 
-  // Skip processing for single m4b (already ABS-ready)
-  if (audioFiles.length === 1 && extname(audioFiles[0]!).toLowerCase() === '.m4b') {
+  // Skip processing for single m4b (already ABS-ready) — but only when the configured
+  // target is also m4b. With outputFormat 'mp3', a single .m4b must fall through to the
+  // convert path so it is re-encoded to .mp3 rather than returned unchanged.
+  if (
+    audioFiles.length === 1 &&
+    extname(audioFiles[0]!).toLowerCase() === '.m4b' &&
+    config.outputFormat === 'm4b'
+  ) {
     return { success: true, outputFiles: audioFiles };
   }
 

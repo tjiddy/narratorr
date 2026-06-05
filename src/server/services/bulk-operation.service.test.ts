@@ -18,6 +18,14 @@ import type { Db } from '../../db/index.js';
 import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
+
+/** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
+const dialect = new SQLiteSyncDialect();
+function toSQL(expr: unknown): { sql: string; params: unknown[] } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL());
+}
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn(),
@@ -511,6 +519,58 @@ describe('BulkOperationService — convert batch', () => {
       expect.objectContaining({ title: 'Title' }),
     );
     expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
+  });
+
+  it('threads outputFormat and mergeBehavior from settings into processAudioFiles', async () => {
+    setupConvertMocks();
+    const { service, db } = createService({
+      settingsOverrides: {
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      },
+    });
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: BOOK_PATH, title: 'Title' },
+    ]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      BOOK_PATH + '.convert-tmp',
+      expect.objectContaining({ outputFormat: 'mp3', mergeBehavior: 'multi-file-only' }),
+      expect.any(Object),
+    );
+  });
+
+  it('eligibility predicate targets the configured outputFormat (m4b default)', async () => {
+    setupConvertMocks();
+    const { service, db } = createService();
+    const chain = mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]);
+    db.select.mockReturnValueOnce(chain);
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    // The eligibility filter binds the configured target format, not a hardcoded literal.
+    const whereArg = (chain.where as Mock).mock.calls[0]![0];
+    const { sql, params } = toSQL(whereArg);
+    expect(sql).toMatch(/lower\("books"\."audio_file_format"\) != \?/i);
+    expect(params).toContain('m4b');
+    expect(params).not.toContain('mp3');
+  });
+
+  it('eligibility predicate targets the configured outputFormat (mp3)', async () => {
+    setupConvertMocks();
+    const { service, db } = createService({
+      settingsOverrides: {
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      },
+    });
+    const chain = mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]);
+    db.select.mockReturnValueOnce(chain);
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    // With an mp3 target, already-mp3 books are excluded and already-m4b books are included.
+    const whereArg = (chain.where as Mock).mock.calls[0]![0];
+    const { params } = toSQL(whereArg);
+    expect(params).toContain('mp3');
+    expect(params).not.toContain('m4b');
   });
 
   it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {
