@@ -80,7 +80,7 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; processing?: Partial<typeof processingOverrides.processing> }) {
+function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean }> }) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
