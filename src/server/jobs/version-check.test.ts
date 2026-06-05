@@ -430,4 +430,57 @@ describe('version check job', () => {
       }
     });
   });
+
+  describe('timeout signal freshness (F1)', () => {
+    // The abort signal must be built per fetch call. A module-scoped
+    // `AbortSignal.timeout(10_000)` would start counting at load and be
+    // permanently aborted once the app has been up past the window, silently
+    // failing every scheduled/manual check thereafter.
+    function captureSignals() {
+      const signals: (AbortSignal | undefined)[] = [];
+      mockFetch.mockImplementation((_url: string, opts?: RequestInit) => {
+        signals.push(opts?.signal ?? undefined);
+        return Promise.resolve(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      });
+      return signals;
+    }
+
+    it('builds a fresh, non-aborted signal for a check run past the timeout window', async () => {
+      vi.useFakeTimers();
+      try {
+        const signals = captureSignals();
+
+        await runCheck();
+        // Simulate the app being up well past the 10s fetch timeout window.
+        vi.advanceTimersByTime(11_000);
+        await runCheck();
+
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        // A shared module-scoped signal would be the same object on both calls
+        // (and already aborted after the advance); a per-call signal is distinct.
+        expect(signals[0]).not.toBe(signals[1]);
+        expect(signals[1]?.aborted).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('the develop path also builds a per-call signal', async () => {
+      channelState.version = 'develop-abc1234';
+      channelState.commit = 'abc1234';
+      const signals: (AbortSignal | undefined)[] = [];
+      mockFetch.mockImplementation((_url: string, opts?: RequestInit) => {
+        signals.push(opts?.signal ?? undefined);
+        return Promise.resolve(makeGitHubCompare(2, COMPARE_HTML_URL));
+      });
+
+      await runCheck();
+      await runCheck();
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(signals[0]).not.toBe(signals[1]);
+      expect(signals[0]?.aborted).toBe(false);
+      expect(signals[1]?.aborted).toBe(false);
+    });
+  });
 });

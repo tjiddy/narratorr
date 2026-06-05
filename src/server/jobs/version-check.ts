@@ -21,10 +21,16 @@ export function _resetUpdateCache() {
 const RELEASES_API_URL = 'https://api.github.com/repos/tjiddy/narratorr/releases/latest';
 const COMPARE_API_BASE = 'https://api.github.com/repos/tjiddy/narratorr/compare';
 
-const FETCH_OPTS = {
-  headers: { 'Accept': 'application/vnd.github.v3+json' },
-  signal: AbortSignal.timeout(10_000),
-};
+// Build fetch options *per call* — `AbortSignal.timeout` starts counting the
+// moment it is created, so a module-scoped signal would be permanently aborted
+// 10s after load and fail every scheduled/manual check thereafter. Each fetch
+// gets a fresh 10s budget.
+function fetchOpts(): RequestInit {
+  return {
+    headers: { 'Accept': 'application/vnd.github.v3+json' },
+    signal: AbortSignal.timeout(10_000),
+  };
+}
 
 /**
  * Channel-aware update detection. Classifies the running build *before* any
@@ -57,7 +63,7 @@ export async function checkForUpdate(log: FastifyBaseLogger): Promise<void> {
 /** Stable channel: semver compare against the latest GitHub release. */
 async function checkStableUpdate(log: FastifyBaseLogger, currentVersion: string): Promise<void> {
   try {
-    const response = await fetch(RELEASES_API_URL, FETCH_OPTS);
+    const response = await fetch(RELEASES_API_URL, fetchOpts());
     if (!response.ok) {
       log.warn({ status: response.status, statusText: response.statusText }, 'Version check: GitHub API returned non-OK status');
       return;
@@ -90,7 +96,7 @@ async function checkStableUpdate(log: FastifyBaseLogger, currentVersion: string)
  */
 async function checkDevelopUpdate(log: FastifyBaseLogger, currentCommit: string): Promise<void> {
   try {
-    const response = await fetch(`${COMPARE_API_BASE}/${currentCommit}...develop`, FETCH_OPTS);
+    const response = await fetch(`${COMPARE_API_BASE}/${currentCommit}...develop`, fetchOpts());
     if (!response.ok) {
       log.warn({ status: response.status, statusText: response.statusText }, 'Version check: GitHub compare API returned non-OK status');
       return;
