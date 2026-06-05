@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { HealthCheckService } from './health-check.service.js';
+import { getUpdateStatus } from '../jobs/version-check.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
 import { inject, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
@@ -10,6 +11,11 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { Db } from '../../db/index.js';
+
+vi.mock('../jobs/version-check.js', () => ({
+  getUpdateStatus: vi.fn(),
+  checkForUpdate: vi.fn(),
+}));
 
 function createService(overrides?: {
   indexer?: Partial<IndexerService>;
@@ -957,6 +963,71 @@ describe('HealthCheckService', () => {
       expect(indexerResult).toBeDefined();
       expect(indexerResult!.state).toBe('error');
       expect(indexerResult!.message).toBe('Auth failed');
+    });
+  });
+
+  describe('#1230 — checkVersionUpdate', () => {
+    afterEach(() => {
+      vi.mocked(getUpdateStatus).mockReset();
+    });
+
+    it('emits a warning row with a release-notes link when an update is available', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '1.2.3',
+        releaseUrl: 'https://github.com/tjiddy/narratorr/releases/v1.2.3',
+        dismissed: false,
+      });
+      const { service } = createService();
+
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'version-update');
+      expect(check).toEqual({
+        checkName: 'version-update',
+        state: 'warning',
+        message: 'Update available: v1.2.3',
+        link: { url: 'https://github.com/tjiddy/narratorr/releases/v1.2.3', label: 'Release notes' },
+      });
+    });
+
+    it('does not set a target (stays out of the clickable-button path)', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '1.2.3',
+        releaseUrl: 'https://example.com/r',
+        dismissed: false,
+      });
+      const { service } = createService();
+
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'version-update');
+      expect(check?.target).toBeUndefined();
+    });
+
+    it('omits the row entirely when no update is available', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      const { service } = createService();
+
+      const results = await service.runAllChecks();
+      expect(results.find((r) => r.checkName === 'version-update')).toBeUndefined();
+    });
+
+    it('queries dismiss-agnostically — always passes an empty dismissed version', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      const { service } = createService();
+
+      await service.runAllChecks();
+      expect(getUpdateStatus).toHaveBeenCalledWith('');
+    });
+
+    it('aggregate rollup reports warning when version-update is the only non-healthy check', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '1.2.3',
+        releaseUrl: 'https://example.com/r',
+        dismissed: false,
+      });
+      const { service } = createService();
+
+      await service.runAllChecks();
+      expect(service.getAggregateState()).toBe('warning');
     });
   });
 });

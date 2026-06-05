@@ -716,16 +716,6 @@ describe('systemApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search-all-wanted', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('dismissUpdate → PUT /system/update/dismiss with version body', async () => {
-    mockFetchApi.mockResolvedValue({ ok: true });
-    const result = await systemApi.dismissUpdate('0.2.0');
-    expect(mockFetchApi).toHaveBeenCalledWith('/system/update/dismiss', {
-      method: 'PUT',
-      body: JSON.stringify({ version: '0.2.0' }),
-    });
-    expect(result).toEqual({ ok: true });
-  });
-
   it('runSystemTask → POST /system/tasks/:name/run', async () => {
     await systemApi.runSystemTask('cleanup');
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/cleanup/run', expect.objectContaining({ method: 'POST' }));

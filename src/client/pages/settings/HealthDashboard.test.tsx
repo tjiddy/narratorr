@@ -274,6 +274,55 @@ describe('HealthDashboard', () => {
     });
   });
 
+  describe('#1230 — inline link rendering', () => {
+    it('renders an external release-notes link when a check carries a link', async () => {
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'version-update',
+          state: 'warning',
+          message: 'Update available: v1.2.3',
+          link: { url: 'https://github.com/tjiddy/narratorr/releases/v1.2.3', label: 'Release notes' },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const anchor = await screen.findByRole('link', { name: /release notes/i });
+      expect(anchor).toHaveAttribute('href', 'https://github.com/tjiddy/narratorr/releases/v1.2.3');
+      expect(anchor).toHaveAttribute('target', '_blank');
+      expect(anchor).toHaveAttribute('rel', 'noopener noreferrer');
+      expect(screen.getByText('Update available: v1.2.3')).toBeInTheDocument();
+    });
+
+    it('renders the card as a non-button (no nested interactive control) when a link is present', async () => {
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'version-update',
+          state: 'warning',
+          link: { url: 'https://example.com/r', label: 'Release notes' },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      await screen.findByRole('link', { name: /release notes/i });
+      expect(screen.queryByRole('button', { name: /version-update/i })).toBeNull();
+    });
+
+    it('renders no anchor for checks without a link', async () => {
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'library-root', state: 'healthy' },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      await waitFor(() => {
+        expect(screen.getByText('library-root')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('link')).toBeNull();
+    });
+  });
+
   it('invalidates both health status and summary queries after successful Run Now', async () => {
     const user = userEvent.setup();
     (api.getHealthStatus as Mock).mockResolvedValue([

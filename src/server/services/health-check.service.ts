@@ -12,6 +12,7 @@ import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { getUpdateStatus } from '../jobs/version-check.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';
@@ -27,6 +28,7 @@ export interface HealthCheckResult {
   state: HealthState;
   message?: string | undefined;
   target?: HealthCheckTarget | undefined;
+  link?: { url: string; label: string } | undefined;
 }
 
 export interface SystemDeps {
@@ -69,6 +71,7 @@ export class HealthCheckService {
         () => this.checkFfmpeg(),
         () => this.checkHardcover(),
         () => this.checkStuckDownloads(),
+        () => this.checkVersionUpdate(),
       ];
 
       for (const check of checks) {
@@ -317,5 +320,26 @@ export class HealthCheckService {
     } catch (error: unknown) {
       return [{ checkName: 'stuck-downloads', state: 'error', message: `Failed to check downloads: ${getErrorMessage(error)}`, target }];
     }
+  }
+
+  /**
+   * Surfaces an available app update as an ambient `warning` (an outdated
+   * version is a mild degradation, not an error). Passes `''` as the dismissed
+   * version so a previously dismissed update never suppresses the warning —
+   * the row clears on its own once the running version catches up to latest.
+   * No `target` is set: the dashboard renders the release-notes `link` inline,
+   * and leaving `target` unset keeps the card out of the clickable-button path
+   * (no nested interactive controls).
+   */
+  private async checkVersionUpdate(): Promise<HealthCheckResult[]> {
+    const update = getUpdateStatus('');
+    if (!update) return []; // No newer version cached — omit the row entirely.
+
+    return [{
+      checkName: 'version-update',
+      state: 'warning',
+      message: `Update available: v${update.latestVersion}`,
+      link: { url: update.releaseUrl, label: 'Release notes' },
+    }];
   }
 }

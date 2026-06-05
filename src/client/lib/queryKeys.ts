@@ -58,7 +58,6 @@ export const queryKeys = {
   systemInfo: () => ['system', 'info'] as const,
   importJobs: (params?: { status?: string }) => params ? ['importJobs', params] as const : ['importJobs'] as const,
   systemStatus: () => ['systemStatus'] as const,
-  updateStatus: () => ['system', 'update-status'] as const,
   discover: {
     suggestions: () => ['discover', 'suggestions'] as const,
     stats: () => ['discover', 'stats'] as const,

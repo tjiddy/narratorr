@@ -61,7 +61,6 @@ import { eventsRoutes } from './events.js';
 import { searchStreamRoutes } from './search-stream.js';
 import { SearchSessionManager } from '../services/search-session.js';
 import { importListsRoutes } from './import-lists.js';
-import { updateRoutes } from './update.js';
 import { discoverRoutes } from './discover.js';
 import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
@@ -296,7 +295,6 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => metadataRoutes(app, s.metadata),
   (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob, s.book, s.metadata),
   (app, s, db) => systemRoutes(app, s, db),
-  (app, s) => updateRoutes(app, s.settings),
   (app, s) => notifiersRoutes(app, s.notifier),
   (app, s) => blacklistRoutes(app, s.blacklist),
   (app, s) => authRoutes(app, s.auth),

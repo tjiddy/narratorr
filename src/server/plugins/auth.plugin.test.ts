@@ -37,7 +37,7 @@ async function createApp(
 
   // Test routes behind auth
   app.get('/api/test', async (request) => ({ ok: true, ip: request.ip }));
-  app.put('/api/system/update/dismiss', async () => ({ ok: true }));
+  app.put('/api/test-mutation', async () => ({ ok: true }));
   app.post('/api/library/scan-debug', async () => ({ ok: true }));
 
   // Non-API route (should not be intercepted)
@@ -217,8 +217,8 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(200);
     });
 
-    it('PUT /api/system/update/dismiss passes without credentials in mode: none', async () => {
-      const res = await app.inject({ method: 'PUT', url: '/api/system/update/dismiss', payload: { version: '1.0.0' } });
+    it('PUT /api/test-mutation passes without credentials in mode: none', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/test-mutation', payload: { version: '1.0.0' } });
       expect(res.statusCode).toBe(200);
     });
   });
@@ -332,8 +332,8 @@ describe('auth middleware', () => {
       expect(authService.verifyCredentials).not.toHaveBeenCalled();
     });
 
-    it('PUT /api/system/update/dismiss returns 401 without credentials in mode: basic', async () => {
-      const res = await app.inject({ method: 'PUT', url: '/api/system/update/dismiss', payload: { version: '1.0.0' } });
+    it('PUT /api/test-mutation returns 401 without credentials in mode: basic', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/test-mutation', payload: { version: '1.0.0' } });
       expect(res.statusCode).toBe(401);
     });
   });
@@ -394,7 +394,7 @@ describe('auth middleware', () => {
 
       const res = await app.inject({
         method: 'PUT',
-        url: '/api/system/update/dismiss',
+        url: '/api/test-mutation',
         headers: { authorization: basicAuthHeader() },
         payload: { version: '1.0.0' },
       });
@@ -627,8 +627,8 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('PUT /api/system/update/dismiss returns 401 without session in mode: forms', async () => {
-      const res = await app.inject({ method: 'PUT', url: '/api/system/update/dismiss', payload: { version: '1.0.0' } });
+    it('PUT /api/test-mutation returns 401 without session in mode: forms', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/test-mutation', payload: { version: '1.0.0' } });
       expect(res.statusCode).toBe(401);
     });
 

@@ -19,7 +19,6 @@ import {
   XIcon,
 } from '@/components/icons';
 import { HealthIndicator } from './HealthIndicator';
-import { UpdateBanner } from '@/components/layout/UpdateBanner';
 import { WelcomeModal } from '@/components/WelcomeModal';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
@@ -155,9 +154,6 @@ export function Layout() {
         isPending={dismissWelcomeMutation.isPending}
         onDismiss={() => dismissWelcomeMutation.mutate()}
       />
-      {/* Update Banner */}
-      <UpdateBanner />
-
       {mode === 'none' && !bannerDismissed && <NoAuthBanner onDismiss={dismissBanner} />}
       {mode === 'basic' && !basicAuthBannerDismissed && <BasicAuthCsrfBanner onDismiss={dismissBasicAuthBanner} />}
 
