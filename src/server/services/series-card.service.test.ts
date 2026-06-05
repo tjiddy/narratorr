@@ -716,6 +716,38 @@ describe('SeriesCardService — unit', () => {
       expect(book.seriesPosition).toBe(0);
     });
 
+    it('syncs ALL matched library books in the bound series, not just the initiating book', async () => {
+      // Two siblings both on the pre-bind (Audnexus) name. Binding from one must
+      // sync the other too — otherwise the sibling keeps the stale name and the
+      // series splits in the Library view (#1228 AC correction: series-wide sync).
+      const bookA = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const bookB = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [
+          { position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' },
+          { position: 5, id: 2, slug: 'tombs', title: 'The Tombs of Atuan' },
+        ],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await svc.bindHardcoverSeries(bookA, 4242); // bind initiated from book A only
+
+      const a = (await db.select().from(books).where(eq(books.id, bookA)))[0]!;
+      const b = (await db.select().from(books).where(eq(books.id, bookB)))[0]!;
+      // Initiating book synced.
+      expect(a.seriesName).toBe('The Earthsea Quartet');
+      expect(a.seriesPosition).toBe(1);
+      // SIBLING synced to the canonical name AND its own matched member position.
+      expect(b.seriesName).toBe('The Earthsea Quartet');
+      expect(b.seriesPosition).toBe(5);
+      // Both carried by the new Hardcover row's member set, exactly once each.
+      const newRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242)))[0]!;
+      const members = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, newRow.id));
+      expect(members.filter((m) => m.bookId === bookA)).toHaveLength(1);
+      expect(members.filter((m) => m.bookId === bookB)).toHaveLength(1);
+    });
+
     it('re-links the book to the canonical series and deletes the emptied old series row', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
       const [oldRow] = await db.insert(series).values({
