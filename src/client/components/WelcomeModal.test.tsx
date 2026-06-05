@@ -210,11 +210,11 @@ describe('WelcomeModal', () => {
     );
   });
 
-  it('Region/Language card links to https://docs.narratorr.dev/configuration/metadata/', () => {
+  it('Region/Language card links to https://docs.narratorr.dev/configuration/settings/#metadata', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(screen.getByRole('link', { name: /Region: US/i })).toHaveAttribute(
       'href',
-      'https://docs.narratorr.dev/configuration/metadata/',
+      'https://docs.narratorr.dev/configuration/settings/#metadata',
     );
   });
 
@@ -227,11 +227,11 @@ describe('WelcomeModal', () => {
     );
   });
 
-  it('Library Import card links to https://docs.narratorr.dev/guides/library-import/', () => {
+  it('Library Import card links to https://docs.narratorr.dev/guides/features/#library-scan', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(screen.getByRole('link', { name: /library import/i })).toHaveAttribute(
       'href',
-      'https://docs.narratorr.dev/guides/library-import/',
+      'https://docs.narratorr.dev/guides/features/#library-scan',
     );
   });
 
