@@ -80,13 +80,15 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService }) {
+function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; processing?: Partial<typeof processingOverrides.processing> }) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
     update: vi.fn().mockResolvedValue(undefined),
   };
-  const settingsService = createMockSettingsService(processingOverrides);
+  const settingsService = createMockSettingsService({
+    processing: { ...processingOverrides.processing, ...opts?.processing },
+  });
   const log = createMockLogger();
 
   const service = new MergeService(
@@ -142,10 +144,11 @@ describe('MergeService', () => {
       expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'), join(STAGING_DIR, '02.mp3'));
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('cover.jpg'), expect.anything());
 
-      // processAudioFiles called on staging dir with mergeBehavior: always and callbacks
+      // processAudioFiles called on staging dir with mergeBehavior: always (manual Merge
+      // always merges by design) and outputFormat taken from the injected settings fixture.
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
-        expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', mergeBehavior: 'always', outputFormat: 'm4b' }),
+        expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', mergeBehavior: 'always', outputFormat: processingOverrides.processing.outputFormat }),
         expect.objectContaining({ title: 'The Way of Kings' }),
         expect.objectContaining({ onProgress: expect.any(Function), onStderr: expect.any(Function) }),
         expect.any(AbortSignal),
@@ -170,6 +173,60 @@ describe('MergeService', () => {
 
       // Staging dir cleaned
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+    });
+
+    it('with outputFormat mp3: passes mp3 to processAudioFiles and discovers/commits the staged .mp3', async () => {
+      // Staging produces a .mp3 instead of a .m4b
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.mp3'];
+        return ['01.mp3', '02.mp3', 'cover.jpg'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.mp3'] });
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 500_000_000 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      const { service } = createService({ processing: { outputFormat: 'mp3' } });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      // (a) outputFormat threaded through to the engine
+      expect(processAudioFiles).toHaveBeenCalledWith(
+        STAGING_DIR,
+        expect.objectContaining({ outputFormat: 'mp3' }),
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(AbortSignal),
+      );
+
+      // (b) the staged .mp3 is discovered (no "Staged output not found" throw) and committed
+      expect(rename).toHaveBeenCalledWith(
+        join(STAGING_DIR, 'The Way of Kings.mp3'),
+        join(BOOK_PATH, 'The Way of Kings.mp3'),
+      );
+    });
+
+    it('always merges (mergeBehavior: always) even when the settings fixture says never', async () => {
+      setupHappyPath();
+      const { service } = createService({ processing: { mergeBehavior: 'never' } });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      // Manual Merge ignores the mergeBehavior setting by design (decision (a)).
+      expect(processAudioFiles).toHaveBeenCalledWith(
+        STAGING_DIR,
+        expect.objectContaining({ mergeBehavior: 'always' }),
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(AbortSignal),
+      );
     });
 
     it('forwards onWarn/onDebug to MergeService log via scanAudioDirectory verify', async () => {
