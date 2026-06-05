@@ -38,7 +38,7 @@ const GET_SERIES_MEMBERS_QUERY = `
 `;
 
 const GET_SERIES_MEMBERS_BY_ID_QUERY = `
-  query GetSeriesMembersById($id: bigint!, $today: date!) {
+  query GetSeriesMembersById($id: Int!, $today: date!) {
     series(where: {
       id: {_eq: $id},
       canonical_id: {_is_null: true}

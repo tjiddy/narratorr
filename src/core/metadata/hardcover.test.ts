@@ -98,6 +98,16 @@ describe('HardcoverClient', () => {
       expect(body.variables.id).toBe(42);
       expect(body.variables.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
+
+    it('declares the by-id $id variable as Int! (Hardcover schema expects Int, not bigint)', async () => {
+      fetchMock.mockResolvedValueOnce(buildJsonResponse({ data: { series: [] } }));
+      const client = new HardcoverClient('K');
+      await client.getSeriesMembersById(1170);
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.query).toContain('$id: Int!');
+      expect(body.query).not.toContain('bigint');
+    });
   });
 
   describe('Response shape', () => {
