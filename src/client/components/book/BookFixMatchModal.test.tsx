@@ -135,20 +135,25 @@ describe('BookFixMatchModal (#1129)', () => {
 
     expect(screen.getByText('Confirm match')).toBeInTheDocument();
 
-    // Changed field (Series): old value struck through + muted, new value amber.
+    // Changed field (Series): label at normal muted, old value struck through + muted, new value amber.
     const seriesRow = getComparisonRow('Series');
+    const seriesLabel = seriesRow.children[0]!;
     const seriesOld = seriesRow.children[1]!;
     const seriesNew = seriesRow.children[2]!;
+    expect(seriesLabel.className).toContain('text-muted-foreground/70');
+    expect(seriesLabel.className).not.toContain('text-muted-foreground/40');
     expect(seriesOld.className).toContain('line-through');
     expect(seriesOld.className).toContain('text-muted-foreground');
     expect(seriesOld.className).not.toContain('text-muted-foreground/40');
     expect(seriesNew.className).toContain('text-primary');
 
-    // Unchanged fields: no strikethrough, both sides greyed (text-muted-foreground/40).
+    // Unchanged fields: label and both value sides greyed (text-muted-foreground/40), no strikethrough.
     for (const label of ['Title', 'Author', 'Narrator', 'Year']) {
       const row = getComparisonRow(label);
+      const labelCell = row.children[0]!;
       const oldCell = row.children[1]!;
       const newCell = row.children[2]!;
+      expect(labelCell.className).toContain('text-muted-foreground/40');
       expect(oldCell.className).not.toContain('line-through');
       expect(oldCell.className).toContain('text-muted-foreground/40');
       expect(newCell.className).toContain('text-muted-foreground/40');
@@ -183,8 +188,10 @@ describe('BookFixMatchModal (#1129)', () => {
 
     for (const label of ['Title', 'Author', 'Narrator', 'Series', 'Year']) {
       const row = getComparisonRow(label);
+      const labelCell = row.children[0]!;
       const oldCell = row.children[1]!;
       const newCell = row.children[2]!;
+      expect(labelCell.className).toContain('text-muted-foreground/40');
       expect(oldCell.className).not.toContain('line-through');
       expect(oldCell.className).toContain('text-muted-foreground/40');
       expect(newCell.className).toContain('text-muted-foreground/40');
