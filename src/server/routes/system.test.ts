@@ -89,6 +89,7 @@ describe('system routes', () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
+        channel: 'stable',
         dismissed: false,
       });
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
@@ -100,6 +101,7 @@ describe('system routes', () => {
       expect(payload.update).toEqual({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
+        channel: 'stable',
         dismissed: false,
       });
       expect(getUpdateStatus).toHaveBeenCalledWith('');
@@ -109,6 +111,7 @@ describe('system routes', () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
+        channel: 'stable',
         dismissed: false,
       });
 

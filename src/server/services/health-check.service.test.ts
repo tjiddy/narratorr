@@ -975,6 +975,7 @@ describe('HealthCheckService', () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '1.2.3',
         releaseUrl: 'https://github.com/tjiddy/narratorr/releases/v1.2.3',
+        channel: 'stable',
         dismissed: false,
       });
       const { service } = createService();
@@ -989,10 +990,33 @@ describe('HealthCheckService', () => {
       });
     });
 
+    it('renders develop-channel copy and a compare link for a develop update (F2)', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: 'def5678', // bare develop HEAD sha — must NOT leak into the message
+        releaseUrl: 'https://github.com/tjiddy/narratorr/compare/abc1234...develop',
+        channel: 'develop',
+        dismissed: false,
+      });
+      const { service } = createService();
+
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'version-update');
+      expect(check).toEqual({
+        checkName: 'version-update',
+        state: 'warning',
+        message: 'A newer develop build is available',
+        link: { url: 'https://github.com/tjiddy/narratorr/compare/abc1234...develop', label: 'Compare changes' },
+      });
+      // No v-prefixed sha leaked into the message, and the diff isn't labelled "Release notes".
+      expect(check!.message).not.toContain('vdef5678');
+      expect(check!.link!.label).not.toBe('Release notes');
+    });
+
     it('does not set a target (stays out of the clickable-button path)', async () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
+        channel: 'stable',
         dismissed: false,
       });
       const { service } = createService();
@@ -1022,6 +1046,7 @@ describe('HealthCheckService', () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
+        channel: 'stable',
         dismissed: false,
       });
       const { service } = createService();

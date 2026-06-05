@@ -48,6 +48,8 @@ export interface UpdateInfo {
   latestVersion: string;
   releaseUrl: string;
   dismissed: boolean;
+  /** Additive discriminator (#1232): 'stable' for releases, 'develop' for develop builds. */
+  channel?: 'stable' | 'develop';
 }
 
 export interface UpdateStatus {
