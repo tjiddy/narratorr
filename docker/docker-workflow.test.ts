@@ -19,10 +19,15 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
   }
 
   describe('trigger configuration', () => {
-    it('triggers on tag push matching v* pattern', () => {
+    it('triggers dev-channel builds on push to develop', () => {
       const wf = load();
-      // Should have push.tags containing v*
-      expect(wf).toMatch(/push:\s*\n\s+tags:\s*\[.*v\*/);
+      expect(wf).toMatch(/push:\s*\n\s+branches:\s*\[develop\]/);
+    });
+
+    it('triggers release-channel builds only on strict semver tags', () => {
+      const wf = load();
+      // vX.Y.Z only — dev milestone tags like v1219_01 must NOT match this filter
+      expect(wf).toContain("tags: ['v[0-9]+.[0-9]+.[0-9]+']");
     });
 
     it('does not trigger on pull request', () => {
@@ -63,42 +68,78 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
   });
 
   describe('image tagging', () => {
-    it('defines IMAGE_NAME env var and uses it for :latest tag', () => {
-      const wf = load();
-      expect(wf).toContain('IMAGE_NAME: narratorr/narratorr');
-      expect(wf).toContain('IMAGE_NAME }}:latest');
+    it('defines IMAGE_NAME env var for the Docker Hub repo', () => {
+      expect(load()).toContain('IMAGE_NAME: narratorr/narratorr');
     });
 
-    it('writes version and major_minor outputs from the tag ref', () => {
-      const wf = load();
-      expect(wf).toContain('GITHUB_REF_NAME');
-      expect(wf).toMatch(/version=.*\$.*VERSION/);
-      expect(wf).toMatch(/major_minor=.*\$.*MAJOR_MINOR/);
+    it('generates the tag matrix with docker/metadata-action', () => {
+      expect(load()).toContain('docker/metadata-action');
     });
 
-    it('publishes versioned tag from steps.version.outputs.version', () => {
+    it('dual-publishes to Docker Hub and GHCR from the generated tag list', () => {
       const wf = load();
-      expect(wf).toContain('${{ steps.version.outputs.version }}');
+      expect(wf).toContain('ghcr.io/${{ github.repository }}');
+      expect(wf).toContain('tags: ${{ steps.meta.outputs.tags }}');
     });
 
-    it('publishes major.minor tag from steps.version.outputs.major_minor', () => {
+    it('emits version + major.minor tags on semver release tags', () => {
       const wf = load();
-      expect(wf).toContain('${{ steps.version.outputs.major_minor }}');
+      expect(wf).toContain('type=semver,pattern={{version}}');
+      expect(wf).toContain('type=semver,pattern={{major}}.{{minor}}');
+    });
+
+    it('emits the :develop tag on non-tag (dev channel) refs', () => {
+      const wf = load();
+      expect(wf).toMatch(/type=raw,value=develop,enable=\$\{\{\s*github\.ref_type\s*!=\s*'tag'/);
+    });
+
+    it('stamps GIT_TAG build-arg (real tag on release, develop-<sha> on dev)', () => {
+      const wf = load();
+      expect(wf).toContain('GIT_TAG=${{ steps.vars.outputs.git_tag }}');
+      expect(wf).toContain('git_tag=develop-${GITHUB_SHA::7}');
     });
   });
 
   describe('registry authentication', () => {
-    it('uses docker/login-action with DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets', () => {
+    it('logs in to Docker Hub with DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets', () => {
       const wf = load();
       expect(wf).toContain('docker/login-action');
       expect(wf).toContain('DOCKERHUB_USERNAME');
       expect(wf).toContain('DOCKERHUB_TOKEN');
     });
 
-    it('validates credentials are present before build and fails with clear error', () => {
+    it('logs in to GHCR with the built-in GITHUB_TOKEN', () => {
       const wf = load();
-      expect(wf).toContain('Validate registry credentials');
+      expect(wf).toContain('registry: ghcr.io');
+      expect(wf).toContain('secrets.GITHUB_TOKEN');
+    });
+
+    it('validates Docker Hub credentials before build and fails with a clear error', () => {
+      const wf = load();
+      expect(wf).toContain('Validate Docker Hub credentials');
       expect(wf).toContain('Registry credentials missing. Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets.');
+    });
+  });
+
+  describe('release channel', () => {
+    it('cuts a GitHub Release only on tag (release) refs', () => {
+      const wf = load();
+      expect(wf).toContain('softprops/action-gh-release');
+      expect(wf).toMatch(/if:\s*github\.ref_type == 'tag'/);
+    });
+
+    it('grants the permissions needed for GHCR push and Release creation', () => {
+      const wf = load();
+      expect(wf).toContain('packages: write');
+      expect(wf).toContain('contents: write');
+    });
+  });
+
+  describe('no auto-deploy (build/publish only)', () => {
+    it('does not deploy to production via Portainer', () => {
+      const wf = load();
+      expect(wf).not.toContain('PORTAINER_WEBHOOK_URL');
+      expect(wf).not.toMatch(/Deploy to production/i);
     });
   });
 
