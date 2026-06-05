@@ -335,11 +335,18 @@ export class HealthCheckService {
     const update = getUpdateStatus('');
     if (!update) return []; // No newer version cached — omit the row entirely.
 
+    // Channel-aware copy: stable renders the semver + release notes; develop
+    // renders generic build wording + a compare-diff link (the develop
+    // `latestVersion` is a bare sha, never `v`-prefixed into the message).
+    const { message, label } = update.channel === 'develop'
+      ? { message: 'A newer develop build is available', label: 'Compare changes' }
+      : { message: `Update available: v${update.latestVersion}`, label: 'Release notes' };
+
     return [{
       checkName: 'version-update',
       state: 'warning',
-      message: `Update available: v${update.latestVersion}`,
-      link: { url: update.releaseUrl, label: 'Release notes' },
+      message,
+      link: { url: update.releaseUrl, label },
     }];
   }
 }
