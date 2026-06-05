@@ -19,6 +19,7 @@ vi.mock('./cover-backfill.js', () => ({ runCoverBackfill: vi.fn().mockResolvedVa
 
 import cron from 'node-cron';
 import { runCoverBackfill } from './cover-backfill.js';
+import { checkForUpdate } from './version-check.js';
 import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
 
 describe('startJobs', () => {
@@ -53,6 +54,9 @@ describe('startJobs', () => {
     (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // Startup version check (#1225) chains .catch on the return value, so the mock
+    // must return a Promise. Default to a resolved one; specific tests override.
+    vi.mocked(checkForUpdate).mockResolvedValue(undefined);
   });
 
   it('registers all jobs with the task registry', async () => {
@@ -698,6 +702,65 @@ describe('startJobs', () => {
       // Jobs should still be registered despite recovery failure
       const tasks = services.taskRegistry.getAll();
       expect(tasks.length).toBeGreaterThan(0);
+    });
+  });
+
+  // #1225 — run version-check once on startup so the update banner reflects reality
+  describe('startup version check (#1225)', () => {
+    it('invokes checkForUpdate exactly once on startup', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+      expect(checkForUpdate).toHaveBeenCalledWith(log);
+    });
+
+    it('does not await checkForUpdate — startJobs returns promptly even when the check never settles', async () => {
+      // A never-resolving check must not delay startJobs returning.
+      vi.mocked(checkForUpdate).mockReturnValue(new Promise<void>(() => { /* never settles */ }));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      // startJobs is synchronous; it must have completed its registration work
+      // (logged the startup message) without waiting on the pending check.
+      expect(log.info).toHaveBeenCalledWith('Background jobs started');
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('startup failure is non-fatal — a rejected check is caught and logged, jobs still register', async () => {
+      const checkError = new Error('GitHub unreachable');
+      vi.mocked(checkForUpdate).mockRejectedValue(checkError);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      // Jobs register synchronously regardless of the check outcome.
+      const tasks = services.taskRegistry.getAll();
+      expect(tasks.length).toBeGreaterThan(0);
+
+      // The .catch handler logs the rejection rather than propagating it.
+      await vi.waitFor(() => {
+        expect(log.error).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: checkError.message, type: 'Error' }) }),
+          'Startup version check failed — jobs continue normally',
+        );
+      });
+    });
+
+    it('leaves the 2 AM version-check cron registration unchanged', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The cron entry must still exist with the same name and schedule.
+      const tasks = services.taskRegistry.getAll();
+      expect(tasks.map((t) => t.name)).toContain('version-check');
+      const cronExpressions = vi.mocked(cron.schedule).mock.calls.map(([expr]) => expr);
+      expect(cronExpressions).toContain('0 2 * * *');
     });
   });
 
