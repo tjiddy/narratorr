@@ -1,14 +1,15 @@
 name: Build & Push Docker Image
 run-name: Docker build for ${{ github.ref_name }}
 
+# Two channels, build/publish only — no deploy:
+#   - push to `develop`         → :develop on DockerHub + GHCR (bleeding edge; pull manually)
+#   - semver tag `vX.Y.Z` on main → :latest + :X.Y.Z + :X.Y on DockerHub + GHCR, plus a GitHub Release
+# Non-semver tags (e.g. v1219_01) do not match the filter and trigger nothing.
 on:
   push:
-    tags: [v*]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Image tag override (default: from git tag)'
-        required: false
+    branches: [develop]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch: {}
 
 env:
   IMAGE_NAME: narratorr/narratorr
@@ -61,34 +62,43 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      contents: write   # create GitHub Release on the semver-tag (release) path
+      packages: write   # push images to GHCR
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Validate registry credentials
+      - name: Validate Docker Hub credentials
         run: |
           if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
             echo "::error::Registry credentials missing. Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets."
             exit 1
           fi
 
-      - name: Extract version from tag
-        id: version
+      - name: Compute build vars
+        id: vars
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
-            VERSION="${{ inputs.tag }}"
-            VERSION="${VERSION#v}"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "git_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            VERSION="${GITHUB_REF_NAME#v}"
+            echo "git_tag=develop-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
-          MAJOR_MINOR="${VERSION%.*}"
-          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
-          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION (major.minor: $MAJOR_MINOR) at $BUILD_TIME"
+
+      - name: Docker metadata (tag matrix)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.IMAGE_NAME }}
+            ghcr.io/${{ github.repository }}
+          # Release (semver tag): :X.Y.Z + :X.Y, and :latest auto-added by flavor latest=auto.
+          # Dev (any non-tag ref, incl. develop push / manual dispatch): :develop only.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=develop,enable=${{ github.ref_type != 'tag' }}
 
       - name: Set up QEMU (for ARM64)
         uses: docker/setup-qemu-action@v4
@@ -102,22 +112,27 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
             GIT_COMMIT=${{ github.sha }}
-            GIT_TAG=v${{ steps.version.outputs.version }}
-            BUILD_TIME=${{ steps.version.outputs.build_time }}
+            GIT_TAG=${{ steps.vars.outputs.git_tag }}
+            BUILD_TIME=${{ steps.vars.outputs.build_time }}
 
       - name: Report image size
         run: |
@@ -126,7 +141,7 @@ jobs:
 
       - name: Verify multi-arch manifest
         run: |
-          MANIFEST=$(docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} 2>&1)
+          MANIFEST=$(docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} 2>&1)
           echo "$MANIFEST"
 
           if ! echo "$MANIFEST" | grep -q 'linux/amd64'; then
@@ -144,7 +159,7 @@ jobs:
           docker run -d --name smoke-test \
             -e DATABASE_URL=file:/config/narratorr.db \
             -p 3199:3000 \
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
           # Wait for /api/health to return 200 (max 30s)
           for i in $(seq 1 30); do
@@ -175,11 +190,8 @@ jobs:
 
           echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION)"
 
-      - name: Deploy to production
-        run: |
-          HTTP_STATUS=$(curl -sf -o /dev/null -w '%{http_code}' -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}")
-          if [ "$HTTP_STATUS" != "204" ] && [ "$HTTP_STATUS" != "200" ]; then
-            echo "::warning::Portainer webhook returned $HTTP_STATUS — deploy may not have triggered"
-          else
-            echo "Deploy triggered via Portainer webhook (HTTP $HTTP_STATUS)"
-          fi
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
