@@ -6,7 +6,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, series, seriesMembers } from '../../db/schema.js';
-import { replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 /**
@@ -209,6 +209,65 @@ describe('book-series-link', () => {
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.position).toBe(2);
+    });
+  });
+
+  // #1228: the dedicated bind re-link helper.
+  describe('relinkBookToBoundSeries', () => {
+    it('unlinks the book from old series, deletes emptied old rows, and leaves the target untouched', async () => {
+      const bookId = await seedBook('A Wizard of Earthsea');
+      const [oldRow] = await db.insert(series).values({ name: 'Old', normalizedName: 'old' }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: oldRow!.id, bookId, title: 'A Wizard of Earthsea', normalizedTitle: 'a wizard of earthsea', position: 1, source: 'local',
+      });
+      const [target] = await db.insert(series).values({ hardcoverSeriesId: 4242, name: 'Quartet', normalizedName: 'quartet' }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: target!.id, bookId, hardcoverBookId: 1, title: 'A Wizard of Earthsea', normalizedTitle: 'a wizard of earthsea', position: 1, source: 'hardcover',
+      });
+
+      await db.transaction((tx) => relinkBookToBoundSeries(tx, bookId, target!.id));
+
+      // Emptied old row removed.
+      expect(await db.select().from(series).where(eq(series.id, oldRow!.id))).toHaveLength(0);
+      // Target row's member preserved (NOT deleted — it equals targetSeriesId).
+      const targetMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, target!.id));
+      expect(targetMembers).toHaveLength(1);
+      expect(targetMembers[0]!.bookId).toBe(bookId);
+    });
+
+    it('keeps an old series row that still has other members after the book is unlinked', async () => {
+      const bookId = await seedBook('A Wizard of Earthsea');
+      const otherBookId = await seedBook('Another Book');
+      const [oldRow] = await db.insert(series).values({ name: 'Old', normalizedName: 'old' }).returning();
+      await db.insert(seriesMembers).values([
+        { seriesId: oldRow!.id, bookId, title: 'A Wizard of Earthsea', normalizedTitle: 'a wizard of earthsea', position: 1, source: 'local' },
+        { seriesId: oldRow!.id, bookId: otherBookId, title: 'Another Book', normalizedTitle: 'another book', position: 2, source: 'local' },
+      ]);
+      const [target] = await db.insert(series).values({ hardcoverSeriesId: 4242, name: 'Quartet', normalizedName: 'quartet' }).returning();
+
+      await db.transaction((tx) => relinkBookToBoundSeries(tx, bookId, target!.id));
+
+      expect(await db.select().from(series).where(eq(series.id, oldRow!.id))).toHaveLength(1);
+      const oldMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, oldRow!.id));
+      expect(oldMembers).toHaveLength(1);
+      expect(oldMembers[0]!.bookId).toBe(otherBookId);
+    });
+
+    it('propagates errors so the caller transaction rolls back', async () => {
+      const bookId = await seedBook('A Wizard of Earthsea');
+      const [oldRow] = await db.insert(series).values({ name: 'Old', normalizedName: 'old' }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: oldRow!.id, bookId, title: 'X', normalizedTitle: 'x', position: 1, source: 'local',
+      });
+
+      await expect(db.transaction(async (tx) => {
+        await relinkBookToBoundSeries(tx, bookId, 999999);
+        throw new Error('boom');
+      })).rejects.toThrow('boom');
+
+      // The member-row deletion was rolled back.
+      const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
+      expect(members).toHaveLength(1);
     });
   });
 });

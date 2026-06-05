@@ -13,9 +13,13 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       getBookSeries: vi.fn(),
       refreshBookSeries: vi.fn(),
+      searchBookSeries: vi.fn(),
+      bindBookSeries: vi.fn(),
     },
   };
 });
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { api } from '@/lib/api';
 
@@ -183,6 +187,33 @@ describe('SeriesCard', () => {
       expect(screen.getByTestId('series-card-name')).toHaveTextContent('The Band');
     });
     expect(screen.getByText('Kings of the Wyld')).toBeInTheDocument();
+  });
+
+  it('renders the Fix-series pencil unconditionally (not hover-gated)', async () => {
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({
+      series: {
+        id: 1, name: 'The Band', hardcoverSeriesId: 5523, seriesAuthor: 'Nicholas Eames', lastFetchedAt: null,
+        members: [makeMember({ title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 1 })],
+      },
+    });
+    renderCard({ bookId: 1 });
+    expect(await screen.findByRole('button', { name: /fix series match/i })).toBeInTheDocument();
+  });
+
+  it('opens the Fix Series modal with the search box prefilled with the current series name', async () => {
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce({
+      series: {
+        id: 1, name: 'The Band', hardcoverSeriesId: 5523, seriesAuthor: 'Nicholas Eames', lastFetchedAt: null, members: [],
+      },
+    });
+    vi.mocked(api.searchBookSeries).mockResolvedValue({ candidates: [] });
+
+    const user = userEvent.setup();
+    renderCard({ bookId: 1 });
+
+    await user.click(await screen.findByRole('button', { name: /fix series match/i }));
+    const input = await screen.findByTestId('fix-series-search-input');
+    expect(input).toHaveValue('The Band');
   });
 
   it('does not render a cover image when imageUrl is null', async () => {

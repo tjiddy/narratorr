@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { DbOrTx } from '../../db/index.js';
 import { series, seriesMembers } from '../../db/schema.js';
@@ -65,6 +65,52 @@ export async function replaceSeriesLink(
     position: args.position,
     source: 'local',
   });
+}
+
+/**
+ * Re-link a book onto a Hardcover-canonical `series` row during a manual
+ * series bind (#1228). Runs inside the caller's transaction; errors propagate
+ * so the bind participates in the atomic rollback.
+ *
+ * The caller has already (a) updated `books.series_name` to the canonical
+ * Hardcover name and (b) rebuilt the target series' Hardcover member set,
+ * which pairs this book to its Hardcover member from the `books` table when it
+ * is a member. This helper handles the *cleanup* the member rebuild does not:
+ *
+ *   - Deletes the book's prior `series_members` rows that belong to OTHER
+ *     series rows (the rebuild already replaced the target series' rows).
+ *   - Deletes any of those now-empty old `series` rows so no orphan is left.
+ *
+ * It deliberately does NOT insert a local member: the target is
+ * Hardcover-canonical (`hardcover_series_id` set), so seeding a local row would
+ * duplicate the Hardcover match — the same guard `upsertSeriesLink` applies at
+ * `hardcover_series_id != null`.
+ */
+export async function relinkBookToBoundSeries(
+  tx: DbOrTx,
+  bookId: number,
+  targetSeriesId: number,
+): Promise<void> {
+  const prior = await tx
+    .select({ seriesId: seriesMembers.seriesId })
+    .from(seriesMembers)
+    .where(and(eq(seriesMembers.bookId, bookId), ne(seriesMembers.seriesId, targetSeriesId)));
+  const oldSeriesIds = [...new Set(prior.map((r) => r.seriesId))];
+
+  await tx
+    .delete(seriesMembers)
+    .where(and(eq(seriesMembers.bookId, bookId), ne(seriesMembers.seriesId, targetSeriesId)));
+
+  for (const seriesId of oldSeriesIds) {
+    const remaining = await tx
+      .select({ id: seriesMembers.id })
+      .from(seriesMembers)
+      .where(eq(seriesMembers.seriesId, seriesId))
+      .limit(1);
+    if (remaining.length === 0) {
+      await tx.delete(series).where(eq(series.id, seriesId));
+    }
+  }
 }
 
 /**

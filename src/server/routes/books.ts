@@ -49,6 +49,7 @@ import {
   type RetagPreviewQuery,
 } from '../../shared/schemas.js';
 import { registerFixMatchRoute } from './books-fix-match.js';
+import { registerSeriesRoutes } from './books-series.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
@@ -168,36 +169,6 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
       // enough to render the card immediately.
 
       return reply.status(201).send(book);
-    },
-  );
-}
-
-function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, seriesCardService: SeriesCardService) {
-  app.get<{ Params: IdParam }>(
-    '/api/books/:id/series',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      const book = await bookService.getById(id);
-      if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
-      }
-      const card = await seriesCardService.getSeriesForBook(id);
-      return { series: card };
-    },
-  );
-
-  app.post<{ Params: IdParam }>(
-    '/api/books/:id/series/refresh',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      const book = await bookService.getById(id);
-      if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
-      }
-      const card = await seriesCardService.refreshSeriesForBook(id);
-      return { series: card };
     },
   );
 }
