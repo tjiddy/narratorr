@@ -55,7 +55,7 @@ describe('SystemSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
     }));
   });
 
@@ -435,7 +435,7 @@ describe('SystemSettings', () => {
 describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('renders housekeeping retention and log level fields on System tab', async () => {
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
       general: { logLevel: 'info', housekeepingRetentionDays: 30, welcomeSeen: false },
     }));
     mockApi.getBackups.mockResolvedValue([]);
@@ -451,7 +451,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('submits general settings with correct payload when log level changed', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
       general: { logLevel: 'warn', housekeepingRetentionDays: 30, welcomeSeen: false },
     }));
     mockApi.getBackups.mockResolvedValue([]);
@@ -476,7 +476,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('shows error toast when general settings save fails', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
       general: { logLevel: 'warn', housekeepingRetentionDays: 30, welcomeSeen: false },
     }));
     mockApi.getBackups.mockResolvedValue([]);
@@ -501,7 +501,7 @@ describe('#324 — restore modal contract change', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
     }));
     mockApi.getBackups.mockResolvedValue([]);
   });

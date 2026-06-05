@@ -26,10 +26,10 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
   });
 
   // GET /api/system/update-status — protected, returns dashboard update info.
+  // Dismiss-agnostic ('' dismissed version): the per-version dismiss UX was
+  // retired in favour of the ambient health warning (#1230).
   app.get('/api/system/update-status', async () => {
-    const systemSettings = await services.settings.get('system');
-    const dismissedVersion = systemSettings?.dismissedUpdateVersion ?? '';
-    const update = getUpdateStatus(dismissedVersion);
+    const update = getUpdateStatus('');
     return { update: update ?? null };
   });
 

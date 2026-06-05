@@ -92,7 +92,7 @@ export const settingsRegistry = {
   }),
   system: defineCategory({
     schema: systemSettingsSchema,
-    defaults: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+    defaults: { backupIntervalMinutes: 10080, backupRetention: 7 },
   }),
   discovery: defineCategory({
     schema: discoverySettingsSchema,

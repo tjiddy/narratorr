@@ -49,7 +49,7 @@ const fullSettings = {
   quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 1, searchImmediately: false, rejectWords: '', requiredWords: '' },
   network: { proxyUrl: '' },
   rss: { intervalMinutes: 30, enabled: false },
-  system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+  system: { backupIntervalMinutes: 10080, backupRetention: 7 },
   library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
   discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: {} },
   testSection: { enabled: true, value: 42 },

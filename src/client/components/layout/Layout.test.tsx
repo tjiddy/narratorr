@@ -19,8 +19,6 @@ vi.mock('@/lib/api', () => ({
   api: {
     getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
     getSystemStatus: vi.fn(),
-    getUpdateStatus: vi.fn().mockResolvedValue({ update: null }),
-    dismissUpdate: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
     testProxy: vi.fn(),
@@ -380,27 +378,6 @@ describe('Layout', () => {
       // HealthIndicator must be the final interactive nav control — no trailing control after it
       const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
       expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
-    });
-  });
-
-  describe('update banner integration', () => {
-    it('renders update banner in the shell when API reports an available update', async () => {
-      mockCounts(0);
-      mockAuth('forms');
-      vi.mocked(api.getUpdateStatus).mockResolvedValue({
-        update: {
-          latestVersion: '0.2.0',
-          releaseUrl: 'https://github.com/releases/v0.2.0',
-          dismissed: false,
-        },
-      });
-
-      renderWithProviders(<Layout />);
-
-      await waitFor(() => {
-        expect(screen.getByText(/update available/i)).toBeInTheDocument();
-      });
-      expect(screen.getByText(/0\.2\.0/)).toBeInTheDocument();
     });
   });
 

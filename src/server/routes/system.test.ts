@@ -105,60 +105,19 @@ describe('system routes', () => {
       expect(getUpdateStatus).toHaveBeenCalledWith('');
     });
 
-    it('returns dismissed: true update info when version is dismissed', async () => {
+    it('ignores any dismissed setting — always queries dismiss-agnostically (#1230)', async () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
-        dismissed: true,
-      });
-      (services.settings.get as Mock).mockResolvedValue({
-        ...DEFAULT_SETTINGS.system,
-        dismissedUpdateVersion: '0.2.0',
+        dismissed: false,
       });
 
       const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
 
       const payload = JSON.parse(res.payload);
-      expect(payload.update.dismissed).toBe(true);
-      expect(getUpdateStatus).toHaveBeenCalledWith('0.2.0');
-    });
-  });
-
-  describe('PUT /api/system/update/dismiss', () => {
-    it('writes dismissedUpdateVersion to system settings via patch', async () => {
-      (services.settings.patch as Mock).mockResolvedValue(undefined);
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/system/update/dismiss',
-        payload: { version: '0.2.0' },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ ok: true });
-      expect(services.settings.patch as Mock).toHaveBeenCalledWith('system', {
-        dismissedUpdateVersion: '0.2.0',
-      });
-    });
-
-    it('returns 400 when version is missing from body', async () => {
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/system/update/dismiss',
-        payload: {},
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when version is whitespace-only', async () => {
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/system/update/dismiss',
-        payload: { version: '   ' },
-      });
-
-      expect(res.statusCode).toBe(400);
-      expect(services.settings.patch as Mock).not.toHaveBeenCalled();
+      expect(payload.update.latestVersion).toBe('0.2.0');
+      // The per-version dismiss UX was retired; the route always passes ''.
+      expect(getUpdateStatus).toHaveBeenCalledWith('');
     });
   });
 
