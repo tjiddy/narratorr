@@ -158,7 +158,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
               badge={<WarningBadge />}
             />
             <InfoCard
-              href="https://docs.narratorr.dev/configuration/metadata/"
+              href="https://docs.narratorr.dev/configuration/settings/#metadata"
               icon={<GlobeIcon className="w-5 h-5 text-primary" />}
               title={"Region: US\nLanguage: English"}
               description={<>Metadata defaults to US region and English language. Change in <span className="whitespace-nowrap">Settings → Search → Filtering</span>.</>}
@@ -174,7 +174,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <InfoCard
-              href="https://docs.narratorr.dev/guides/library-import/"
+              href="https://docs.narratorr.dev/guides/features/#library-scan"
               icon={<ImportIcon className="w-5 h-5 text-primary" />}
               title="Library Import"
               description="Already have audiobooks? Scan your existing folders to add them to your library."
