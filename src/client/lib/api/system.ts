@@ -13,6 +13,7 @@ export interface HealthCheckResult {
   state: HealthState;
   message?: string;
   target?: HealthCheckTarget;
+  link?: { url: string; label: string };
 }
 
 export interface HealthSummary {
@@ -56,11 +57,6 @@ export interface UpdateStatus {
 export const systemApi = {
   getSystemStatus: () => fetchApi<SystemStatus>('/system/status'),
   getUpdateStatus: () => fetchApi<UpdateStatus>('/system/update-status'),
-  dismissUpdate: (version: string) =>
-    fetchApi<{ ok: true }>('/system/update/dismiss', {
-      method: 'PUT',
-      body: JSON.stringify({ version }),
-    }),
   searchAllWanted: () =>
     fetchApi<{ searched: number; grabbed: number; skipped: number; errors: number }>(
       '/system/tasks/search-all-wanted',
