@@ -3171,6 +3171,76 @@ describe('#1071 series routes', () => {
     expect(res.json()).toEqual({ series: null });
   });
 
+  // #1228: manual Hardcover series search + bind routes.
+  it('GET /api/books/:id/series/search returns candidates and forwards the query', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    (services.seriesCard.searchSeriesCandidates as Mock).mockResolvedValue([
+      { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3, imageUrl: null },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=the%20band' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().candidates[0].id).toBe(5523);
+    expect(services.seriesCard.searchSeriesCandidates).toHaveBeenCalledWith('the band');
+  });
+
+  it('GET /api/books/:id/series/search returns an empty list (not a 500) when Hardcover yields nothing', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    (services.seriesCard.searchSeriesCandidates as Mock).mockResolvedValue([]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=nothing' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ candidates: [] });
+  });
+
+  it('GET /api/books/:id/series/search returns 404 for a missing book', async () => {
+    (services.book.getById as Mock).mockResolvedValue(null);
+    const res = await app.inject({ method: 'GET', url: '/api/books/999/series/search?q=x' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /api/books/:id/series/search rejects an empty query', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /api/books/:id/series/bind returns the rebuilt card and forwards the id', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Earthsea Cycle' });
+    (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue({
+      id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: 'Ursula K. Le Guin', lastFetchedAt: null, members: [],
+    });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().series.hardcoverSeriesId).toBe(4242);
+    expect(services.seriesCard.bindHardcoverSeries).toHaveBeenCalledWith(1, 4242);
+  });
+
+  it('POST /api/books/:id/series/bind returns 502 when binding fails', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
+
+    expect(res.statusCode).toBe(502);
+  });
+
+  it('POST /api/books/:id/series/bind returns 404 for a missing book', async () => {
+    (services.book.getById as Mock).mockResolvedValue(null);
+    const res = await app.inject({ method: 'POST', url: '/api/books/999/series/bind', payload: { hardcoverSeriesId: 4242 } });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('POST /api/books/:id/series/bind rejects a non-positive hardcoverSeriesId', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 0 } });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('POST /api/books no longer enqueues an async series refresh (#1133 — lazy via GET)', async () => {
     (services.book.findDuplicate as Mock).mockResolvedValue(null);
     const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: 'The Band', seriesPosition: 1, status: 'wanted' };

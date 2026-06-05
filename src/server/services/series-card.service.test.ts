@@ -8,6 +8,7 @@ import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books, bookAuthors, authors, series, seriesMembers } from '../../db/schema.js';
 import { SeriesCardService, STALE_AFTER_DAYS } from './series-card.service.js';
 import type { SettingsService } from './settings.service.js';
+import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -597,6 +598,218 @@ describe('SeriesCardService — unit', () => {
       expect(card!.id).toBeNull();
       expect(card!.hardcoverSeriesId).toBeNull();
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- #1228: manual Hardcover series search + bind --------------------------
+
+  describe('searchSeriesCandidates', () => {
+    function searchPayload(hits: unknown[]): unknown {
+      return { data: { search: { results: hits } } };
+    }
+
+    it('returns candidates from Hardcover and passes the query through verbatim', async () => {
+      const fetchMock = mockFetchOnce(searchPayload([
+        { document: { id: '4242', name: 'The Earthsea Quartet', author_name: 'Ursula K. Le Guin', books_count: 4, slug: 'earthsea-quartet' } },
+      ]));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      const candidates = await svc.searchSeriesCandidates('earthsea');
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]!.id).toBe(4242);
+      expect(candidates[0]!.name).toBe('The Earthsea Quartet');
+      const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+      expect(body.variables.query).toBe('earthsea');
+    });
+
+    it('returns an empty list when Hardcover yields no results', async () => {
+      mockFetchOnce(searchPayload([]));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      expect(await svc.searchSeriesCandidates('nothing')).toEqual([]);
+    });
+
+    it('returns an empty list without fetching when no API key is configured', async () => {
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as typeof globalThis.fetch;
+      const svc = new SeriesCardService(db, log, settingsServiceWith(''));
+      expect(await svc.searchSeriesCandidates('earthsea')).toEqual([]);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('bindHardcoverSeries', () => {
+    it('persists the chosen id and the card subsequently refreshes by id (not name)', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      const card = await svc.bindHardcoverSeries(bookId, 4242);
+
+      expect(card!.hardcoverSeriesId).toBe(4242);
+      expect(card!.name).toBe('The Earthsea Quartet');
+      const rows = await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242));
+      expect(rows).toHaveLength(1);
+
+      // A follow-up refresh resolves by id, proving the card is id-sourced now.
+      const fetchMock = mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+      await svc.refreshSeriesForBook(bookId);
+      const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+      expect(body.query).toContain('GetSeriesMembersById');
+      expect(body.variables.id).toBe(4242);
+    });
+
+    it('syncs books.seriesName to canonical and adopts the member position (matched by normalized title, differing positions)', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'Earthsea', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        // Title matches the book, but the position differs — exercises the title fallback.
+        members: [{ position: 5, id: 99, slug: 'tombs', title: 'The Tombs of Atuan' }],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await svc.bindHardcoverSeries(bookId, 4242);
+
+      const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+      expect(book.seriesName).toBe('The Earthsea Quartet');
+      expect(book.seriesPosition).toBe(5);
+      // The book is represented by the Hardcover member set — no duplicate local row.
+      const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
+      expect(memberRows).toHaveLength(1);
+      expect(memberRows[0]!.source).toBe('hardcover');
+    });
+
+    it('preserves books.seriesPosition and seeds no local member when the book is not a member', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Unrelated Book', seriesName: 'Earthsea', seriesPosition: 7, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await svc.bindHardcoverSeries(bookId, 4242);
+
+      const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+      expect(book.seriesName).toBe('The Earthsea Quartet');
+      expect(book.seriesPosition).toBe(7);
+      const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
+      expect(memberRows).toHaveLength(0);
+    });
+
+    it('sets books.seriesPosition to 0 for a position-0 member (no falsy coercion)', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'Prequel', seriesName: 'Earthsea', seriesPosition: 3, authorName: 'Ursula K. Le Guin' });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 0, id: 1, slug: 'prequel', title: 'Prequel' }],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await svc.bindHardcoverSeries(bookId, 4242);
+
+      const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+      expect(book.seriesPosition).toBe(0);
+    });
+
+    it('re-links the book to the canonical series and deletes the emptied old series row', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const [oldRow] = await db.insert(series).values({
+        name: 'The Earthsea Cycle', normalizedName: normalizeSeriesName('The Earthsea Cycle'),
+      }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: oldRow!.id, bookId, title: 'A Wizard of Earthsea', normalizedTitle: 'a wizard of earthsea', position: 1, source: 'local',
+      });
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await svc.bindHardcoverSeries(bookId, 4242);
+
+      // Old row removed (orphan cleanup) and no members point at it anymore.
+      expect(await db.select().from(series).where(eq(series.id, oldRow!.id))).toHaveLength(0);
+      const allMembers = await db.select().from(seriesMembers);
+      expect(allMembers.every((m) => m.seriesId !== oldRow!.id)).toBe(true);
+      // The book is now carried by the new Hardcover row's member set.
+      const newRow = (await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242)))[0]!;
+      const newMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, newRow.id));
+      expect(newMembers).toHaveLength(1);
+      expect(newMembers[0]!.bookId).toBe(bookId);
+    });
+
+    it('merges onto a pre-existing row already bound to the chosen id with no unique-index collision', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const [oldRow] = await db.insert(series).values({
+        name: 'The Earthsea Cycle', normalizedName: normalizeSeriesName('The Earthsea Cycle'),
+      }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: oldRow!.id, bookId, title: 'A Wizard of Earthsea', normalizedTitle: 'a wizard of earthsea', position: 1, source: 'local',
+      });
+      // A separate row ALREADY carries the chosen Hardcover id.
+      const [targetRow] = await db.insert(series).values({
+        hardcoverSeriesId: 4242, name: 'The Earthsea Quartet', normalizedName: normalizeSeriesName('The Earthsea Quartet'), authorName: 'Ursula K. Le Guin', lastFetchedAt: new Date(),
+      }).returning();
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [{ position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' }],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await svc.bindHardcoverSeries(bookId, 4242);
+
+      // Exactly one row bound to the id — the pre-existing target.
+      const bound = await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242));
+      expect(bound).toHaveLength(1);
+      expect(bound[0]!.id).toBe(targetRow!.id);
+      // Old row deleted.
+      expect(await db.select().from(series).where(eq(series.id, oldRow!.id))).toHaveLength(0);
+      // Book fields + linkage moved onto the target.
+      const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+      expect(book.seriesName).toBe('The Earthsea Quartet');
+      expect(book.seriesPosition).toBe(1);
+      const targetMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, targetRow!.id));
+      expect(targetMembers.some((m) => m.bookId === bookId)).toBe(true);
+    });
+
+    it('rolls back ALL writes when a failure occurs mid-bind (book fields + series row)', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      // Two members sharing a hardcover book id violate the (series_id, hardcover_book_id)
+      // unique index on the second insert — forcing a throw mid-transaction.
+      mockFetchOnce(hardcoverSeriesPayload({
+        id: 4242, name: 'The Earthsea Quartet', author: 'Ursula K. Le Guin',
+        members: [
+          { position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' },
+          { position: 2, id: 1, slug: 'dup', title: 'Duplicate Id' },
+        ],
+      }));
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      await expect(svc.bindHardcoverSeries(bookId, 4242)).rejects.toThrow();
+
+      // Book fields reverted.
+      const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+      expect(book.seriesName).toBe('The Earthsea Cycle');
+      expect(book.seriesPosition).toBe(1);
+      // No series row persisted for the chosen id.
+      expect(await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242))).toHaveLength(0);
+    });
+
+    it('returns null without binding when no API key is configured', async () => {
+      const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as typeof globalThis.fetch;
+
+      const svc = new SeriesCardService(db, log, settingsServiceWith(''));
+      expect(await svc.bindHardcoverSeries(bookId, 4242)).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
+      expect(book.seriesName).toBe('The Earthsea Cycle');
     });
   });
 });

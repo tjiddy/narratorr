@@ -178,7 +178,7 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('star wars aftermath');
       expect(candidates).toEqual([
-        { id: 3384, name: 'Star Wars: Aftermath', slug: 'star-wars-aftermath', authorName: 'Chuck Wendig', booksCount: 10 },
+        { id: 3384, name: 'Star Wars: Aftermath', slug: 'star-wars-aftermath', authorName: 'Chuck Wendig', booksCount: 10, imageUrl: null },
       ]);
       // id is coerced from the string "3384" to the number 3384.
       expect(typeof candidates[0]!.id).toBe('number');
@@ -198,7 +198,7 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('the band');
       expect(candidates).toEqual([
-        { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3 },
+        { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3, imageUrl: null },
       ]);
     });
 
@@ -228,7 +228,23 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('partial');
       expect(candidates).toEqual([
-        { id: 51, name: 'Keeper', slug: 'keeper', authorName: null, booksCount: 1 },
+        { id: 51, name: 'Keeper', slug: 'keeper', authorName: null, booksCount: 1, imageUrl: null },
+      ]);
+    });
+
+    it('extracts a cover image from a string `image_url` or nested `image`/`cached_image`', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { document: { id: '1', name: 'Direct', slug: 'direct', image_url: 'https://img.test/a.jpg' } },
+        { document: { id: '2', name: 'Nested', slug: 'nested', image: { url: 'https://img.test/b.jpg' } } },
+        { document: { id: '3', name: 'Cached', slug: 'cached', cached_image: { url: 'https://img.test/c.jpg' } } },
+        { document: { id: '4', name: 'None', slug: 'none' } },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('images');
+      expect(candidates.map((c) => c.imageUrl)).toEqual([
+        'https://img.test/a.jpg',
+        'https://img.test/b.jpg',
+        'https://img.test/c.jpg',
+        null,
       ]);
     });
 

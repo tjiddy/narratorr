@@ -2,9 +2,11 @@ import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
 import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
+import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 export type { LibraryBookListItem, LibraryBookListResponse };
+export type { BookSeriesMemberCard, BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 
 export interface Author {
   id: number;
@@ -393,6 +395,13 @@ export const booksApi = {
     fetchApi<{ series: BookSeriesCardData | null }>(`/books/${id}/series`),
   refreshBookSeries: (id: number) =>
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/refresh`, { method: 'POST' }),
+  searchBookSeries: (id: number, query: string) =>
+    fetchApi<{ candidates: HardcoverSeriesCandidate[] }>(`/books/${id}/series/search?q=${encodeURIComponent(query)}`),
+  bindBookSeries: (id: number, hardcoverSeriesId: number) =>
+    fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/bind`, {
+      method: 'POST',
+      body: JSON.stringify({ hardcoverSeriesId }),
+    }),
   fixMatchBook: (id: number, payload: FixMatchPayload) =>
     fetchApi<BookWithAuthor>(`/books/${id}/fix-match`, {
       method: 'POST',
@@ -404,29 +413,4 @@ export interface FixMatchPayload {
   asin: string;
   renameFiles?: boolean;
   retagFiles?: boolean;
-}
-
-export interface BookSeriesMemberCard {
-  hardcoverBookId: number | null;
-  slug: string | null;
-  title: string;
-  position: number | null;
-  imageUrl: string | null;
-  inLibrary: boolean;
-  libraryBookId: number | null;
-}
-
-export interface BookSeriesCardData {
-  /** Local `series` row id; null in no-key mode or when no cached row exists. */
-  id: number | null;
-  name: string;
-  hardcoverSeriesId: number | null;
-  /** Persisted Hardcover `series.author.name`; null in no-key mode. */
-  seriesAuthor: string | null;
-  lastFetchedAt: string | null;
-  members: BookSeriesMemberCard[];
-}
-
-export interface RefreshBookSeriesResponse {
-  series: BookSeriesCardData | null;
 }

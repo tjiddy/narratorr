@@ -57,7 +57,7 @@ describe('computeAuthorOverlap', () => {
 
 describe('pickBestSearchCandidate', () => {
   const candidate = (overrides: Partial<HardcoverSearchCandidate>): HardcoverSearchCandidate => ({
-    id: 1, name: 'Stormlight Archive', slug: 's', authorName: 'Brandon Sanderson', booksCount: 5,
+    id: 1, name: 'Stormlight Archive', slug: 's', authorName: 'Brandon Sanderson', booksCount: 5, imageUrl: null,
     ...overrides,
   });
 

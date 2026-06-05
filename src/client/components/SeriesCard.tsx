@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -6,7 +7,8 @@ import {
   type BookSeriesMemberCard,
   type RefreshBookSeriesResponse,
 } from '@/lib/api';
-import { RefreshIcon, LoadingSpinner } from '@/components/icons';
+import { RefreshIcon, LoadingSpinner, PencilIcon } from '@/components/icons';
+import { FixSeriesModal } from '@/components/book/FixSeriesModal';
 
 interface SeriesCardProps {
   bookId: number;
@@ -77,6 +79,7 @@ function MemberRow({ member, card }: MemberRowProps) {
 export function SeriesCard({ bookId }: SeriesCardProps) {
   const queryClient = useQueryClient();
   const queryKey = ['book', bookId, 'series'] as const;
+  const [isFixOpen, setIsFixOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey,
@@ -106,15 +109,25 @@ export function SeriesCard({ bookId }: SeriesCardProps) {
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Series
         </h2>
-        <button
-          type="button"
-          onClick={() => refresh.mutate()}
-          disabled={isRefreshing}
-          aria-label="Refresh series"
-          className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-        >
-          {isRefreshing ? <LoadingSpinner className="w-4 h-4" /> : <RefreshIcon className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsFixOpen(true)}
+            aria-label="Fix series match"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <PencilIcon className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => refresh.mutate()}
+            disabled={isRefreshing}
+            aria-label="Refresh series"
+            className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          >
+            {isRefreshing ? <LoadingSpinner className="w-4 h-4" /> : <RefreshIcon className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
       <div className="glass-card rounded-2xl p-4 space-y-3">
         <p className="text-sm font-medium" data-testid="series-card-name">{series.name}</p>
@@ -131,6 +144,13 @@ export function SeriesCard({ bookId }: SeriesCardProps) {
           ))}
         </ul>
       </div>
+      {isFixOpen && (
+        <FixSeriesModal
+          bookId={bookId}
+          currentSeriesName={series.name}
+          onClose={() => setIsFixOpen(false)}
+        />
+      )}
     </div>
   );
 }

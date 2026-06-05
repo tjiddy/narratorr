@@ -138,6 +138,7 @@ export interface HardcoverSearchCandidate {
   slug: string | null;
   authorName: string | null;
   booksCount: number;
+  imageUrl: string | null;
 }
 
 function isoDateToday(): string {
@@ -299,9 +300,29 @@ function extractSearchCandidates(raw: unknown): HardcoverSearchCandidate[] {
     const slug = typeof obj.slug === 'string' ? obj.slug : null;
     const authorName = extractAuthorName(obj);
     const booksCount = pickNumber(obj.books_count) ?? 0;
-    out.push({ id, name, slug, authorName, booksCount });
+    const imageUrl = extractImageUrl(obj);
+    out.push({ id, name, slug, authorName, booksCount, imageUrl });
   }
   return out;
+}
+
+/**
+ * Cover art for a series candidate is best-effort: the Typesense `search`
+ * payload may carry it as a top-level `image_url` string, or nested under
+ * `image` / `cached_image` objects with a `url`. Absent on most series hits —
+ * the candidate list renders fine without it (name + book count carry the UI).
+ */
+function extractImageUrl(hit: Record<string, unknown>): string | null {
+  const directUrl = hit.image_url;
+  if (typeof directUrl === 'string' && directUrl.length > 0) return directUrl;
+  for (const key of ['image', 'cached_image'] as const) {
+    const candidate = hit[key];
+    if (typeof candidate === 'object' && candidate !== null) {
+      const url = (candidate as Record<string, unknown>).url;
+      if (typeof url === 'string' && url.length > 0) return url;
+    }
+  }
+  return null;
 }
 
 function extractHitsArray(raw: unknown): unknown[] {
