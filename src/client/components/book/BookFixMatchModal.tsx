@@ -59,11 +59,12 @@ function formatYear(meta: BookMetadata | BookWithAuthor): string {
 
 function IdentityComparisonRow({ label, oldValue, newValue }: { label: string; oldValue: string; newValue: string }) {
   const changed = oldValue !== newValue;
+  const mutedAll = 'text-muted-foreground/40';
   return (
     <div className="grid grid-cols-[100px_1fr_1fr] gap-3 text-xs items-baseline">
-      <div className="text-muted-foreground/70 font-medium">{label}</div>
-      <div className="text-muted-foreground line-through">{oldValue}</div>
-      <div className={changed ? 'text-primary font-medium' : 'text-foreground'}>{newValue}</div>
+      <div className={`font-medium ${changed ? 'text-muted-foreground/70' : mutedAll}`}>{label}</div>
+      <div className={changed ? 'text-muted-foreground line-through' : mutedAll}>{oldValue}</div>
+      <div className={changed ? 'text-primary font-medium' : mutedAll}>{newValue}</div>
     </div>
   );
 }
