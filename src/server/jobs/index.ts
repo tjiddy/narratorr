@@ -97,6 +97,14 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   runStartupRecovery(db, services, log).catch((error: unknown) => {
     log.error({ error: serializeError(error) }, 'Startup recovery failed — jobs continue normally');
   });
+
+  // Run the version check once on boot so the update banner reflects reality
+  // before the 2 AM cron fires (#1225). Fire-and-forget: checkForUpdate swallows
+  // and logs its own errors, and the trailing .catch guards against any unexpected
+  // rejection so a failed check never blocks or crashes startup.
+  checkForUpdate(log).catch((error: unknown) => {
+    log.error({ error: serializeError(error) }, 'Startup version check failed — jobs continue normally');
+  });
 }
 
 async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLogger): Promise<void> {
