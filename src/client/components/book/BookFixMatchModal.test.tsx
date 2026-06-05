@@ -94,6 +94,103 @@ describe('BookFixMatchModal (#1129)', () => {
     expect(screen.getByText('New Narrator')).toBeInTheDocument();
   });
 
+  // #1226 — the identity comparison must strike through ONLY the field that
+  // actually differs, and grey unchanged fields on BOTH sides. We locate each
+  // comparison row by its label cell (children[0]) and inspect the old (1) and
+  // new (2) value cells directly, avoiding ambiguous text selectors for values
+  // that are intentionally identical on both columns (F2).
+  function getComparisonRow(label: string): HTMLElement {
+    const rows = Array.from(document.body.querySelectorAll<HTMLElement>('div')).filter(
+      (el) =>
+        el.className.includes('grid-cols-[100px_1fr_1fr]') &&
+        el.children.length === 3 &&
+        el.children[0]?.textContent === label,
+    );
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  it('strikes through only the changed field and greys unchanged rows on both sides (#1226)', async () => {
+    const user = userEvent.setup();
+    (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      books: [
+        // Title/Author/Narrator/Year identical to mockBook — only Series differs.
+        createMockBookMetadata({
+          asin: 'B_NEW',
+          title: 'Wrong Match',
+          authors: [{ name: 'Author' }],
+          narrators: ['Old Narrator'],
+          publishedDate: '2010-08-31',
+          seriesPrimary: { name: 'New Series', position: 2, asin: 'SERIES_NEW' },
+          series: undefined,
+        }),
+      ],
+      authors: [],
+      series: [],
+    });
+    renderModal();
+    await user.click(screen.getByRole('button', { name: /search/i }));
+    await waitFor(() => expect(screen.getByText('Wrong Match')).toBeInTheDocument());
+    await user.click(screen.getByText('Wrong Match'));
+
+    expect(screen.getByText('Confirm match')).toBeInTheDocument();
+
+    // Changed field (Series): old value struck through + muted, new value amber.
+    const seriesRow = getComparisonRow('Series');
+    const seriesOld = seriesRow.children[1]!;
+    const seriesNew = seriesRow.children[2]!;
+    expect(seriesOld.className).toContain('line-through');
+    expect(seriesOld.className).toContain('text-muted-foreground');
+    expect(seriesOld.className).not.toContain('text-muted-foreground/40');
+    expect(seriesNew.className).toContain('text-primary');
+
+    // Unchanged fields: no strikethrough, both sides greyed (text-muted-foreground/40).
+    for (const label of ['Title', 'Author', 'Narrator', 'Year']) {
+      const row = getComparisonRow(label);
+      const oldCell = row.children[1]!;
+      const newCell = row.children[2]!;
+      expect(oldCell.className).not.toContain('line-through');
+      expect(oldCell.className).toContain('text-muted-foreground/40');
+      expect(newCell.className).toContain('text-muted-foreground/40');
+      expect(newCell.className).not.toContain('text-primary');
+    }
+  });
+
+  it('greys the entire comparison table with no strikethrough when every field is identical (#1226)', async () => {
+    const user = userEvent.setup();
+    (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      books: [
+        // Every identity field matches mockBook — the table should fully recede.
+        createMockBookMetadata({
+          asin: 'B_NEW',
+          title: 'Wrong Match',
+          authors: [{ name: 'Author' }],
+          narrators: ['Old Narrator'],
+          publishedDate: '2010-08-31',
+          seriesPrimary: { name: 'Old Series', position: 1, asin: 'SERIES_OLD' },
+          series: undefined,
+        }),
+      ],
+      authors: [],
+      series: [],
+    });
+    renderModal();
+    await user.click(screen.getByRole('button', { name: /search/i }));
+    await waitFor(() => expect(screen.getByText('Wrong Match')).toBeInTheDocument());
+    await user.click(screen.getByText('Wrong Match'));
+
+    expect(screen.getByText('Confirm match')).toBeInTheDocument();
+
+    for (const label of ['Title', 'Author', 'Narrator', 'Series', 'Year']) {
+      const row = getComparisonRow(label);
+      const oldCell = row.children[1]!;
+      const newCell = row.children[2]!;
+      expect(oldCell.className).not.toContain('line-through');
+      expect(oldCell.className).toContain('text-muted-foreground/40');
+      expect(newCell.className).toContain('text-muted-foreground/40');
+    }
+  });
+
   it('confirmation step shows Standalone when new record has no series', async () => {
     const user = userEvent.setup();
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
