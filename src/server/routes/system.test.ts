@@ -17,13 +17,6 @@ vi.mock('../utils/version.js', () => ({
   getCommit: () => 'testsha99',
 }));
 
-vi.mock('../jobs/version-check.js', () => ({
-  getUpdateStatus: vi.fn(),
-  checkForUpdate: vi.fn(),
-}));
-
-import { getUpdateStatus } from '../jobs/version-check.js';
-
 describe('system routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
@@ -71,56 +64,6 @@ describe('system routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload).not.toHaveProperty('timestamp');
       expect(payload).not.toHaveProperty('update');
-    });
-  });
-
-  describe('GET /api/system/update-status (#742 — authenticated update info)', () => {
-    it('returns { update: null } when no update available', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
-      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
-      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
-
-      expect(res.statusCode).toBe(200);
-      const payload = JSON.parse(res.payload);
-      expect(payload).toEqual({ update: null });
-    });
-
-    it('returns { update } when newer version available and not dismissed', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        channel: 'stable',
-        dismissed: false,
-      });
-      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
-
-      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
-
-      expect(res.statusCode).toBe(200);
-      const payload = JSON.parse(res.payload);
-      expect(payload.update).toEqual({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        channel: 'stable',
-        dismissed: false,
-      });
-      expect(getUpdateStatus).toHaveBeenCalledWith('');
-    });
-
-    it('ignores any dismissed setting — always queries dismiss-agnostically (#1230)', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        channel: 'stable',
-        dismissed: false,
-      });
-
-      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
-
-      const payload = JSON.parse(res.payload);
-      expect(payload.update.latestVersion).toBe('0.2.0');
-      // The per-version dismiss UX was retired; the route always passes ''.
-      expect(getUpdateStatus).toHaveBeenCalledWith('');
     });
   });
 

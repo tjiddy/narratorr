@@ -7,7 +7,6 @@ import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
 import { getVersion } from '../utils/version.js';
-import { getUpdateStatus } from '../jobs/version-check.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import fs from 'fs';
@@ -17,20 +16,11 @@ import { serializeError } from '../utils/serialize-error.js';
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status — public, minimal payload (#742): { version, status }.
-  // Update info moved to authenticated GET /api/system/update-status.
   app.get('/api/system/status', async () => {
     return {
       version: getVersion(),
       status: 'ok',
     };
-  });
-
-  // GET /api/system/update-status — protected, returns dashboard update info.
-  // Dismiss-agnostic ('' dismissed version): the per-version dismiss UX was
-  // retired in favour of the ambient health warning (#1230).
-  app.get('/api/system/update-status', async () => {
-    const update = getUpdateStatus('');
-    return { update: update ?? null };
   });
 
   // GET /api/health — DB-aware health probe for Docker/k8s/load balancers.

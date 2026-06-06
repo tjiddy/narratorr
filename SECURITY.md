@@ -16,7 +16,7 @@ Narratorr supports three authentication modes:
 
 All `/api/*` routes require authentication when an auth mode is enabled. Public endpoints are limited to:
 - `/api/health` — Kubernetes/Docker health probe; returns exactly `{ status: 'ok' }` (HTTP 200) on success and `{ status: 'error' }` (HTTP 503) on DB failure. No version, commit, timestamp, or error message is included in the response — failures are logged server-side via `request.log.warn` instead.
-- `/api/system/status` — Returns exactly `{ version, status }`. Update info (whether a newer release is available) lives behind authentication at `/api/system/update-status`.
+- `/api/system/status` — Returns exactly `{ version, status }`.
 - `/api/auth/status` — Returns exactly `{ mode, authenticated }`. Admin/deployment fields (`hasUser`, `username`, `localBypass`, `bypassActive`, `envBypass`) live behind authentication at `/api/auth/admin-status`.
 - `/api/auth/login` — Login endpoint
 - `/api/auth/logout` — Logout endpoint
