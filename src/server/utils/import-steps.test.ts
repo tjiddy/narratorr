@@ -7,6 +7,8 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(),
   rm: vi.fn().mockResolvedValue(undefined),
   statfs: vi.fn(),
+  mkdir: vi.fn().mockResolvedValue(undefined),
+  rename: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../utils/post-processing-script.js', () => ({
@@ -26,10 +28,11 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, statfs, readdir } from 'node:fs/promises';
+import { stat, rm, statfs, readdir, mkdir, rename } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize } from './import-helpers.js';
+import { PathOutsideLibraryError } from './paths.js';
 import type { Stats } from 'node:fs';
 
 import {
@@ -49,7 +52,8 @@ import {
   handleImportFailure,
   isContentFailure,
   cleanupOldBookPath,
-  clearExistingAudio,
+  prepareImportSiblings,
+  commitStagedImport,
 } from './import-steps.js';
 
 function createMockLog(): FastifyBaseLogger {
@@ -541,109 +545,195 @@ describe('cleanupOldBookPath', () => {
   });
 });
 
-// ── clearExistingAudio ──────────────────────────────────────────────────
+// ── prepareImportSiblings ───────────────────────────────────────────────
 
-describe('clearExistingAudio', () => {
-  const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
+describe('prepareImportSiblings', () => {
+  const target = '/library/Author/Title';
+  const staging = `${target}.import-tmp`;
+  const backup = `${target}.import-bak`;
 
-  it('removes only audio files from an in-place re-import target', async () => {
+  it('removes any stale staging and backup siblings before staging a fresh import', async () => {
     const log = createMockLog();
-    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3'), dirent('002.mp3'), dirent('003.mp3')] as never);
-    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
-    expect(rm).toHaveBeenCalledWith('/library/Author/Title/001.mp3', { force: true });
-    expect(rm).toHaveBeenCalledWith('/library/Author/Title/002.mp3', { force: true });
-    expect(rm).toHaveBeenCalledWith('/library/Author/Title/003.mp3', { force: true });
-    expect(rm).toHaveBeenCalledTimes(3);
-    expect(log.info).toHaveBeenCalledWith(
-      expect.objectContaining({ targetPath: '/library/Author/Title', cleared: 3 }),
-      expect.stringMatching(/Cleared existing audio files/i),
-    );
+    await prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log });
+    expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
   });
 
-  it('preserves non-audio files (cover.jpg, notes.txt) — clears only audio', async () => {
+  it('skips removal and logs error-level when a sibling is outside libraryRoot', async () => {
     const log = createMockLog();
-    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3'), dirent('cover.jpg'), dirent('notes.txt')] as never);
-    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
-    expect(rm).toHaveBeenCalledTimes(1);
-    expect(rm).toHaveBeenCalledWith('/library/Author/Title/001.mp3', { force: true });
-    expect(rm).not.toHaveBeenCalledWith('/library/Author/Title/cover.jpg', expect.anything());
-    expect(rm).not.toHaveBeenCalledWith('/library/Author/Title/notes.txt', expect.anything());
-  });
-
-  it('ignores subdirectories that happen to end in an audio extension', async () => {
-    const log = createMockLog();
-    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3'), dirent('weird.mp3', false)] as never);
-    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
-    expect(rm).toHaveBeenCalledTimes(1);
-    expect(rm).toHaveBeenCalledWith('/library/Author/Title/001.mp3', { force: true });
-  });
-
-  it('is a no-op when the target directory does not exist yet (first import)', async () => {
-    const log = createMockLog();
-    vi.mocked(readdir).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
-    expect(rm).not.toHaveBeenCalled();
-    expect(log.warn).not.toHaveBeenCalled();
-    expect(log.error).not.toHaveBeenCalled();
-  });
-
-  it('is a no-op when the target contains no audio files', async () => {
-    const log = createMockLog();
-    vi.mocked(readdir).mockResolvedValue([dirent('cover.jpg'), dirent('desc.nfo')] as never);
-    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
-    expect(rm).not.toHaveBeenCalled();
-  });
-
-  it('logs warn and skips deletion when readdir fails for a non-ENOENT reason (nonfatal)', async () => {
-    const log = createMockLog();
-    vi.mocked(readdir).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
-    await expect(
-      clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log }),
-    ).resolves.toBeUndefined();
-    expect(rm).not.toHaveBeenCalled();
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ targetPath: '/library/Author/Title', error: expect.objectContaining({ message: 'EACCES' }) }),
-      expect.stringMatching(/Failed to read target path for audio clear/i),
-    );
-    expect(log.error).not.toHaveBeenCalled();
-  });
-
-  it('skips deletion and logs error-level when targetPath is outside libraryRoot', async () => {
-    const log = createMockLog();
-    await clearExistingAudio({ targetPath: '/tmp/external', libraryRoot: '/library', log });
-    expect(readdir).not.toHaveBeenCalled();
+    await prepareImportSiblings({ stagingPath: '/tmp/x.import-tmp', backupPath: '/tmp/x.import-bak', libraryRoot: '/library', log });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
-      expect.objectContaining({ targetPath: '/tmp/external', libraryRoot: '/library' }),
+      expect.objectContaining({ libraryRoot: '/library' }),
       expect.stringMatching(/outside library root/i),
     );
   });
 
-  it('does not throw when targetPath is outside libraryRoot — import continues', async () => {
+  it('propagates a stale-staging cleanup failure (strict) so the import aborts before staging (F1)', async () => {
     const log = createMockLog();
-    await expect(
-      clearExistingAudio({ targetPath: '/tmp/external', libraryRoot: '/library', log }),
-    ).resolves.toBeUndefined();
-  });
-
-  it('swallows rm failures as warn and does not throw (nonfatal)', async () => {
-    const log = createMockLog();
-    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3')] as never);
+    // A leftover .import-tmp whose rm fails must NOT be silently reused — otherwise
+    // commitStagedImport would enumerate and commit the stale files into the target.
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(
-      clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log }),
-    ).resolves.toBeUndefined();
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ targetPath: '/library/Author/Title' }),
-      expect.stringMatching(/Failed to clear existing audio files/i),
+      prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('EACCES');
+  });
+
+  it('propagates a stale-backup cleanup failure (strict)', async () => {
+    const log = createMockLog();
+    // staging rm succeeds, backup rm fails → still aborts rather than proceeding over leftover state.
+    vi.mocked(rm)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    await expect(
+      prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('EBUSY');
+  });
+});
+
+// ── commitStagedImport ──────────────────────────────────────────────────
+
+describe('commitStagedImport', () => {
+  const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
+  const target = '/library/Author/Title';
+  const staging = `${target}.import-tmp`;
+  const backup = `${target}.import-bak`;
+
+  /** Route readdir results by path so target vs staging return distinct sets. */
+  function readdirByPath(map: Record<string, ReturnType<typeof dirent>[]>) {
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => (map[p as string] ?? []) as never);
+  }
+
+  it('same-path re-import: backs up old audio, moves staged files in, preserves cover, cleans siblings', async () => {
+    const log = createMockLog();
+    readdirByPath({
+      [target]: [dirent('old - 001.mp3'), dirent('old - 002.mp3'), dirent('cover.jpg')],
+      [staging]: [dirent('new.m4b')],
+    });
+
+    await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    // Existing audio moved to backup (per-file rename, not deleted)...
+    expect(rename).toHaveBeenCalledWith(`${target}/old - 001.mp3`, `${backup}/old - 001.mp3`);
+    expect(rename).toHaveBeenCalledWith(`${target}/old - 002.mp3`, `${backup}/old - 002.mp3`);
+    // ...cover left untouched (non-audio stays in targetPath)...
+    expect(rename).not.toHaveBeenCalledWith(`${target}/cover.jpg`, expect.anything());
+    // ...new staged file moved into the target...
+    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    // ...and both siblings removed on success.
+    expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
+    // The target folder itself is never wholesale-deleted.
+    expect(rm).not.toHaveBeenCalledWith(target, expect.objectContaining({ recursive: true }));
+  });
+
+  it('first import (empty target): no backup created, staged files moved in, staging cleaned', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [], [staging]: [dirent('new.m4b')] });
+
+    await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    expect(mkdir).not.toHaveBeenCalledWith(backup, expect.anything());
+    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
+  });
+
+  it('treats a non-existent target (ENOENT) as no audio to back up', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      if (p === staging) return [dirent('new.m4b')] as never;
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+
+    await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(mkdir).not.toHaveBeenCalledWith(backup, expect.anything());
+  });
+
+  it('rolls back when a staged-file move fails after old audio was backed up', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(rename)
+      .mockResolvedValueOnce(undefined)                                    // backup old.mp3 -> backup
+      .mockRejectedValueOnce(new Error('EIO staged move'))                 // staging/new.m4b -> target FAILS
+      .mockResolvedValue(undefined);                                       // rollback restore
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('EIO staged move');
+
+    // Backed-up audio restored into the target — existing book left intact.
+    expect(rename).toHaveBeenCalledWith(`${backup}/old.mp3`, `${target}/old.mp3`);
+    // Commit threw before the success cleanup — siblings not removed here.
+    expect(rm).not.toHaveBeenCalledWith(backup, expect.objectContaining({ recursive: true }));
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: target }),
+      expect.stringMatching(/rolling back/i),
     );
   });
 
-  it('matches audio extensions case-insensitively', async () => {
+  it('removes any staged files already moved in during rollback', async () => {
     const log = createMockLog();
-    vi.mocked(readdir).mockResolvedValue([dirent('Book.M4B'), dirent('Part.MP3')] as never);
-    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
-    expect(rm).toHaveBeenCalledTimes(2);
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('a.m4b'), dirent('b.m4b')] });
+    vi.mocked(rename)
+      .mockResolvedValueOnce(undefined)               // backup old.mp3
+      .mockResolvedValueOnce(undefined)               // staging/a.m4b -> target (moved in)
+      .mockRejectedValueOnce(new Error('boom'))       // staging/b.m4b -> target FAILS
+      .mockResolvedValue(undefined);                  // rollback restore old.mp3
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('boom');
+
+    // The already-moved staged file is removed from the target on rollback.
+    expect(rm).toHaveBeenCalledWith(`${target}/a.m4b`, { force: true });
+    // And the backed-up original is restored.
+    expect(rename).toHaveBeenCalledWith(`${backup}/old.mp3`, `${target}/old.mp3`);
+  });
+
+  it('rolls back when the backup move itself fails partway', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('a.mp3'), dirent('b.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(rename)
+      .mockResolvedValueOnce(undefined)                       // a.mp3 -> backup
+      .mockRejectedValueOnce(new Error('EXDEV backup move'))  // b.mp3 -> backup FAILS
+      .mockResolvedValue(undefined);                          // rollback restore a.mp3
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('EXDEV backup move');
+
+    // Only the audio that made it to backup is restored.
+    expect(rename).toHaveBeenCalledWith(`${backup}/a.mp3`, `${target}/a.mp3`);
+  });
+
+  it('best-effort rollback: a restore failure is logged but never masks the original commit error (F2)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(rename)
+      .mockResolvedValueOnce(undefined)                       // backup old.mp3
+      .mockRejectedValueOnce(new Error('staged move failed')) // staged move FAILS
+      .mockRejectedValueOnce(new Error('restore failed'));    // rollback restore ALSO fails
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('staged move failed');
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ message: 'restore failed' }) }),
+      expect.stringMatching(/Rollback: failed to restore/i),
+    );
+  });
+
+  it('throws PathOutsideLibraryError before any filesystem mutation when a path escapes the library', async () => {
+    const log = createMockLog();
+    await expect(
+      commitStagedImport({ stagingPath: '/tmp/x.import-tmp', targetPath: '/tmp/x', backupPath: '/tmp/x.import-bak', libraryRoot: '/library', log }),
+    ).rejects.toBeInstanceOf(PathOutsideLibraryError);
+    expect(rename).not.toHaveBeenCalled();
+    expect(rm).not.toHaveBeenCalled();
   });
 });
 
@@ -735,6 +825,57 @@ describe('handleImportFailure', () => {
       }),
       'Import failed',
     );
+  });
+
+  it('cleans up the staging and backup siblings when provided', async () => {
+    const log = createMockLog();
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/library/Author/Title',
+      stagingPath: '/library/Author/Title.import-tmp', backupPath: '/library/Author/Title.import-bak',
+      libraryRoot: '/library', db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow('fail');
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-tmp', { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-bak', { recursive: true, force: true });
+  });
+
+  it('does NOT blanket-remove a protected pre-existing target (same-path re-import)', async () => {
+    const log = createMockLog();
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/library/Author/Title',
+      stagingPath: '/library/Author/Title.import-tmp', backupPath: '/library/Author/Title.import-bak',
+      libraryRoot: '/library', protectTarget: true, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: '/library/Author/Title' }, log,
+    })).rejects.toThrow('fail');
+    // Siblings cleaned, but the existing book folder is never recursively removed.
+    expect(rm).not.toHaveBeenCalledWith('/library/Author/Title', expect.objectContaining({ recursive: true }));
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-tmp', { recursive: true, force: true });
+  });
+
+  it('still removes a disposable (unprotected) target on failure — first import / move-path', async () => {
+    const log = createMockLog();
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/library/Author/Title',
+      stagingPath: '/library/Author/Title.import-tmp', backupPath: '/library/Author/Title.import-bak',
+      libraryRoot: '/library', protectTarget: false, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow('fail');
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title', { recursive: true, force: true });
+  });
+
+  it('refuses to remove a target outside libraryRoot but still reverts DB statuses', async () => {
+    const log = createMockLog();
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/tmp/external',
+      libraryRoot: '/library', db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow('fail');
+    expect(rm).not.toHaveBeenCalledWith('/tmp/external', expect.objectContaining({ recursive: true }));
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/tmp/external', libraryRoot: '/library' }),
+      expect.stringMatching(/outside library root/i),
+    );
+    expect(revertBookStatus).toHaveBeenCalled();
   });
 });
 

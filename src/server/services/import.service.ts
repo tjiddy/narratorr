@@ -1,4 +1,5 @@
 import { eq, and, inArray, isNotNull } from 'drizzle-orm';
+import { normalize } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
@@ -15,8 +16,8 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import {
-  validateSource, checkDiskSpace, clearExistingAudio, copyToLibrary,
-  verifyCopy, cleanupOldBookPath, handleImportFailure,
+  validateSource, checkDiskSpace, prepareImportSiblings, copyToLibrary,
+  verifyCopy, commitStagedImport, cleanupOldBookPath, handleImportFailure,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
@@ -124,6 +125,10 @@ export class ImportService {
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
 
     let targetPath: string | undefined;
+    let stagingPath: string | undefined;
+    let backupPath: string | undefined;
+    let libraryRoot: string | undefined;
+    let protectTarget = false;
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
       this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath }, 'Resolved save path');
@@ -133,33 +138,48 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
       const namingOptions = toNamingOptions(librarySettings);
+      libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
-      this.log.debug({ downloadId, bookTitle: book.title, targetPath }, 'Built target path');
+      stagingPath = `${targetPath}.import-tmp`;
+      backupPath = `${targetPath}.import-bak`;
+      // Same-path re-import: targetPath IS the user's existing book folder, so the
+      // commit must back-up-and-rollback rather than destroy, and failure cleanup
+      // must never blanket-rm it. First import / move-path: targetPath is disposable.
+      protectTarget = book.path != null && normalize(targetPath) === normalize(book.path);
+      this.log.debug({ downloadId, bookTitle: book.title, targetPath, protectTarget }, 'Built target path');
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
       this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
-      // Clear any existing audio in the target before copy so a re-import fully
-      // replaces the book's audio (whether or not the folder path changed) —
-      // prevents old + new versions mixing in one folder. Non-audio files (cover,
-      // .nfo, user files) are preserved. Nonfatal.
-      await clearExistingAudio({ targetPath, libraryRoot: librarySettings.path, log: this.log });
+
+      // ── Phase 1: stage + verify into a sibling (non-destructive) ──────────
+      // Copy, rename and verify the new version into `.import-tmp`. The existing
+      // targetPath is never touched here, so a copy failure can't destroy the
+      // current book — old audio, cover and metadata all remain in place.
+      await prepareImportSiblings({ stagingPath, backupPath, libraryRoot, log: this.log });
       await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
-        sourcePath, targetPath, sourceStats, log: this.log,
+        sourcePath, targetPath: stagingPath, sourceStats, log: this.log,
         onProgress: bindCopyProgress(callbacks),
       });
 
       if (librarySettings.fileFormat) {
         await notifyPhase(callbacks, 'renaming');
         await renameFilesWithTemplate(
-          targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions,
+          stagingPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions,
           bindRenameProgress(callbacks),
         );
       }
-      const targetSize = await verifyCopy({ targetPath, sourcePath });
+      const targetSize = await verifyCopy({ targetPath: stagingPath, sourcePath });
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
+
+      // ── Phase 2: commit (backup existing audio, move staged in, rollback) ─
+      // Only after Phase 1 verifies do we touch targetPath. The swap backs up the
+      // old audio before moving the new files in and rolls back on any failure,
+      // so a mid-commit error can't leave the book missing or half-replaced.
+      await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
+
       await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
 
       await this.db.transaction(async (tx) => {
@@ -181,8 +201,8 @@ export class ImportService {
       // handleImportFailure does core cleanup (rm files, revert DB) then rethrows.
       // Orchestrator catches the rethrow for failure-path side effects.
       return handleImportFailure({
-        error, targetPath, db: this.db, downloadId,
-        book, log: this.log, elapsedMs: Date.now() - startMs,
+        error, targetPath, stagingPath, backupPath, libraryRoot, protectTarget,
+        db: this.db, downloadId, book, log: this.log, elapsedMs: Date.now() - startMs,
       });
     }
   }
