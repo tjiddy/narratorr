@@ -594,6 +594,20 @@ describe('clearExistingAudio', () => {
     expect(rm).not.toHaveBeenCalled();
   });
 
+  it('logs warn and skips deletion when readdir fails for a non-ENOENT reason (nonfatal)', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(
+      clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/library/Author/Title', error: expect.objectContaining({ message: 'EACCES' }) }),
+      expect.stringMatching(/Failed to read target path for audio clear/i),
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
   it('skips deletion and logs error-level when targetPath is outside libraryRoot', async () => {
     const log = createMockLog();
     await clearExistingAudio({ targetPath: '/tmp/external', libraryRoot: '/library', log });
