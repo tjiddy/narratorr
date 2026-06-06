@@ -1,8 +1,7 @@
 import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
-import { fetchWithTimeout } from '../utils/network-service.js';
-import { HTTP_DOWNLOAD_TIMEOUT_MS } from '../utils/constants.js';
+import { createSsrfSafeDispatcher, fetchWithSsrfRedirect, mapNetworkError } from '../utils/network-service.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
@@ -45,22 +44,40 @@ export class BlackholeClient implements DownloadClientAdapter {
       return null;
     }
 
-    // nzb-url — fetch the URL and write the bytes
-    let response: Response;
+    // nzb-url — follow indexer download redirects (302 getnzb links) through the
+    // SSRF-safe redirect helper, exactly as the torrent path does, then write the
+    // final .nzb bytes. The LAN allowlist (when present) lets a private/LAN
+    // configured-indexer NZB URL (e.g. Prowlarr-in-Docker) pass the SSRF pre-flight
+    // without widening policy for arbitrary private addresses (#1243).
+    const dispatcher = createSsrfSafeDispatcher(artifact.lanAllowlist?.hostname);
     try {
-      response = await fetchWithTimeout(artifact.url, {}, HTTP_DOWNLOAD_TIMEOUT_MS);
-    } catch (error: unknown) {
-      if (isTimeoutError(error)) throw new DownloadClientTimeoutError(this.name, (error as Error).message);
-      throw new DownloadClientError(this.name, getErrorMessage(error));
-    }
-    if (!response.ok) {
-      throw new DownloadClientError(this.name, `Failed to download file: HTTP ${response.status}`);
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
-    await writeFile(filePath, buffer);
+      let response: Response;
+      try {
+        response = await fetchWithSsrfRedirect(artifact.url, {
+          dispatcher,
+          ...(artifact.lanAllowlist && { lanAllowlist: artifact.lanAllowlist.hostPort }),
+        });
+      } catch (error: unknown) {
+        // fetchWithSsrfRedirect propagates raw errors (unlike fetchWithTimeout, which
+        // maps internally). Map first so the AbortSignal.timeout DOMException becomes
+        // the 'Request timed out' string isTimeoutError matches; otherwise a timeout
+        // would downgrade to a plain DownloadClientError.
+        const mapped = mapNetworkError(error);
+        if (isTimeoutError(mapped)) throw new DownloadClientTimeoutError(this.name, mapped.message);
+        throw new DownloadClientError(this.name, mapped.message);
+      }
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        throw new DownloadClientError(this.name, `Failed to download file: HTTP ${response.status}`);
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
+      await writeFile(filePath, buffer);
 
-    return null;
+      return null;
+    } finally {
+      await dispatcher.close().catch(() => { /* best-effort cleanup */ });
+    }
   }
 
   async getDownload(_id: string): Promise<DownloadItemInfo | null> {
