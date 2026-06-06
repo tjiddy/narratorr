@@ -302,6 +302,36 @@ describe('DelugeClient', () => {
       expect(cookies['web.connect']).toContain(SESSION_COOKIE);
     });
 
+    it('surfaces a rawRpc() data.error as a plain DownloadClientError without re-login/retry', async () => {
+      // A `data.error` (even code 1) reached through rawRpc() during the handshake
+      // must NOT trigger the auth-retry path — rawRpc keeps its own plain-throw
+      // policy at the helper boundary, so no inner re-login loop occurs.
+      const methods: string[] = [];
+      server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string; params: unknown[]; id: number };
+        methods.push(body.method);
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: body.id, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        // web.connected goes through rawRpc(); return an RPC error with code 1.
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
+        }
+        return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+      }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('Deluge RPC error');
+      // No retry: auth.login ran exactly once, web.connected was not re-attempted.
+      expect(methods.filter((m) => m === 'auth.login')).toHaveLength(1);
+      expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
+    });
+
     it('re-runs the handshake on the re-login retry path without looping', async () => {
       const methods: string[] = [];
       let daemonInfoCalls = 0;
