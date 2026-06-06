@@ -28,6 +28,9 @@ const TORRENT_STATUS_KEYS = [
   'is_finished',
 ];
 
+const NO_DAEMON_MESSAGE =
+  'Deluge WebUI is not connected to a daemon. Open Deluge’s Connection Manager and configure (and connect to) a daemon host, then try again.';
+
 export class DelugeClient implements DownloadClientAdapter {
   readonly type = 'deluge';
   readonly name = 'Deluge';
@@ -114,6 +117,75 @@ export class DelugeClient implements DownloadClientAdapter {
     );
   }
 
+  /**
+   * Issue a JSON-RPC call WITHOUT the auth gate that `rpc()` applies. Reuses the
+   * persisted session cookie from `login()`. The auth handshake (web.*) must use
+   * this rather than `rpc()` — `rpc()` calls `login()` when `!this.authenticated`,
+   * which would recurse back into the handshake.
+   */
+  private async rawRpc(method: string, params: unknown[] = []): Promise<unknown> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.sessionCookie) {
+      headers.Cookie = this.sessionCookie;
+    }
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ method, params, id: ++this.requestId }),
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+    if (!response.ok) {
+      throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
+    }
+
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch {
+      throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
+    }
+
+    const parsed = delugeRpcResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `Deluge returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    if (parsed.data.error) {
+      throw new DownloadClientError(this.name, `Deluge RPC error: ${parsed.data.error.message}`);
+    }
+
+    return parsed.data.result;
+  }
+
+  /**
+   * `auth.login` only authenticates to the web server — it does NOT connect the
+   * web server to a daemon. Daemon-proxied methods (`daemon.*`, `core.*`) are
+   * absent from the callable-method map until a daemon is connected, so they fail
+   * with "Unknown method". Ensure a daemon is connected before any such call.
+   */
+  private async ensureDaemonConnected(): Promise<void> {
+    const connected = await this.rawRpc('web.connected');
+    if (connected === true) {
+      return;
+    }
+
+    const hosts = await this.rawRpc('web.get_hosts');
+    if (!Array.isArray(hosts) || hosts.length === 0) {
+      throw new DownloadClientError(this.name, NO_DAEMON_MESSAGE);
+    }
+
+    const firstHost = hosts[0];
+    if (!Array.isArray(firstHost) || typeof firstHost[0] !== 'string' || firstHost[0].length === 0) {
+      throw new DownloadClientError(this.name, NO_DAEMON_MESSAGE);
+    }
+
+    await this.rawRpc('web.connect', [firstHost[0]]);
+  }
+
   private async login(): Promise<void> {
     const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
       method: 'POST',
@@ -159,6 +231,10 @@ export class DelugeClient implements DownloadClientAdapter {
     if (setCookie) {
       this.sessionCookie = setCookie.split(';')[0]!;
     }
+
+    // auth.login only authenticates to the web server — connect it to a daemon
+    // before any daemon.*/core.* call. Reuses the cookie just persisted above.
+    await this.ensureDaemonConnected();
 
     this.authenticated = true;
   }
