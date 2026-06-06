@@ -1,7 +1,7 @@
 import { writeFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
-import { createSsrfSafeDispatcher, fetchWithSsrfRedirect, mapNetworkError } from '../utils/network-service.js';
+import { createSsrfSafeDispatcher, fetchWithSsrfRedirect, mapNetworkError, redactUrlsFromMessage } from '../utils/network-service.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 
@@ -64,7 +64,10 @@ export class BlackholeClient implements DownloadClientAdapter {
         // would downgrade to a plain DownloadClientError.
         const mapped = mapNetworkError(error);
         if (isTimeoutError(mapped)) throw new DownloadClientTimeoutError(this.name, mapped.message);
-        throw new DownloadClientError(this.name, mapped.message);
+        // Redact any raw URL (and its apikey/passkey query params) from unmapped
+        // errors before surfacing — mapped network codes carry no URL, but the
+        // final passthrough branch of mapNetworkError returns error.message verbatim.
+        throw new DownloadClientError(this.name, redactUrlsFromMessage(mapped.message));
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => { /* best-effort */ });

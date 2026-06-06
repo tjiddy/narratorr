@@ -6,6 +6,7 @@ import {
   createSsrfSafeDispatcher,
   fetchWithSsrfRedirect,
   mapNetworkError,
+  redactUrlsFromMessage,
   UnsupportedRedirectSchemeError,
 } from './network-service.js';
 
@@ -226,6 +227,5 @@ function isHtmlResponse(response: Response, buffer: Buffer): boolean {
 /** Sanitize network errors to never include the raw URL (passkey/token safety). */
 function sanitizeNetworkError(error: unknown): Error {
   const mapped = mapNetworkError(error);
-  const sanitized = mapped.message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
-  return new Error(`Download failed: ${sanitized}`);
+  return new Error(`Download failed: ${redactUrlsFromMessage(mapped.message)}`);
 }
