@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
@@ -727,14 +727,15 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // cleanupOldBookPath must not wholesale-delete the folder we just copied into.
-      // (clearExistingAudio may rm individual audio files with { force: true }, but the
-      // recursive folder delete signature must never fire for a same-path re-import.)
+      // The commit/cleanup must not wholesale-delete the existing book folder we
+      // re-imported into. (Staging/backup SIBLINGS are removed recursively, but the
+      // target folder itself must never get the recursive-delete signature.)
+      const base = '/audiobooks/Brandon Sanderson/The Way of Kings';
       const rmMock = vi.mocked(rm);
-      expect(rmMock).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ recursive: true }));
+      expect(rmMock).not.toHaveBeenCalledWith(base, expect.objectContaining({ recursive: true }));
     });
 
-    it('clears existing target audio before copy on an in-place re-import (same path)', async () => {
+    it('stages then commits an in-place re-import: backs up old audio, preserves cover, cleans siblings (same path)', async () => {
       const samePathBook = createMockDbBook({
         status: 'downloading' as const,
         path: '/audiobooks/Brandon Sanderson/The Way of Kings',
@@ -746,7 +747,7 @@ describe('ImportService', () => {
         if (key === 'processing') return Promise.resolve({});
         return Promise.resolve({});
       });
-      // Target already holds an old 2-part MP3 rip; the new import is a single M4B.
+      // Target already holds an old 2-part MP3 rip plus a cover.
       vi.mocked(readdir).mockResolvedValue([
         { name: 'old - 001.mp3', isFile: () => true, isDirectory: () => false },
         { name: 'old - 002.mp3', isFile: () => true, isDirectory: () => false },
@@ -759,16 +760,22 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
+      const base = '/audiobooks/Brandon Sanderson/The Way of Kings';
+      const renameMock = vi.mocked(rename);
+      // Old audio is moved (backed up) out of the target — not destroyed in place...
+      expect(renameMock).toHaveBeenCalledWith(`${base}/old - 001.mp3`, `${base}.import-bak/old - 001.mp3`);
+      expect(renameMock).toHaveBeenCalledWith(`${base}/old - 002.mp3`, `${base}.import-bak/old - 002.mp3`);
+      // ...the cover is never moved out of the target (non-audio preserved)...
+      expect(renameMock).not.toHaveBeenCalledWith(`${base}/cover.jpg`, `${base}.import-bak/cover.jpg`);
+
       const rmMock = vi.mocked(rm);
-      // Old audio removed from the target...
-      expect(rmMock).toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings/old - 001.mp3', { force: true });
-      expect(rmMock).toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings/old - 002.mp3', { force: true });
-      // ...but the non-audio cover is left untouched, and the folder itself is not wholesale-deleted.
-      expect(rmMock).not.toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings/cover.jpg', expect.anything());
-      expect(rmMock).not.toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings', expect.objectContaining({ recursive: true }));
-      // Clear runs before the copy.
-      const lastClearOrder = Math.max(...rmMock.mock.invocationCallOrder);
-      expect(lastClearOrder).toBeLessThan(vi.mocked(cp).mock.invocationCallOrder[0]!);
+      // ...old audio is not individually force-deleted (it is moved, then the backup dir cleaned)...
+      expect(rmMock).not.toHaveBeenCalledWith(`${base}/old - 001.mp3`, { force: true });
+      // ...the target folder itself is never wholesale-deleted...
+      expect(rmMock).not.toHaveBeenCalledWith(base, expect.objectContaining({ recursive: true }));
+      // ...and the staging + backup siblings are removed on success.
+      expect(rmMock).toHaveBeenCalledWith(`${base}.import-bak`, { recursive: true, force: true });
+      expect(rmMock).toHaveBeenCalledWith(`${base}.import-tmp`, { recursive: true, force: true });
     });
 
     it('continues when old file deletion fails (EACCES)', async () => {
@@ -804,10 +811,10 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // No prior path → cleanupOldBookPath does nothing; the recursive folder-delete
-      // signature must not fire (clearExistingAudio's per-file { force: true } rm is fine).
+      // No prior path → cleanupOldBookPath does nothing; the target folder must not
+      // get the recursive folder-delete signature (staging/backup siblings may).
       const rmMock = vi.mocked(rm);
-      expect(rmMock).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ recursive: true }));
+      expect(rmMock).not.toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings', expect.objectContaining({ recursive: true }));
     });
 
     it('preserves old download record during re-import (history)', async () => {
@@ -818,6 +825,99 @@ describe('ImportService', () => {
 
       // Old download record should NOT be deleted — only status updated
       expect(db.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('atomic staged re-import — data-loss prevention (#1255)', () => {
+    const SAME_PATH = '/audiobooks/Brandon Sanderson/The Way of Kings';
+    const STAGING = `${SAME_PATH}.import-tmp`;
+    const BACKUP = `${SAME_PATH}.import-bak`;
+
+    function useSamePathSettings() {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+    }
+
+    /** Existing in-place book: one old audio file + a cover. */
+    function withExistingAudioAndCover() {
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'old.mp3', isFile: () => true, isDirectory: () => false },
+        { name: 'cover.jpg', isFile: () => true, isDirectory: () => false },
+      ] as never);
+    }
+
+    beforeEach(setupDefaults);
+
+    // AC2 installs a persistent rename implementation; clearAllMocks() does NOT
+    // reset implementations, so restore the default resolve to avoid leaking the
+    // throwing impl into every later test (see CLAUDE.md vi.clearAllMocks gotcha).
+    afterEach(() => {
+      vi.mocked(rename).mockReset();
+      vi.mocked(rename).mockResolvedValue(undefined);
+    });
+
+    it('AC1: a Phase-1 copy failure leaves the existing book + cover untouched (no blanket delete)', async () => {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // The staged copy fails partway through Phase 1.
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during staging'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during staging');
+
+      // The existing book folder is NEVER blanket-removed...
+      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      // ...no existing audio was moved out (the commit phase was never reached)...
+      expect(rename).not.toHaveBeenCalledWith(`${SAME_PATH}/old.mp3`, `${BACKUP}/old.mp3`);
+      // ...and the staging sibling is cleaned up.
+      expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
+    });
+
+    it('AC2: a Phase-2 commit/swap failure rolls back, restoring the original audio', async () => {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Backup move + in-staging renames succeed; the staged-file move INTO the target fails.
+      vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
+        const s = String(src); const d = String(dst);
+        if (s.includes('.import-tmp') && !d.includes('.import-tmp') && !d.includes('.import-bak')) {
+          throw new Error('EIO during swap');
+        }
+      });
+
+      await expect(service.importDownload(1)).rejects.toThrow('EIO during swap');
+
+      // Rollback restored the backed-up audio into the target...
+      expect(rename).toHaveBeenCalledWith(`${BACKUP}/old.mp3`, `${SAME_PATH}/old.mp3`);
+      // ...the existing book folder was never blanket-removed...
+      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      // ...and both transient siblings are cleaned up.
+      expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
+      expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+    });
+
+    it('AC4: a first-import copy failure cleans up its own partial (staged) files', async () => {
+      // mockBook has no path → first import → targetPath is the import's own scratch dir.
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
+
+      // The staging sibling (the partial copy) is removed during failure cleanup.
+      const stagingCleanup = vi.mocked(rm).mock.calls.find(([p]) => String(p).endsWith('.import-tmp'));
+      expect(stagingCleanup).toBeDefined();
     });
   });
 
@@ -941,8 +1041,8 @@ describe('ImportService', () => {
         return mockDbChain() as never;
       });
 
-      // Make the recursive targetPath cleanup throw (leave clearExistingAudio's
-      // per-file { force: true } rm working so the failure under test is the cleanup rm).
+      // Make every recursive rm throw (staging/backup sibling cleanup is nonfatal,
+      // so the failure under test surfaces on the recursive targetPath cleanup rm).
       const rmMock = vi.mocked(rm);
       rmMock.mockImplementation((_p: unknown, opts: unknown) =>
         (opts as { recursive?: boolean })?.recursive
@@ -1313,8 +1413,8 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // rm rejects for old path cleanup (recursive folder delete), but not for
-      // clearExistingAudio's per-file { force: true } clear of the new target.
+      // rm rejects for any recursive folder delete (old-path cleanup + sibling
+      // cleanup), but not for the per-file { force: true } rollback path.
       const rmMock = vi.mocked(rm);
       rmMock.mockImplementation((_p: unknown, opts: unknown) =>
         (opts as { recursive?: boolean })?.recursive
@@ -2255,9 +2355,9 @@ describe('ImportService consolidation (issue #79)', () => {
           expect.objectContaining({ error: expect.objectContaining({ message: 'unexpected crash', type: 'Error' }) }),
           expect.stringContaining('enrichment threw'),
         );
-        // Import succeeded → no failure-cleanup recursive rm of the target.
-        // (clearExistingAudio's per-file { force: true } clear is expected and unrelated.)
-        expect(rm).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ recursive: true }));
+        // Import succeeded → no failure-cleanup recursive rm of the target folder.
+        // (Staging/backup sibling cleanup is recursive and expected; the target is not.)
+        expect(rm).not.toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings', expect.objectContaining({ recursive: true }));
       });
     });
 
