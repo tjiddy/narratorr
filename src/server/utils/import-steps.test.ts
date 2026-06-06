@@ -26,7 +26,7 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, statfs } from 'node:fs/promises';
+import { stat, rm, statfs, readdir } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize } from './import-helpers.js';
@@ -49,6 +49,7 @@ import {
   handleImportFailure,
   isContentFailure,
   cleanupOldBookPath,
+  clearExistingAudio,
 } from './import-steps.js';
 
 function createMockLog(): FastifyBaseLogger {
@@ -537,6 +538,112 @@ describe('cleanupOldBookPath', () => {
       expect.stringMatching(/Failed to delete old book files/i),
     );
     expect(log.error).not.toHaveBeenCalled();
+  });
+});
+
+// ── clearExistingAudio ──────────────────────────────────────────────────
+
+describe('clearExistingAudio', () => {
+  const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
+
+  it('removes only audio files from an in-place re-import target', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3'), dirent('002.mp3'), dirent('003.mp3')] as never);
+    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title/001.mp3', { force: true });
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title/002.mp3', { force: true });
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title/003.mp3', { force: true });
+    expect(rm).toHaveBeenCalledTimes(3);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/library/Author/Title', cleared: 3 }),
+      expect.stringMatching(/Cleared existing audio files/i),
+    );
+  });
+
+  it('preserves non-audio files (cover.jpg, notes.txt) — clears only audio', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3'), dirent('cover.jpg'), dirent('notes.txt')] as never);
+    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
+    expect(rm).toHaveBeenCalledTimes(1);
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title/001.mp3', { force: true });
+    expect(rm).not.toHaveBeenCalledWith('/library/Author/Title/cover.jpg', expect.anything());
+    expect(rm).not.toHaveBeenCalledWith('/library/Author/Title/notes.txt', expect.anything());
+  });
+
+  it('ignores subdirectories that happen to end in an audio extension', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3'), dirent('weird.mp3', false)] as never);
+    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
+    expect(rm).toHaveBeenCalledTimes(1);
+    expect(rm).toHaveBeenCalledWith('/library/Author/Title/001.mp3', { force: true });
+  });
+
+  it('is a no-op when the target directory does not exist yet (first import)', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when the target contains no audio files', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([dirent('cover.jpg'), dirent('desc.nfo')] as never);
+    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
+    expect(rm).not.toHaveBeenCalled();
+  });
+
+  it('logs warn and skips deletion when readdir fails for a non-ENOENT reason (nonfatal)', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(
+      clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/library/Author/Title', error: expect.objectContaining({ message: 'EACCES' }) }),
+      expect.stringMatching(/Failed to read target path for audio clear/i),
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('skips deletion and logs error-level when targetPath is outside libraryRoot', async () => {
+    const log = createMockLog();
+    await clearExistingAudio({ targetPath: '/tmp/external', libraryRoot: '/library', log });
+    expect(readdir).not.toHaveBeenCalled();
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/tmp/external', libraryRoot: '/library' }),
+      expect.stringMatching(/outside library root/i),
+    );
+  });
+
+  it('does not throw when targetPath is outside libraryRoot — import continues', async () => {
+    const log = createMockLog();
+    await expect(
+      clearExistingAudio({ targetPath: '/tmp/external', libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('swallows rm failures as warn and does not throw (nonfatal)', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([dirent('001.mp3')] as never);
+    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(
+      clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/library/Author/Title' }),
+      expect.stringMatching(/Failed to clear existing audio files/i),
+    );
+  });
+
+  it('matches audio extensions case-insensitively', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([dirent('Book.M4B'), dirent('Part.MP3')] as never);
+    await clearExistingAudio({ targetPath: '/library/Author/Title', libraryRoot: '/library', log });
+    expect(rm).toHaveBeenCalledTimes(2);
   });
 });
 
