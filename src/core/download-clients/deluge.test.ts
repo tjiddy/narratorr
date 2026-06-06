@@ -71,7 +71,7 @@ describe('DelugeClient', () => {
     it('authenticates via auth.login JSON-RPC call', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'daemon.info': () => '2.1.1',
+        'daemon.get_version': () => '2.1.1',
       }));
 
       const result = await client.test();
@@ -178,7 +178,7 @@ describe('DelugeClient', () => {
 
   describe('daemon handshake (web.connect)', () => {
     // Builds a handler that auths, answers the handshake methods per the supplied
-    // config, then answers daemon.info. Records every method seen + connect params.
+    // config, then answers daemon.get_version. Records every method seen + connect params.
     function handshakeHandler(opts: {
       connected: boolean;
       hosts?: unknown;
@@ -196,7 +196,7 @@ describe('DelugeClient', () => {
         if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: opts.connected, error: null });
         if (body.method === 'web.get_hosts') return HttpResponse.json({ id: body.id, result: opts.hosts ?? null, error: null });
         if (body.method === 'web.connect') return HttpResponse.json({ id: body.id, result: [], error: null });
-        if (body.method === 'daemon.info') return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+        if (body.method === 'daemon.get_version') return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
         return HttpResponse.json({ id: body.id, result: null, error: { message: `Unknown method: ${body.method}`, code: 2 } });
       });
     }
@@ -378,7 +378,7 @@ describe('DelugeClient', () => {
         if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: false, error: null });
         if (body.method === 'web.get_hosts') return HttpResponse.json({ id: body.id, result: [['host-id-1', '127.0.0.1', 58846, 'localhost']], error: null });
         if (body.method === 'web.connect') return HttpResponse.json({ id: body.id, result: [], error: null });
-        // daemon.info: first call reports an expired session (code 1) → forces re-login.
+        // daemon.get_version: first call reports an expired session (code 1) → forces re-login.
         daemonInfoCalls++;
         if (daemonInfoCalls === 1) {
           return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
@@ -744,7 +744,7 @@ describe('DelugeClient', () => {
     it('returns success with version on valid auth', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'daemon.info': () => '2.1.1',
+        'daemon.get_version': () => '2.1.1',
       }));
 
       const result = await client.test();
