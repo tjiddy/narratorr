@@ -17,11 +17,6 @@ vi.mock('../utils/version.js', () => ({
   getCommit: () => 'testsha99',
 }));
 
-vi.mock('../jobs/version-check.js', () => ({
-  getUpdateStatus: vi.fn(),
-  checkForUpdate: vi.fn(),
-}));
-
 describe('system routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
