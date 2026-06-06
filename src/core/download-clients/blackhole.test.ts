@@ -287,7 +287,11 @@ describe('BlackholeClient', () => {
         url: 'https://example.com/file.nzb',
       };
 
-      await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientTimeoutError);
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientTimeoutError);
+      // The timeout branch must stay reachable before redaction; its message is the
+      // URL-free literal isTimeoutError matches by strict equality (#1246).
+      expect((error as DownloadClientTimeoutError).message).toContain('Request timed out');
       expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -300,6 +304,49 @@ describe('BlackholeClient', () => {
       };
 
       await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientError);
+    });
+
+    // #1246 — unmapped errors can embed the raw download URL (passkey/apikey); redact before surfacing.
+    it('redacts a credentialed URL from an unmapped nzb-url error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('connect ECONNREFUSED https://indexer.example.com/api?apikey=SECRET123'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://indexer.example.com/dl/secret',
+      };
+
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      const message = (error as DownloadClientError).message;
+      expect(message).not.toContain('https://');
+      expect(message).not.toContain('SECRET123');
+      expect(message).toContain('[redacted-url]');
+    });
+
+    it('redacts a bare URL from an unmapped nzb-url error message', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Failed to fetch https://example.com/file.nzb'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).not.toContain('https://');
+    });
+
+    it('passes a no-URL nzb-url error message through unchanged', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('socket hang up'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('socket hang up');
     });
 
     it('closes the dispatcher on a successful nzb-url download', async () => {

@@ -31,6 +31,17 @@ function mapFetchFailedCause(cause: Error & { code?: string }): Error {
   return new Error(cause.message || 'Network error');
 }
 
+/**
+ * Strip any `http(s)://…` substring from an error message so a raw URL (and its
+ * passkey/apikey/token query params) can never reach a user-facing error or log.
+ * Single source of truth for the redaction regex — both the torrent HTTP path
+ * (`download-url.ts` `sanitizeNetworkError`) and the Blackhole NZB path
+ * (`blackhole.ts`) call this before embedding a mapped message in an error.
+ */
+export function redactUrlsFromMessage(message: string): string {
+  return message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
+}
+
 export function mapNetworkError(error: unknown): Error {
   // AbortError from manual AbortController.abort()
   // TimeoutError from AbortSignal.timeout() (Node 18+)

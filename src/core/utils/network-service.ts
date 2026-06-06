@@ -39,7 +39,7 @@ import { mapNetworkError } from './map-network-error.js';
 
 // Re-export so callers have a single import surface for outbound-network helpers
 // (the implementation stays in map-network-error.ts to keep its dedicated tests isolated).
-export { mapNetworkError } from './map-network-error.js';
+export { mapNetworkError, redactUrlsFromMessage } from './map-network-error.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 
 /**

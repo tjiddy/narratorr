@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapNetworkError } from './map-network-error.js';
+import { mapNetworkError, redactUrlsFromMessage } from './map-network-error.js';
 
 describe('mapNetworkError', () => {
   describe('error code mapping', () => {
@@ -110,5 +110,24 @@ describe('mapNetworkError', () => {
       const result = mapNetworkError(original);
       expect(result.message).toContain('unknown network issue');
     });
+  });
+});
+
+describe('redactUrlsFromMessage', () => {
+  it('redacts a credentialed URL, stripping passkey/apikey query params', () => {
+    const result = redactUrlsFromMessage('connect failed https://indexer.example.com/api?apikey=SECRET123');
+    expect(result).not.toContain('https://');
+    expect(result).not.toContain('SECRET123');
+    expect(result).toBe('connect failed [redacted-url]');
+  });
+
+  it('redacts every URL when a message contains multiple', () => {
+    const result = redactUrlsFromMessage('http://a.example/x failed, retry http://b.example/y');
+    expect(result).not.toContain('http://');
+    expect(result).toBe('[redacted-url] failed, retry [redacted-url]');
+  });
+
+  it('leaves a message with no URL unchanged', () => {
+    expect(redactUrlsFromMessage('socket hang up')).toBe('socket hang up');
   });
 });
