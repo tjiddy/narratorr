@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
@@ -269,6 +269,17 @@ describe('ImportService', () => {
     settingsService = createMockSettingsService();
     mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)), update: vi.fn().mockResolvedValue(undefined) };
     service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
+
+    // clearAllMocks() clears call history but NOT implementations (see CLAUDE.md
+    // gotcha) — so a persistent rm/rename/cp mockImplementation set by one test
+    // would leak into later ones. Reset + re-establish the fs-mock defaults here
+    // so every test starts from a clean resolve, regardless of prior test order.
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined);
+    vi.mocked(rename).mockReset();
+    vi.mocked(rename).mockResolvedValue(undefined);
+    vi.mocked(cp).mockReset();
+    vi.mocked(cp).mockResolvedValue(undefined);
 
     // Default: stat returns a directory for source, then directory for target (size verification)
     vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
@@ -780,7 +791,10 @@ describe('ImportService', () => {
 
     it('continues when old file deletion fails (EACCES)', async () => {
       const rmMock = vi.mocked(rm);
-      rmMock.mockRejectedValueOnce(new Error('EACCES: permission denied'));
+      // Fail only the old-path cleanup; pre-stage sibling cleanup must still succeed.
+      rmMock.mockImplementation(async (p: unknown) =>
+        String(p).includes('Old Book') ? Promise.reject(new Error('EACCES: permission denied')) : undefined,
+      );
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
@@ -792,7 +806,10 @@ describe('ImportService', () => {
 
     it('does not roll back new files when old file deletion fails', async () => {
       const rmMock = vi.mocked(rm);
-      rmMock.mockRejectedValueOnce(new Error('EACCES'));
+      // Fail only the old-path cleanup; pre-stage sibling cleanup must still succeed.
+      rmMock.mockImplementation(async (p: unknown) =>
+        String(p).includes('Old Book') ? Promise.reject(new Error('EACCES')) : undefined,
+      );
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
@@ -853,14 +870,6 @@ describe('ImportService', () => {
 
     beforeEach(setupDefaults);
 
-    // AC2 installs a persistent rename implementation; clearAllMocks() does NOT
-    // reset implementations, so restore the default resolve to avoid leaking the
-    // throwing impl into every later test (see CLAUDE.md vi.clearAllMocks gotcha).
-    afterEach(() => {
-      vi.mocked(rename).mockReset();
-      vi.mocked(rename).mockResolvedValue(undefined);
-    });
-
     it('AC1: a Phase-1 copy failure leaves the existing book + cover untouched (no blanket delete)', async () => {
       useSamePathSettings();
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
@@ -905,6 +914,30 @@ describe('ImportService', () => {
       // ...and both transient siblings are cleaned up.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+    });
+
+    it('F1: aborts before staging when a stale staging sibling cannot be cleared (never commits leftovers)', async () => {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // The leftover .import-tmp cannot be cleared. Because commitStagedImport
+      // enumerates whatever is in staging and moves it into the target, the import
+      // MUST abort here rather than copy + commit over the stale staging dir.
+      vi.mocked(rm).mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-tmp')
+          ? Promise.reject(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
+          : undefined,
+      );
+
+      await expect(service.importDownload(1)).rejects.toThrow('EACCES');
+
+      // The copy never ran — no staged files were produced, so nothing stale could be committed...
+      expect(cp).not.toHaveBeenCalled();
+      // ...and the existing protected book folder was never blanket-removed.
+      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
     });
 
     it('AC4: a first-import copy failure cleans up its own partial (staged) files', async () => {
@@ -1041,14 +1074,17 @@ describe('ImportService', () => {
         return mockDbChain() as never;
       });
 
-      // Make every recursive rm throw (staging/backup sibling cleanup is nonfatal,
-      // so the failure under test surfaces on the recursive targetPath cleanup rm).
+      // Make recursive rm of the real target throw, but let the strict pre-stage
+      // sibling cleanup succeed — so the failure under test surfaces on the
+      // recursive targetPath cleanup rm, not the pre-stage staging removal.
       const rmMock = vi.mocked(rm);
-      rmMock.mockImplementation((_p: unknown, opts: unknown) =>
-        (opts as { recursive?: boolean })?.recursive
+      rmMock.mockImplementation((p: unknown, opts: unknown) => {
+        const path = String(p);
+        if (path.endsWith('.import-tmp') || path.endsWith('.import-bak')) return Promise.resolve(undefined);
+        return (opts as { recursive?: boolean })?.recursive
           ? Promise.reject(new Error('EPERM: permission denied'))
-          : Promise.resolve(undefined),
-      );
+          : Promise.resolve(undefined);
+      });
 
       await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
 
@@ -1413,14 +1449,16 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // rm rejects for any recursive folder delete (old-path cleanup + sibling
-      // cleanup), but not for the per-file { force: true } rollback path.
+      // rm rejects for the recursive old-path folder delete, but the strict
+      // pre-stage sibling cleanup must still succeed so the import proceeds.
       const rmMock = vi.mocked(rm);
-      rmMock.mockImplementation((_p: unknown, opts: unknown) =>
-        (opts as { recursive?: boolean })?.recursive
+      rmMock.mockImplementation((p: unknown, opts: unknown) => {
+        const path = String(p);
+        if (path.endsWith('.import-tmp') || path.endsWith('.import-bak')) return Promise.resolve(undefined);
+        return (opts as { recursive?: boolean })?.recursive
           ? Promise.reject(new Error('EACCES: permission denied'))
-          : Promise.resolve(undefined),
-      );
+          : Promise.resolve(undefined);
+      });
 
       const result = await svc.importDownload(1);
 

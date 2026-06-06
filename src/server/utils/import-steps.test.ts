@@ -569,16 +569,25 @@ describe('prepareImportSiblings', () => {
     );
   });
 
-  it('swallows rm failures as warn and does not throw (nonfatal)', async () => {
+  it('propagates a stale-staging cleanup failure (strict) so the import aborts before staging (F1)', async () => {
     const log = createMockLog();
-    vi.mocked(rm).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    // A leftover .import-tmp whose rm fails must NOT be silently reused — otherwise
+    // commitStagedImport would enumerate and commit the stale files into the target.
+    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(
       prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log }),
-    ).resolves.toBeUndefined();
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ path: staging, label: 'staging' }),
-      expect.stringMatching(/Failed to remove import sibling/i),
-    );
+    ).rejects.toThrow('EACCES');
+  });
+
+  it('propagates a stale-backup cleanup failure (strict)', async () => {
+    const log = createMockLog();
+    // staging rm succeeds, backup rm fails → still aborts rather than proceeding over leftover state.
+    vi.mocked(rm)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    await expect(
+      prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('EBUSY');
   });
 });
 

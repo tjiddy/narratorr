@@ -143,14 +143,24 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
 
 /**
  * Guarded recursive removal of a transient import sibling (staging or backup).
- * Verifies the path is inside the library root before deleting, then removes it
- * best-effort — never throws, so a cleanup hiccup can't abort or mask an import.
+ * Verifies the path is inside the library root before deleting.
+ *
+ * `strict` controls failure handling:
+ *  - `false` (default) — best-effort: a failed `rm` is logged and swallowed.
+ *    Used for post-success and failure-path cleanup, where a cleanup hiccup must
+ *    never abort an already-committed import or mask the controlling error.
+ *  - `true` — a real `rm` failure propagates. Used pre-stage (see
+ *    `prepareImportSiblings`): a leftover staging dir that can't be cleared would
+ *    otherwise be enumerated and committed into the target by `commitStagedImport`
+ *    (F1), so the import must abort instead. `force: true` still suppresses the
+ *    common no-stale-dir ENOENT case, so the happy path never throws.
  */
 async function removeImportSibling(
   path: string,
   libraryRoot: string | undefined,
   log: FastifyBaseLogger,
   label: 'staging' | 'backup',
+  opts?: { strict?: boolean },
 ): Promise<void> {
   if (libraryRoot) {
     try {
@@ -162,6 +172,10 @@ async function removeImportSibling(
       }
       throw gateError;
     }
+  }
+  if (opts?.strict) {
+    await rm(path, { recursive: true, force: true });
+    return;
   }
   await rm(path, { recursive: true, force: true })
     .catch((rmError: unknown) => log.warn({ error: serializeError(rmError), path, label }, 'Failed to remove import sibling — continuing'));
@@ -192,13 +206,17 @@ export interface PrepareImportSiblingsArgs {
 
 /**
  * Clear any stale `.import-tmp` / `.import-bak` siblings left behind by a
- * previously interrupted import before staging a fresh one. Guarded + nonfatal
- * so leftover siblings are treated as recoverable state, never a hard failure.
+ * previously interrupted import before staging a fresh one. Guarded and STRICT:
+ * a stale staging dir that survives cleanup would be enumerated and committed
+ * into the target by `commitStagedImport` (F1), and a surviving backup dir could
+ * shadow a fresh backup, so a real `rm` failure aborts the import rather than
+ * proceeding over leftover state. `force: true` suppresses the common
+ * no-stale-dir ENOENT case, so the happy path never throws.
  */
 export async function prepareImportSiblings(args: PrepareImportSiblingsArgs): Promise<void> {
   const { stagingPath, backupPath, libraryRoot, log } = args;
-  await removeImportSibling(stagingPath, libraryRoot, log, 'staging');
-  await removeImportSibling(backupPath, libraryRoot, log, 'backup');
+  await removeImportSibling(stagingPath, libraryRoot, log, 'staging', { strict: true });
+  await removeImportSibling(backupPath, libraryRoot, log, 'backup', { strict: true });
 }
 
 // ── commitStagedImport ──────────────────────────────────────────────────
