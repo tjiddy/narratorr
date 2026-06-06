@@ -20,6 +20,7 @@ export interface DelugeConfig {
 }
 
 type DelugeTorrentStatus = z.infer<typeof delugeTorrentStatusSchema>;
+type DelugeRpcEnvelope = z.infer<typeof delugeRpcResponseSchema>;
 
 const TORRENT_STATUS_KEYS = [
   'hash', 'name', 'state', 'progress', 'total_size',
@@ -75,26 +76,7 @@ export class DelugeClient implements DownloadClientAdapter {
           throw new DownloadClientAuthError(this.name, `Deluge request failed: HTTP ${response.status}`);
         }
 
-        if (!response.ok) {
-          throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
-        }
-
-        let raw: unknown;
-        try {
-          raw = await response.json();
-        } catch {
-          throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
-        }
-
-        const parsed = delugeRpcResponseSchema.safeParse(raw);
-        if (!parsed.success) {
-          throw new DownloadClientError(
-            this.name,
-            `Deluge returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-            { cause: parsed.error },
-          );
-        }
-        const data = parsed.data;
+        const data = await this.parseRpcResponse(response);
 
         if (data.error) {
           if (data.error.code === 1) {
@@ -135,6 +117,23 @@ export class DelugeClient implements DownloadClientAdapter {
       body: JSON.stringify({ method, params, id: ++this.requestId }),
     }, DEFAULT_REQUEST_TIMEOUT_MS);
 
+    const data = await this.parseRpcResponse(response);
+    if (data.error) {
+      throw new DownloadClientError(this.name, `Deluge RPC error: ${data.error.message}`);
+    }
+
+    return data.result;
+  }
+
+  /**
+   * Shared, policy-free response pipeline for `rpc()` and `rawRpc()`: HTTP
+   * status check, JSON decode, and schema validation. Returns the validated
+   * envelope and performs NO `data.error` interpretation — each caller keeps
+   * its own `data.error` policy (auth-retry in `rpc()`, plain throw in
+   * `rawRpc()`). `rpc()`'s 401/403 auth pre-check also stays caller-side,
+   * ahead of this helper's generic `!response.ok` branch.
+   */
+  private async parseRpcResponse(response: Response): Promise<DelugeRpcEnvelope> {
     if (!response.ok) {
       throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
     }
@@ -154,11 +153,7 @@ export class DelugeClient implements DownloadClientAdapter {
         { cause: parsed.error },
       );
     }
-    if (parsed.data.error) {
-      throw new DownloadClientError(this.name, `Deluge RPC error: ${parsed.data.error.message}`);
-    }
-
-    return parsed.data.result;
+    return parsed.data;
   }
 
   /**
