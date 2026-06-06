@@ -1,8 +1,8 @@
-import { stat, rm, statfs, mkdir, cp } from 'node:fs/promises';
+import { stat, rm, statfs, mkdir, cp, readdir } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { Stats } from 'node:fs';
+import type { Stats, Dirent } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -137,6 +137,58 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
   }
 
   return { freeGB, requiredGB };
+}
+
+// ── clearExistingAudio ──────────────────────────────────────────────────
+
+export interface ClearExistingAudioArgs {
+  targetPath: string;
+  libraryRoot: string;
+  log: FastifyBaseLogger;
+}
+
+/**
+ * Remove existing audio files from `targetPath` before re-importing a book.
+ * Ensures an import fully replaces the book's audio whether the folder path
+ * changed or not — without this, re-importing a different version (e.g. a
+ * single M4B over a 32-part MP3 rip) mixes old and new files in one folder.
+ * Filters strictly by AUDIO_EXTENSIONS, so non-audio files (cover.jpg, .nfo,
+ * user-added files) are left untouched. No-op when the target doesn't exist
+ * yet (first import). Awaited but nonfatal — never aborts an otherwise-good
+ * import on a cleanup hiccup.
+ */
+export async function clearExistingAudio(args: ClearExistingAudioArgs): Promise<void> {
+  const { targetPath, libraryRoot, log } = args;
+  try {
+    assertPathInsideLibrary(targetPath, libraryRoot);
+  } catch (gateError: unknown) {
+    if (gateError instanceof PathOutsideLibraryError) {
+      log.error({ targetPath, libraryRoot }, 'Refusing to clear audio in target path outside library root — leaving foreign path untouched');
+      return;
+    }
+    throw gateError;
+  }
+
+  let entries: Dirent[];
+  try {
+    entries = await readdir(targetPath, { withFileTypes: true });
+  } catch (readError: unknown) {
+    if ((readError as NodeJS.ErrnoException).code === 'ENOENT') return; // target doesn't exist yet — no-op
+    log.warn({ error: serializeError(readError), targetPath }, 'Failed to read target path for audio clear — continuing');
+    return;
+  }
+
+  const audioFiles = entries
+    .filter((e) => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
+    .map((e) => e.name);
+  if (audioFiles.length === 0) return;
+
+  try {
+    await Promise.all(audioFiles.map((name) => rm(join(targetPath, name), { force: true })));
+    log.info({ targetPath, cleared: audioFiles.length }, 'Cleared existing audio files before re-import');
+  } catch (rmError: unknown) {
+    log.warn({ error: serializeError(rmError), targetPath }, 'Failed to clear existing audio files before re-import — continuing');
+  }
 }
 
 // ── copyToLibrary ───────────────────────────────────────────────────────

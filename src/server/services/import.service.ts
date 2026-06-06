@@ -15,7 +15,7 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import {
-  validateSource, checkDiskSpace, copyToLibrary,
+  validateSource, checkDiskSpace, clearExistingAudio, copyToLibrary,
   verifyCopy, cleanupOldBookPath, handleImportFailure,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
@@ -140,6 +140,11 @@ export class ImportService {
       this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
+      // Clear any existing audio in the target before copy so a re-import fully
+      // replaces the book's audio (whether or not the folder path changed) —
+      // prevents old + new versions mixing in one folder. Non-audio files (cover,
+      // .nfo, user files) are preserved. Nonfatal.
+      await clearExistingAudio({ targetPath, libraryRoot: librarySettings.path, log: this.log });
       await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
         sourcePath, targetPath, sourceStats, log: this.log,
