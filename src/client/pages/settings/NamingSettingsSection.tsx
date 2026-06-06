@@ -82,6 +82,7 @@ interface FormatFieldProps {
   previewNoSeries: string;
   previewMultiFile?: string | undefined;
   previewSuffix?: string | undefined;
+  previewSuffixMultiFile?: string | undefined;
   warnings?: ReactNode;
   onOpenTokenModal: () => void;
   onInsertToken: (token: string) => void;
@@ -94,7 +95,7 @@ interface FormatFieldProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewSuffix, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewSuffix, previewSuffixMultiFile, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (
     <div>
@@ -172,7 +173,7 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
             <div className="flex items-baseline gap-3">
               <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Multi-file</span>
               <span data-testid="preview-multi-file" className="text-sm font-mono break-all">
-                {previewMultiFile ? <>{previewMultiFile}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
+                {previewMultiFile ? <>{previewMultiFile}{previewSuffixMultiFile ?? previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
               </span>
             </div>
           )}
@@ -289,7 +290,7 @@ export function NamingSettingsSection() {
 
         <FormatField
           id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
-          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" hasValue={!!fileFormat}
+          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
           onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}

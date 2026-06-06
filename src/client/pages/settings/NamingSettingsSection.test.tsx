@@ -306,10 +306,26 @@ describe('NamingSettingsSection', () => {
         expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
       });
       // File format previews should contain .m4b suffix
-      const previews = screen.getAllByTestId('preview-with-series');
+      const withSeries = screen.getAllByTestId('preview-with-series');
       // The second preview-with-series belongs to the file format field
-      expect(previews.length).toBe(2);
-      expect(previews[1]!.textContent).toContain('.m4b');
+      expect(withSeries.length).toBe(2);
+      expect(withSeries[1]!.textContent).toContain('.m4b');
+      expect(withSeries[1]!.textContent).not.toContain('.mp3');
+      // Without-series file row also stays .m4b
+      const withoutSeries = screen.getAllByTestId('preview-without-series');
+      expect(withoutSeries[1]!.textContent).toContain('.m4b');
+      expect(withoutSeries[1]!.textContent).not.toContain('.mp3');
+    });
+
+    it('file format multi-file preview shows .mp3 suffix, not .m4b', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
+      });
+      // Only the file format field renders preview-multi-file (folder passes no previewMultiFile)
+      const multiFile = screen.getByTestId('preview-multi-file');
+      expect(multiFile.textContent).toContain('.mp3');
+      expect(multiFile.textContent).not.toContain('.m4b');
     });
 
     it('folder format preview does not show .m4b suffix', async () => {
@@ -320,6 +336,7 @@ describe('NamingSettingsSection', () => {
       // The first preview-with-series belongs to the folder format field
       const previews = screen.getAllByTestId('preview-with-series');
       expect(previews[0]!.textContent).not.toContain('.m4b');
+      expect(previews[0]!.textContent).not.toContain('.mp3');
     });
 
     it('preview container not rendered when format field is empty', async () => {
