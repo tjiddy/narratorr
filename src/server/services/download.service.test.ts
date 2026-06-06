@@ -533,9 +533,15 @@ describe('DownloadService', () => {
         resolveSpy.mockRestore();
       });
 
-      it('does NOT call IndexerService.getLanAllowlist() for usenet HTTP grabs', async () => {
+      // #1243 — usenet HTTP grabs now thread the LAN allowlist so the Blackhole
+      // self-download can reach private/LAN configured-indexer NZB URLs.
+      it('delegates LAN allowlist construction to IndexerService.getLanAllowlist for usenet HTTP grabs (#1243)', async () => {
         setupCommonGrabMocks();
-        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) };
+        const sharedAllowlist = {
+          hostPort: new Set(['192.168.0.22:9696']),
+          hostname: new Set(['192.168.0.22']),
+        };
+        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue(sharedAllowlist) };
         service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
 
         const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
@@ -548,8 +554,8 @@ describe('DownloadService', () => {
           protocol: 'usenet',
         });
 
-        expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
-        expect(resolveSpy).toHaveBeenCalledWith(undefined);
+        expect(indexerService.getLanAllowlist).toHaveBeenCalledTimes(1);
+        expect(resolveSpy.mock.calls[0]![0]!).toBe(sharedAllowlist);
         resolveSpy.mockRestore();
       });
 
@@ -790,6 +796,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
       );
+      service.wire({ retrySearchDeps: {} as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
       const result = await service.grab({
         downloadUrl: 'https://nzb.example.com/download/123',
@@ -1032,6 +1039,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
       );
+      service.wire({ retrySearchDeps: {} as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
       await service.grab({
         downloadUrl: 'https://indexer.test/nzb/12345',
@@ -1098,6 +1106,7 @@ describe('DownloadService', () => {
 
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      svc.wire({ retrySearchDeps: {} as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
       await svc.grab({
         downloadUrl: 'https://indexer.example.com/api/v1/download/12345?apikey=SECRETKEY123',

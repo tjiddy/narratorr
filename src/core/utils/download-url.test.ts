@@ -216,6 +216,31 @@ describe('DownloadUrl', () => {
       });
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    // #1243 — the allowlist is carried on the nzb-url artifact so the Blackhole
+    // self-download can reach private/LAN configured-indexer NZB URLs.
+    it('attaches the LAN allowlist to the nzb-url passthrough when provided (no HTTP fetch)', async () => {
+      const allowlist = {
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      };
+      const dl = new DownloadUrl('http://192.168.0.22:9696/getnzb/abc.nzb', 'usenet');
+      const artifact = await dl.resolve(allowlist);
+
+      expect(artifact).toEqual({
+        type: 'nzb-url',
+        url: 'http://192.168.0.22:9696/getnzb/abc.nzb',
+        lanAllowlist: allowlist,
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('omits lanAllowlist from the nzb-url passthrough when no allowlist is provided', async () => {
+      const dl = new DownloadUrl('https://indexer.example.com/dl/12345.nzb', 'usenet');
+      const artifact = await dl.resolve();
+
+      expect(artifact).not.toHaveProperty('lanAllowlist');
+    });
   });
 
   describe('resolve() — torrent HTTP URLs (direct response)', () => {
