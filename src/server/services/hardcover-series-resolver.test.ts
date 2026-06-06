@@ -57,7 +57,7 @@ describe('computeAuthorOverlap', () => {
 
 describe('pickBestSearchCandidate', () => {
   const candidate = (overrides: Partial<HardcoverSearchCandidate>): HardcoverSearchCandidate => ({
-    id: 1, name: 'Stormlight Archive', slug: 's', authorName: 'Brandon Sanderson', booksCount: 5, imageUrl: null,
+    id: 1, name: 'Stormlight Archive', slug: 's', authorName: 'Brandon Sanderson', booksCount: 5, readersCount: 0, imageUrl: null,
     ...overrides,
   });
 
@@ -112,6 +112,17 @@ describe('pickBestSearchCandidate', () => {
       candidate({ id: 1, name: 'Stormlight Archive', authorName: null, booksCount: 5 }),
     ]);
     expect(best).toBeNull();
+  });
+
+  it('selection is independent of readersCount popularity order (#1239)', () => {
+    // The adapter now sorts its pool by readersCount desc. Prove the resolver's
+    // pick is driven by author/name match, NOT popularity: the best match has a
+    // LOW readersCount and a poorer match has a HIGH readersCount.
+    const best = pickBestSearchCandidate('Stormlight Archive', 'Brandon Sanderson', [
+      candidate({ id: 1, name: 'Stormlight Companion', authorName: 'Brandon Sanderson', readersCount: 99999 }),
+      candidate({ id: 2, name: 'Stormlight Archive', authorName: 'Brandon Sanderson', readersCount: 1 }),
+    ]);
+    expect(best?.id).toBe(2);
   });
 });
 

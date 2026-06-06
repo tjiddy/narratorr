@@ -431,7 +431,10 @@ export class SeriesCardService {
     const apiKey = await this.getApiKey();
     if (!apiKey) return [];
     const client = new HardcoverClient(apiKey);
-    return client.searchSeries(query);
+    // Display cap for the picker: the adapter returns the full popularity-ranked
+    // pool (consumed unsliced by the automatic resolver, #1239); the ≤10 limit
+    // is a picker-display concern enforced here, not in the adapter.
+    return (await client.searchSeries(query)).slice(0, 10);
   }
 
   private async loadLibraryBooksForSeries(seriesName: string, executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {

@@ -629,6 +629,22 @@ describe('SeriesCardService — unit', () => {
       expect(await svc.searchSeriesCandidates('nothing')).toEqual([]);
     });
 
+    it('caps the picker display to ≤10 candidates in readers_count-desc order (#1239)', async () => {
+      // Adapter returns the full ranked pool; the picker enforces the ≤10 cap.
+      // Hits arrive low-to-high readers_count so the cap must keep the top 10.
+      const hits = Array.from({ length: 15 }, (_, i) => ({
+        document: { id: String(i + 1), name: `Series ${i + 1}`, author_name: 'A', books_count: 2, readers_count: i, slug: `s${i + 1}` },
+      }));
+      mockFetchOnce(searchPayload(hits));
+      const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+      const candidates = await svc.searchSeriesCandidates('many');
+
+      expect(candidates).toHaveLength(10);
+      // Highest readers_count first; the cap drops the 5 lowest-readership hits.
+      expect(candidates[0]!.readersCount).toBe(14);
+      expect(candidates.map((c) => c.readersCount)).toEqual([14, 13, 12, 11, 10, 9, 8, 7, 6, 5]);
+    });
+
     it('returns an empty list without fetching when no API key is configured', async () => {
       const fetchSpy = vi.fn();
       globalThis.fetch = fetchSpy as typeof globalThis.fetch;

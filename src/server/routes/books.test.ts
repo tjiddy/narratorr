@@ -3175,7 +3175,7 @@ describe('#1071 series routes', () => {
   it('GET /api/books/:id/series/search returns candidates and forwards the query', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
     (services.seriesCard.searchSeriesCandidates as Mock).mockResolvedValue([
-      { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3, imageUrl: null },
+      { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3, readersCount: 0, imageUrl: null },
     ]);
 
     const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=the%20band' });
