@@ -89,14 +89,12 @@ describe('auth middleware', () => {
       }
     });
 
-    it('new authenticated admin/update endpoints (#742) are NOT public — return 401 without auth', async () => {
-      // /api/auth/admin-status and /api/system/update-status were carved out of
-      // the public auth/system status payloads so admin/deployment fields no
-      // longer leak on unauthenticated requests. They must be protected at the
-      // plugin layer just like any other /api/* route.
+    it('new authenticated admin endpoints (#742) are NOT public — return 401 without auth', async () => {
+      // /api/auth/admin-status was carved out of the public auth status payload
+      // so admin/deployment fields no longer leak on unauthenticated requests.
+      // It must be protected at the plugin layer just like any other /api/* route.
       const protectedRoutes = [
         { method: 'GET' as const, url: '/api/auth/admin-status' },
-        { method: 'GET' as const, url: '/api/system/update-status' },
       ];
       for (const { method, url } of protectedRoutes) {
         const res = await app.inject({ method, url });
@@ -104,7 +102,7 @@ describe('auth middleware', () => {
       }
     });
 
-    it('new authenticated admin/update endpoints accept valid X-Api-Key (#742)', async () => {
+    it('new authenticated admin endpoints accept valid X-Api-Key (#742)', async () => {
       // Sanity check: the protected routes are denied to unauthenticated callers
       // but pass through with a valid API key. Confirms the routes themselves are
       // not in the public allowlist (they would otherwise return non-401 even
@@ -115,7 +113,7 @@ describe('auth middleware', () => {
       });
       const apiKeyApp = await createApp(apiKeyService);
       try {
-        for (const url of ['/api/auth/admin-status', '/api/system/update-status']) {
+        for (const url of ['/api/auth/admin-status']) {
           const res = await apiKeyApp.inject({
             method: 'GET',
             url,

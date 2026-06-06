@@ -706,11 +706,6 @@ describe('systemApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/system/status');
   });
 
-  it('getUpdateStatus → GET /system/update-status', async () => {
-    await systemApi.getUpdateStatus();
-    expect(mockFetchApi).toHaveBeenCalledWith('/system/update-status');
-  });
-
   it('searchAllWanted → POST /system/tasks/search-all-wanted', async () => {
     await systemApi.searchAllWanted();
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search-all-wanted', expect.objectContaining({ method: 'POST' }));

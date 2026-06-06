@@ -44,21 +44,8 @@ export interface SystemStatus {
   status: string;
 }
 
-export interface UpdateInfo {
-  latestVersion: string;
-  releaseUrl: string;
-  dismissed: boolean;
-  /** Additive discriminator (#1232): 'stable' for releases, 'develop' for develop builds. */
-  channel?: 'stable' | 'develop';
-}
-
-export interface UpdateStatus {
-  update: UpdateInfo | null;
-}
-
 export const systemApi = {
   getSystemStatus: () => fetchApi<SystemStatus>('/system/status'),
-  getUpdateStatus: () => fetchApi<UpdateStatus>('/system/update-status'),
   searchAllWanted: () =>
     fetchApi<{ searched: number; grabbed: number; skipped: number; errors: number }>(
       '/system/tasks/search-all-wanted',
