@@ -332,6 +332,37 @@ describe('DelugeClient', () => {
       expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
     });
 
+    it('surfaces a rawRpc() non-401/403 transport failure as a plain DownloadClientError without re-login/retry', async () => {
+      // A generic HTTP failure (e.g. 500) reached through rawRpc()'s shared parse
+      // path must surface as a plain DownloadClientError and NOT set wasAuthFailure
+      // or trigger the auth re-login/retry — locking the divergence at the helper
+      // boundary (the 401/403 auth pre-check lives in rpc(), not in the helper).
+      const methods: string[] = [];
+      server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string; params: unknown[]; id: number };
+        methods.push(body.method);
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: body.id, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        // web.connected goes through rawRpc(); fail it with a non-401/403 HTTP status.
+        if (body.method === 'web.connected') {
+          return new HttpResponse(null, { status: 500 });
+        }
+        return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+      }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('HTTP 500');
+      // No retry: auth.login ran exactly once, web.connected was not re-attempted.
+      expect(methods.filter((m) => m === 'auth.login')).toHaveLength(1);
+      expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
+    });
+
     it('re-runs the handshake on the re-login retry path without looping', async () => {
       const methods: string[] = [];
       let daemonInfoCalls = 0;
