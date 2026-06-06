@@ -13,7 +13,7 @@ import {
 export type DownloadArtifact =
   | { type: 'torrent-bytes'; data: Buffer; infoHash: string }
   | { type: 'magnet-uri'; uri: string; infoHash: string }
-  | { type: 'nzb-url'; url: string }
+  | { type: 'nzb-url'; url: string; lanAllowlist?: LanAllowlist }
   | { type: 'nzb-bytes'; data: Buffer };
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -67,9 +67,11 @@ export class DownloadUrl {
       return this.resolveDataUri();
     }
 
-    // Usenet HTTP URLs — passthrough as nzb-url (adapters handle URL submission)
+    // Usenet HTTP URLs — passthrough as nzb-url (adapters handle URL submission).
+    // Carry the LAN allowlist so the Blackhole self-download can reach private/
+    // LAN configured-indexer NZB URLs through the SSRF-safe helper (#1243).
     if (this.protocol === 'usenet' && this.isHttp) {
-      return { type: 'nzb-url', url: this.raw };
+      return { type: 'nzb-url', url: this.raw, ...(lanAllowlist && { lanAllowlist }) };
     }
 
     if (this.isHttp) {
