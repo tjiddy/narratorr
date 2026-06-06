@@ -345,7 +345,7 @@ export class DelugeClient implements DownloadClientAdapter {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       await this.login();
-      const version = await this.rpc('daemon.info') as string;
+      const version = await this.rpc('daemon.get_version') as string;
       return { success: true, message: `Deluge ${version}` };
     } catch (error: unknown) {
       return {
