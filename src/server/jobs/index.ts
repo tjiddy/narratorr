@@ -16,6 +16,7 @@ import { runDiscoveryJob } from './discovery.js';
 import { runCoverBackfill } from './cover-backfill.js';
 import { runSeriesRefreshJob } from './series-refresh.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 import { LibraryPathError, ScanInProgressError } from '../services/library-scan.service.js';
 
 
@@ -43,6 +44,15 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     retrySearchDeps: services.retrySearchDeps,
   };
 
+  // When a version-check changes the cached update status, recompute health so
+  // the health card + nav dot reflect it within one UI poll instead of lagging
+  // until the next scheduled health-check tick. Must call the service directly
+  // (not `executeTracked('health-check')`, which silently no-ops mid-pass) so
+  // the coalesced trailing rerun in runAllChecks always consumes the new status.
+  const onUpdateChanged = (): void => {
+    fireAndForget(services.healthCheck.runAllChecks(), log, 'Version-check health nudge failed');
+  };
+
   /** Job registry — adding a new job requires one entry here. */
   const jobRegistry: JobEntry[] = [
     { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping, services.qualityGateOrchestrator, services.eventHistory) },
@@ -61,7 +71,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
       try { await services.blacklist.deleteExpired(); } catch (error: unknown) { log.warn({ error: serializeError(error) }, 'Housekeeping: blacklist cleanup failed'); }
     } },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
-    { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },
+    { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log, onUpdateChanged) },
     { name: 'import-list-sync', type: 'cron', schedule: '* * * * *', callback: () => services.importList.syncDueLists() },
     { name: 'discovery', type: 'timeout', getIntervalMinutes: () => services.settings.get('discovery').then((s) => s.intervalHours * 60), callback: () => runDiscoveryJob(services.discovery, services.settings, log) },
     { name: 'series-refresh', type: 'cron', schedule: '0 3 * * 0', callback: () => runSeriesRefreshJob(services.seriesCard, log) },
@@ -102,7 +112,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   // before the 2 AM cron fires (#1225). Fire-and-forget: checkForUpdate swallows
   // and logs its own errors, and the trailing .catch guards against any unexpected
   // rejection so a failed check never blocks or crashes startup.
-  checkForUpdate(log).catch((error: unknown) => {
+  checkForUpdate(log, onUpdateChanged).catch((error: unknown) => {
     log.error({ error: serializeError(error) }, 'Startup version check failed — jobs continue normally');
   });
 }

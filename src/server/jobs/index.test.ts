@@ -714,7 +714,8 @@ describe('startJobs', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(checkForUpdate).toHaveBeenCalledTimes(1);
-      expect(checkForUpdate).toHaveBeenCalledWith(log);
+      // #1262 — the boot check is wired with the onUpdateChanged nudge callback.
+      expect(checkForUpdate).toHaveBeenCalledWith(log, expect.any(Function));
     });
 
     it('does not await checkForUpdate — startJobs returns promptly even when the check never settles', async () => {
@@ -761,6 +762,61 @@ describe('startJobs', () => {
       expect(tasks.map((t) => t.name)).toContain('version-check');
       const cronExpressions = vi.mocked(cron.schedule).mock.calls.map(([expr]) => expr);
       expect(cronExpressions).toContain('0 2 * * *');
+    });
+  });
+
+  // #1262 — version-check nudges a health recompute so a manual/boot update check
+  // reflects in the health card within one UI poll instead of lagging to the next
+  // scheduled health-check tick.
+  describe('version-check → health-check nudge wiring (#1262)', () => {
+    it('boot version-check is passed an onUpdateChanged callback that recomputes health', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The boot call wires the nudge. Invoke the captured callback and assert it
+      // drives a real health recompute via the service (not executeTracked, which
+      // silently no-ops while a pass is running).
+      const bootCall = vi.mocked(checkForUpdate).mock.calls.at(-1)!;
+      const onUpdateChanged = bootCall[1] as () => void;
+      expect(typeof onUpdateChanged).toBe('function');
+
+      expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
+      onUpdateChanged();
+      expect(services.healthCheck.runAllChecks).toHaveBeenCalledTimes(1);
+    });
+
+    it('the 2 AM version-check cron callback passes the same onUpdateChanged nudge', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      vi.mocked(checkForUpdate).mockClear();
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Run the registered cron task; its callback must call checkForUpdate with
+      // the nudge wired in (log + a function), mirroring the boot path.
+      await services.taskRegistry.executeTracked('version-check');
+
+      const cronCall = vi.mocked(checkForUpdate).mock.calls.find((c) => typeof c[1] === 'function');
+      expect(cronCall).toBeDefined();
+      const onUpdateChanged = cronCall![1] as () => void;
+      onUpdateChanged();
+      expect(services.healthCheck.runAllChecks).toHaveBeenCalled();
+    });
+
+    it('does not recompute health when the nudge callback is never invoked (no-op check)', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The mocked checkForUpdate never calls its callback (mirrors a same-version
+      // no-op check). The health service must not be recomputed by the nudge path.
+      expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
     });
   });
 

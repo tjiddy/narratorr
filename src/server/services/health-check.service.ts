@@ -44,6 +44,7 @@ export class HealthCheckService {
   private previousStates: Map<string, HealthState> = new Map();
   private cachedResults: HealthCheckResult[] = [];
   private running = false;
+  private pendingRerun = false;
 
   constructor(
     private indexerService: IndexerService,
@@ -55,60 +56,82 @@ export class HealthCheckService {
     private deps: SystemDeps,
   ) {}
 
+  /**
+   * Recompute every health check and store the result for the cached-read
+   * endpoints. Overlapping requests coalesce: a call that lands while a pass is
+   * already running sets `pendingRerun` and returns the current cached results
+   * immediately, and the active pass runs exactly one trailing recompute after
+   * it finishes so the latest state (e.g. a freshly-cached version update from a
+   * manual/boot version-check) is always observed within one UI poll — never
+   * silently dropped. The trailing rerun is bounded to a single pass per
+   * overlapping request (no unbounded loop), and only fires when a request lands
+   * during an active pass, so non-overlapping scheduled cron runs are untouched.
+   */
   async runAllChecks(): Promise<HealthCheckResult[]> {
-    if (this.running) return this.cachedResults;
+    if (this.running) {
+      this.pendingRerun = true;
+      return this.cachedResults;
+    }
     this.running = true;
 
     try {
-      const results: HealthCheckResult[] = [];
-
-      // Run all checks independently — one failure doesn't prevent others
-      const checks = [
-        () => this.checkIndexers(),
-        () => this.checkDownloadClients(),
-        () => this.checkLibraryRoot(),
-        () => this.checkDiskSpace(),
-        () => this.checkFfmpeg(),
-        () => this.checkHardcover(),
-        () => this.checkStuckDownloads(),
-        () => this.checkVersionUpdate(),
-      ];
-
-      for (const check of checks) {
-        try {
-          const checkResults = await check();
-          results.push(...checkResults);
-        } catch (error: unknown) {
-          this.log.error({ error: serializeError(error) }, 'Health check failed');
-        }
-      }
-
-      // Fire notifications for state transitions
-      for (const result of results) {
-        const previousState = this.previousStates.get(result.checkName) ?? 'healthy';
-        if (previousState !== result.state) {
-          fireAndForget(
-            this.notifierService.notify('on_health_issue', {
-              event: 'on_health_issue',
-              health: {
-                checkName: result.checkName,
-                previousState,
-                currentState: result.state,
-                message: result.message,
-              },
-            }),
-            this.log,
-            'Failed to send health issue notification',
-          );
-        }
-        this.previousStates.set(result.checkName, result.state);
-      }
-
-      this.cachedResults = results;
-      return results;
+      do {
+        this.pendingRerun = false;
+        this.cachedResults = await this.runChecksOnce();
+      } while (this.pendingRerun);
+      return this.cachedResults;
     } finally {
       this.running = false;
     }
+  }
+
+  /** Run one full pass of every check and fire state-transition notifications. */
+  private async runChecksOnce(): Promise<HealthCheckResult[]> {
+    const results: HealthCheckResult[] = [];
+
+    // Run all checks independently — one failure doesn't prevent others
+    const checks = [
+      () => this.checkIndexers(),
+      () => this.checkDownloadClients(),
+      () => this.checkLibraryRoot(),
+      () => this.checkDiskSpace(),
+      () => this.checkFfmpeg(),
+      () => this.checkHardcover(),
+      () => this.checkStuckDownloads(),
+      () => this.checkVersionUpdate(),
+    ];
+
+    for (const check of checks) {
+      try {
+        const checkResults = await check();
+        results.push(...checkResults);
+      } catch (error: unknown) {
+        this.log.error({ error: serializeError(error) }, 'Health check failed');
+      }
+    }
+
+    // Fire notifications for state transitions
+    for (const result of results) {
+      const previousState = this.previousStates.get(result.checkName) ?? 'healthy';
+      if (previousState !== result.state) {
+        fireAndForget(
+          this.notifierService.notify('on_health_issue', {
+            event: 'on_health_issue',
+            health: {
+              checkName: result.checkName,
+              previousState,
+              currentState: result.state,
+              message: result.message,
+            },
+          }),
+          this.log,
+          'Failed to send health issue notification',
+        );
+      }
+      this.previousStates.set(result.checkName, result.state);
+    }
+
+    return results;
   }
 
   getAggregateState(): HealthState {
@@ -136,6 +159,7 @@ export class HealthCheckService {
     this.previousStates.clear();
     this.cachedResults = [];
     this.running = false;
+    this.pendingRerun = false;
   }
 
   private async checkIndexers(): Promise<HealthCheckResult[]> {

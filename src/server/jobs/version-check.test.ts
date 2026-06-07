@@ -483,4 +483,105 @@ describe('version check job', () => {
       expect(signals[1]?.aborted).toBe(false);
     });
   });
+
+  describe('onUpdateChanged nudge (#1262)', () => {
+    async function runCheckWith(onUpdateChanged: () => void) {
+      await checkForUpdate(log as unknown as FastifyBaseLogger, onUpdateChanged);
+    }
+
+    it('none → available invokes the callback exactly once', async () => {
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      const onUpdateChanged = vi.fn();
+
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('available → different version invokes the callback once', async () => {
+      // Seed an available update first (no callback so the count starts clean).
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await runCheck();
+      const onUpdateChanged = vi.fn();
+
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.3.0', 'https://github.com/releases/v0.3.0'));
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).toHaveBeenCalledTimes(1);
+      expect(getUpdateStatus('')?.latestVersion).toBe('0.3.0');
+    });
+
+    it('channel change with the SAME latestVersion invokes the callback once (channel participates in identity)', async () => {
+      // Seed a stable-channel update at latestVersion '0.2.0' (no callback yet).
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await runCheck();
+      expect(getUpdateStatus('')).toMatchObject({ latestVersion: '0.2.0', channel: 'stable' });
+
+      // Now the running build is a develop image. The compare API's HEAD commit
+      // sha is '0.2.0' so `developHeadSha` (sha.slice(0,7)) yields the IDENTICAL
+      // latestVersion '0.2.0' — only the channel differs (stable → develop).
+      // If the production identity dropped the `channel` comparison, this would
+      // be seen as a no-op and the callback would NOT fire.
+      channelState.version = 'develop-abc1234';
+      channelState.commit = 'abc1234';
+      mockFetch.mockResolvedValue(makeGitHubCompare(2, COMPARE_HTML_URL, '0.2.0'));
+      const onUpdateChanged = vi.fn();
+
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).toHaveBeenCalledTimes(1);
+      expect(getUpdateStatus('')).toMatchObject({ latestVersion: '0.2.0', channel: 'develop' });
+    });
+
+    it('available → cleared (now on latest) invokes the callback once', async () => {
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await runCheck();
+      const onUpdateChanged = vi.fn();
+
+      // Latest release now matches the running build → cache clears.
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.1.0', 'https://github.com/releases/v0.1.0'));
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).toHaveBeenCalledTimes(1);
+      expect(getUpdateStatus('')).toBeUndefined();
+    });
+
+    it('same version as the current cached update does not invoke the callback (no-op guard)', async () => {
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await runCheck();
+      const onUpdateChanged = vi.fn();
+
+      // Re-check yields the same available version → meaningful identity unchanged.
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).not.toHaveBeenCalled();
+    });
+
+    it('no cached update and still no update does not invoke the callback', async () => {
+      // Running build is already latest → nothing cached, nothing changes.
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.1.0', 'https://github.com/releases/v0.1.0'));
+      const onUpdateChanged = vi.fn();
+
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).not.toHaveBeenCalled();
+    });
+
+    it('a failed check (prior cache preserved) does not invoke the callback', async () => {
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await runCheck();
+      const onUpdateChanged = vi.fn();
+
+      mockFetch.mockRejectedValue(new Error('network down'));
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).not.toHaveBeenCalled();
+      expect(getUpdateStatus('')?.latestVersion).toBe('0.2.0'); // prior cache intact
+    });
+
+    it('completes without throwing when no callback is wired', async () => {
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await expect(runCheck()).resolves.toBeUndefined();
+    });
+  });
 });

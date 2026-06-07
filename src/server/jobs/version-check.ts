@@ -18,6 +18,20 @@ export function _resetUpdateCache() {
   cachedUpdate = undefined;
 }
 
+/**
+ * Meaningful identity of the cached update for change detection. Two checks are
+ * "the same" when they point at the same channel + version, so a same-version
+ * re-check (or a URL-only difference) is a no-op and does not nudge. A
+ * none→available, version→different-version, or available→cleared transition is
+ * a change. A failed/early-return check leaves `cachedUpdate` untouched, so
+ * prior and next are the same reference → no change.
+ */
+function updateIdentityChanged(prior: CachedUpdate | undefined, next: CachedUpdate | undefined): boolean {
+  if (!prior && !next) return false;
+  if (!prior || !next) return true;
+  return prior.channel !== next.channel || prior.latestVersion !== next.latestVersion;
+}
+
 const RELEASES_API_URL = 'https://api.github.com/repos/tjiddy/narratorr/releases/latest';
 const COMPARE_API_BASE = 'https://api.github.com/repos/tjiddy/narratorr/compare';
 
@@ -45,19 +59,30 @@ function fetchOpts(): RequestInit {
  * `isNewerVersion` strips an optional leading `v`, so real `vX.Y.Z` images are
  * handled without a strict `X.Y.Z` gate in the router.
  */
-export async function checkForUpdate(log: FastifyBaseLogger): Promise<void> {
+export async function checkForUpdate(
+  log: FastifyBaseLogger,
+  onUpdateChanged?: () => void,
+): Promise<void> {
   const currentVersion = getVersion();
   const currentCommit = getCommit();
 
   // Local / unbuilt → no-op. Leave any prior cache untouched, fetch nothing.
   if (currentVersion === 'dev' || currentCommit === 'unknown') return;
 
+  // Capture the prior cached value before the channel check mutates it, so we
+  // can detect a status change and nudge consumers (e.g. the health card) only
+  // when the meaningful identity actually changed.
+  const prior = cachedUpdate;
+
   if (currentVersion.startsWith('develop-')) {
     await checkDevelopUpdate(log, currentCommit);
-    return;
+  } else {
+    await checkStableUpdate(log, currentVersion);
   }
 
-  await checkStableUpdate(log, currentVersion);
+  if (onUpdateChanged && updateIdentityChanged(prior, cachedUpdate)) {
+    onUpdateChanged();
+  }
 }
 
 /** Stable channel: semver compare against the latest GitHub release. */
