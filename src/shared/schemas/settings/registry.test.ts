@@ -65,12 +65,12 @@ describe('settingsRegistry', () => {
     });
 
     it('search schema defaults match registry defaults', () => {
-      expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
       const schemaParsed = settingsRegistry.search.schema.parse({});
       expect(schemaParsed.intervalMinutes).toBe(360);
       expect(schemaParsed.enabled).toBe(true);
       expect(schemaParsed.blacklistTtlDays).toBe(7);
-      expect(schemaParsed.searchPriority).toBe('quality');
+      expect(schemaParsed.searchPriority).toBe('accuracy');
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.search);
     });
 
@@ -105,7 +105,7 @@ describe('settingsRegistry', () => {
       expect(DEFAULT_SETTINGS.processing).toEqual({
         ffmpegPath: '',
         outputFormat: 'm4b',
-        keepOriginalBitrate: false,
+        keepOriginalBitrate: true,
         bitrate: 128,
         mergeBehavior: 'multi-file-only',
         maxConcurrentProcessing: 2,
@@ -117,6 +117,17 @@ describe('settingsRegistry', () => {
     it('postProcessingScriptTimeout defaults to 300 when omitted', () => {
       const result = processingSettingsSchema.parse({});
       expect(result.postProcessingScriptTimeout).toBe(300);
+    });
+
+    it('keepOriginalBitrate defaults to true when omitted (schema matches registry)', () => {
+      const result = processingSettingsSchema.parse({});
+      expect(result.keepOriginalBitrate).toBe(true);
+      expect(result.keepOriginalBitrate).toBe(DEFAULT_SETTINGS.processing.keepOriginalBitrate);
+    });
+
+    it('keepOriginalBitrate accepts explicit true and false', () => {
+      expect(processingSettingsSchema.parse({ keepOriginalBitrate: false }).keepOriginalBitrate).toBe(false);
+      expect(processingSettingsSchema.parse({ keepOriginalBitrate: true }).keepOriginalBitrate).toBe(true);
     });
 
     it('postProcessingScriptTimeout rejects zero', () => {
@@ -800,13 +811,13 @@ describe('settingsRegistry', () => {
       expect(settingsRegistry.search.schema.safeParse({ searchPriority: 'speed' }).success).toBe(false);
     });
 
-    it('missing searchPriority defaults to quality', () => {
+    it('missing searchPriority defaults to accuracy', () => {
       const parsed = settingsRegistry.search.schema.parse({});
-      expect(parsed.searchPriority).toBe('quality');
+      expect(parsed.searchPriority).toBe('accuracy');
     });
 
-    it('DEFAULT_SETTINGS.search includes searchPriority: quality', () => {
-      expect(DEFAULT_SETTINGS.search.searchPriority).toBe('quality');
+    it('DEFAULT_SETTINGS.search includes searchPriority: accuracy', () => {
+      expect(DEFAULT_SETTINGS.search.searchPriority).toBe('accuracy');
     });
   });
 });

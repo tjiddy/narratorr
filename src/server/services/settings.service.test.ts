@@ -58,7 +58,7 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('search');
-      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
     });
   });
 
@@ -73,7 +73,7 @@ describe('SettingsService', () => {
       // Zod fills missing fileFormat with default
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' });
       // Other sections fall back to defaults
-      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
       expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false });
     });
@@ -372,6 +372,24 @@ describe('SettingsService', () => {
       expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
+    it('no-migration: stored keepOriginalBitrate: false survives a patch of an unrelated field', async () => {
+      // Existing user opted out of keep-original before the 1.0 default flip to true.
+      // Patching an unrelated field must NOT overwrite their stored false with the new default.
+      const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'processing', value: existingProcessing }]))  // get('processing')
+        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('processing', { bitrate: 192 });
+
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
+      expect(storedValue.keepOriginalBitrate).toBe(false);
+      expect(storedValue.bitrate).toBe(192);
+      expect(result.keepOriginalBitrate).toBe(false);
+    });
+
     it('preserves existing deleteAfterImport and minSeedTime when patching minFreeSpaceGB', async () => {
       const existingImport = { deleteAfterImport: true, minSeedTime: 120, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true };
       db.select
@@ -438,8 +456,8 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
-      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
-      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'accuracy' });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'accuracy' });
     });
 
     it('sentinel passthrough preserves existing encrypted value', async () => {

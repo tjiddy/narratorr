@@ -9,7 +9,7 @@ export type MergeBehavior = z.infer<typeof mergeBehaviorSchema>;
 export const processingSettingsSchema = z.object({
   ffmpegPath: z.string().default(''),
   outputFormat: outputFormatSchema.default('m4b'),
-  keepOriginalBitrate: z.boolean().default(false),
+  keepOriginalBitrate: z.boolean().default(true),
   bitrate: z.number().int().min(32).max(512).default(128),
   mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
   maxConcurrentProcessing: z.number().int().min(1).default(2),

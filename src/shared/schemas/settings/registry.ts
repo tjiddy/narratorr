@@ -37,7 +37,7 @@ export const settingsRegistry = {
   }),
   search: defineCategory({
     schema: searchSettingsSchema,
-    defaults: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' as const },
+    defaults: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' as const },
   }),
   import: defineCategory({
     schema: importSettingsSchema,
@@ -56,7 +56,7 @@ export const settingsRegistry = {
     defaults: {
       ffmpegPath: '',
       outputFormat: 'm4b' as const,
-      keepOriginalBitrate: false,
+      keepOriginalBitrate: true,
       bitrate: 128,
       mergeBehavior: 'multi-file-only' as const,
       maxConcurrentProcessing: 2,

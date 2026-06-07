@@ -153,7 +153,7 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'quality' },
+        search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'accuracy' },
         rss: { enabled: false, intervalMinutes: 30 },
         quality: { protocolPreference: 'none' },
       });
@@ -274,7 +274,7 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 14, searchPriority: 'quality' },
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 14, searchPriority: 'accuracy' },
         rss: { enabled: false, intervalMinutes: 60 },
         quality: { protocolPreference: 'none' },
       });
@@ -303,7 +303,7 @@ describe('SearchSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'quality' },
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7, searchPriority: 'accuracy' },
         rss: { enabled: false, intervalMinutes: 30 },
         quality: { protocolPreference: 'usenet' },
       });
@@ -347,7 +347,7 @@ describe('SearchSettingsSection', () => {
       expect(screen.getByText(/Prioritize releases matching the narrator/)).toBeInTheDocument();
     });
 
-    it('selecting accuracy and saving fires mutation with correct payload', async () => {
+    it('selecting quality and saving fires mutation with correct payload', async () => {
       mockApi.updateSettings.mockResolvedValue(mockSettings);
       const user = userEvent.setup();
       renderWithProviders(<SearchSettingsSection />);
@@ -356,14 +356,15 @@ describe('SearchSettingsSection', () => {
         expect(screen.getByLabelText('Search Priority')).toBeInTheDocument();
       });
 
-      await user.selectOptions(screen.getByLabelText('Search Priority'), 'accuracy');
+      // 'accuracy' is the default, so select 'quality' to dirty the form
+      await user.selectOptions(screen.getByLabelText('Search Priority'), 'quality');
 
       await user.click(screen.getByRole('button', { name: /save/i }));
 
       await waitFor(() => {
         expect(mockApi.updateSettings).toHaveBeenCalledWith(
           expect.objectContaining({
-            search: expect.objectContaining({ searchPriority: 'accuracy' }),
+            search: expect.objectContaining({ searchPriority: 'quality' }),
           }),
         );
       });
