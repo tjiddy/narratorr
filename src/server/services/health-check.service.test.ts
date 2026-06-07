@@ -1055,4 +1055,105 @@ describe('HealthCheckService', () => {
       expect(service.getAggregateState()).toBe('warning');
     });
   });
+
+  describe('#1262 — nudge refresh + in-flight coalescing', () => {
+    afterEach(() => {
+      vi.mocked(getUpdateStatus).mockReset();
+    });
+
+    it('re-running runAllChecks lands the version-update warning into cached results', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      const { service } = createService();
+
+      await service.runAllChecks();
+      expect(service.getCachedResults().find((r) => r.checkName === 'version-update')).toBeUndefined();
+
+      // Simulate a version-check populating cachedUpdate, then a nudge → recompute.
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '1.2.3',
+        releaseUrl: 'https://example.com/r',
+        channel: 'stable',
+        dismissed: false,
+      });
+      await service.runAllChecks();
+
+      // The cached-read source (what the endpoints serve) now includes the row —
+      // proving a real recompute ran, not bare invalidation that leaves it empty.
+      const cached = service.getCachedResults();
+      expect(cached.find((r) => r.checkName === 'version-update')).toMatchObject({
+        checkName: 'version-update',
+        state: 'warning',
+      });
+    });
+
+    it('clearing the update and re-running drops the version-update warning', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '1.2.3',
+        releaseUrl: 'https://example.com/r',
+        channel: 'stable',
+        dismissed: false,
+      });
+      const { service } = createService();
+
+      await service.runAllChecks();
+      expect(service.getCachedResults().find((r) => r.checkName === 'version-update')).toBeDefined();
+
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      await service.runAllChecks();
+
+      expect(service.getCachedResults().find((r) => r.checkName === 'version-update')).toBeUndefined();
+    });
+
+    it('a recompute requested mid-pass coalesces into exactly one trailing rerun that observes the new status', async () => {
+      // Gate the first pass on a slow indexer so we can fire a nudge while it runs.
+      let releaseFirstPass: () => void;
+      const getAll = vi.fn()
+        .mockReturnValueOnce(new Promise<unknown[]>((r) => { releaseFirstPass = () => r([]); }))
+        .mockResolvedValue([]);
+      const { service } = createService({ indexer: { getAll, test: vi.fn() } });
+
+      // First pass observes NO update.
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      const first = service.runAllChecks();
+
+      // While the first pass is mid-flight, the version-check completes with a
+      // newer build and nudges a recompute. The nudge must not be dropped.
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '2.0.0',
+        releaseUrl: 'https://example.com/r2',
+        channel: 'stable',
+        dismissed: false,
+      });
+      const nudge = service.runAllChecks(); // returns stale cached immediately
+
+      // Let the first (and then the coalesced trailing) pass complete.
+      releaseFirstPass!();
+      await Promise.all([first, nudge]);
+
+      // The trailing rerun observed the NEW status → it is surfaced, not lost.
+      const cached = service.getCachedResults();
+      expect(cached.find((r) => r.checkName === 'version-update')).toMatchObject({
+        checkName: 'version-update',
+        state: 'warning',
+        message: 'Update available: v2.0.0',
+      });
+
+      // Exactly one trailing rerun: the first pass + one rerun = 2 full passes,
+      // so getAll (called once per pass) was invoked exactly twice — no loop.
+      expect(getAll).toHaveBeenCalledTimes(2);
+    });
+
+    it('non-overlapping sequential runs do not trigger a spurious trailing rerun', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      const getAll = vi.fn().mockResolvedValue([]);
+      const { service } = createService({ indexer: { getAll, test: vi.fn() } });
+
+      await service.runAllChecks();
+      await service.runAllChecks();
+
+      // Two awaited, non-overlapping passes → exactly two getAll calls. A spurious
+      // trailing rerun would push this to 3.
+      expect(getAll).toHaveBeenCalledTimes(2);
+    });
+  });
 });
