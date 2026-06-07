@@ -511,6 +511,28 @@ describe('version check job', () => {
       expect(getUpdateStatus('')?.latestVersion).toBe('0.3.0');
     });
 
+    it('channel change with the SAME latestVersion invokes the callback once (channel participates in identity)', async () => {
+      // Seed a stable-channel update at latestVersion '0.2.0' (no callback yet).
+      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
+      await runCheck();
+      expect(getUpdateStatus('')).toMatchObject({ latestVersion: '0.2.0', channel: 'stable' });
+
+      // Now the running build is a develop image. The compare API's HEAD commit
+      // sha is '0.2.0' so `developHeadSha` (sha.slice(0,7)) yields the IDENTICAL
+      // latestVersion '0.2.0' — only the channel differs (stable → develop).
+      // If the production identity dropped the `channel` comparison, this would
+      // be seen as a no-op and the callback would NOT fire.
+      channelState.version = 'develop-abc1234';
+      channelState.commit = 'abc1234';
+      mockFetch.mockResolvedValue(makeGitHubCompare(2, COMPARE_HTML_URL, '0.2.0'));
+      const onUpdateChanged = vi.fn();
+
+      await runCheckWith(onUpdateChanged);
+
+      expect(onUpdateChanged).toHaveBeenCalledTimes(1);
+      expect(getUpdateStatus('')).toMatchObject({ latestVersion: '0.2.0', channel: 'develop' });
+    });
+
     it('available → cleared (now on latest) invokes the callback once', async () => {
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
