@@ -179,13 +179,20 @@ export class ImportService {
       // old audio before moving the new files in and rolls back on any failure,
       // so a mid-commit error can't leave the book missing or half-replaced.
       await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
-
-      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
+      // Committed: targetPath now holds the new version. Protect it so a later
+      // failure never blanket-rm's the committed files (matters for move re-imports
+      // and first imports, where protectTarget started false).
+      protectTarget = true;
 
       await this.db.transaction(async (tx) => {
         await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
         await tx.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
       });
+
+      // Delete the old folder only after the DB durably points the book at
+      // targetPath. Deleting earlier would strand the DB on a deleted path if the
+      // transaction rolled back. No-op for first import / same-path re-import.
+      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
       await notifyPhase(callbacks, 'fetching_metadata');

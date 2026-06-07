@@ -954,6 +954,121 @@ describe('ImportService', () => {
     });
   });
 
+  describe('move-path re-import — post-commit ordering (#1257)', () => {
+    // Default settings resolve targetPath from buildTargetPath('/audiobooks',
+    // '{author}/{title}', book='The Way of Kings', author='Brandon Sanderson').
+    const NEW_TARGET = '/audiobooks/Brandon Sanderson/The Way of Kings';
+    const OLD_PATH = '/audiobooks/Brandon Sanderson/Old Title';
+    const STAGING = `${NEW_TARGET}.import-tmp`;
+    const BACKUP = `${NEW_TARGET}.import-bak`;
+
+    /** Collect every `.set({...})` payload across all db.update() calls. */
+    function collectSetArgs(database: typeof db): Record<string, unknown>[] {
+      const setCalls = database.update.mock.results
+        .map((r: { value: unknown }) => { try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; } })
+        .filter(Boolean);
+      return setCalls.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+    }
+
+    /**
+     * db.update mock that rejects update #3 (download→imported, inside the
+     * post-commit transaction), simulating a post-commit DB failure after
+     * commitStagedImport has already succeeded. updates #1/#2 and the later
+     * revert updates (#4+) resolve normally.
+     */
+    function failPostCommitUpdate() {
+      let updateCallCount = 0;
+      db.update.mockImplementation(() => {
+        updateCallCount++;
+        const chain = mockDbChain();
+        if (updateCallCount === 3) {
+          (chain.where as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('constraint violation'));
+        }
+        return chain as never;
+      });
+    }
+
+    beforeEach(setupDefaults);
+
+    it('post-commit DB failure preserves the committed new target AND the old path, reverting the book to imported', async () => {
+      // Move re-import: old path differs from targetPath → protectTarget starts false.
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: OLD_PATH })));
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      failPostCommitUpdate(); // commit succeeds (rename resolves by default), then update #3 throws
+
+      await expect(service.importDownload(1)).rejects.toThrow('constraint violation');
+
+      // The committed new version survives — protectTarget flipped true after commit.
+      expect(rm).not.toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
+      // The old folder cleanup is deferred past the (failed) transaction → never ran,
+      // so the DB's old book.path still has real files behind it.
+      expect(rm).not.toHaveBeenCalledWith(OLD_PATH, { recursive: true, force: true });
+      // Transient siblings are still cleaned.
+      expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
+      expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+
+      // DB revert: download → failed, book → imported (non-null old path), NOT wanted.
+      const allSetArgs = collectSetArgs(db);
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
+      expect(allSetArgs).not.toContainEqual(expect.objectContaining({ status: 'wanted' }));
+    });
+
+    it('post-commit success still deletes the old folder (now after the DB commit) and points the book at targetPath', async () => {
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: OLD_PATH })));
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.importDownload(1);
+
+      expect(result.targetPath).toBe(NEW_TARGET);
+      // Old-folder deletion still happens on the success path, just after the DB commit.
+      expect(rm).toHaveBeenCalledWith(OLD_PATH, { recursive: true, force: true });
+      // Book row now points at the new target.
+      const allSetArgs = collectSetArgs(db);
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported', path: NEW_TARGET }));
+    });
+
+    it('same-path re-import: post-commit DB failure does not rm the target (unchanged from #1255)', async () => {
+      // book.path === targetPath → protectTarget already true before commit.
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: NEW_TARGET })));
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      failPostCommitUpdate();
+
+      await expect(service.importDownload(1)).rejects.toThrow('constraint violation');
+
+      expect(rm).not.toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
+    });
+
+    it('first import: pre-commit copy failure cleans the scratch target + siblings (protectTarget still false)', async () => {
+      // mockBook has path null → first import → targetPath is the import's own scratch dir.
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
+
+      // Pre-commit → protectTarget false → the scratch target is removed (no orphan).
+      expect(rm).toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
+      expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
+    });
+
+    it('move re-import: pre-commit copy failure cleans the new scratch target but leaves the old path untouched', async () => {
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: OLD_PATH })));
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
+
+      // The new scratch target is cleaned (protectTarget still false pre-commit)...
+      expect(rm).toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
+      // ...but cleanupOldBookPath only runs after a successful commit + DB write, so
+      // the old path is never touched on a pre-commit failure.
+      expect(rm).not.toHaveBeenCalledWith(OLD_PATH, { recursive: true, force: true });
+    });
+  });
+
   describe('book status recovery on import failure', () => {
     beforeEach(setupDefaults);
 
@@ -1025,7 +1140,7 @@ describe('ImportService', () => {
   describe('target path cleanup on import failure', () => {
     beforeEach(setupDefaults);
 
-    it('removes targetPath when DB update throws after copy', async () => {
+    it('preserves targetPath when DB update throws after copy (#1257 — committed version protected)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
       // First two updates succeed (book status='importing', download status='importing')
@@ -1044,9 +1159,15 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
 
-      // Verify rm was called on the target path
+      // #1257: the failure is post-commit, so protectTarget is already true — the
+      // committed new version at targetPath is NOT blanket-removed.
+      expect(rmMock).not.toHaveBeenCalledWith(
+        '/audiobooks/Brandon Sanderson/The Way of Kings',
+        { recursive: true, force: true },
+      );
+      // Transient siblings are still cleaned.
       expect(rmMock).toHaveBeenCalledWith(
-        expect.stringContaining('audiobooks'),
+        '/audiobooks/Brandon Sanderson/The Way of Kings.import-tmp',
         { recursive: true, force: true },
       );
 
@@ -1062,17 +1183,15 @@ describe('ImportService', () => {
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
 
-    it('logs warning and continues DB revert when rm(targetPath) throws', async () => {
+    it('logs warning and continues DB revert when rm(targetPath) throws (pre-commit cleanup)', async () => {
+      // #1257: post-commit first imports now PROTECT targetPath, so the recursive
+      // targetPath cleanup rm only fires on a PRE-commit failure (protectTarget
+      // still false). Trigger one via a copy failure so this still exercises the
+      // "Failed to clean up target path" warn-log + DB-revert-continues behavior.
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
 
-      let updateCallCount = 0;
-      db.update.mockImplementation(() => {
-        updateCallCount++;
-        if (updateCallCount === 3) {
-          return { set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }) } as never;
-        }
-        return mockDbChain() as never;
-      });
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during copy'));
 
       // Make recursive rm of the real target throw, but let the strict pre-stage
       // sibling cleanup succeed — so the failure under test surfaces on the
@@ -1086,7 +1205,7 @@ describe('ImportService', () => {
           : Promise.resolve(undefined);
       });
 
-      await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during copy');
 
       // Verify cleanup was attempted
       expect(rmMock).toHaveBeenCalledWith(
@@ -1401,7 +1520,7 @@ describe('ImportService', () => {
   describe('import atomicity failures (#235 Tier 1)', () => {
     beforeEach(setupDefaults);
 
-    it('cleans up copied files when DB update throws after copy (#237)', async () => {
+    it('preserves committed files when DB update throws after copy (#237, updated by #1257)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
       // First update (set importing) succeeds, then book update at step 8 throws
@@ -1417,13 +1536,14 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('DB constraint violation');
 
-      // Verify cp was called (files were copied)
+      // Verify cp was called (files were copied) and the commit landed (staged → target).
       expect(cp).toHaveBeenCalled();
 
-      // Fixed in #237 — rm IS now called on targetPath to clean up orphaned files
+      // #1257: the DB failure is post-commit, so protectTarget is already true — the
+      // committed targetPath is NOT recursively removed (previously #237 deleted it).
       const rmMock = vi.mocked(rm);
-      expect(rmMock).toHaveBeenCalledWith(
-        expect.stringContaining('audiobooks'),
+      expect(rmMock).not.toHaveBeenCalledWith(
+        '/audiobooks/Brandon Sanderson/The Way of Kings',
         { recursive: true, force: true },
       );
 
