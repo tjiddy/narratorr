@@ -2697,8 +2697,10 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('The Dark Forest');
-        // Cap forces medium even on a single-result shortcut path
-        expect(result!.confidence).toBe('medium');
+        // #1266 — scanned runtime (600min) verifies the album-strip match (duration 600),
+        // so the medium cap is bypassed: confidence stays high with no review reason.
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
         // Both planner attempts ran, no Pass 2 fallback
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
@@ -2732,7 +2734,9 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('Imagine Me');
-        expect(result!.confidence).toBe('medium');
+        // #1266 — scanned runtime (600min) verifies the album-strip match (duration 600) → high, no cap.
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           2,
           'Imagine Me Tahereh Mafi',
@@ -2761,7 +2765,9 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('Second Son');
-        expect(result!.confidence).toBe('medium');
+        // #1266 — scanned runtime (600min) verifies the Reacher prefix-strip match (duration 600) → high, no cap.
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           2,
           'Second Son Lee Child',
@@ -2852,9 +2858,10 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        // Without cap, duration would lift to 'high' (top.duration=600min ~= 600min scanned).
-        // Cap forces medium because the winning attempt was strip-trailing-part.
-        expect(result!.confidence).toBe('medium');
+        // #1266 — top.duration=600min matches the 600min scan, so the strip cap is
+        // bypassed: the duration-verified 'high' is NOT clobbered back to medium.
+        expect(result!.confidence).toBe('high');
+        expect(result!.reason).toBeUndefined();
       });
 
       // ── #1052 Cap-driven downgrade supplies a user-facing reason ─────
@@ -2904,10 +2911,10 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBeUndefined();
         });
 
-        it('AC3 — multi-result, duration would lift to high but cap downgrades to medium: reason set', async () => {
+        it('#1266 AC3 — multi-result, duration verifies top result: cap bypassed, high with no reason', async () => {
           // Stripped attempt wins, multiple results, duration matches top.duration.
-          // Without cap, confidence would resolve to 'high' (no reason). Cap forces
-          // medium — the cap fallback supplies the reason since duration didn't.
+          // #1266 — duration verification corroborates the match, so the medium cap
+          // is bypassed: confidence resolves to 'high' with no review reason.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36000 }),
           );
@@ -2923,8 +2930,8 @@ describe('MatchJobService', () => {
           await waitForJob(service, id);
 
           const result = service.getJob(id)!.results[0];
-          expect(result!.confidence).toBe('medium');
-          expect(result!.reason).toBe(CAPPED_REASON);
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
         });
 
         it('AC4 — multi-result with duration mismatch under capped attempt: duration-specific reason wins', async () => {
@@ -2971,6 +2978,98 @@ describe('MatchJobService', () => {
           const result = service.getJob(id)!.results[0];
           expect(result!.confidence).toBe('medium');
           expect(result!.reason).toContain('no duration data');
+          expect(result!.reason).not.toBe(CAPPED_REASON);
+        });
+      });
+
+      // ── #1266 Duration-verified strip matches bypass the medium cap ─────
+      describe('#1266 duration-verified strip-cap bypass', () => {
+        const CAPPED_REASON = 'Low confidence match. Please verify.';
+
+        it('single-result + strip cap + duration-verified → high, no reason', async () => {
+          // strip-trailing-part wins with one result whose duration (600min)
+          // matches the 600min scan → cap bypassed, high with no review reason.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36000 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
+        });
+
+        it('single-result + strip cap + NO scanned duration → medium + capped reason', async () => {
+          // No scanned duration (totalDuration: 0) → nothing to verify against →
+          // cap applies, medium with the generic review reason.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 0 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toBe(CAPPED_REASON);
+        });
+
+        it('single-result + strip cap + duration MISMATCH → medium + capped reason', async () => {
+          // Scanned 600min vs candidate 900min → 50% off → not verified → cap
+          // applies. Single-result branch supplies the generic cap reason (the
+          // duration-mismatch text only originates from the multi-result path).
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 900 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toBe(CAPPED_REASON);
+        });
+
+        it('multi-result + strip cap + duration MISMATCH → medium + duration-mismatch reason', async () => {
+          // Multi-result mismatch keeps the more-specific duration reason (F2):
+          // 600min scan vs 900min top → resolveConfidenceFromDuration reason wins.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 900 }),
+              makeBookMetadata({ title: 'Imagine Me Too', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p2', duration: 1000 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toContain('Duration mismatch');
           expect(result!.reason).not.toBe(CAPPED_REASON);
         });
       });

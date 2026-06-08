@@ -10,7 +10,7 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { deriveTagQuery, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
+import { deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
@@ -330,12 +330,17 @@ class MatchJob {
     const { scored, attempt } = outcome;
     const top = scored[0]!;
 
-    if (scored.length === 1) {
-      return { path: book.path, ...applyAttemptCap('high', attempt.maxConfidence, undefined), bestMatch: top.meta, alternatives: [] };
-    }
+    // #1266 — the strip `medium` cap flags matches we couldn't corroborate; when the scanned
+    // runtime independently verifies the top candidate, bypass the cap and keep `high` (no reason).
+    const capBypassedByDuration = attempt.maxConfidence === 'medium' && isDurationVerified(top.meta, duration, top.score);
+    const cap = (raw: Confidence, reason: string | undefined): { confidence: Confidence; reason?: string } =>
+      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason);
 
+    if (scored.length === 1) {
+      return { path: book.path, ...cap('high', undefined), bestMatch: top.meta, alternatives: [] };
+    }
     const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
-    return { path: book.path, ...applyAttemptCap(confidence, attempt.maxConfidence, reason), bestMatch: top.meta, alternatives: scored.slice(1).map(s => s.meta) };
+    return { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: scored.slice(1).map(s => s.meta) };
   }
 
   /**
