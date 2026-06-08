@@ -20,8 +20,34 @@ function formatHours(minutes: number): string {
 }
 
 /**
+ * Single source of truth for "does the scanned runtime independently corroborate
+ * this candidate?". Returns true only when both the scanned duration and the
+ * candidate's metadata duration are present and positive AND the relative
+ * distance is within tolerance. The strict 5% band relaxes to 15% once the
+ * combined similarity score clears `COMBINED_SCORE_GATE` (a strong textual match
+ * earns a wider runtime tolerance).
+ *
+ * Guard hygiene (#1266): both the falsy and `<= 0` checks are load-bearing — a
+ * bare `!scannedDuration` or `meta.duration > 0` alone misbehaves on the
+ * `0`/`undefined` boundaries.
+ */
+export function isDurationVerified(
+  meta: BookMetadata,
+  scannedDuration: number | undefined,
+  score: number,
+): boolean {
+  if (!scannedDuration || scannedDuration <= 0) return false;
+  if (!meta.duration || meta.duration <= 0) return false;
+  const distance = Math.abs(meta.duration - scannedDuration) / scannedDuration;
+  const threshold = score >= COMBINED_SCORE_GATE ? DURATION_THRESHOLD_RELAXED : DURATION_THRESHOLD_STRICT;
+  return distance <= threshold;
+}
+
+/**
  * Determines confidence from duration data without overriding the similarity-ranked winner.
  * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
+ * The high-vs-medium decision is delegated to `isDurationVerified` so the
+ * strict/relaxed-threshold logic lives in exactly one place (#1266).
  */
 export function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata; score: number }[],
@@ -32,9 +58,7 @@ export function resolveConfidenceFromDuration(
   }
   const topResult = scored[0]!;
   if (topResult.meta.duration && topResult.meta.duration > 0) {
-    const distance = Math.abs(topResult.meta.duration - duration) / duration;
-    const threshold = topResult.score >= COMBINED_SCORE_GATE ? DURATION_THRESHOLD_RELAXED : DURATION_THRESHOLD_STRICT;
-    if (distance <= threshold) return { confidence: 'high' };
+    if (isDurationVerified(topResult.meta, duration, topResult.score)) return { confidence: 'high' };
     return {
       confidence: 'medium',
       reason: `Duration mismatch — scanned ${formatHours(duration)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
