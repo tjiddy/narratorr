@@ -168,16 +168,52 @@ export class QBittorrentClient implements DownloadClientAdapter {
         formData.set('paused', 'true');
       }
 
-      await this.request('/api/v2/torrents/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData,
-      });
+      try {
+        await this.request('/api/v2/torrents/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData,
+        });
+      } catch (error: unknown) {
+        // The magnet path has no raw Response — a duplicate-add surfaces as the
+        // generic HTTP 409 DownloadClientError thrown by request(). Adopt the
+        // existing torrent (mirror Transmission's torrent-duplicate) instead of
+        // failing the grab.
+        if (this.isDuplicateAddError(error)) {
+          return this.adoptDuplicateOrRethrow(artifact.infoHash, error);
+        }
+        throw error;
+      }
 
       return artifact.infoHash;
     }
 
     throw new DownloadClientError(this.name, 'qBittorrent only supports torrent artifacts (torrent-bytes, magnet-uri)');
+  }
+
+  /**
+   * qBittorrent answers a duplicate `/api/v2/torrents/add` with HTTP 409. The
+   * torrent the client already holds IS exactly the release we wanted (matched
+   * by infohash). Confirm it is actually present, then adopt it by returning its
+   * infohash so the grab persists a normal tracked download; the monitor
+   * discovers the real state on its next poll. If the client has no torrent for
+   * the infohash (race / removed between add and lookup), rethrow the original
+   * add error.
+   */
+  private async adoptDuplicateOrRethrow(infoHash: string, originalError: unknown): Promise<string> {
+    const existing = await this.getDownload(infoHash);
+    if (existing) {
+      return infoHash;
+    }
+    throw originalError;
+  }
+
+  private isDuplicateAddError(error: unknown): boolean {
+    return (
+      error instanceof DownloadClientError &&
+      error.message.includes('HTTP 409') &&
+      error.message.includes('/api/v2/torrents/add')
+    );
   }
 
   private async addDownloadFromFile(torrentFile: Buffer, infoHash: string, options?: AddDownloadOptions): Promise<string> {
@@ -211,6 +247,15 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
         if (response.status === 403) {
           throw new DownloadClientAuthError(this.name, `Session expired: HTTP 403 /api/v2/torrents/add`);
+        }
+
+        // Duplicate-add: qBittorrent returns 409 when it already holds this
+        // torrent. Adopt the existing torrent rather than failing the grab.
+        if (response.status === 409) {
+          return this.adoptDuplicateOrRethrow(
+            infoHash,
+            new DownloadClientError(this.name, `Request failed: HTTP 409 /api/v2/torrents/add`),
+          );
         }
 
         if (!response.ok) {

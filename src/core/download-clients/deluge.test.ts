@@ -492,6 +492,85 @@ describe('DelugeClient', () => {
       await expect(client.addDownload(artifact)).rejects.toThrow('no torrent hash');
     });
 
+    describe('duplicate-add adoption (AddTorrentError)', () => {
+      const dupHash = 'abc123def456';
+      const dupErrorMessage =
+        "Failure: <Fault 4: \"<class 'deluge.error.AddTorrentError'>: Torrent already in session (" + dupHash + ').">';
+
+      function dupAddHandler(addMethod: string, statusResult: unknown) {
+        return http.post(`${BASE_URL}/json`, async ({ request }) => {
+          const body = await request.json() as { method: string; params: unknown[]; id: number };
+          if (body.method === 'auth.login') {
+            return HttpResponse.json(
+              { id: body.id, result: true, error: null },
+              { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+            );
+          }
+          if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
+          if (body.method === addMethod) {
+            return HttpResponse.json({ id: body.id, result: null, error: { message: dupErrorMessage, code: 4 } });
+          }
+          if (body.method === 'core.get_torrent_status') {
+            return HttpResponse.json({ id: body.id, result: statusResult, error: null });
+          }
+          return HttpResponse.json({ id: body.id, result: null, error: null });
+        });
+      }
+
+      it('magnet path: adopts existing torrent on AddTorrentError when present', async () => {
+        const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        server.use(dupAddHandler('core.add_torrent_magnet', { ...mockTorrentStatus, hash: dupHash }));
+
+        const result = await client.addDownload(artifact);
+        expect(result).toBe(dupHash);
+      });
+
+      it('torrent-file path: adopts existing torrent on AddTorrentError when present', async () => {
+        const artifact: DownloadArtifact = { type: 'torrent-bytes', data: Buffer.from('fake'), infoHash: dupHash };
+        server.use(dupAddHandler('core.add_torrent_file', { ...mockTorrentStatus, hash: dupHash }));
+
+        const result = await client.addDownload(artifact);
+        expect(result).toBe(dupHash);
+      });
+
+      it('rethrows original error when torrent absent (race/removed)', async () => {
+        const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        server.use(dupAddHandler('core.add_torrent_magnet', {}));
+
+        const error = await client.addDownload(artifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('AddTorrentError');
+      });
+
+      it('does NOT adopt on a non-duplicate RPC error', async () => {
+        const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        let statusCalled = false;
+        server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+          const body = await request.json() as { method: string; params: unknown[]; id: number };
+          if (body.method === 'auth.login') {
+            return HttpResponse.json(
+              { id: body.id, result: true, error: null },
+              { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+            );
+          }
+          if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
+          if (body.method === 'core.add_torrent_magnet') {
+            return HttpResponse.json({ id: body.id, result: null, error: { message: 'Some other failure', code: 4 } });
+          }
+          if (body.method === 'core.get_torrent_status') {
+            statusCalled = true;
+            return HttpResponse.json({ id: body.id, result: { ...mockTorrentStatus, hash: dupHash }, error: null });
+          }
+          return HttpResponse.json({ id: body.id, result: null, error: null });
+        }));
+
+        const error = await client.addDownload(artifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('Some other failure');
+        expect(statusCalled).toBe(false);
+      });
+    });
+
     it('rejects nzb-url artifact with torrent-only error', async () => {
       await expect(
         client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),
