@@ -127,10 +127,15 @@ describe('startJobs', () => {
 
   it('every cron job reports a real future nextRun (not "now") after scheduling', async () => {
     const { startJobs } = await import('./index.js');
+    // Capture the reference time BEFORE scheduling. croner stores the next fire as
+    // of construction time, so for sub-minute expressions (`*/30 * * * * *`) the
+    // stored boundary can be imminent — a reference time captured AFTER scheduling
+    // could race past it and fail spuriously. A pre-scheduling reference is always
+    // strictly less than any next-fire croner computes during startJobs.
+    const before = Date.now();
     startJobs(injectHelper<Db>(db), services, log);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const before = Date.now();
     const cronTasks = services.taskRegistry.getAll().filter((t) => t.type === 'cron');
     expect(cronTasks.length).toBeGreaterThan(0);
     for (const task of cronTasks) {
@@ -997,13 +1002,18 @@ describe('startJobs', () => {
       const job = scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
       cronInstances.push(job);
 
+      // Reference time captured before the fire — the finally-block recomputes
+      // nextRun during trigger(), so it is strictly after this point. Comparing
+      // against a post-trigger Date.now() would re-introduce the same sub-minute
+      // boundary race as F1 for `*/30 * * * * *`.
+      const before = Date.now();
       await job.trigger();
 
       // The callback ran the registered fn and refreshed nextRun from job.nextRun().
       expect(fn).toHaveBeenCalledTimes(1);
       const task = reg.getAll().find((t) => t.name === 'monitor');
       expect(task!.nextRun).not.toBeNull();
-      expect(new Date(task!.nextRun!).getTime()).toBeGreaterThan(Date.now());
+      expect(new Date(task!.nextRun!).getTime()).toBeGreaterThan(before);
     });
 
     it('skips setNextRun (leaves the prior value) when nextRun() returns null, without throwing', async () => {
