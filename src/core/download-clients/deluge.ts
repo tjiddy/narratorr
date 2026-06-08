@@ -262,20 +262,49 @@ export class DelugeClient implements DownloadClientAdapter {
   }
 
   private async addTorrent(artifact: Extract<DownloadArtifact, { type: 'torrent-bytes' } | { type: 'magnet-uri' }>, addOptions: Record<string, unknown>): Promise<string> {
-    let result: unknown;
+    try {
+      let result: unknown;
 
-    if (artifact.type === 'torrent-bytes') {
-      const fileContent = artifact.data.toString('base64');
-      result = await this.rpc('core.add_torrent_file', ['upload.torrent', fileContent, addOptions]);
-    } else {
-      result = await this.rpc('core.add_torrent_magnet', [artifact.uri, addOptions]);
+      if (artifact.type === 'torrent-bytes') {
+        const fileContent = artifact.data.toString('base64');
+        result = await this.rpc('core.add_torrent_file', ['upload.torrent', fileContent, addOptions]);
+      } else {
+        result = await this.rpc('core.add_torrent_magnet', [artifact.uri, addOptions]);
+      }
+
+      if (!result || typeof result !== 'string') {
+        throw new DownloadClientError(this.name, 'Deluge returned no torrent hash');
+      }
+
+      return result;
+    } catch (error: unknown) {
+      // Duplicate-add: Deluge raises an AddTorrentError ("Torrent already in
+      // session") which rpc() surfaces as a thrown DownloadClientError. The
+      // torrent the daemon already holds IS the release we wanted (matched by
+      // infohash), so adopt it — confirm it is present, then return its infohash
+      // so the grab persists a normal tracked download for the monitor to drive
+      // to completion. Mirror Transmission's torrent-duplicate handling.
+      if (this.isDuplicateAddError(error)) {
+        const existing = await this.getDownload(artifact.infoHash);
+        if (existing) {
+          return artifact.infoHash;
+        }
+      }
+      throw error;
     }
+  }
 
-    if (!result || typeof result !== 'string') {
-      throw new DownloadClientError(this.name, 'Deluge returned no torrent hash');
-    }
-
-    return result;
+  /**
+   * Detect Deluge's duplicate-add signal. A duplicate `core.add_torrent_*`
+   * returns `error.code === 4` (generic "RPC call failure") with an
+   * `AddTorrentError` / "already in session" message — so the match must be
+   * scoped to the message substrings, NOT `code 4` alone.
+   */
+  private isDuplicateAddError(error: unknown): boolean {
+    return (
+      error instanceof DownloadClientError &&
+      (error.message.includes('AddTorrentError') || error.message.includes('already in session'))
+    );
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
