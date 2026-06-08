@@ -2124,4 +2124,128 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       }
     });
   });
+
+  // Issue #1273 — characterization regression suite seeded with real folder names
+  // captured during the 1.0 import UAT (2026-06-08, organized-library + messy-torrent
+  // live scans validated in-container with ffprobe + scan-debug).
+  //
+  // PURPOSE: lock the CURRENT output of parseFolderStructure / parseFolderStructureRaw
+  // for these real-world names so any future parser drift fails CI and forces a
+  // deliberate human decision. These are NOT assertions of correct behavior — every
+  // `expected` object below was captured by RUNNING the parser, not hand-authored.
+  // Rows whose current parse is visibly wrong carry a `// FIXME: known-wrong` note so
+  // the lock does not silently bless the bug (AC3).
+  //
+  // EXCLUSIONS (AC4): Golden Son / Iron Gold names are owned by #1271 and the
+  // 1776 / Slaughterhouse-Five disc sets by #1272 — kept out of this suite so those
+  // fix issues own their own fixtures and the two efforts don't collide.
+  describe('characterization regression suite (1.0 UAT, 2026-06-08)', () => {
+    // Flat single-file novels — the filename IS the only path segment; the `.m4b`
+    // extension is stripped before parsing.
+    // FIXME: known-wrong author — the leading "Reacher NN.00" series-marker is
+    // misread as the author (cleaned collapses the dot to a space, raw preserves it).
+    // The title extraction ("Killing Floor", etc.) is correct and is the value worth
+    // guarding; the author quirk is pinned only to detect drift.
+    const flatSingleFile = [
+      {
+        name: 'Reacher 04.00-Killing Floor.m4b',
+        parts: ['Reacher 04.00-Killing Floor.m4b'],
+        cleaned: { title: 'Killing Floor', author: 'Reacher 04 00', series: null },
+        raw: { title: 'Killing Floor', author: 'Reacher 04.00', series: null },
+      },
+      {
+        name: 'Reacher 11.00-One Shot.m4b',
+        parts: ['Reacher 11.00-One Shot.m4b'],
+        cleaned: { title: 'One Shot', author: 'Reacher 11 00', series: null },
+        raw: { title: 'One Shot', author: 'Reacher 11.00', series: null },
+      },
+      {
+        name: 'Reacher 08.00-Echo Burning.m4b',
+        parts: ['Reacher 08.00-Echo Burning.m4b'],
+        cleaned: { title: 'Echo Burning', author: 'Reacher 08 00', series: null },
+        raw: { title: 'Echo Burning', author: 'Reacher 08.00', series: null },
+      },
+      {
+        name: 'Reacher 22.00-The Midnight Line.m4b',
+        parts: ['Reacher 22.00-The Midnight Line.m4b'],
+        cleaned: { title: 'The Midnight Line', author: 'Reacher 22 00', series: null },
+        raw: { title: 'The Midnight Line', author: 'Reacher 22.00', series: null },
+      },
+    ];
+
+    // Author / Series / Title + numbered, single-segment "Author - ..." shape.
+    const authorSeriesNumbered = [
+      // Correct author; title retains the embedded "Hyperion 04" series marker.
+      {
+        name: 'Dan Simmons - Hyperion 04 The Rise of Endymion',
+        parts: ['Dan Simmons - Hyperion 04 The Rise of Endymion'],
+        cleaned: { title: 'Hyperion 04 The Rise of Endymion', author: 'Dan Simmons', series: null },
+        raw: null, // raw output identical to cleaned
+      },
+      // Correct author; title retains the "DF05 -" Dresden Files abbreviation marker.
+      {
+        name: 'Jim Butcher - DF05 - Death Masks',
+        parts: ['Jim Butcher - DF05 - Death Masks'],
+        cleaned: { title: 'DF05 - Death Masks', author: 'Jim Butcher', series: null },
+        raw: null,
+      },
+      // FIXME: known-wrong — "Robin Hobb" (the author) is misread as the series and
+      // author comes back null; the real series ("Farseer") is dropped with the
+      // stripped parenthetical. seriesPosition 1 is correct. Cleaned strips
+      // "(Farseer) (Unabridged)"; raw retains them in the title.
+      {
+        name: 'Robin Hobb - 01 - Assassins Apprentice (Farseer) (Unabridged)',
+        parts: ['Robin Hobb - 01 - Assassins Apprentice (Farseer) (Unabridged)'],
+        cleaned: { title: 'Assassins Apprentice', author: null, series: 'Robin Hobb', seriesPosition: 1 },
+        raw: {
+          title: 'Assassins Apprentice (Farseer) (Unabridged)',
+          author: null,
+          series: 'Robin Hobb',
+          seriesPosition: 1,
+        },
+      },
+      // FIXME: known-wrong — author comes back null and the extracted series carries a
+      // trailing comma ("The Ten Realms,"). Title and seriesPosition 7 are correct.
+      {
+        name: 'Michael Chatfield - 07 - Sixth Realm Part 2 (The Ten Realms, Book 7)',
+        parts: ['Michael Chatfield - 07 - Sixth Realm Part 2 (The Ten Realms, Book 7)'],
+        cleaned: { title: 'Sixth Realm Part 2', author: null, series: 'The Ten Realms,', seriesPosition: 7 },
+        raw: null,
+      },
+    ];
+
+    // Single-segment / by-Author shapes.
+    const singleSegment = [
+      // Correct — clean "Author - Title" split.
+      {
+        name: 'Travis Baldree - Legends and Lattes',
+        parts: ['Travis Baldree - Legends and Lattes'],
+        cleaned: { title: 'Legends and Lattes', author: 'Travis Baldree', series: null },
+        raw: null,
+      },
+      // FIXME: known-wrong — a multi-space gap (not a dash) is not recognized as an
+      // author/title separator, so author stays null and the whole string becomes the
+      // title. Cleaned collapses the triple space; raw preserves it.
+      {
+        name: 'Christopher Moore   Fool',
+        parts: ['Christopher Moore   Fool'],
+        cleaned: { title: 'Christopher Moore Fool', author: null, series: null },
+        raw: { title: 'Christopher Moore   Fool', author: null, series: null },
+      },
+    ];
+
+    const allSeeds = [...flatSingleFile, ...authorSeriesNumbered, ...singleSegment];
+
+    it.each(allSeeds)('parseFolderStructure pins cleaned output — $name', ({ parts, cleaned }) => {
+      expect(parseFolderStructure(parts)).toEqual(cleaned);
+    });
+
+    // Only the rows whose raw output actually diverges from cleaned get a raw lock,
+    // to keep the table readable (AC2 / AC6).
+    const rawDivergent = allSeeds.filter((s) => s.raw !== null);
+
+    it.each(rawDivergent)('parseFolderStructureRaw pins raw output — $name', ({ parts, raw }) => {
+      expect(parseFolderStructureRaw(parts)).toEqual(raw);
+    });
+  });
 });
