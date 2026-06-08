@@ -3007,6 +3007,31 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBeUndefined();
         });
 
+        it('single-result + strip cap + duration in relaxed 15% band + score clears gate → high (uses top.score)', async () => {
+          // F1 — proves the single-result branch feeds `top.score` into isDurationVerified
+          // so a strong textual match relaxes the duration band from strict 5% to 15%.
+          // Scanned 600min vs candidate 660min = 10% distance: outside strict 5%, inside
+          // relaxed 15%. The exact 'Imagine Me' / 'Tahereh Mafi' match scores 1.0 (≥ 0.95
+          // gate), so the relaxed band applies → verified → high. A strict-only regression
+          // (or a low/default score passed instead of top.score) would yield medium here.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 660 }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
+        });
+
         it('single-result + strip cap + NO scanned duration → medium + capped reason', async () => {
           // No scanned duration (totalDuration: 0) → nothing to verify against →
           // cap applies, medium with the generic review reason.
