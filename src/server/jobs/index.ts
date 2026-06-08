@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import { Cron } from 'croner';
 import { sql, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
@@ -137,14 +137,31 @@ async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLo
   await runCoverBackfill(db, log);
 }
 
-function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: FastifyBaseLogger): void {
-  cron.schedule(expression, async () => {
+/**
+ * Schedule a cron job via croner. croner is the single source of truth for both
+ * firing and the displayed next-run: `job.nextRun()` is the real next fire time,
+ * stored on the registry at registration and refreshed after each run (mirroring
+ * how timeout-loop jobs use `setNextRun`). The constructed `Cron` is returned so
+ * tests can `.stop()` it for deterministic cleanup; production ignores the handle.
+ */
+export function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: FastifyBaseLogger): Cron {
+  const job = new Cron(expression, async () => {
     try {
       await reg.executeTracked(name);
     } catch (error: unknown) {
       log.error({ error: serializeError(error) }, `${name} job error`);
+    } finally {
+      // Refresh the displayed next-run after each fire. Skip on null (no future
+      // occurrence) so a stale value is left untouched rather than crashing
+      // setNextRun, which expects a Date. Never exercised by the recurring
+      // production jobs — defensive only.
+      const next = job.nextRun();
+      if (next) reg.setNextRun(name, next);
     }
   });
+  const next = job.nextRun();
+  if (next) reg.setNextRun(name, next);
+  return job;
 }
 
 function scheduleTimeoutLoop(

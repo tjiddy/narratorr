@@ -1,12 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { Services } from '../routes/index.js';
 import { createMockServices, createMockLogger } from '../__tests__/helpers.js';
 import { TaskRegistry } from '../services/task-registry.js';
 
-// Mock node-cron to prevent real scheduling
-vi.mock('node-cron', () => ({ default: { schedule: vi.fn() } }));
+// Track every Cron the scheduler constructs so each test can stop them in
+// afterEach — croner schedules a real timer, so leaking one across tests would
+// fire mid-suite. The subclass uses the REAL croner engine (real next-run math),
+// it just records instances. Module-level array shared via vi.hoisted so the
+// (hoisted) vi.mock factory can reach it.
+const { cronInstances } = vi.hoisted(() => ({ cronInstances: [] as Cron[] }));
+vi.mock('croner', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('croner')>();
+  class TrackedCron extends actual.Cron {
+    constructor(pattern: string | Date, fn?: CronCallback<undefined>) {
+      super(pattern, fn);
+      cronInstances.push(this);
+    }
+  }
+  return { ...actual, Cron: TrackedCron };
+});
 
 // Mock job modules — only the run functions are used now
 vi.mock('./monitor.js', () => ({ monitorDownloads: vi.fn() }));
@@ -17,10 +32,17 @@ vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
 vi.mock('./cover-backfill.js', () => ({ runCoverBackfill: vi.fn().mockResolvedValue(undefined) }));
 
-import cron from 'node-cron';
+import { Cron, type CronCallback } from 'croner';
 import { runCoverBackfill } from './cover-backfill.js';
 import { checkForUpdate } from './version-check.js';
 import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
+
+/** Find the scheduled Cron for an expression and fire its real (try/catch-wrapped) callback. */
+async function triggerCron(pattern: string): Promise<void> {
+  const job = cronInstances.find((c) => c.getPattern() === pattern);
+  expect(job, `no scheduled cron for "${pattern}"`).toBeDefined();
+  await job!.trigger();
+}
 
 describe('startJobs', () => {
   let services: Services;
@@ -59,6 +81,12 @@ describe('startJobs', () => {
     vi.mocked(checkForUpdate).mockResolvedValue(undefined);
   });
 
+  afterEach(() => {
+    // Stop every scheduled cron so no live croner timer leaks into the next test.
+    for (const job of cronInstances) job.stop();
+    cronInstances.length = 0;
+  });
+
   it('registers all jobs with the task registry', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
@@ -83,19 +111,32 @@ describe('startJobs', () => {
     expect(names).not.toContain('import');
   });
 
-  it('schedules cron jobs via cron.schedule', async () => {
+  it('schedules cron jobs via croner', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const cronCalls = vi.mocked(cron.schedule).mock.calls;
-    const expressions = cronCalls.map(([expr]) => expr);
+    const expressions = cronInstances.map((c) => c.getPattern());
     expect(expressions).toContain('*/30 * * * * *'); // monitor
-    expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check
-    expect(expressions).toContain('*/5 * * * *');    // import-maintenance (shares schedule with enrichment, health-check)
+    expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check, import-maintenance
     expect(expressions).toContain('0 0 * * 0');      // housekeeping
     expect(expressions).toContain('0 2 * * *');      // version-check
     expect(expressions).toContain('* * * * *');      // import-list-sync
+    expect(expressions).toContain('0 */6 * * *');    // library-rescan
+  });
+
+  it('every cron job reports a real future nextRun (not "now") after scheduling', async () => {
+    const { startJobs } = await import('./index.js');
+    startJobs(injectHelper<Db>(db), services, log);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const before = Date.now();
+    const cronTasks = services.taskRegistry.getAll().filter((t) => t.type === 'cron');
+    expect(cronTasks.length).toBeGreaterThan(0);
+    for (const task of cronTasks) {
+      expect(task.nextRun, `${task.name} has no nextRun`).not.toBeNull();
+      expect(new Date(task.nextRun!).getTime()).toBeGreaterThan(before);
+    }
   });
 
   it('logs startup message', async () => {
@@ -173,12 +214,8 @@ describe('startJobs', () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
 
-    // Find and execute the monitor cron callback
-    const cronCalls = vi.mocked(cron.schedule).mock.calls;
-    const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
-    expect(monitorCall).toBeDefined();
-    const cronCallback = monitorCall![1] as () => Promise<void>;
-    await cronCallback();
+    // Fire the monitor cron callback via croner's trigger
+    await triggerCron('*/30 * * * * *');
 
     // Assert monitorDownloads received services.eventHistory as the last argument
     expect(monitorDownloads).toHaveBeenCalledWith(
@@ -200,11 +237,7 @@ describe('startJobs', () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
 
-    const cronCalls = vi.mocked(cron.schedule).mock.calls;
-    const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
-    expect(monitorCall).toBeDefined();
-    const cronCallback = monitorCall![1] as () => Promise<void>;
-    await cronCallback();
+    await triggerCron('*/30 * * * * *');
 
     // The retryDeps object passed to monitorDownloads (5th arg) must contain
     // the SAME instances that createServices wired into the service graph.
@@ -254,14 +287,8 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      // Find the cron callback for monitor (first cron.schedule call)
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
-      expect(monitorCall).toBeDefined();
-
-      // Execute the cron callback — scheduleCron wraps it in try/catch
-      const cronCallback = monitorCall![1] as () => Promise<void>;
-      await cronCallback();
+      // Fire the monitor cron callback — scheduleCron wraps it in try/catch
+      await triggerCron('*/30 * * * * *');
 
       expect(log.error).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
@@ -760,7 +787,7 @@ describe('startJobs', () => {
       // The cron entry must still exist with the same name and schedule.
       const tasks = services.taskRegistry.getAll();
       expect(tasks.map((t) => t.name)).toContain('version-check');
-      const cronExpressions = vi.mocked(cron.schedule).mock.calls.map(([expr]) => expr);
+      const cronExpressions = cronInstances.map((c) => c.getPattern());
       expect(cronExpressions).toContain('0 2 * * *');
     });
   });
@@ -832,8 +859,7 @@ describe('startJobs', () => {
       expect(entry).toBeDefined();
       expect(entry!.type).toBe('cron');
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const expressions = cronCalls.map(([expr]) => expr);
+      const expressions = cronInstances.map((c) => c.getPattern());
       expect(expressions).toContain('0 */6 * * *');
     });
 
@@ -857,11 +883,7 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
-      expect(rescanCall).toBeDefined();
-      const cronCallback = rescanCall![1] as () => Promise<void>;
-      await cronCallback();
+      await triggerCron('0 */6 * * *');
 
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: 'Library path is not configured', type: 'LibraryPathError' }) }),
@@ -883,10 +905,7 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
-      const cronCallback = rescanCall![1] as () => Promise<void>;
-      await cronCallback();
+      await triggerCron('0 */6 * * *');
 
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ type: 'ScanInProgressError' }) }),
@@ -905,10 +924,7 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
-      const cronCallback = rescanCall![1] as () => Promise<void>;
-      await cronCallback();
+      await triggerCron('0 */6 * * *');
 
       // The job didn't swallow it — scheduleCron caught it via its own try/catch
       expect(log.error).toHaveBeenCalledWith(
@@ -920,6 +936,97 @@ describe('startJobs', () => {
         expect.anything(),
         'Scheduled library rescan skipped',
       );
+    });
+  });
+
+  // #1270 — scheduleCron is the croner owner: it stores the engine's real next-fire
+  // on the registry. These tests drive it directly against a real TaskRegistry and a
+  // real croner engine (no stubbed nextRun) so the cron math is actually exercised.
+  describe('scheduleCron next-run wiring (#1270)', () => {
+    // Every production cron expression — the 5 previously-broken fixed/weekly/hourly/
+    // every-minute ones plus the sub-minute monitor and the */5 interval jobs.
+    const CRON_EXPRESSIONS: ReadonlyArray<[name: string, expr: string]> = [
+      ['monitor', '*/30 * * * * *'],
+      ['enrichment', '*/5 * * * *'],
+      ['version-check', '0 2 * * *'],
+      ['housekeeping', '0 0 * * 0'],
+      ['series-refresh', '0 3 * * 0'],
+      ['library-rescan', '0 */6 * * *'],
+      ['import-list-sync', '* * * * *'],
+    ];
+
+    it.each(CRON_EXPRESSIONS)(
+      'stores a real future nextRun for %s (%s)',
+      async (name, expr) => {
+        const { scheduleCron } = await import('./index.js');
+        const reg = new TaskRegistry();
+        // Mirror production order: register BEFORE scheduling, else setNextRun no-ops.
+        reg.register(name, 'cron', vi.fn().mockResolvedValue(undefined), expr);
+
+        const before = Date.now();
+        const job = scheduleCron(reg, name, expr, log);
+        cronInstances.push(job); // ensure afterEach stops it
+
+        const task = reg.getAll().find((t) => t.name === name);
+        expect(task!.nextRun).not.toBeNull();
+        const nextRunMs = new Date(task!.nextRun!).getTime();
+        expect(Number.isNaN(nextRunMs)).toBe(false);
+        expect(nextRunMs).toBeGreaterThan(before);
+      },
+    );
+
+    it('reports a fixed-time cron (0 2 * * *) more than a minute out — guards the old "≈now" fallback', async () => {
+      const { scheduleCron } = await import('./index.js');
+      const reg = new TaskRegistry();
+      reg.register('version-check', 'cron', vi.fn().mockResolvedValue(undefined), '0 2 * * *');
+
+      const job = scheduleCron(reg, 'version-check', '0 2 * * *', log);
+      cronInstances.push(job);
+
+      const task = reg.getAll().find((t) => t.name === 'version-check');
+      const deltaMs = new Date(task!.nextRun!).getTime() - Date.now();
+      expect(deltaMs).toBeGreaterThan(60 * 1000);
+    });
+
+    it('refreshes nextRun after each fire via the callback finally-block', async () => {
+      const { scheduleCron } = await import('./index.js');
+      const reg = new TaskRegistry();
+      const fn = vi.fn().mockResolvedValue(undefined);
+      reg.register('monitor', 'cron', fn, '*/30 * * * * *');
+
+      const job = scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
+      cronInstances.push(job);
+
+      await job.trigger();
+
+      // The callback ran the registered fn and refreshed nextRun from job.nextRun().
+      expect(fn).toHaveBeenCalledTimes(1);
+      const task = reg.getAll().find((t) => t.name === 'monitor');
+      expect(task!.nextRun).not.toBeNull();
+      expect(new Date(task!.nextRun!).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('skips setNextRun (leaves the prior value) when nextRun() returns null, without throwing', async () => {
+      const { scheduleCron } = await import('./index.js');
+      const reg = new TaskRegistry();
+      reg.register('null-job', 'cron', vi.fn().mockResolvedValue(undefined), '* * * * *');
+
+      // Seed a prior value that must survive a null-nextRun scheduling pass.
+      const prior = new Date('2026-01-01T00:00:00.000Z');
+      reg.setNextRun('null-job', prior);
+
+      // Force croner's next-fire to read as null (no future occurrence). nextRun lives
+      // on the real Cron prototype (the imported Cron is the tracking subclass).
+      const proto = Object.getPrototypeOf(Cron.prototype) as { nextRun: () => Date | null };
+      const spy = vi.spyOn(proto, 'nextRun').mockReturnValue(null);
+
+      let job: Cron;
+      expect(() => { job = scheduleCron(reg, 'null-job', '* * * * *', log); }).not.toThrow();
+      cronInstances.push(job!);
+      spy.mockRestore();
+
+      const task = reg.getAll().find((t) => t.name === 'null-job');
+      expect(task!.nextRun).toBe(prior.toISOString());
     });
   });
 });
