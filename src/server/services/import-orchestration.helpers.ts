@@ -80,7 +80,7 @@ export async function copyToLibrary(
   // member set from disk and flatten every disc into one target (AC7), instead of copying just one.
   const memberPaths = await reconstructDiscGroup(item.path);
   if (memberPaths.length >= 2) {
-    return await copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, onProgress);
+    return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, onProgress);
   }
 
   await mkdir(targetPath, { recursive: true });

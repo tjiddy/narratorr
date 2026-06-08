@@ -35,6 +35,10 @@ vi.mock('../streaming-copy.helpers.js', () => ({
 vi.mock('../../utils/import-helpers.js', async () => ({
   ...(await vi.importActual('../../utils/import-helpers.js')),
   getAudioPathSize: vi.fn(),
+  // copyDiscGroup uses real fs streams when given a progress callback; mock it so the disc-group
+  // wiring (reconstruct → flatten member set) is asserted without touching real fs. The actual
+  // flattening behavior is covered in import-helpers.test.ts.
+  copyDiscGroup: vi.fn(),
 }));
 
 vi.mock('node:fs/promises', async () => ({
@@ -249,6 +253,76 @@ describe('ManualImportAdapter', () => {
       expect(phases).toContain('fetching_metadata');
       expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
       expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalledWith(TARGET_PATH, expect.anything());
+    });
+
+    describe('coalesced disc-group rows (#1272)', () => {
+      const MEMBER_PATHS = [
+        '/audiobooks/Author - Book Disc 1 of 3',
+        '/audiobooks/Author - Book Disc 2 of 3',
+        '/audiobooks/Author - Book Disc 3 of 3',
+      ];
+
+      /** Mock readdir(dirname) once with the sibling disc folders for reconstruction. */
+      async function mockDiscSiblings(): Promise<void> {
+        const fs = await import('node:fs/promises');
+        vi.mocked(fs.readdir).mockResolvedValueOnce([
+          makeDirent('Author - Book Disc 1 of 3', false),
+          makeDirent('Author - Book Disc 2 of 3', false),
+          makeDirent('Author - Book Disc 3 of 3', false),
+        ] as never);
+      }
+
+      it('mode=copy: reconstructs the group and flattens ALL members via copyDiscGroup', async () => {
+        await mockDiscSiblings();
+        const { copyDiscGroup, getAudioPathSize } = await import('../../utils/import-helpers.js');
+        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+        // 3 member-size reads then the aggregated target size — verification passes (300 vs 300)
+        vi.mocked(getAudioPathSize)
+          .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
+          .mockResolvedValueOnce(300);
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', mode: 'copy',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
+        // Single-path copy must NOT run — the whole group is flattened, not just Disc 1
+        expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      });
+
+      it('mode=move: removes every reconstructed member folder after copy', async () => {
+        await mockDiscSiblings();
+        const fs = await import('node:fs/promises');
+        const { getAudioPathSize } = await import('../../utils/import-helpers.js');
+        vi.mocked(getAudioPathSize)
+          .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
+          .mockResolvedValueOnce(300);
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', mode: 'move',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        for (const member of MEMBER_PATHS) {
+          expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(member, { recursive: true });
+        }
+      });
+
+      it('pointer mode: rejects a disc-group row instead of silently registering Disc 1', async () => {
+        await mockDiscSiblings();
+        const { copyDiscGroup } = await import('../../utils/import-helpers.js');
+        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', // mode omitted = pointer
+        };
+
+        await expect(adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx))
+          .rejects.toThrow(/multi-disc set/i);
+        expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+        expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      });
     });
 
     describe('single-file payloads (issue #982)', () => {

@@ -3,6 +3,10 @@ import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
+import { parseEmbeddedDiscMarker, normalizeStem, type EmbeddedDiscMarker } from './disc-marker.js';
+
+// Re-exported so existing importers (import-helpers.ts, tests) keep a single entry point.
+export { parseEmbeddedDiscMarker, normalizeStem, type EmbeddedDiscMarker } from './disc-marker.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
 export interface DiscoveryLogger {
@@ -45,48 +49,6 @@ export function parseTitledDiscFolder(name: string): { title: string; discNumber
   }
 
   return null;
-}
-
-/**
- * Embedded disc-marker grammar — matches `(Disc|Disk|CD|D) <N> [of <M>]`, case-insensitive,
- * where <N>/<M> are 1–3 digit integers. Unlike DISC_FOLDER_PATTERN (whole-name bare token)
- * and parseTitledDiscFolder (parenthesized), this finds a marker *embedded* in a longer
- * release string. The marker may be trailing or followed only by further release metadata
- * (e.g. ` - File ~ of 28 - yEnc "…"`).
- */
-const EMBEDDED_DISC_MARKER_RE = /\b(?:disc|disk|cd|d)\s*(\d{1,3})(?:\s+of\s+(\d{1,3}))?/i;
-
-export interface EmbeddedDiscMarker {
-  /**
-   * The folder-name text BEFORE the disc marker, trailing separators/whitespace trimmed.
-   * Empty for bare-token names ("CD1", "Disc 2") — callers grouping by stem must reject
-   * empty stems so the bare-token DISC_FOLDER_PATTERN path stays authoritative for those.
-   */
-  stem: string;
-  discNumber: number;
-  /** The `of <M>` total when present — informational for grouping (consistency guard). */
-  total?: number;
-}
-
-/**
- * Parse an embedded disc marker out of a longer release folder name.
- *
- * Returns null when no marker is present, or when a marker keyword carries no disc digit
- * (e.g. "… Disc of 10 …") — so malformed names never crash or get treated as disc members.
- */
-export function parseEmbeddedDiscMarker(name: string): EmbeddedDiscMarker | null {
-  if (!name) return null;
-  const match = name.match(EMBEDDED_DISC_MARKER_RE);
-  if (!match || match.index === undefined) return null;
-  const stem = name.slice(0, match.index).replace(/[\s\-_–]+$/, '').trim();
-  const result: EmbeddedDiscMarker = { stem, discNumber: parseInt(match[1]!, 10) };
-  if (match[2] !== undefined) result.total = parseInt(match[2], 10);
-  return result;
-}
-
-/** Normalize a common stem for case/whitespace-insensitive group identity. */
-export function normalizeStem(stem: string): string {
-  return stem.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 export interface DiscoverBooksOptions {
@@ -232,21 +194,7 @@ async function collectBooks(
 
   // Sibling-stem coalescing: per-disc usenet folder sets share a common stem with the
   // disc marker embedded in a longer release string (e.g. "… 1776 Disc 1 of 10 - yEnc …").
-  // Distinct from the bare-token path above — these never match DISC_FOLDER_PATTERN.
-  const discGroups = findEmbeddedDiscGroups(audioChildren);
-  if (discGroups.length > 0) {
-    const grouped = new Set<DirInfo>();
-    for (const group of discGroups) {
-      await mergeEmbeddedDiscGroup(group, results, log);
-      for (const member of group.members) grouped.add(member);
-    }
-    for (const child of info.children) {
-      if (!grouped.has(child)) {
-        await collectBooks(child, rootPath, results, log);
-      }
-    }
-    return;
-  }
+  if (await coalesceEmbeddedDiscGroups(info, audioChildren, rootPath, results, log)) return;
 
   for (const child of audioChildren) {
     await collectBooks(child, rootPath, results, log);
@@ -397,7 +345,11 @@ function sharesStemPrefix(name: string, key: string): boolean {
 function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
   const byStem = new Map<string, { info: DirInfo; marker: EmbeddedDiscMarker }[]>();
   for (const child of audioChildren) {
-    const marker = parseEmbeddedDiscMarker(folderNameOf(child));
+    const name = folderNameOf(child);
+    // Bare tokens (DISC_FOLDER_PATTERN) and parenthesized titled-disc folders are owned by
+    // the existing merge paths — the embedded path is strictly for markers in longer strings.
+    if (DISC_FOLDER_PATTERN.test(name) || parseTitledDiscFolder(name) !== null) continue;
+    const marker = parseEmbeddedDiscMarker(name);
     if (!marker || !marker.stem) continue;
     const key = normalizeStem(marker.stem);
     const members = byStem.get(key) ?? [];
@@ -436,6 +388,33 @@ function synthesizeStemParts(stem: string): string[] {
     .replace(/^(?:non[\s-]?fiction|fiction)\s+/i, '')
     .trim();
   return [cleaned || stem];
+}
+
+/**
+ * Coalesce every embedded-disc sibling group under `info`, then recurse into the remaining
+ * (non-grouped) children. Returns true when at least one group was found and handled.
+ */
+async function coalesceEmbeddedDiscGroups(
+  info: DirInfo,
+  audioChildren: DirInfo[],
+  rootPath: string,
+  results: DiscoveredFolder[],
+  log?: DiscoveryLogger,
+): Promise<boolean> {
+  const discGroups = findEmbeddedDiscGroups(audioChildren);
+  if (discGroups.length === 0) return false;
+
+  const grouped = new Set<DirInfo>();
+  for (const group of discGroups) {
+    await mergeEmbeddedDiscGroup(group, results, log);
+    for (const member of group.members) grouped.add(member);
+  }
+  for (const child of info.children) {
+    if (!grouped.has(child)) {
+      await collectBooks(child, rootPath, results, log);
+    }
+  }
+  return true;
 }
 
 /** Coalesce an embedded-disc group into a single discovery row (AC2 contract). */
