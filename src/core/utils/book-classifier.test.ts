@@ -494,6 +494,19 @@ describe('classifyLeafFolder', () => {
       expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
     });
 
+    it('AC4: Arabic digit run with trailing junk still matches (boundary is Roman-only)', () => {
+      // Pins the AC4 contract: the trailing token boundary `(?=[\s_\-.]|$)` lives
+      // INSIDE the Roman alternative only. If a future edit moved it after the whole
+      // `(?:\d+|…)` alternation, `Part 12abc` would stop matching the `\d+` branch
+      // (the `abc` after `12` is not a separator/EOS) and this batch would fall
+      // through to split. Separator-terminated digit tests can't catch that regression.
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Shared Part 12abc.mp3',
+        '/lib/Book/Shared Part 13def.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
     it('CRITICAL: Dune Saga "Chronicles I…VIII" stays split (no marker keyword)', () => {
       const result = classifyLeafFolder(uniformLarge([
         '/lib/Dune/Dune Chronicles I_ Dune.m4b',
