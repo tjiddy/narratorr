@@ -29,9 +29,20 @@ const MIN_TITLE_CHARS = 3;
  * correct shape.
  *
  * Excluded: book|volume|vol — too ambiguous (real titles like "Mistborn Book 1").
+ *
+ * Roman-numeral parts (#1267): the marker also accepts a canonical 1–39 Roman
+ * numeral after the keyword (`Part I`, `Disc IV`), in ADDITION to Arabic digits.
+ * The Roman alternative is `(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})(?=[\s_\-.]|$)`:
+ * a non-empty run of `I`/`V`/`X` only (no `L`/`C`/`D`/`M`), required to be a
+ * standalone token via the trailing boundary. Restricting to 1–39 / `IVX`-only
+ * is what makes real-word tokens like `Mix`, `Civil`, and `Part XL` fail — an
+ * open `[ivxlcdm]+` run would over-match those even with boundaries. The
+ * trailing `(?=[\s_\-.]|$)` boundary lives INSIDE the Roman alternative only;
+ * the Arabic `\d+` branch keeps its original shape (so `Part 12abc` still
+ * matches `12`), preserving existing Arabic behavior unchanged.
  */
-const MERGE_MARKER_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*\d+/i;
-const MERGE_MARKER_GLOBAL_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*\d+/gi;
+const MERGE_MARKER_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})(?=[\s_\-.]|$))/i;
+const MERGE_MARKER_GLOBAL_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})(?=[\s_\-.]|$))/gi;
 const NUMERIC_ONLY_RE = /^\d+$/;
 const ALPHA_COUNT_RE = /[A-Za-z]/g;
 /**

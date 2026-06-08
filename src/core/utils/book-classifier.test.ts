@@ -416,6 +416,147 @@ describe('classifyLeafFolder', () => {
     });
   });
 
+  describe('Roman-numeral part markers (#1267)', () => {
+    it('AC1: Golden Son — 4 large loose "Part I…IV" files merge', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Golden Son/Part I Bow.mp3',
+        '/lib/Golden Son/Part II Storm.mp3',
+        '/lib/Golden Son/Part III Lightning.mp3',
+        '/lib/Golden Son/Part IV Ruin.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it('AC1: Iron Gold — 3 large loose "Part I…III" files merge', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Iron Gold/Part I Wind.mp3',
+        '/lib/Iron Gold/Part II Ash.mp3',
+        '/lib/Iron Gold/Part III Dust.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it('AC1: Disc Roman variants merge', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/BookTitle Disc I.mp3',
+        '/lib/Book/BookTitle Disc II.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it('AC1: CD Roman variants merge', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/BookTitle CD I.mp3',
+        '/lib/Book/BookTitle CD II.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it.each(['chapter', 'chap', 'track', 'trk', 'disc', 'disk', 'cd', 'part', 'pt'])(
+      'F2: marker keyword "%s" recognizes a Roman run (I/II two-file batch)',
+      (marker) => {
+        const result = classifyLeafFolder(uniformLarge([
+          `/lib/Book/Shared ${marker} I.mp3`,
+          `/lib/Book/Shared ${marker} II.mp3`,
+        ]));
+        expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+      },
+    );
+
+    it.each(['IX', 'X', 'XIV', 'XXXIX'])(
+      'higher-range canonical numeral "Part %s" is recognized',
+      (roman) => {
+        const result = classifyLeafFolder(uniformLarge([
+          `/lib/Book/Shared Part ${roman}.mp3`,
+          '/lib/Book/Shared Part I.mp3',
+        ]));
+        expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+      },
+    );
+
+    it.each(['PART I', 'part i', 'Part I'])(
+      'case-insensitivity preserved for "%s" (/i flag)',
+      (variant) => {
+        const result = classifyLeafFolder(uniformLarge([
+          `/lib/Book/Shared ${variant}.mp3`,
+          `/lib/Book/Shared ${variant.replace(/i/gi, 'II')}.mp3`,
+        ]));
+        expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+      },
+    );
+
+    it('mixed Roman + Arabic batch sharing a prefix merges', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Shared Part 1.mp3',
+        '/lib/Book/Shared Part II.mp3',
+        '/lib/Book/Shared Part 3.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it('AC4: Arabic digit run with trailing junk still matches (boundary is Roman-only)', () => {
+      // Pins the AC4 contract: the trailing token boundary `(?=[\s_\-.]|$)` lives
+      // INSIDE the Roman alternative only. If a future edit moved it after the whole
+      // `(?:\d+|…)` alternation, `Part 12abc` would stop matching the `\d+` branch
+      // (the `abc` after `12` is not a separator/EOS) and this batch would fall
+      // through to split. Separator-terminated digit tests can't catch that regression.
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Shared Part 12abc.mp3',
+        '/lib/Book/Shared Part 13def.mp3',
+      ]));
+      expect(result).toEqual({ decision: 'merge', reason: 'chapter-disc-part-marker' });
+    });
+
+    it('CRITICAL: Dune Saga "Chronicles I…VIII" stays split (no marker keyword)', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Dune/Dune Chronicles I_ Dune.m4b',
+        '/lib/Dune/Dune Chronicles II_ Dune Messiah.m4b',
+        '/lib/Dune/Dune Chronicles III_ Children of Dune.m4b',
+        '/lib/Dune/Dune Chronicles IV_ God Emperor of Dune.m4b',
+        '/lib/Dune/Dune Chronicles V_ Heretics of Dune.m4b',
+        '/lib/Dune/Dune Chronicles VI_ Chapterhouse Dune.m4b',
+        '/lib/Dune/Dune Chronicles VII_ Hunters of Dune.m4b',
+        '/lib/Dune/Dune Chronicles VIII_ Sandworms of Dune.m4b',
+      ]));
+      expect(result.decision).toBe('split');
+      expect(result.reason).toBe('distinct-large-files-no-marker');
+    });
+
+    it('F1: real-word Roman-letter tokens (Mix/Civil/Dixie) are NOT recognized', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Album Part Mix.mp3',
+        '/lib/Book/Album Part Civil.mp3',
+        '/lib/Book/Album Part Dixie.mp3',
+      ]));
+      expect(result.reason).not.toBe('chapter-disc-part-marker');
+    });
+
+    it('F1: "Part Vivid" (I/V letters but not token-terminated) is NOT recognized', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Album Part Vivid.mp3',
+        '/lib/Book/Album Part Violet.mp3',
+      ]));
+      expect(result.reason).not.toBe('chapter-disc-part-marker');
+    });
+
+    it('F3: Roman numerals above 39 (Part XL / XLI) are NOT recognized', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Book/Shared Part XL Something.mp3',
+        '/lib/Book/Shared Part XLI Something Else.mp3',
+      ]));
+      expect(result.reason).not.toBe('chapter-disc-part-marker');
+    });
+
+    it('single stray "Part I" among distinct titles stays split', () => {
+      const result = classifyLeafFolder(uniformLarge([
+        '/lib/Pack/Some Standalone Novel Part I.mp3',
+        '/lib/Pack/A Wholly Different Book.mp3',
+        '/lib/Pack/Yet Another Distinct Title.mp3',
+      ]));
+      expect(result.reason).not.toBe('chapter-disc-part-marker');
+    });
+  });
+
   describe('check-order regression', () => {
     it('duplicate-stem fires BEFORE title-content when both would match', () => {
       // Three files all normalizing to "Bk" — both guards (duplicate + title-content) would fire.
@@ -484,6 +625,22 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
       expect(hasStrongChapterSetEvidence([
         { path: '/lib/Pack/Book A Part 1.mp3', size: SHORT_STORY },
         { path: '/lib/Pack/Book B Part 2.mp3', size: SHORT_STORY },
+      ])).toBe(false);
+    });
+
+    it('#1267: returns true for all-Roman "Part I…IV" shared-prefix set (mixed-content path)', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Golden Son/Part I Bow.mp3', size: LARGE },
+        { path: '/lib/Golden Son/Part II Storm.mp3', size: LARGE },
+        { path: '/lib/Golden Son/Part III Lightning.mp3', size: LARGE },
+        { path: '/lib/Golden Son/Part IV Ruin.mp3', size: LARGE },
+      ])).toBe(true);
+    });
+
+    it('#1267: returns false for bare-title Roman numerals with no marker keyword', () => {
+      expect(hasStrongChapterSetEvidence([
+        { path: '/lib/Dune/Dune Chronicles I_ Dune.m4b', size: LARGE },
+        { path: '/lib/Dune/Dune Chronicles II_ Dune Messiah.m4b', size: LARGE },
       ])).toBe(false);
     });
   });
