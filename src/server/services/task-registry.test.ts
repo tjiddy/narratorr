@@ -43,7 +43,9 @@ describe('TaskRegistry', () => {
         name: 'monitor',
         type: 'cron',
         lastRun: null,
-        nextRun: expect.any(String),
+        // nextRun is null until the scheduler (scheduleCron) feeds it via setNextRun —
+        // the registry no longer estimates a next-run from the cron string.
+        nextRun: null,
         running: false,
       });
     });
@@ -62,13 +64,20 @@ describe('TaskRegistry', () => {
       expect(task!.nextRun).toBe(next.toISOString());
     });
 
-    it('estimates nextRun correctly for 6-part second-based cron expressions', () => {
+    it('returns null nextRun for a registered cron task before any setNextRun call', () => {
+      // The estimator fallback is gone — the registry only stores what the
+      // scheduler hands it, so a cron task reads null until setNextRun runs.
       registry.register('monitor', 'cron', vi.fn(), '*/30 * * * * *');
       const [task] = registry.getAll();
-      // Should produce a time within 30 seconds from now (not 30 minutes)
-      const nextRun = new Date(task!.nextRun!);
-      const diffMs = nextRun.getTime() - Date.now();
-      expect(diffMs).toBeLessThanOrEqual(30 * 1000);
+      expect(task!.nextRun).toBeNull();
+    });
+
+    it('returns the stored ISO value for a cron task after setNextRun', () => {
+      registry.register('monitor', 'cron', vi.fn(), '*/30 * * * * *');
+      const next = new Date('2026-03-10T20:00:30Z');
+      registry.setNextRun('monitor', next);
+      const [task] = registry.getAll();
+      expect(task!.nextRun).toBe(next.toISOString());
     });
   });
 
