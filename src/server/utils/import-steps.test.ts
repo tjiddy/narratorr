@@ -9,6 +9,7 @@ vi.mock('node:fs/promises', () => ({
   statfs: vi.fn(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
+  writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../utils/post-processing-script.js', () => ({
@@ -28,7 +29,7 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, statfs, readdir, mkdir, rename } from 'node:fs/promises';
+import { stat, rm, statfs, readdir, mkdir, rename, writeFile } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize } from './import-helpers.js';
@@ -54,6 +55,7 @@ import {
   cleanupOldBookPath,
   prepareImportSiblings,
   commitStagedImport,
+  BackupRecoveryError,
 } from './import-steps.js';
 
 function createMockLog(): FastifyBaseLogger {
@@ -548,20 +550,28 @@ describe('cleanupOldBookPath', () => {
 // ── prepareImportSiblings ───────────────────────────────────────────────
 
 describe('prepareImportSiblings', () => {
+  const dirent = (name: string, isFile = true) => ({ name, isFile: () => isFile, isDirectory: () => !isFile });
   const target = '/library/Author/Title';
   const staging = `${target}.import-tmp`;
   const backup = `${target}.import-bak`;
+  const marker = `${target}.import-commit-pending`;
+  const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
-  it('removes any stale staging and backup siblings before staging a fresh import', async () => {
+  beforeEach(() => {
+    // Default: no commit-pending marker on disk → no recovery, fast strict-clear path.
+    vi.mocked(stat).mockRejectedValue(enoent());
+  });
+
+  it('removes any stale staging and backup siblings before staging a fresh import (no marker)', async () => {
     const log = createMockLog();
-    await prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log });
+    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
     expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
   });
 
   it('skips removal and logs error-level when a sibling is outside libraryRoot', async () => {
     const log = createMockLog();
-    await prepareImportSiblings({ stagingPath: '/tmp/x.import-tmp', backupPath: '/tmp/x.import-bak', libraryRoot: '/library', log });
+    await prepareImportSiblings({ stagingPath: '/tmp/x.import-tmp', targetPath: '/tmp/x', backupPath: '/tmp/x.import-bak', libraryRoot: '/library', log });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ libraryRoot: '/library' }),
@@ -575,7 +585,7 @@ describe('prepareImportSiblings', () => {
     // commitStagedImport would enumerate and commit the stale files into the target.
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
     await expect(
-      prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
     ).rejects.toThrow('EACCES');
   });
 
@@ -586,8 +596,53 @@ describe('prepareImportSiblings', () => {
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
-      prepareImportSiblings({ stagingPath: staging, backupPath: backup, libraryRoot: '/library', log }),
+      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
     ).rejects.toThrow('EBUSY');
+  });
+
+  it('marker present → recovers backed-up audio into target before clearing (#1290)', async () => {
+    const log = createMockLog();
+    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.m4b')] : []) as never);
+
+    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    // Backed-up original restored into the target...
+    expect(rename).toHaveBeenCalledWith(`${backup}/old.m4b`, `${target}/old.m4b`);
+    // ...the now-empty backup strict-cleared, and the marker removed.
+    expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: target }),
+      expect.stringMatching(/Recovering interrupted import commit/i),
+    );
+  });
+
+  it('marker present but backup empty (in-process rollback already restored) → just removes marker, no restore', async () => {
+    const log = createMockLog();
+    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(readdir).mockResolvedValue([] as never);                 // empty backup
+
+    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    expect(rename).not.toHaveBeenCalled();                            // nothing to restore
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/Recovering interrupted import commit/i));
+  });
+
+  it('marker present, restore rename fails → throws BackupRecoveryError, leaves backup + marker on disk', async () => {
+    const log = createMockLog();
+    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.m4b')] : []) as never);
+    vi.mocked(rename).mockRejectedValueOnce(new Error('EIO restore'));
+
+    await expect(
+      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toBeInstanceOf(BackupRecoveryError);
+
+    // Backup and marker are NOT removed — they survive for the next boot's recovery.
+    expect(rm).not.toHaveBeenCalledWith(backup, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(marker, { force: true });
   });
 });
 
@@ -637,6 +692,57 @@ describe('commitStagedImport', () => {
     expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
     expect(rename).toHaveBeenCalledTimes(1);
     expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
+  });
+
+  it('same-path re-import: writes the commit-pending marker before backup, removes it on completion (#1290)', async () => {
+    const log = createMockLog();
+    const marker = `${target}.import-commit-pending`;
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+
+    await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    // Marker written (empty) once a backup is about to be created...
+    expect(writeFile).toHaveBeenCalledWith(marker, '');
+    // ...and strict-removed on a successful commit.
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+  });
+
+  it('first import (empty target): never writes the commit-pending marker (#1290)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [], [staging]: [dirent('new.m4b')] });
+
+    await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('a strict marker-removal failure triggers rollback and rethrows (#1290)', async () => {
+    const log = createMockLog();
+    const marker = `${target}.import-commit-pending`;
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    // backup + move-in succeed; the authoritative marker removal fails.
+    vi.mocked(rm).mockImplementation(async (p: unknown) => {
+      if (p === marker) throw new Error('EBUSY marker');
+      return undefined as never;
+    });
+
+    try {
+      await expect(
+        commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+      ).rejects.toThrow('EBUSY marker');
+
+      // The existing rollback ran (restores the backed-up original).
+      expect(rename).toHaveBeenCalledWith(`${backup}/old.mp3`, `${target}/old.mp3`);
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ targetPath: target }),
+        expect.stringMatching(/rolling back/i),
+      );
+    } finally {
+      // clearAllMocks() does NOT reset implementations — restore rm's default so the
+      // path-specific throw never leaks into later tests.
+      vi.mocked(rm).mockReset();
+      vi.mocked(rm).mockResolvedValue(undefined);
+    }
   });
 
   it('treats a non-existent target (ENOENT) as no audio to back up', async () => {
@@ -882,6 +988,35 @@ describe('handleImportFailure', () => {
     })).rejects.toThrow('fail');
     expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-tmp', { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-bak', { recursive: true, force: true });
+  });
+
+  it('preserves .import-bak and the commit-pending marker on a BackupRecoveryError, clears only staging (#1290)', async () => {
+    const log = createMockLog();
+    const target = '/library/Author/Title';
+    await expect(handleImportFailure({
+      error: new BackupRecoveryError(target), targetPath: target,
+      stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
+      libraryRoot: '/library', protectTarget: true, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: target }, log,
+    })).rejects.toBeInstanceOf(BackupRecoveryError);
+    // Staging cleared (re-derivable scratch)...
+    expect(rm).toHaveBeenCalledWith(`${target}.import-tmp`, { recursive: true, force: true });
+    // ...but the backup and marker survive for the next boot's recovery.
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
+  });
+
+  it('removes the commit-pending marker on an ordinary (non-recovery) failure (#1290)', async () => {
+    const log = createMockLog();
+    const target = '/library/Author/Title';
+    await expect(handleImportFailure({
+      error: new Error('ordinary'), targetPath: target,
+      stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
+      libraryRoot: '/library', protectTarget: true, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: target }, log,
+    })).rejects.toThrow('ordinary');
+    expect(rm).toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
   });
 
   it('does NOT blanket-remove a protected pre-existing target (same-path re-import)', async () => {
