@@ -143,6 +143,19 @@ describe('BlackholeClient', () => {
       );
     });
 
+    it('sends User-Agent: Narratorr/<version> on the nzb-url self-download (#1315)', async () => {
+      const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
+      mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
+
+      await client.addDownload({ type: 'nzb-url', url: 'https://example.com/api/download/123' });
+
+      // GIT_TAG is unset in tests, so getUserAgent() resolves to "Narratorr/dev".
+      expect(ssrfRedirectWalker).toHaveBeenCalledWith(
+        'https://example.com/api/download/123',
+        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/dev' } }),
+      );
+    });
+
     // #1243 — follow indexer download redirects (302 getnzb links).
     it('follows a 302 redirect to the real .nzb and writes the followed-redirect bytes', async () => {
       const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62, 0x3e]); // <nzb>

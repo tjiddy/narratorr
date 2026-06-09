@@ -11,7 +11,8 @@ import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '../../shared/constants.js';
 
-vi.mock('../utils/enrich-usenet-languages.js', () => ({
+vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
   enrichUsenetLanguages: vi.fn(),
 }));
 
@@ -1004,6 +1005,28 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     expect(enrichedResults).toHaveLength(1);
     expect(enrichedResults[0]!.title).toBe('The Way of Kings');
     expect(result.grabbed).toBe(1);
+  });
+
+  it('sets matchScore = bestScore on matched results and caps Phase-2 fetches before enrichment (#1315)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [
+      makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/matched' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
+    // The matched result carries the computed match score so the Phase-2 cap
+    // ranks by it rather than falling back to feed order.
+    const enrichedResults = mockEnrichUsenet.mock.calls[0]![0];
+    expect(enrichedResults[0]!.matchScore).toBeGreaterThan(0.7);
+    // Auto-grab path passes the Phase-2 fetch cap as the options argument.
+    expect(mockEnrichUsenet.mock.calls[0]![3]).toEqual({ maxPhase2Fetches: 10 });
   });
 
   it('matched count includes books whose candidates were all multi-part rejected', async () => {

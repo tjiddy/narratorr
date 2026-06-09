@@ -48,6 +48,21 @@ describe('TorznabIndexer', () => {
   });
 
   describe('search', () => {
+    it('sends a User-Agent: Narratorr/<version> header on the API request (#1315)', async () => {
+      let userAgent: string | null = null;
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          userAgent = request.headers.get('user-agent');
+          return new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } });
+        }),
+      );
+
+      await indexer.search('Brandon Sanderson');
+
+      // GIT_TAG is unset in tests, so getUserAgent() resolves to "Narratorr/dev".
+      expect(userAgent).toBe('Narratorr/dev');
+    });
+
     it('parses search results from XML', async () => {
       server.use(
         http.get(`${API_BASE}/api`, () => {
