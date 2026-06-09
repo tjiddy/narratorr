@@ -306,6 +306,13 @@ describe('ManualImportAdapter', () => {
         expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
         // Single-path copy must NOT run — the whole group is flattened, not just Disc 1
         expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+        // AC2: verification sums every member size, then reads the target — not item.path alone.
+        expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [MEMBER_PATHS[0]],
+          [MEMBER_PATHS[1]],
+          [MEMBER_PATHS[2]],
+          [TARGET_PATH],
+        ]);
       });
 
       it('mode=move: removes every reconstructed member folder after copy', async () => {
@@ -324,6 +331,14 @@ describe('ManualImportAdapter', () => {
         for (const member of MEMBER_PATHS) {
           expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(member, { recursive: true });
         }
+        // AC2: move-mode runs the same full-member copy verification before the rm sweep —
+        // every member size is read, then the target, not item.path alone.
+        expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [MEMBER_PATHS[0]],
+          [MEMBER_PATHS[1]],
+          [MEMBER_PATHS[2]],
+          [TARGET_PATH],
+        ]);
       });
 
       it('pointer mode: rejects a disc-group row instead of silently registering Disc 1', async () => {
@@ -404,6 +419,17 @@ describe('ManualImportAdapter', () => {
         // All 3 audio-bearing discs flattened (Artwork excluded), not just Disc 1
         expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
         expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+
+        // AC2: copy verification must sum EVERY reconstructed member's size, then read the target —
+        // not silently fall back to checking only the anchor disc (item.path) against the target.
+        // The exact call sequence proves all 3 member sizes are accumulated before the target read;
+        // a regression to single-path verification would yield only [item.path, target] (2 calls).
+        expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [MEMBER_PATHS[0]],
+          [MEMBER_PATHS[1]],
+          [MEMBER_PATHS[2]],
+          [TARGET_PATH],
+        ]);
       });
     });
 
