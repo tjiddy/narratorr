@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
@@ -560,5 +560,95 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
     // Zod's events.min(1, 'Select at least one event') fires; the error text appears in red below the events list.
     expect(await screen.findByText('Select at least one event')).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+// #908 family — settingsFromX registry-overlay guard (siblings: IndexerCard.test.tsx,
+// DownloadClientForm.test.tsx). NotifierCard hydrates edit-mode settings via the
+// `settingsFromNotifier` registry overlay (NotifierCard.tsx:32-40): it seeds from the
+// entity type's `defaultSettings` and overlays only non-null stored values, so a webhook
+// entity hydrates to webhook keys only and a discord entity to discord keys only.
+//
+// This suite mirrors the IndexerCard reference shape EXACTLY: no-switch, per-type. Each
+// case renders edit mode with an entity of one type and immediately fires Test — it never
+// switches the type selector. That is deliberate: the settings reset in NotifierCard.tsx:92-97
+// is create-mode only, so an in-edit type switch would leave stale source-type keys in RHF
+// state. The overlay is validated at hydration, per type, instead. No production change is
+// needed — the existing overlay already prevents the leak (regress it by seeding from a union
+// of all types' defaults and these assertions go red).
+describe('NotifierCard — #908 settingsFromNotifier registry overlay (no foreign-type leak)', () => {
+  it('webhook entity edit Test payload preserves webhook keys and leaks no discord keys', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const webhookNotifier: Notifier = createMockNotifier({
+      id: 200,
+      name: 'Webhook No Leak',
+      type: 'webhook',
+      settings: { url: 'https://hook.example.com', method: 'POST', bodyTemplate: '{{title}}' },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={webhookNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+    // Stored webhook-specific keys MUST round-trip (value-checked so a default can't masquerade).
+    expect(payloadSettings).toHaveProperty('url', 'https://hook.example.com');
+    expect(payloadSettings).toHaveProperty('method', 'POST');
+    expect(payloadSettings).toHaveProperty('bodyTemplate', '{{title}}');
+
+    // Discord-only keys MUST NOT leak.
+    expect(payloadSettings).not.toHaveProperty('webhookUrl');
+    expect(payloadSettings).not.toHaveProperty('includeCover');
+  });
+
+  it('discord entity edit Test payload preserves discord keys and leaks no webhook keys', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const discordNotifier: Notifier = createMockNotifier({
+      id: 201,
+      name: 'Discord No Leak',
+      type: 'discord',
+      settings: { webhookUrl: 'https://discord.com/api/webhooks/x', includeCover: false },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={discordNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+    // Stored discord-specific keys MUST round-trip — includeCover:false is non-default,
+    // so the overlay (not the registry default of true) must win.
+    expect(payloadSettings).toHaveProperty('webhookUrl', 'https://discord.com/api/webhooks/x');
+    expect(payloadSettings).toHaveProperty('includeCover', false);
+
+    // Webhook-only keys MUST NOT leak.
+    expect(payloadSettings).not.toHaveProperty('url');
+    expect(payloadSettings).not.toHaveProperty('method');
+    expect(payloadSettings).not.toHaveProperty('bodyTemplate');
   });
 });

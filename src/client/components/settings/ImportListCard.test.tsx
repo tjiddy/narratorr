@@ -439,4 +439,73 @@ describe('ImportListCard', () => {
       );
     });
   });
+
+  // #908 family — registry-overlay leak guard (siblings: IndexerCard.test.tsx,
+  // DownloadClientForm.test.tsx, NotifierCard.test.tsx). ImportListCard has NO
+  // `settingsFromImportList` helper and none should be added — its leak-prevention
+  // mechanism is `handleTypeChange` (ImportListCard.tsx:173), which resets `settings`
+  // to the newly selected type's `defaultSettings` on a create-mode provider switch.
+  // The provider-type selector is rendered only in create mode (ImportListCard.tsx:228,
+  // `{!initial && …}`), so create mode is the only surface that both exposes the switch
+  // and routes Test through the `onFormTest(formData)` payload path. Edit mode is
+  // covered by the separate #1057 saved-id test above and must NOT be normalized into
+  // this payload pattern. Regress the guard by removing the `setSettings` reset in
+  // `handleTypeChange` and these assertions go red.
+  describe('#908 — ImportListCard handleTypeChange registry reset (no foreign-type leak)', () => {
+    it('abs → nyt switch drops abs-only keys from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(
+        <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
+      );
+
+      // Populate abs-only settings before switching, so the reset is proven to drop
+      // real stored values — not merely empty registry defaults.
+      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
+      await user.type(screen.getByLabelText('Library'), 'lib-42');
+
+      // Switch provider type — handleTypeChange resets settings to nyt defaults.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      expect(onFormTest).toHaveBeenCalled();
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+      // abs-only keys MUST NOT survive the switch.
+      expect(payloadSettings).not.toHaveProperty('serverUrl');
+      expect(payloadSettings).not.toHaveProperty('libraryId');
+
+      // nyt defaults MUST be present (value-checked so the reset is confirmed).
+      expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
+      expect(payloadSettings).toHaveProperty('apiKey', '');
+    });
+
+    it('nyt → abs switch drops the nyt-only list key from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(
+        <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
+      );
+
+      // Switch to nyt and set a non-default Bestseller List value.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+      await user.selectOptions(screen.getByLabelText('Bestseller List'), 'audio-nonfiction');
+
+      // Switch back to abs — handleTypeChange resets settings to abs defaults.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'abs');
+
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      expect(onFormTest).toHaveBeenCalled();
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+      // nyt-only key MUST NOT survive the switch.
+      expect(payloadSettings).not.toHaveProperty('list');
+
+      // abs defaults MUST be present.
+      expect(payloadSettings).toHaveProperty('serverUrl', '');
+      expect(payloadSettings).toHaveProperty('libraryId', '');
+    });
+  });
 });
