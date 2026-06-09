@@ -361,7 +361,6 @@ function buildRawEnriched(item: ImportListItem): EnrichedItem {
   };
 }
 
-// eslint-disable-next-line complexity -- flat coalescing across item/match
 function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): EnrichedItem {
   const primarySeries = match.seriesPrimary ?? match.series?.[0];
   return {
