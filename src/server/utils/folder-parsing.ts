@@ -165,6 +165,34 @@ export function cleanTagTitle(s: string): string {
   return result.replace(TAG_TITLE_SERIES_MARKER_REGEX, '').trim() || s;
 }
 
+/**
+ * Strip bracketed release tags (`[M4B]`, `[64k]`, `[2021]`, `[GA]`) — but NOT when
+ * doing so would leave a title-less remainder. When the whole title is wrapped in
+ * brackets (`Author - [The Real Title]`), a global strip collapses the name to an
+ * empty or author-only string (`Author -`), poisoning the metadata search (#1316).
+ * In that case the brackets wrapped real content, not a tag, so we UNWRAP them —
+ * keep the inner text, drop the brackets — and let downstream steps parse it as
+ * plain text. The guard evaluates the remainder after the FULL strip (not per
+ * bracket) so a legitimate trailing tag alongside real title text still strips.
+ * Mirrors the `... || s` fallback-on-empty idiom in `cleanTagTitle`.
+ */
+function bracketTagStrip(s: string): string {
+  const stripped = s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  // Only intervene when the strip left a title-less remainder: empty, or
+  // author-only like "Author -" (ends with a space-prefixed hyphen/en-dash and
+  // nothing after). Anything with real title text keeps the normal strip.
+  if (stripped !== '' && !/\s[–-]\s*$/.test(stripped)) return stripped;
+  // The bracket(s) wrapped real content, not a tag. Unwrap only MULTI-WORD inner
+  // text (a real title phrase like "Bobiverse 03 All These Worlds – 3"); keep
+  // deleting single-token tags (codec/bitrate/year/format/ASIN: [M4B], [64k],
+  // [2021], [B0D18DYG5C]) so the existing tag- and ASIN-strip behavior survives.
+  const recovered = s
+    .replace(/\s*\[([^\]]*)\]/g, (_full, inner: string) => (/\s/.test(inner) ? ` ${inner}` : ' '))
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return recovered || stripped;
+}
+
 /** Pipeline steps for cleanName/cleanNameWithTrace. Order matters — see step names below. */
 const CLEAN_NAME_PIPELINE: ReadonlyArray<readonly [string, (s: string) => string]> = [
   ['leadingNumeric', s => s
@@ -175,7 +203,7 @@ const CLEAN_NAME_PIPELINE: ReadonlyArray<readonly [string, (s: string) => string
   ['normalize', s => normalizeFolderName(s)],
   ['yearParenStrip', s => s.replace(/\s*\(\d{4}\)$/, '')],
   ['yearBracketStrip', s => s.replace(/\s*\[\d{4}\]$/, '')],
-  ['bracketTagStrip', s => s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim()],
+  ['bracketTagStrip', bracketTagStrip],
   ['yearBareStrip', s => s.replace(BARE_YEAR_REGEX, '')],
   ['emptyParenStrip', s => s.replace(/\s*\(\s*\)/g, '')],
   ['emptyBracketStrip', s => s.replace(/\s*\[\s*\]/g, '').trim()],
