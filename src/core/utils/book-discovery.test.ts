@@ -40,6 +40,7 @@ import {
   parseTitledDiscFolder,
   parseEmbeddedDiscMarker,
   normalizeAlbumForComparison,
+  composeReviewReason,
   type DiscoveryLogger,
 } from './book-discovery.js';
 import { parseFolderStructure } from '../../server/utils/folder-parsing.js';
@@ -772,6 +773,93 @@ describe('discoverBooks', () => {
       const result = await discoverBooks('/audiobooks');
       // No embedded marker parsed from a bare `D<n>` token → three standalone books, not one merge
       expect(result).toHaveLength(3);
+    });
+
+    // ---- Incomplete-disc-set warning (#1282) ----
+
+    it('coalesces an incomplete set AND flags the shortfall on reviewReason', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1} of 10`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      // still coalesces (guards permit incomplete sets) ...
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      // ... but warns the operator the set is short
+      expect(result[0]!.reviewReason).toBe('Incomplete disc set: 3 of 10 discs');
+    });
+
+    it('emits no incompleteness warning for a complete set', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1} of 3`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('emits no incompleteness warning when no "of M" total was parsed', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1}`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      // total is unknown → cannot assert incompleteness
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('emits no incomplete "N of M" string for an over-complete set (count > M)', async () => {
+      // 4 members all marked "of 3" (e.g. a duplicated disc) — must never render N>M.
+      const names = [
+        'Author - Book Disc 1 of 3',
+        'Author - Book Disc 2 of 3',
+        'Author - Book Disc 3 of 3',
+        'Author - Book Disc 4 of 3',
+      ];
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('composes incomplete + bonus warnings when a member disc-folder name carries a bonus token', async () => {
+      // Disc-folder name matches BONUS_SUBDIR_RE (name-signal arm) AND the set is short of M.
+      const names = [
+        'Author - Bonus Disc 1 of 10',
+        'Author - Bonus Disc 2 of 10',
+        'Author - Bonus Disc 3 of 10',
+      ];
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.reviewReason).toBe(
+        'Incomplete disc set: 3 of 10 discs; Additional non-book content possibly merged',
+      );
+    });
+  });
+
+  // ---- composeReviewReason unit coverage (#1282) ----
+
+  describe('composeReviewReason', () => {
+    const incomplete = 'Incomplete disc set: 3 of 10 discs';
+    const bonus = 'Additional non-book content possibly merged';
+
+    it('joins both messages incomplete-first with "; "', () => {
+      expect(composeReviewReason(incomplete, bonus)).toBe(`${incomplete}; ${bonus}`);
+    });
+
+    it('returns the incomplete message alone when bonus is absent', () => {
+      expect(composeReviewReason(incomplete, undefined)).toBe(incomplete);
+    });
+
+    it('returns the bonus message alone when incomplete is absent', () => {
+      expect(composeReviewReason(undefined, bonus)).toBe(bonus);
+    });
+
+    it('returns undefined when neither is present', () => {
+      expect(composeReviewReason(undefined, undefined)).toBeUndefined();
     });
   });
 

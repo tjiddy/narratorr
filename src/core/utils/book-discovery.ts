@@ -323,6 +323,12 @@ interface EmbeddedDiscGroup {
   stem: string;
   /** Member disc folders, ordered by parsed disc number ascending. */
   members: DirInfo[];
+  /**
+   * Agreed `of M` total parsed from the members' markers, when present. The consistency
+   * guard (`discGroupGuardsPass`) guarantees every member agrees on this value, so it is
+   * taken from the lowest-disc member's marker. Undefined when no member carried `of M`.
+   */
+  total?: number;
 }
 
 /**
@@ -356,7 +362,9 @@ function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
     if (!discGroupGuardsPass(siblingNames, key)) continue;
 
     const sorted = members.slice().sort((a, b) => a.marker.discNumber - b.marker.discNumber);
-    groups.push({ stem: sorted[0]!.marker.stem, members: sorted.map(m => m.info) });
+    const group: EmbeddedDiscGroup = { stem: sorted[0]!.marker.stem, members: sorted.map(m => m.info) };
+    if (sorted[0]!.marker.total !== undefined) group.total = sorted[0]!.marker.total;
+    groups.push(group);
   }
   return groups;
 }
@@ -420,7 +428,9 @@ async function mergeEmbeddedDiscGroup(
   // mirroring the bare-token merge's review-reason flow.
   const parentPath = anchor.path.split(/[\\/]/).slice(0, -1).join('/');
   const synthetic: DirInfo = { path: parentPath, audioFiles: [], children: group.members };
-  const reviewReason = await detectBonusContent(synthetic, mergedAudioFiles);
+  const bonusReason = await detectBonusContent(synthetic, mergedAudioFiles);
+  const incompleteReason = incompleteDiscSetMessage(group.members.length, group.total);
+  const reviewReason = composeReviewReason(incompleteReason, bonusReason);
 
   log?.debug(
     { path: anchor.path, stem: group.stem, members: group.members.map(m => m.path), mergedAudioFiles: mergedAudioFiles.length },
@@ -473,6 +483,29 @@ function makeFolderEntry(
 }
 
 const BONUS_REVIEW_REASON = 'Additional non-book content possibly merged';
+
+/**
+ * Incomplete-disc-set warning message for a coalesced group, or undefined when the set is
+ * complete / its expected total is unknown. A set is incomplete only when the agreed `of M`
+ * total is a known positive number AND the coalesced member count is strictly less than it —
+ * over-complete sets (count > M, e.g. duplicate discs) never produce an `N of M` string.
+ */
+function incompleteDiscSetMessage(memberCount: number, total: number | undefined): string | undefined {
+  if (total === undefined || !Number.isFinite(total) || total <= 0) return undefined;
+  if (memberCount >= total) return undefined;
+  return `Incomplete disc set: ${memberCount} of ${total} discs`;
+}
+
+/**
+ * Compose the two display-only review-reason signals for a coalesced disc group into the
+ * single `reviewReason` slot. When both are present, the incomplete-set message comes first,
+ * then the bonus message, joined by `"; "`; when only one is present, that single message;
+ * when neither, undefined (caller leaves `reviewReason` unset).
+ */
+export function composeReviewReason(incomplete?: string, bonus?: string): string | undefined {
+  const parts = [incomplete, bonus].filter((p): p is string => !!p);
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
 const BONUS_SUBDIR_RE = /excerpt|bonus|behind[\s_-]*the[\s_-]*scenes|sample|preview|extra/i;
 
 /**

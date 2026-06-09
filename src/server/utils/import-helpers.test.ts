@@ -893,6 +893,19 @@ describe('reconstructDiscGroup', () => {
     expect(result).not.toContain('/downloads/1776 Disc 11 of 10');
   });
 
+  it('reconstructs ALL members of an incomplete N-of-M set unchanged — import is never blocked (#1282)', async () => {
+    // 8-of-10 download: discs 9 and 10 are missing. The incomplete-set warning is display-only
+    // at discovery; reconstruction must still return every available member so the import copies
+    // all 8 discs (refusing partial sets would itself be a data-loss regression).
+    const { tree, discPaths } = discTree('/downloads', 'Author - Book', 8, 10);
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
+
+    expect(result).toEqual(discPaths);
+    expect(result).toHaveLength(8);
+  });
+
   it('treats an unreadable audioless sibling as zero-audio (mirrors discovery scanDir)', async () => {
     // F5: containsAudioFiles failure on a sibling must not fail the whole import — discovery's
     // scanDir catches readdir failures and treats the subtree as empty/no-audio.
