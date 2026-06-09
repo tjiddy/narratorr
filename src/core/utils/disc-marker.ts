@@ -5,12 +5,18 @@
  */
 
 /**
- * Embedded disc-marker grammar — matches `(Disc|Disk|CD|D) <N> [of <M>]`, case-insensitive,
+ * Embedded disc-marker grammar — matches `(Disc|Disk|CD) <N> [of <M>]`, case-insensitive,
  * where <N>/<M> are 1–3 digit integers. Unlike a whole-name bare token or a parenthesized
  * titled-disc folder, this finds a marker *embedded* in a longer release string. The marker
  * may be trailing or followed only by further release metadata (e.g. ` - File ~ of 28 - yEnc`).
+ *
+ * The lone `d` alternative is deliberately excluded: a bare `D<n>` token embedded in a longer
+ * title (e.g. `Star Wars D2 Adventures`) is indistinguishable from a real disc marker, so the
+ * all-or-nothing guard would falsely coalesce ≥2 distinct `D<n>`-shaped siblings sharing a stem
+ * prefix into one book (#1280). Whole-name bare `D1` folders remain owned by `DISC_FOLDER_PATTERN`
+ * and parenthesized `(D 1)` by `parseTitledDiscFolder`, so nothing legitimate is lost.
  */
-const EMBEDDED_DISC_MARKER_RE = /\b(?:disc|disk|cd|d)\s*(\d{1,3})(?:\s+of\s+(\d{1,3}))?/i;
+const EMBEDDED_DISC_MARKER_RE = /\b(?:disc|disk|cd)\s*(\d{1,3})(?:\s+of\s+(\d{1,3}))?/i;
 
 export interface EmbeddedDiscMarker {
   /**

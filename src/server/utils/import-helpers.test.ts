@@ -753,6 +753,44 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 });
 
 describe('reconstructDiscGroup', () => {
+  // reconstructDiscGroup reads the parent dir, then probes each sibling for audio via
+  // containsAudioFiles (one readdir per sibling). Serve both from a path->entries tree so
+  // the audio-bearing decision is driven through the real OS boundary (the exported
+  // containsAudioFiles is same-module, so a vi.mock of it would not intercept the internal call).
+  type TreeEntry = { name: string; isFile: boolean; reject?: boolean };
+  function setupTree(tree: Record<string, TreeEntry[]>) {
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      const key = String(p);
+      const entries = tree[key];
+      if (!entries) throw Object.assign(new Error(`ENOENT: ${key}`), { code: 'ENOENT' });
+      if (entries.some(e => e.reject)) {
+        throw Object.assign(new Error(`EACCES: ${key}`), { code: 'EACCES' });
+      }
+      return entries.map(e => makeDirent(e.name, e.isFile, !e.isFile)) as never;
+    });
+  }
+
+  /** Build a parent listing of disc dirs (each with one audio file) plus extra siblings. */
+  function discTree(
+    parent: string,
+    stem: string,
+    count: number,
+    total: number,
+    extras: Record<string, TreeEntry[]> = {},
+  ): { tree: Record<string, TreeEntry[]>; discPaths: string[] } {
+    const discNames = Array.from({ length: count }, (_, i) => `${stem} Disc ${i + 1} of ${total}`);
+    const extraNames = Object.keys(extras).map(p => p.slice(parent.length + 1));
+    const tree: Record<string, TreeEntry[]> = {
+      [parent]: [
+        ...discNames.map(n => ({ name: n, isFile: false })),
+        ...extraNames.map(n => ({ name: n, isFile: false })),
+      ],
+    };
+    for (const n of discNames) tree[`${parent}/${n}`] = [{ name: 'track.mp3', isFile: true }];
+    Object.assign(tree, extras);
+    return { tree, discPaths: discNames.map(n => `${parent}/${n}`) };
+  }
+
   it('returns [path] for a non-disc folder without touching the filesystem', async () => {
     const result = await reconstructDiscGroup('/lib/Author/Book Title');
     expect(result).toEqual(['/lib/Author/Book Title']);
@@ -760,28 +798,28 @@ describe('reconstructDiscGroup', () => {
   });
 
   it('reconstructs the ordered member set from sibling disc folders', async () => {
-    vi.mocked(readdir).mockResolvedValueOnce([
-      makeDirent('Author - Book Disc 2 of 3', false, true),
-      makeDirent('Author - Book Disc 1 of 3', false, true),
-      makeDirent('Author - Book Disc 3 of 3', false, true),
-    ] as never);
+    const { tree, discPaths } = discTree('/downloads', 'Author - Book', 3, 3);
+    setupTree(tree);
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
 
-    expect(result).toEqual([
-      '/downloads/Author - Book Disc 1 of 3',
-      '/downloads/Author - Book Disc 2 of 3',
-      '/downloads/Author - Book Disc 3 of 3',
-    ]);
+    expect(result).toEqual(discPaths);
   });
 
   it('filters to siblings sharing the stem — ignores a different group under the same parent', async () => {
-    vi.mocked(readdir).mockResolvedValueOnce([
-      makeDirent('1776 Disc 1 of 2', false, true),
-      makeDirent('1776 Disc 2 of 2', false, true),
-      makeDirent('Slaughterhouse Disc 1 of 2', false, true),
-      makeDirent('Slaughterhouse Disc 2 of 2', false, true),
-    ] as never);
+    const tree: Record<string, TreeEntry[]> = {
+      '/downloads': [
+        { name: '1776 Disc 1 of 2', isFile: false },
+        { name: '1776 Disc 2 of 2', isFile: false },
+        { name: 'Slaughterhouse Disc 1 of 2', isFile: false },
+        { name: 'Slaughterhouse Disc 2 of 2', isFile: false },
+      ],
+      '/downloads/1776 Disc 1 of 2': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/1776 Disc 2 of 2': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Slaughterhouse Disc 1 of 2': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Slaughterhouse Disc 2 of 2': [{ name: 'a.mp3', isFile: true }],
+    };
+    setupTree(tree);
 
     const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 2');
 
@@ -789,10 +827,15 @@ describe('reconstructDiscGroup', () => {
   });
 
   it('does NOT reconstruct a set with inconsistent "of M" totals (mirrors discovery guard)', async () => {
-    vi.mocked(readdir).mockResolvedValueOnce([
-      makeDirent('Author - Book Disc 1 of 10', false, true),
-      makeDirent('Author - Book Disc 2 of 8', false, true),
-    ] as never);
+    const tree: Record<string, TreeEntry[]> = {
+      '/downloads': [
+        { name: 'Author - Book Disc 1 of 10', isFile: false },
+        { name: 'Author - Book Disc 2 of 8', isFile: false },
+      ],
+      '/downloads/Author - Book Disc 1 of 10': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Author - Book Disc 2 of 8': [{ name: 'a.mp3', isFile: true }],
+    };
+    setupTree(tree);
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
 
@@ -800,16 +843,67 @@ describe('reconstructDiscGroup', () => {
     expect(result).toEqual(['/downloads/Author - Book Disc 1 of 10']);
   });
 
-  it('does NOT reconstruct when a markerless sibling shares the stem (all-or-nothing guard)', async () => {
-    vi.mocked(readdir).mockResolvedValueOnce([
-      makeDirent('Author - Book Disc 1 of 3', false, true),
-      makeDirent('Author - Book Disc 2 of 3', false, true),
-      makeDirent('Author - Book Bonus Material', false, true),
-    ] as never);
+  it('does NOT reconstruct when an AUDIO-bearing markerless sibling shares the stem (all-or-nothing)', async () => {
+    const { tree } = discTree('/downloads', 'Author - Book', 2, 3, {
+      // markerless sibling that DOES contain audio → genuinely ambiguous → guard must refuse
+      '/downloads/Author - Book Bonus Material': [{ name: 'extra.mp3', isFile: true }],
+    });
+    setupTree(tree);
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
 
     expect(result).toEqual(['/downloads/Author - Book Disc 1 of 3']);
+  });
+
+  it('reconstructs the FULL N-disc set despite an audioless markerless stem-sharing sibling (#1280)', async () => {
+    // The data-loss case: an audioless `<stem> Artwork` sibling broke the all-or-nothing guard
+    // at import time even though discovery (audio-bearing children only) coalesced all 10 discs.
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
+      '/downloads/1776 Artwork': [{ name: 'cover.jpg', isFile: true }, { name: 'info.nfo', isFile: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(result).toEqual(discPaths);
+    expect(result).toHaveLength(10);
+    expect(result).not.toContain('/downloads/1776 Artwork');
+  });
+
+  it('returns the full set with NO audioless sibling present (happy-path control)', async () => {
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10);
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(result).toEqual(discPaths);
+  });
+
+  it('excludes a marker-carrying AUDIOLESS sibling from the member set (members are audio-bearing dirs only)', async () => {
+    // A stray `<stem> Disc 11 of 10` dir with no audio — discovery never persists it (audioless),
+    // so reconstruction must not return it either.
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
+      '/downloads/1776 Disc 11 of 10': [{ name: 'liner-notes.pdf', isFile: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(result).toEqual(discPaths);
+    expect(result).not.toContain('/downloads/1776 Disc 11 of 10');
+  });
+
+  it('treats an unreadable audioless sibling as zero-audio (mirrors discovery scanDir)', async () => {
+    // F5: containsAudioFiles failure on a sibling must not fail the whole import — discovery's
+    // scanDir catches readdir failures and treats the subtree as empty/no-audio.
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
+      '/downloads/1776 Artwork': [{ name: 'x', isFile: true, reject: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(result).toEqual(discPaths);
   });
 });
 
