@@ -705,6 +705,32 @@ describe('commitStagedImport', () => {
     expect(writeFile).toHaveBeenCalledWith(marker, '');
     // ...and strict-removed on a successful commit.
     expect(rm).toHaveBeenCalledWith(marker, { force: true });
+    // The marker MUST be written BEFORE the first destructive backup rename — a
+    // crash in that window must find the marker so recovery fires (#1290). Assert
+    // the ordering directly: the (sole) marker write precedes the first rename
+    // (`${target}/old.mp3` → `${backup}/old.mp3`), so reordering the write after
+    // the backup loop would fail this test.
+    const markerWriteOrder = vi.mocked(writeFile).mock.invocationCallOrder[0]!;
+    const firstBackupRename = vi.mocked(rename).mock.calls.findIndex(
+      (c) => c[0] === `${target}/old.mp3` && c[1] === `${backup}/old.mp3`,
+    );
+    expect(firstBackupRename).toBeGreaterThanOrEqual(0);
+    expect(markerWriteOrder).toBeLessThan(vi.mocked(rename).mock.invocationCallOrder[firstBackupRename]!);
+  });
+
+  it('a marker-write failure aborts before any destructive backup rename — nothing destroyed (#1290)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    // Writing the marker first means a marker-write failure aborts before the
+    // backup loop, so no original is ever renamed out of the target.
+    vi.mocked(writeFile).mockRejectedValueOnce(new Error('ENOSPC marker'));
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('ENOSPC marker');
+
+    // The original was NOT moved into .import-bak — the existing book is untouched.
+    expect(rename).not.toHaveBeenCalledWith(`${target}/old.mp3`, `${backup}/old.mp3`);
   });
 
   it('first import (empty target): never writes the commit-pending marker (#1290)', async () => {
