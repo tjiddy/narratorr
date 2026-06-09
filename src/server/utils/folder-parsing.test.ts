@@ -2248,4 +2248,93 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(parseFolderStructureRaw(parts)).toEqual(raw);
     });
   });
+
+  // Issue #1271 — strip the inline "Book N of [the] <Series> Series/Saga" descriptor and
+  // fix the Title-first author/title ordering it produces. Direct follow-up to #1267, which
+  // coalesced the multi-part Red Rising books but left the coalesced name unmatchable.
+  describe('"Book N of [the] <Series> Series/Saga" descriptor strip + ordering (issue #1271)', () => {
+    // AC1 — middle descriptor: `Title - <descriptor> - Author`. The real author is the
+    // TRAILING segment; a naive middle-strip + first-dash heuristic would invert to
+    // { title: 'Pierce Brown', author: 'Golden Son' }, so this also guards the structural branch.
+    it('AC1 — Golden Son - Book II of the Red Rising Series - Pierce Brown (middle descriptor)', () => {
+      const result = parseFolderStructure(['Golden Son - Book II of the Red Rising Series - Pierce Brown']);
+      expect(result.title).toBe('Golden Son');
+      expect(result.author).toBe('Pierce Brown');
+      // Ordering-regression guard: pin the structural branch, not the inverted naive-strip output.
+      expect(result.author).not.toBe('Golden Son');
+      // No descriptor residue in the resolved title (AC3).
+      expect(result.title).not.toMatch(/\bBook\b|\bof the\b|\bSeries\b/i);
+      // Bonus series capture.
+      expect(result.series).toBe('Red Rising');
+      expect(result.seriesPosition).toBe(2);
+    });
+
+    // AC2 — trailing descriptor: `Author - Title - <descriptor>`. Author already correct;
+    // stripping the trailing descriptor leaves `Author - Title` for the existing heuristic.
+    it('AC2 — Pierce Brown - Iron Gold - Book IV of The Red Rising Saga (trailing descriptor)', () => {
+      const result = parseFolderStructure(['Pierce Brown - Iron Gold - Book IV of The Red Rising Saga']);
+      expect(result.title).toBe('Iron Gold');
+      expect(result.author).toBe('Pierce Brown');
+      expect(result.title).not.toMatch(/\bSaga\b/i); // AC3 — no descriptor residue
+      expect(result.series).toBe('Red Rising');
+      expect(result.seriesPosition).toBe(4);
+    });
+
+    // AC3 — bare "Book N of <Series> Saga" (no "the") confirms the optional `the` is handled.
+    it('AC3 — bare "of" form (no "the") — Dawn - Book III of Foundation Saga - Isaac Asimov', () => {
+      const result = parseFolderStructure(['Dawn - Book III of Foundation Saga - Isaac Asimov']);
+      expect(result.title).toBe('Dawn');
+      expect(result.author).toBe('Isaac Asimov');
+      expect(result.series).toBe('Foundation');
+      expect(result.seriesPosition).toBe(3);
+    });
+
+    // AC4 — negative twin: the keyword "Saga" inside a real title survives because there is
+    // no leading `Book N of ...` anchor.
+    it('AC4 — over-strip guard: "Saga" in a real title survives — Brian Aldiss - The Saga of Pliocene Exile', () => {
+      const result = parseFolderStructure(['Brian Aldiss - The Saga of Pliocene Exile']);
+      expect(result.title).toBe('The Saga of Pliocene Exile');
+      expect(result.author).toBe('Brian Aldiss');
+      expect(result.series).toBeNull();
+      expect(result.seriesPosition).toBeUndefined();
+    });
+
+    // AC4 (second guard) — "Chronicles" inside a legitimate title never triggers the strip.
+    it('AC4 — over-strip guard: "Chronicles" in a real title survives — Roger Zelazny - The Chronicles of Amber', () => {
+      const result = parseFolderStructure(['Roger Zelazny - The Chronicles of Amber']);
+      expect(result.title).toBe('The Chronicles of Amber');
+      expect(result.author).toBe('Roger Zelazny');
+      expect(result.series).toBeNull();
+    });
+
+    // AC6 — degenerate descriptor-only name must not blank the title; falls back to the original.
+    it('AC6 — degenerate "Book 1 of the Series" falls back to a non-empty title', () => {
+      const result = parseFolderStructure(['Book 1 of the Series']);
+      expect(result.title).toBeTruthy();
+      expect(result.title).toBe('Book 1 of the Series');
+      expect(result.author).toBeNull();
+    });
+
+    // AC5 — raw parity twins: parseFolderStructureRaw must produce the SAME structure as the
+    // cleaned parser, including the middle-descriptor ordering guard.
+    describe('raw parity (parseFolderStructureRaw)', () => {
+      it('AC5 — raw twin of AC1 (middle descriptor, with ordering guard)', () => {
+        const result = parseFolderStructureRaw(['Golden Son - Book II of the Red Rising Series - Pierce Brown']);
+        expect(result).toEqual({ title: 'Golden Son', author: 'Pierce Brown', series: 'Red Rising', seriesPosition: 2 });
+        expect(result.author).not.toBe('Golden Son'); // structural branch verified in the raw path too
+      });
+
+      it('AC5 — raw twin of AC2 (trailing descriptor)', () => {
+        expect(parseFolderStructureRaw(['Pierce Brown - Iron Gold - Book IV of The Red Rising Saga'])).toEqual({
+          title: 'Iron Gold', author: 'Pierce Brown', series: 'Red Rising', seriesPosition: 4,
+        });
+      });
+
+      it('AC5 — raw twin of AC4 (over-strip guard — no strip, no series)', () => {
+        expect(parseFolderStructureRaw(['Brian Aldiss - The Saga of Pliocene Exile'])).toEqual({
+          title: 'The Saga of Pliocene Exile', author: 'Brian Aldiss', series: null,
+        });
+      });
+    });
+  });
 });

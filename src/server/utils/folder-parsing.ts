@@ -4,7 +4,12 @@
 
 import { extname } from 'node:path';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
-import { tryTitleDashSeriesBook, tryCrossSegmentAgreement, trySeriesParen } from './folder-parsing-patterns.js';
+import {
+  tryTitleDashSeriesBook,
+  tryCrossSegmentAgreement,
+  trySeriesParen,
+  tryBookOfSeriesDescriptor,
+} from './folder-parsing-patterns.js';
 
 /**
  * Strip a recognized audio extension from a path segment. Used for single-file
@@ -388,6 +393,11 @@ function parseSingleFolder(folder: string): ParsedFolder {
   const p10Pre = matchFirstDashOnly(input, WORDS_NUM_DASH_TITLE_REGEX);
   if (p10Pre) return seriesPosResult(p10Pre, null, asinTail, cleanName);
 
+  // #1271: "Book N of [the] <Series> Saga" descriptor — strip it and fix Title-first ordering.
+  const bookOfSeries = tryBookOfSeriesDescriptor(input, asinTail, cleanName,
+    (residual) => tryAuthorTitleForms(residual, asinTail, cleanName));
+  if (bookOfSeries) return bookOfSeries;
+
   const authorTitle = tryAuthorTitleForms(input, asinTail, cleanName);
   if (authorTitle) return authorTitle;
 
@@ -595,6 +605,11 @@ function parseSingleFolderRaw(folder: string): ParsedFolder {
   // P10-precheck (no-author path)
   const p10Pre = matchFirstDashOnly(input, WORDS_NUM_DASH_TITLE_REGEX);
   if (p10Pre) return seriesPosResult(p10Pre, null, asinTail, identity);
+
+  // #1271: "Book N of [the] <Series> Saga" descriptor — strip it and fix Title-first ordering.
+  const bookOfSeries = tryBookOfSeriesDescriptor(input, asinTail, identity,
+    (residual) => tryAuthorTitleForms(residual, asinTail, identity));
+  if (bookOfSeries) return bookOfSeries;
 
   const authorTitle = tryAuthorTitleForms(input, asinTail, identity);
   if (authorTitle) return authorTitle;
