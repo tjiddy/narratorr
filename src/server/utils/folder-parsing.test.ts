@@ -809,6 +809,46 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         });
       });
 
+      describe('trailing-comma series normalization (issue #1276)', () => {
+        it('strips trailing comma — Title (The Stormlight Archive, Book 2)', () => {
+          expect(parseFolderStructure(['The Way of Kings (The Stormlight Archive, Book 2)'])).toEqual({
+            title: 'The Way of Kings', author: null, series: 'The Stormlight Archive', seriesPosition: 2,
+          });
+        });
+
+        it('no-comma form is unaffected (strip is a no-op) — Title (Discworld Book 16)', () => {
+          expect(parseFolderStructure(['The Colour of Magic (Discworld Book 16)'])).toEqual({
+            title: 'The Colour of Magic', author: null, series: 'Discworld', seriesPosition: 16,
+          });
+        });
+
+        it('hash form with comma — Title (The Expanse, #3)', () => {
+          expect(parseFolderStructure(["Abaddon's Gate (The Expanse, #3)"])).toEqual({
+            title: "Abaddon's Gate", author: null, series: 'The Expanse', seriesPosition: 3,
+          });
+        });
+
+        it('comma followed by single space trims to a comma-free, whitespace-trimmed series', () => {
+          const result = parseFolderStructure(['Leviathan Wakes (The Expanse, Book 1)']);
+          expect(result.series).toBe('The Expanse');
+          expect(result.series).not.toMatch(/,\s*$/);
+          expect(result.seriesPosition).toBe(1);
+        });
+
+        it('internal commas are preserved — only the trailing comma is stripped', () => {
+          const result = parseFolderStructure(['Some Tale (Earth, Wind, and Fire, Book 4)']);
+          expect(result.series).toBe('Earth, Wind, and Fire');
+          expect(result.seriesPosition).toBe(4);
+        });
+
+        it('AC raw parity — comma-free raw series for the hash comma form (F1)', () => {
+          const result = parseFolderStructureRaw(["Abaddon's Gate (The Expanse, #3)"]);
+          expect(result.series).toBe('The Expanse');
+          expect(result.title).toBe("Abaddon's Gate");
+          expect(result.seriesPosition).toBe(3);
+        });
+      });
+
       describe('disc + series interaction (parseTitledDiscFolder unaffected)', () => {
         it('disc paren is split off by parseTitledDiscFolder, leaving a series-paren title that parses to series', () => {
           // Discovery strips the trailing "(Disc N)" via parseTitledDiscFolder; the residual
@@ -2204,12 +2244,12 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
           seriesPosition: 1,
         },
       },
-      // FIXME: known-wrong — author comes back null and the extracted series carries a
-      // trailing comma ("The Ten Realms,"). Title and seriesPosition 7 are correct.
+      // author comes back null (separate Author - NN - Title (Series, Book N) limitation,
+      // see #1276 out-of-scope); the trailing comma on the series is now stripped.
       {
         name: 'Michael Chatfield - 07 - Sixth Realm Part 2 (The Ten Realms, Book 7)',
         parts: ['Michael Chatfield - 07 - Sixth Realm Part 2 (The Ten Realms, Book 7)'],
-        cleaned: { title: 'Sixth Realm Part 2', author: null, series: 'The Ten Realms,', seriesPosition: 7 },
+        cleaned: { title: 'Sixth Realm Part 2', author: null, series: 'The Ten Realms', seriesPosition: 7 },
         raw: null,
       },
     ];

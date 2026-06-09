@@ -77,7 +77,7 @@ export function trySeriesParen(
 ): { remainder: string; series: string; seriesPosition: number } | null {
   const m = input.match(SERIES_PAREN_REGEX);
   if (!m) return null;
-  const series = m[1]!.trim();
+  const series = m[1]!.trim().replace(/,\s*$/, '');
   if (!series || CODEC_TEST_REGEX.test(series) || isEditionParen(series)) return null;
   const position = parseRomanOrArabicPosition(m[2] ?? m[3]!);
   if (position === undefined) return null;
