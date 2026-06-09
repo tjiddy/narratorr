@@ -5,7 +5,6 @@ import type { Db } from '../../db/index.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('fs/promises')>();
   return { ...actual, default: { ...actual, statfs: vi.fn() } };
 });

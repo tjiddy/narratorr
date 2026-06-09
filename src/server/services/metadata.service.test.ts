@@ -25,7 +25,6 @@ const mockAudnexus = {
 };
 
 vi.mock('../../core/index.js', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('../../core/index.js')>();
   return {
     ...actual,

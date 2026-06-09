@@ -9,7 +9,6 @@ import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 
 vi.mock('drizzle-orm', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('drizzle-orm')>();
   return {
     ...actual,

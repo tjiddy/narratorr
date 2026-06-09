@@ -17,7 +17,6 @@ import { importPreviewRoute } from './import-preview.js';
 // individual tests can override per-call to simulate Windows cross-drive
 // scenarios that Linux CI cannot produce naturally.
 vi.mock('node:path', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('node:path')>();
   return { ...actual, relative: vi.fn(actual.relative) };
 });
@@ -25,7 +24,6 @@ vi.mock('node:path', async (importOriginal) => {
 // Mock only realpath so the symlink-containment regression can simulate a
 // symlink escape without requiring Windows symlink privileges in local tests.
 vi.mock('node:fs/promises', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, realpath: vi.fn(actual.realpath) };
 });

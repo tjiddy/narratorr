@@ -10,7 +10,6 @@ import type { MetadataBook } from './helpers';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return { ...actual, useNavigate: () => mockNavigate };
 });
