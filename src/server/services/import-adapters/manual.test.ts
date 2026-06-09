@@ -262,14 +262,31 @@ describe('ManualImportAdapter', () => {
         '/audiobooks/Author - Book Disc 3 of 3',
       ];
 
-      /** Mock readdir(dirname) once with the sibling disc folders for reconstruction. */
-      async function mockDiscSiblings(): Promise<void> {
+      /**
+       * Mock the reconstruction filesystem: readdir('/audiobooks') lists `names`, and each named
+       * subdir is audio-bearing (returns an audio file) unless listed in `audioless` (returns only
+       * non-audio). reconstructDiscGroup now filters siblings to audio-bearing dirs before the
+       * guard (#1280), so the per-sibling probe must be served, not just the parent listing.
+       */
+      async function mockSiblingTree(names: string[], audioless: string[] = []): Promise<void> {
         const fs = await import('node:fs/promises');
-        vi.mocked(fs.readdir).mockResolvedValueOnce([
-          makeDirent('Author - Book Disc 1 of 3', false),
-          makeDirent('Author - Book Disc 2 of 3', false),
-          makeDirent('Author - Book Disc 3 of 3', false),
-        ] as never);
+        vi.mocked(fs.readdir).mockImplementation(async (p: unknown) => {
+          const key = String(p);
+          if (key === '/audiobooks') return names.map(n => makeDirent(n, false)) as never;
+          const name = key.slice('/audiobooks/'.length);
+          return (audioless.includes(name)
+            ? [makeDirent('cover.jpg', true)]
+            : [makeDirent('track.mp3', true)]) as never;
+        });
+      }
+
+      /** The standard 3-disc audio-bearing sibling set used by the copy/move tests. */
+      async function mockDiscSiblings(): Promise<void> {
+        await mockSiblingTree([
+          'Author - Book Disc 1 of 3',
+          'Author - Book Disc 2 of 3',
+          'Author - Book Disc 3 of 3',
+        ]);
       }
 
       it('mode=copy: reconstructs the group and flattens ALL members via copyDiscGroup', async () => {
@@ -325,11 +342,7 @@ describe('ManualImportAdapter', () => {
       });
 
       it('mode=copy: inconsistent-total sibling set falls back to single-path copy, not a flatten', async () => {
-        const fs = await import('node:fs/promises');
-        vi.mocked(fs.readdir).mockResolvedValueOnce([
-          makeDirent('Author - Book Disc 1 of 10', false),
-          makeDirent('Author - Book Disc 2 of 8', false),
-        ] as never);
+        await mockSiblingTree(['Author - Book Disc 1 of 10', 'Author - Book Disc 2 of 8']);
         const { copyDiscGroup } = await import('../../utils/import-helpers.js');
         const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
 
@@ -345,13 +358,13 @@ describe('ManualImportAdapter', () => {
         );
       });
 
-      it('pointer mode: partial-marker sibling set is NOT rejected (discovery left it ungrouped)', async () => {
-        const fs = await import('node:fs/promises');
-        vi.mocked(fs.readdir).mockResolvedValueOnce([
-          makeDirent('Author - Book Disc 1 of 3', false),
-          makeDirent('Author - Book Disc 2 of 3', false),
-          makeDirent('Author - Book Bonus Material', false),
-        ] as never);
+      it('pointer mode: AUDIO-bearing partial-marker sibling set is NOT rejected (discovery left it ungrouped)', async () => {
+        // An audio-bearing markerless sibling is genuinely ambiguous → all-or-nothing guard refuses.
+        await mockSiblingTree([
+          'Author - Book Disc 1 of 3',
+          'Author - Book Disc 2 of 3',
+          'Author - Book Bonus Material',
+        ]);
         const { copyDiscGroup } = await import('../../utils/import-helpers.js');
 
         const payload: ManualImportJobPayload = {
@@ -363,6 +376,34 @@ describe('ManualImportAdapter', () => {
         const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
         expect(phases).toContain('fetching_metadata');
         expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+      });
+
+      it('mode=copy: an AUDIOLESS stem-sharing sibling no longer drops discs — flattens ALL members (#1280)', async () => {
+        // The data-loss case: previously an audioless `<stem> Artwork` sibling broke the import-side
+        // all-or-nothing guard, silently copying only Disc 1. Now it is filtered out before the guard.
+        await mockSiblingTree(
+          [
+            'Author - Book Disc 1 of 3',
+            'Author - Book Disc 2 of 3',
+            'Author - Book Disc 3 of 3',
+            'Author - Book Artwork',
+          ],
+          ['Author - Book Artwork'],
+        );
+        const { copyDiscGroup, getAudioPathSize } = await import('../../utils/import-helpers.js');
+        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+        vi.mocked(getAudioPathSize)
+          .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
+          .mockResolvedValueOnce(300);
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', mode: 'copy',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // All 3 audio-bearing discs flattened (Artwork excluded), not just Disc 1
+        expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
+        expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
       });
     });
 
