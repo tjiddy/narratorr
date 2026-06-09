@@ -798,6 +798,23 @@ describe('discoverBooks', () => {
       expect(result[0]).not.toHaveProperty('reviewReason');
     });
 
+    it('flags the shortfall when the total lives on a non-lowest member (mixed implicit/explicit)', async () => {
+      // Disc 1 omits "of M" but discs 2 and 3 carry it — the consistency guard filters the
+      // undefined total and still coalesces, so the known total (10) must be recovered from the
+      // later members and the shortfall reported.
+      const names = [
+        'Author - Book Disc 1',
+        'Author - Book Disc 2 of 10',
+        'Author - Book Disc 3 of 10',
+      ];
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]!.reviewReason).toBe('Incomplete disc set: 3 of 10 discs');
+    });
+
     it('emits no incompleteness warning when no "of M" total was parsed', async () => {
       const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1}`);
       setupFs(discSiblings('/audiobooks', names));

@@ -363,7 +363,12 @@ function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
 
     const sorted = members.slice().sort((a, b) => a.marker.discNumber - b.marker.discNumber);
     const group: EmbeddedDiscGroup = { stem: sorted[0]!.marker.stem, members: sorted.map(m => m.info) };
-    if (sorted[0]!.marker.total !== undefined) group.total = sorted[0]!.marker.total;
+    // The agreed total can live on ANY member — the consistency guard filters out members that
+    // omit `of M` before checking agreement, so a group like `Disc 1`, `Disc 2 of 10` coalesces
+    // with a known total even though the lowest-disc member carries none. Take the first explicit
+    // total (the guard guarantees all explicit totals agree).
+    const explicitTotal = sorted.find(m => m.marker.total !== undefined)?.marker.total;
+    if (explicitTotal !== undefined) group.total = explicitTotal;
     groups.push(group);
   }
   return groups;
