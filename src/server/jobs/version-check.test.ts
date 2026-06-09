@@ -66,12 +66,11 @@ describe('version check job', () => {
 
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toEqual({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
         channel: 'stable',
-        dismissed: false,
       });
     });
 
@@ -80,7 +79,7 @@ describe('version check job', () => {
 
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toBeUndefined();
     });
 
@@ -89,7 +88,7 @@ describe('version check job', () => {
 
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toBeUndefined();
     });
   });
@@ -99,14 +98,14 @@ describe('version check job', () => {
       // First: cache a successful result
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
 
       // Then: rate limit
       mockFetch.mockResolvedValue({ ok: false, status: 429, statusText: 'Too Many Requests' });
       await runCheck();
 
       expect(log.warn).toHaveBeenCalled();
-      expect(getUpdateStatus('')).toBeDefined(); // cached result preserved
+      expect(getUpdateStatus()).toBeDefined(); // cached result preserved
     });
 
     it('5xx error → cached result preserved, error logged, job completes', async () => {
@@ -117,7 +116,7 @@ describe('version check job', () => {
       await runCheck();
 
       expect(log.warn).toHaveBeenCalled();
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
     });
 
     it('malformed JSON response → handled gracefully, cached result preserved', async () => {
@@ -131,7 +130,7 @@ describe('version check job', () => {
       await runCheck();
 
       // Should keep cached result since response has no tag_name
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
     });
 
     it('empty/null release response → no crash, no false update', async () => {
@@ -142,7 +141,7 @@ describe('version check job', () => {
 
       await runCheck();
 
-      expect(getUpdateStatus('')).toBeUndefined();
+      expect(getUpdateStatus()).toBeUndefined();
     });
 
     it('network timeout → error logged with canonical serialized payload, cached result used', async () => {
@@ -156,7 +155,7 @@ describe('version check job', () => {
         expect.objectContaining({ error: expect.objectContaining({ message: 'fetch failed', type: 'Error' }) }),
         'Version check: failed to check for updates',
       );
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
     });
 
     it('tag_name present but html_url missing → cached result preserved with original releaseUrl', async () => {
@@ -170,12 +169,11 @@ describe('version check job', () => {
       });
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toEqual({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
         channel: 'stable',
-        dismissed: false,
       });
     });
 
@@ -189,12 +187,11 @@ describe('version check job', () => {
       });
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toEqual({
         latestVersion: '0.2.0',
         releaseUrl: 'https://github.com/releases/v0.2.0',
         channel: 'stable',
-        dismissed: false,
       });
     });
 
@@ -202,7 +199,7 @@ describe('version check job', () => {
       mockFetch.mockRejectedValue(new Error('network error'));
       await runCheck();
 
-      expect(getUpdateStatus('')).toBeUndefined();
+      expect(getUpdateStatus()).toBeUndefined();
     });
   });
 
@@ -220,36 +217,13 @@ describe('version check job', () => {
     ])('$label: $current vs $latest → update=$expectsUpdate', async ({ latest, expectsUpdate }) => {
       mockFetch.mockResolvedValue(makeGitHubRelease(latest, `https://github.com/releases/${latest}`));
       await runCheck();
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       if (expectsUpdate) {
         expect(status).toBeDefined();
         expect(status?.latestVersion).toBe(latest.replace(/^v/, ''));
       } else {
         expect(status).toBeUndefined();
       }
-    });
-  });
-
-  describe('dismissed version integration', () => {
-    it('getUpdateStatus returns dismissed: true when dismissed version matches latest', async () => {
-      mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
-      await runCheck();
-
-      const status = getUpdateStatus('0.2.0');
-      expect(status).toEqual({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        channel: 'stable',
-        dismissed: true,
-      });
-    });
-
-    it('getUpdateStatus returns dismissed: false when dismissed version differs from latest', async () => {
-      mockFetch.mockResolvedValue(makeGitHubRelease('v0.3.0', 'https://github.com/releases/v0.3.0'));
-      await runCheck();
-
-      const status = getUpdateStatus('0.2.0');
-      expect(status?.dismissed).toBe(false);
     });
   });
 
@@ -264,12 +238,11 @@ describe('version check job', () => {
 
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toEqual({
         latestVersion: 'def5678', // develop HEAD short sha (bare, no v-prefix)
         releaseUrl: COMPARE_HTML_URL,
         channel: 'develop',
-        dismissed: false,
       });
       // Only the compare endpoint was hit — /releases/latest is never fetched.
       const url = mockFetch.mock.calls[0]![0] as string;
@@ -281,13 +254,13 @@ describe('version check job', () => {
       // Seed a develop update first.
       mockFetch.mockResolvedValue(makeGitHubCompare(3, COMPARE_HTML_URL));
       await runCheck();
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
 
       // Now develop has not advanced past the running commit.
       mockFetch.mockResolvedValue(makeGitHubCompare(0, COMPARE_HTML_URL));
       await runCheck();
 
-      expect(getUpdateStatus('')).toBeUndefined();
+      expect(getUpdateStatus()).toBeUndefined();
     });
 
     it('develop path never compares against a stable release', async () => {
@@ -296,14 +269,14 @@ describe('version check job', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch.mock.calls[0]![0]).toContain('/compare/');
-      expect(getUpdateStatus('')?.channel).toBe('develop');
+      expect(getUpdateStatus()?.channel).toBe('develop');
     });
 
     describe('failure modes preserve prior cache', () => {
       async function seedDevelopUpdate() {
         mockFetch.mockResolvedValue(makeGitHubCompare(4, COMPARE_HTML_URL));
         await runCheck();
-        expect(getUpdateStatus('')).toBeDefined();
+        expect(getUpdateStatus()).toBeDefined();
       }
 
       it('non-OK (404) → cached result preserved, warn logged', async () => {
@@ -311,7 +284,7 @@ describe('version check job', () => {
         mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
         await runCheck();
         expect(log.warn).toHaveBeenCalled();
-        expect(getUpdateStatus('')).toBeDefined();
+        expect(getUpdateStatus()).toBeDefined();
       });
 
       it('5xx → cached result preserved, warn logged', async () => {
@@ -319,7 +292,7 @@ describe('version check job', () => {
         mockFetch.mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' });
         await runCheck();
         expect(log.warn).toHaveBeenCalled();
-        expect(getUpdateStatus('')).toBeDefined();
+        expect(getUpdateStatus()).toBeDefined();
       });
 
       it('missing ahead_by → cached result preserved (unexpected shape)', async () => {
@@ -327,14 +300,14 @@ describe('version check job', () => {
         mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ html_url: COMPARE_HTML_URL }) });
         await runCheck();
         expect(log.warn).toHaveBeenCalled();
-        expect(getUpdateStatus('')).toBeDefined();
+        expect(getUpdateStatus()).toBeDefined();
       });
 
       it('non-number ahead_by → cached result preserved', async () => {
         await seedDevelopUpdate();
         mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ahead_by: 'lots', html_url: COMPARE_HTML_URL }) });
         await runCheck();
-        expect(getUpdateStatus('')).toBeDefined();
+        expect(getUpdateStatus()).toBeDefined();
       });
 
       it('rejected fetch → error logged, cached result preserved', async () => {
@@ -345,7 +318,7 @@ describe('version check job', () => {
           expect.objectContaining({ error: expect.objectContaining({ message: 'compare fetch failed', type: 'Error' }) }),
           'Version check: failed to check for updates',
         );
-        expect(getUpdateStatus('')).toBeDefined();
+        expect(getUpdateStatus()).toBeDefined();
       });
     });
   });
@@ -358,12 +331,11 @@ describe('version check job', () => {
 
       await runCheck();
 
-      const status = getUpdateStatus('');
+      const status = getUpdateStatus();
       expect(status).toEqual({
         latestVersion: '1.1.0',
         releaseUrl: 'https://github.com/releases/v1.1.0',
         channel: 'stable',
-        dismissed: false,
       });
       // Releases endpoint was used; the compare endpoint was never fetched.
       expect(mockFetch.mock.calls[0]![0]).toContain('/releases/latest');
@@ -376,7 +348,7 @@ describe('version check job', () => {
       // Seed a stable update under a real build first.
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
       mockFetch.mockClear();
 
       channelState.version = 'dev';
@@ -384,13 +356,13 @@ describe('version check job', () => {
       await runCheck();
 
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(getUpdateStatus('')).toBeDefined(); // prior cache preserved
+      expect(getUpdateStatus()).toBeDefined(); // prior cache preserved
     });
 
     it('getCommit() === unknown → neither endpoint fetched, prior cache untouched', async () => {
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
       mockFetch.mockClear();
 
       channelState.version = '0.1.0';
@@ -398,7 +370,7 @@ describe('version check job', () => {
       await runCheck();
 
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(getUpdateStatus('')).toBeDefined();
+      expect(getUpdateStatus()).toBeDefined();
     });
   });
 
@@ -508,14 +480,14 @@ describe('version check job', () => {
       await runCheckWith(onUpdateChanged);
 
       expect(onUpdateChanged).toHaveBeenCalledTimes(1);
-      expect(getUpdateStatus('')?.latestVersion).toBe('0.3.0');
+      expect(getUpdateStatus()?.latestVersion).toBe('0.3.0');
     });
 
     it('channel change with the SAME latestVersion invokes the callback once (channel participates in identity)', async () => {
       // Seed a stable-channel update at latestVersion '0.2.0' (no callback yet).
       mockFetch.mockResolvedValue(makeGitHubRelease('v0.2.0', 'https://github.com/releases/v0.2.0'));
       await runCheck();
-      expect(getUpdateStatus('')).toMatchObject({ latestVersion: '0.2.0', channel: 'stable' });
+      expect(getUpdateStatus()).toMatchObject({ latestVersion: '0.2.0', channel: 'stable' });
 
       // Now the running build is a develop image. The compare API's HEAD commit
       // sha is '0.2.0' so `developHeadSha` (sha.slice(0,7)) yields the IDENTICAL
@@ -530,7 +502,7 @@ describe('version check job', () => {
       await runCheckWith(onUpdateChanged);
 
       expect(onUpdateChanged).toHaveBeenCalledTimes(1);
-      expect(getUpdateStatus('')).toMatchObject({ latestVersion: '0.2.0', channel: 'develop' });
+      expect(getUpdateStatus()).toMatchObject({ latestVersion: '0.2.0', channel: 'develop' });
     });
 
     it('available → cleared (now on latest) invokes the callback once', async () => {
@@ -543,7 +515,7 @@ describe('version check job', () => {
       await runCheckWith(onUpdateChanged);
 
       expect(onUpdateChanged).toHaveBeenCalledTimes(1);
-      expect(getUpdateStatus('')).toBeUndefined();
+      expect(getUpdateStatus()).toBeUndefined();
     });
 
     it('same version as the current cached update does not invoke the callback (no-op guard)', async () => {
@@ -576,7 +548,7 @@ describe('version check job', () => {
       await runCheckWith(onUpdateChanged);
 
       expect(onUpdateChanged).not.toHaveBeenCalled();
-      expect(getUpdateStatus('')?.latestVersion).toBe('0.2.0'); // prior cache intact
+      expect(getUpdateStatus()?.latestVersion).toBe('0.2.0'); // prior cache intact
     });
 
     it('completes without throwing when no callback is wired', async () => {
