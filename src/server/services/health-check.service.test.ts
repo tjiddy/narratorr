@@ -976,7 +976,6 @@ describe('HealthCheckService', () => {
         latestVersion: '1.2.3',
         releaseUrl: 'https://github.com/tjiddy/narratorr/releases/v1.2.3',
         channel: 'stable',
-        dismissed: false,
       });
       const { service } = createService();
 
@@ -995,7 +994,6 @@ describe('HealthCheckService', () => {
         latestVersion: 'def5678', // bare develop HEAD sha — must NOT leak into the message
         releaseUrl: 'https://github.com/tjiddy/narratorr/compare/abc1234...develop',
         channel: 'develop',
-        dismissed: false,
       });
       const { service } = createService();
 
@@ -1017,7 +1015,6 @@ describe('HealthCheckService', () => {
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
         channel: 'stable',
-        dismissed: false,
       });
       const { service } = createService();
 
@@ -1034,20 +1031,11 @@ describe('HealthCheckService', () => {
       expect(results.find((r) => r.checkName === 'version-update')).toBeUndefined();
     });
 
-    it('queries dismiss-agnostically — always passes an empty dismissed version', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
-      const { service } = createService();
-
-      await service.runAllChecks();
-      expect(getUpdateStatus).toHaveBeenCalledWith('');
-    });
-
     it('aggregate rollup reports warning when version-update is the only non-healthy check', async () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
         channel: 'stable',
-        dismissed: false,
       });
       const { service } = createService();
 
@@ -1073,7 +1061,6 @@ describe('HealthCheckService', () => {
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
         channel: 'stable',
-        dismissed: false,
       });
       await service.runAllChecks();
 
@@ -1091,7 +1078,6 @@ describe('HealthCheckService', () => {
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
         channel: 'stable',
-        dismissed: false,
       });
       const { service } = createService();
 
@@ -1122,7 +1108,6 @@ describe('HealthCheckService', () => {
         latestVersion: '2.0.0',
         releaseUrl: 'https://example.com/r2',
         channel: 'stable',
-        dismissed: false,
       });
       const nudge = service.runAllChecks(); // returns stale cached immediately
 

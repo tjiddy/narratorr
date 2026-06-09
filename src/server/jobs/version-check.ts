@@ -165,19 +165,16 @@ function developHeadSha(data: { commits?: unknown }): string {
 
 /**
  * Returns the current update status, or undefined if no update is available.
- * The `dismissed` flag is derived from the provided dismissedUpdateVersion.
  * The additive `channel` discriminator lets consumers render channel-appropriate
  * copy without inspecting URL strings; existing fields are unchanged.
  */
-export function getUpdateStatus(dismissedUpdateVersion: string): {
+export function getUpdateStatus(): {
   latestVersion: string;
   releaseUrl: string;
   channel: UpdateChannel;
-  dismissed: boolean;
 } | undefined {
   if (!cachedUpdate) return undefined;
   return {
     ...cachedUpdate,
-    dismissed: dismissedUpdateVersion === cachedUpdate.latestVersion,
   };
 }

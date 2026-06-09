@@ -348,15 +348,14 @@ export class HealthCheckService {
 
   /**
    * Surfaces an available app update as an ambient `warning` (an outdated
-   * version is a mild degradation, not an error). Passes `''` as the dismissed
-   * version so a previously dismissed update never suppresses the warning —
-   * the row clears on its own once the running version catches up to latest.
+   * version is a mild degradation, not an error). The row clears on its own
+   * once the running version catches up to latest.
    * No `target` is set: the dashboard renders the release-notes `link` inline,
    * and leaving `target` unset keeps the card out of the clickable-button path
    * (no nested interactive controls).
    */
   private async checkVersionUpdate(): Promise<HealthCheckResult[]> {
-    const update = getUpdateStatus('');
+    const update = getUpdateStatus();
     if (!update) return []; // No newer version cached — omit the row entirely.
 
     // Channel-aware copy: stable renders the semver + release notes; develop
