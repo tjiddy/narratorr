@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type path from 'node:path';
 
-// Mock node:fs/promises before importing the module under test
-vi.mock('node:fs/promises', () => ({
-  readdir: vi.fn(),
-  stat: vi.fn(),
-}));
+// Mock node:fs/promises before importing the module under test. Spread the real module so the
+// reconstructDiscGroup import (which statically pulls mkdir/cp from import-helpers.ts) keeps every
+// export present — only readdir/stat are stubbed, the rest stay real but are never called here.
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  return {
+    ...actual,
+    readdir: vi.fn(),
+    stat: vi.fn(),
+  };
+});
 
 // Mock node:path to use posix behavior so tests work on Windows too.
 // The source code uses join() and extname() which produce backslash paths on Windows,
