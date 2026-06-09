@@ -1445,6 +1445,19 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(insertChain.onConflictDoUpdate).toHaveBeenCalled();
     });
 
+    it('does NOT track genres the normalizer already handles', async () => {
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      setupGetById(db);
+
+      // 'Sci-Fi' is a synonym-map key — normalization maps it to
+      // 'Science Fiction', so nothing should reach the unmatched table.
+      await service.update(1, { genres: ['Sci-Fi'] });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
     it('does NOT call trackUnmatchedGenres when genres are absent from update payload', async () => {
       db.update.mockReturnValue(mockDbChain([mockBook]));
       setupGetById(db);

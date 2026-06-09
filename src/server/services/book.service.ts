@@ -6,7 +6,7 @@ import { eq, and, sql, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
-import { slugify, findUnmatchedGenres } from '../../core/index.js';
+import { slugify, findUnmatchedGenres, normalizeGenres } from '../../core/index.js';
 import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { type MetadataService } from './metadata.service.js';
@@ -462,7 +462,7 @@ export class BookService {
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
   private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
-    const unmatched = findUnmatchedGenres(genres, genres);
+    const unmatched = findUnmatchedGenres(normalizeGenres(genres));
     if (unmatched.length === 0) return;
 
     for (const genre of unmatched) {
