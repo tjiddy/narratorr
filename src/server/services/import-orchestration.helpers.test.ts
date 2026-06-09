@@ -24,6 +24,24 @@ vi.mock('./library-scan.helpers.js', () => ({
   getAudioStats: vi.fn().mockResolvedValue({ fileCount: 3, totalSize: 100_000 }),
 }));
 
+// Controllable wrappers around node:fs/promises `rm`/`cp`. Both default to the
+// real implementation (passthrough); individual tests in the staged-swap cleanup
+// suite override them to simulate a vanished/permission-denied source removal or
+// an undersized copy. Restored to passthrough in that suite's beforeEach.
+type AnyFsFn = (...args: unknown[]) => Promise<void>;
+const fsMocks = vi.hoisted(() => {
+  const noop: AnyFsFn = () => Promise.resolve();
+  return { rm: vi.fn(), cp: vi.fn(), real: { rm: noop, cp: noop } };
+});
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  fsMocks.real.rm = actual.rm as unknown as AnyFsFn;
+  fsMocks.real.cp = actual.cp as unknown as AnyFsFn;
+  fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+  fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp };
+});
+
 function createMockLogger(): FastifyBaseLogger {
   return { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as unknown as FastifyBaseLogger;
 }
@@ -515,6 +533,135 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     expect(files).toContain('cover.jpg');
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+});
+
+describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+  const enoent = (): NodeJS.ErrnoException => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+  const eperm = (): NodeJS.ErrnoException => Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
+
+  beforeEach(async () => {
+    // Restore both wrappers to passthrough so each test starts from real fs behavior.
+    fsMocks.rm.mockReset();
+    fsMocks.cp.mockReset();
+    fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+    fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1291-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsMocks.real.rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('completes a move when the post-swap source removal hits ENOENT (vanished source)', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    // Simulate the source vanishing before the post-commit cleanup runs: a
+    // force-less rm would throw ENOENT and fail an already-committed import;
+    // force: true must suppress it.
+    fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (p === source) {
+        if ((opts as { force?: boolean } | undefined)?.force) return;
+        throw enoent();
+      }
+      return fsMocks.real.rm(p, opts);
+    });
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(target);
+    // New audio committed despite the vanished source.
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    expect(fsMocks.rm).toHaveBeenCalledWith(source, expect.objectContaining({ force: true }));
+  });
+
+  it('completes a multi-disc move when one member source has vanished (ENOENT)', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    // Populated target routes the disc group through the staged swap.
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+
+    // One member's source vanishes during the post-swap rm loop — force: true
+    // must keep the loop from breaking early and orphaning the other members.
+    fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (p === disc2) {
+        if ((opts as { force?: boolean } | undefined)?.force) return;
+        throw enoent();
+      }
+      return fsMocks.real.rm(p, opts);
+    });
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(target);
+    const files = (await readdir(target)).sort();
+    // Both discs flattened into the target; old single-file edition replaced.
+    expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
+    expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    expect(fsMocks.rm).toHaveBeenCalledWith(disc2, expect.objectContaining({ force: true }));
+    // The non-vanished member was still really removed.
+    expect(await pathExists(disc1)).toBe(false);
+  });
+
+  it('still surfaces a non-ENOENT (EPERM) failure from post-swap source removal', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    // force: true only suppresses ENOENT — a genuine permission/IO error must
+    // still propagate and fail the import.
+    fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (p === source) throw eperm();
+      return fsMocks.real.rm(p, opts);
+    });
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toThrow(/EPERM/);
+  });
+
+  it('still fails the import when copy verification falls below threshold (verification path untouched)', async () => {
+    // Empty target keeps the direct-copy fast path. A no-op copy leaves the
+    // target undersized so the inline verification throws — proving the
+    // force: true change did not leak into the pre-commit verification path.
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(1000, 2));
+    fsMocks.cp.mockImplementation(async () => {});
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toThrow(/Copy verification failed/);
+    // The throw precedes cleanup — the source is left intact, never removed.
+    expect(await pathExists(source)).toBe(true);
+    expect(fsMocks.rm).not.toHaveBeenCalledWith(source, expect.anything());
   });
 });
 

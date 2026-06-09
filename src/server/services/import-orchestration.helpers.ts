@@ -115,7 +115,11 @@ export async function copyToLibrary(
       stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
     });
     if (mode === 'move') {
-      await rm(item.path, { recursive: true });
+      // Post-commit cleanup: the staged swap has already committed the new audio
+      // to the library, so a vanished/partial source (ENOENT) must not fail an
+      // already-successful import. `force: true` suppresses ENOENT only — a
+      // genuine EPERM/EBUSY still surfaces.
+      await rm(item.path, { recursive: true, force: true });
       log.info({ source: item.path }, 'Source directory removed after move');
     }
     return targetPath;
@@ -177,8 +181,12 @@ async function copyDiscGroupToLibrary(
       stage: (stagingPath) => copyDiscGroup(memberPaths, stagingPath, onProgress),
     });
     if (mode === 'move') {
+      // Post-commit cleanup: the staged swap has already committed all discs'
+      // audio. A member whose source vanished (ENOENT) must not break the loop
+      // and orphan later members or fail the import. `force: true` suppresses
+      // ENOENT only — a genuine EPERM/EBUSY still surfaces.
       for (const memberPath of memberPaths) {
-        await rm(memberPath, { recursive: true });
+        await rm(memberPath, { recursive: true, force: true });
       }
       log.info({ discMembers: memberPaths.length }, 'Source disc folders removed after move');
     }
