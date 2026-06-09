@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Stats, Dirent } from 'node:fs';
-import { join, extname, basename, normalize } from 'node:path';
+import { join, extname, basename, normalize, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
@@ -195,6 +195,37 @@ async function listDirFileNames(dir: string, audioOnly: boolean): Promise<string
     .map((e) => e.name);
 }
 
+/**
+ * List audio files under `dir` at any depth, as paths RELATIVE to `dir`
+ * (e.g. `Disc 1/old.mp3`). Empty array when the dir doesn't exist.
+ *
+ * The gate that admits an import into the staged-swap path (`getAudioPathSize`)
+ * recurses, so a populated target whose audio is nested under subdirectories is
+ * accepted — but the commit's backup step must then enumerate that nested audio
+ * too, or it survives and recreates the mixed-edition chimera (#1287 F7).
+ * Recursion is a no-op for already-flat folders, so the re-import path that
+ * reuses `commitStagedImport` is unaffected.
+ */
+async function listAudioFilesRecursive(dir: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (readError: unknown) {
+    if ((readError as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw readError;
+  }
+  const results: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      results.push(entry.name);
+    } else if (entry.isDirectory()) {
+      const nested = await listAudioFilesRecursive(join(dir, entry.name));
+      results.push(...nested.map((rel) => join(entry.name, rel)));
+    }
+  }
+  return results;
+}
+
 // ── prepareImportSiblings ───────────────────────────────────────────────
 
 export interface PrepareImportSiblingsArgs {
@@ -246,9 +277,16 @@ async function rollbackStagedCommit(
     await rm(join(targetPath, name), { force: true })
       .catch((rollbackError: unknown) => log.error({ error: serializeError(rollbackError), file: name }, 'Rollback: failed to remove staged file from target'));
   }
-  for (const name of backedUp) {
-    await rename(join(backupPath, name), join(targetPath, name))
-      .catch((rollbackError: unknown) => log.error({ error: serializeError(rollbackError), file: name }, 'Rollback: failed to restore backed-up audio to target'));
+  for (const rel of backedUp) {
+    // `rel` may be nested (e.g. `Disc 1/old.mp3`); recreate the subdir the
+    // backup was lifted out of before restoring it to its original location.
+    const sub = dirname(rel);
+    if (sub !== '.') {
+      await mkdir(join(targetPath, sub), { recursive: true })
+        .catch((rollbackError: unknown) => log.error({ error: serializeError(rollbackError), file: rel }, 'Rollback: failed to recreate target subdirectory for backed-up audio'));
+    }
+    await rename(join(backupPath, rel), join(targetPath, rel))
+      .catch((rollbackError: unknown) => log.error({ error: serializeError(rollbackError), file: rel }, 'Rollback: failed to restore backed-up audio to target'));
   }
 }
 
@@ -277,7 +315,10 @@ export async function commitStagedImport(args: CommitStagedImportArgs): Promise<
 
   await mkdir(targetPath, { recursive: true });
 
-  const existingAudio = await listDirFileNames(targetPath, true);
+  // Existing target audio is enumerated RECURSIVELY (#1287 F7): the gate that
+  // routes here (`getAudioPathSize`) recurses, so audio nested under target
+  // subdirectories must be backed up too or it survives the swap as a chimera.
+  const existingAudio = await listAudioFilesRecursive(targetPath);
   const stagedFiles = await listDirFileNames(stagingPath, false);
 
   const backedUp: string[] = [];
@@ -285,9 +326,13 @@ export async function commitStagedImport(args: CommitStagedImportArgs): Promise<
   try {
     if (existingAudio.length > 0) {
       await mkdir(backupPath, { recursive: true });
-      for (const name of existingAudio) {
-        await rename(join(targetPath, name), join(backupPath, name));
-        backedUp.push(name);
+      for (const rel of existingAudio) {
+        // Preserve the relative path inside the backup so a rollback can restore
+        // nested audio to exactly where it came from.
+        const sub = dirname(rel);
+        if (sub !== '.') await mkdir(join(backupPath, sub), { recursive: true });
+        await rename(join(targetPath, rel), join(backupPath, rel));
+        backedUp.push(rel);
       }
     }
     for (const name of stagedFiles) {
@@ -303,6 +348,76 @@ export async function commitStagedImport(args: CommitStagedImportArgs): Promise<
   log.info({ targetPath, replaced: backedUp.length, added: movedIn.length }, 'Committed staged import');
   await removeImportSibling(backupPath, libraryRoot, log, 'backup');
   await removeImportSibling(stagingPath, libraryRoot, log, 'staging');
+}
+
+// ── cleanupImportSiblings ───────────────────────────────────────────────
+
+export interface CleanupImportSiblingsArgs {
+  stagingPath: string;
+  backupPath: string;
+  libraryRoot?: string | undefined;
+  log: FastifyBaseLogger;
+}
+
+/**
+ * Best-effort removal of the transient `.import-tmp` / `.import-bak` siblings,
+ * guarded by the library-root ancestry check (#759). Used on the failure path of
+ * `stagedAudioReplace` (`commitStagedImport` already rolls the target back; this
+ * just clears the leftover scratch dirs). A cleanup hiccup is logged, never thrown.
+ */
+export async function cleanupImportSiblings(args: CleanupImportSiblingsArgs): Promise<void> {
+  const { stagingPath, backupPath, libraryRoot, log } = args;
+  await removeImportSibling(stagingPath, libraryRoot, log, 'staging');
+  await removeImportSibling(backupPath, libraryRoot, log, 'backup');
+}
+
+// ── stagedAudioReplace ──────────────────────────────────────────────────
+
+export interface StagedAudioReplaceArgs {
+  /** The user's existing book folder — already contains audio (caller-gated). */
+  targetPath: string;
+  libraryRoot: string;
+  log: FastifyBaseLogger;
+  /** Expected source audio bytes, for staged-copy verification. */
+  sourceAudioSize: number;
+  /** Copy the new version's audio, FLATTENED to the staging dir's top level. */
+  stage: (stagingPath: string) => Promise<void>;
+}
+
+/**
+ * Replace a populated target's audio via #1255's staged-swap machinery, for the
+ * manual-import path (#1287). The manual path's direct merge-copy would coexist a
+ * differently-structured new edition with the old files in one folder — exactly
+ * the Frankenbook #1252/#1255 closed for the re-import path.
+ *
+ *   1. Clear stale siblings, then `stage()` the new audio (flattened to the top
+ *      level) into `.import-tmp` and verify it there — the populated target is
+ *      never touched, so a mid-copy failure can't corrupt the existing files.
+ *   2. `commitStagedImport` backs the existing target audio (at any depth) aside
+ *      to `.import-bak`, moves the staged audio in, and rolls back on failure.
+ *      Pre-existing non-audio files are preserved.
+ *   3. On any failure, clear the transient siblings and rethrow (the caller marks
+ *      the import job/book failed).
+ *
+ * Returns the verified staged audio byte size.
+ */
+export async function stagedAudioReplace(args: StagedAudioReplaceArgs): Promise<number> {
+  const { targetPath, libraryRoot, log, sourceAudioSize, stage } = args;
+  const stagingPath = `${targetPath}.import-tmp`;
+  const backupPath = `${targetPath}.import-bak`;
+  try {
+    await prepareImportSiblings({ stagingPath, backupPath, libraryRoot, log });
+    await stage(stagingPath);
+    const stagedSize = await getAudioPathSize(stagingPath);
+    if (stagedSize < sourceAudioSize * COPY_VERIFICATION_THRESHOLD) {
+      throw new Error(`Copy verification failed: source ${sourceAudioSize} bytes, target ${stagedSize} bytes`);
+    }
+    await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log });
+    return stagedSize;
+  } catch (error: unknown) {
+    await cleanupImportSiblings({ stagingPath, backupPath, libraryRoot, log });
+    throw error;
+  }
 }
 
 // ── copyToLibrary ───────────────────────────────────────────────────────

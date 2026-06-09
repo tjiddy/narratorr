@@ -2,9 +2,10 @@
  * Bulk import pipeline — accepts user-confirmed items and queues them for the
  * import worker. Extracted for consistency with quality-gate helpers.
  */
-import { mkdir, cp, rm } from 'node:fs/promises';
+import { mkdir, cp, rm, stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 import { streamCopyWithProgress } from './streaming-copy.helpers.js';
+import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from './book.service.js';
@@ -31,6 +32,20 @@ export interface ImportPipelineDeps {
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
   broadcaster?: EventBroadcasterService | undefined;
+}
+
+/**
+ * Audio bytes already present at the computed target, treating a non-existent
+ * target (ENOENT) as empty. `> 0` routes the manual import through the staged
+ * swap (#1287); `0`/missing keeps the simple direct-copy fast path (AC3).
+ */
+async function getTargetAudioSize(targetPath: string): Promise<number> {
+  try {
+    return await getAudioPathSize(targetPath);
+  } catch (sizeError: unknown) {
+    if ((sizeError as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw sizeError;
+  }
 }
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
@@ -80,7 +95,30 @@ export async function copyToLibrary(
   // member set from disk and flatten every disc into one target (AC7), instead of copying just one.
   const memberPaths = await reconstructDiscGroup(item.path);
   if (memberPaths.length >= 2) {
-    return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, onProgress);
+    return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, librarySettings.path, onProgress);
+  }
+
+  // Populated-target guard (#1287): a manual import whose computed target already
+  // contains audio must NOT merge-copy in place (that recreates the #1252
+  // Frankenbook). Route through the staged audio swap, flattening the source's
+  // audio to the staging top level so the commit moves every file. Empty/missing
+  // target keeps the simple direct-copy fast path below (AC3).
+  if (await getTargetAudioSize(targetPath) > 0) {
+    const sourceStats = await stat(item.path);
+    const sourceAudioSize = await getAudioPathSize(item.path);
+    log.info({ source: item.path, target: targetPath, mode, sourceAudioSize }, 'Target already contains audio — routing manual import through staged swap');
+    await stagedAudioReplace({
+      targetPath,
+      libraryRoot: librarySettings.path,
+      log,
+      sourceAudioSize,
+      stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
+    });
+    if (mode === 'move') {
+      await rm(item.path, { recursive: true });
+      log.info({ source: item.path }, 'Source directory removed after move');
+    }
+    return targetPath;
   }
 
   await mkdir(targetPath, { recursive: true });
@@ -116,10 +154,37 @@ async function copyDiscGroupToLibrary(
   memberPaths: string[],
   mode: ImportMode,
   deps: ImportPipelineDeps,
+  libraryRoot: string,
   onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
 ): Promise<string> {
   const { log } = deps;
   log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode }, 'Flattening multi-disc group to library');
+
+  // Populated-target guard (#1287, AC5): the disc-group flatten has the identical
+  // merge-into-target gap as the single-source path. When the target already holds
+  // audio, stage the flattened discs and atomically swap rather than merging.
+  if (await getTargetAudioSize(targetPath) > 0) {
+    let sourceAudioSize = 0;
+    for (const memberPath of memberPaths) {
+      sourceAudioSize += await getAudioPathSize(memberPath);
+    }
+    log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode, sourceAudioSize }, 'Target already contains audio — routing multi-disc import through staged swap');
+    await stagedAudioReplace({
+      targetPath,
+      libraryRoot,
+      log,
+      sourceAudioSize,
+      stage: (stagingPath) => copyDiscGroup(memberPaths, stagingPath, onProgress),
+    });
+    if (mode === 'move') {
+      for (const memberPath of memberPaths) {
+        await rm(memberPath, { recursive: true });
+      }
+      log.info({ discMembers: memberPaths.length }, 'Source disc folders removed after move');
+    }
+    return targetPath;
+  }
+
   await copyDiscGroup(memberPaths, targetPath, onProgress);
 
   let sourceSize = 0;
