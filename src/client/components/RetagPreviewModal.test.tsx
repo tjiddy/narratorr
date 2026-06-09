@@ -8,7 +8,6 @@ import { countApplyFiles } from './RetagPreviewModal.utils';
 import { api, RetagFfmpegNotConfiguredError, type RetagPlan, type RetagExcludableField, type RetagMode } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
     ...actual,

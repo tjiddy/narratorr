@@ -37,7 +37,6 @@ let clampToTotalCallCount = 0;
 type ClampFn = (total: number) => void;
 const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
 vi.mock('@/hooks/usePagination', async () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
   return {
     ...mod,
@@ -56,7 +55,6 @@ vi.mock('@/hooks/usePagination', async () => {
 });
 
 vi.mock('@/hooks/useEventSource', async () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
   const actual = await vi.importActual<typeof import('@/hooks/useEventSource')>('@/hooks/useEventSource');
   return {
     ...actual,

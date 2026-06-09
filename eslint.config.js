@@ -166,6 +166,13 @@ export default tseslint.config(
       'max-lines-per-function': 'off',
       'complexity': 'off',
       'narratorr/no-tautological-expect': 'error',
+      // Allow inline `typeof import('...')` annotations in vi.mock/vi.importActual
+      // partial-mock helpers — type-only, fully-erased, harmless in test factories.
+      // Keep the import-style preference for ordinary `import type` usage.
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'inline-type-imports', disallowTypeAnnotations: false },
+      ],
     },
   }
 );

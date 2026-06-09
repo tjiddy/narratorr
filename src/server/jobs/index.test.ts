@@ -12,7 +12,6 @@ import { TaskRegistry } from '../services/task-registry.js';
 // (hoisted) vi.mock factory can reach it.
 const { cronInstances } = vi.hoisted(() => ({ cronInstances: [] as Cron[] }));
 vi.mock('croner', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('croner')>();
   class TrackedCron extends actual.Cron {
     constructor(pattern: string | Date, fn?: CronCallback<undefined>) {
