@@ -1307,6 +1307,52 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(cleanName('Some Title []')).toBe('Some Title');
     });
 
+    // Per-step preservation for codec/bitrate/year tag forms — these have real
+    // title text outside the brackets, so bracketTagStrip strips the tag exactly
+    // as before; the #1316 unwrap guard must not regress them (issue #1316).
+    it('strips [M4B] codec tag, leaving the bare title', () => {
+      expect(cleanName('Title [M4B]')).toBe('Title');
+    });
+
+    it('strips [64k] bitrate tag, leaving the bare title', () => {
+      expect(cleanName('Title [64k]')).toBe('Title');
+    });
+
+    it('strips [2021] bracketed-year tag, leaving the bare title', () => {
+      expect(cleanName('Title [2021]')).toBe('Title');
+    });
+
+    // Issue #1316 — bracketTagStrip deleted whole-title brackets, collapsing
+    // "Author - [Title]" to a title-less "Author -" and poisoning metadata search.
+    // The fix unwraps (keeps inner text) when stripping would leave no title.
+    describe('whole-title bracket unwrap (issue #1316)', () => {
+      it('unwraps a whole-title bracket instead of deleting it (en-dash variant)', () => {
+        const parsed = parseFolderStructure(['Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]']);
+        expect(parsed.title).toBe('Bobiverse 03 All These Worlds – 3');
+        expect(parsed.author).toBe('Dennis E Taylor');
+        expect(parsed.title).toMatch(/^[^[\]]*$/);
+      });
+
+      it('unwraps a whole-title bracket instead of deleting it (hyphen variant)', () => {
+        const parsed = parseFolderStructure(['Dennis E. Taylor - [Bobiverse 03 All These Worlds - 3]']);
+        expect(parsed.title).toBe('Bobiverse 03 All These Worlds - 3');
+        expect(parsed.author).toBe('Dennis E Taylor');
+        expect(parsed.title).toMatch(/^[^[\]]*$/);
+      });
+
+      // Proves the fix lives in the bracketTagStrip step itself, not the
+      // end-of-pipeline non-empty fallback: the step output is the unwrapped,
+      // bracket-free string rather than an empty (or bracket-wrapped) value.
+      it('bracketTagStrip step output is the unwrapped, bracket-free string', () => {
+        const trace = cleanNameWithTrace('Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]');
+        const step = trace.steps.find((s) => s.name === 'bracketTagStrip');
+        expect(step).toBeDefined();
+        expect(step!.output).toBe('Dennis E Taylor - Bobiverse 03 All These Worlds – 3');
+        expect(step!.output).not.toBe('');
+        expect(step!.output).toMatch(/^[^[\]]*$/);
+      });
+    });
+
     describe('all-numeric date-like inputs (issue #701)', () => {
       it('preserves dash-separated date-like input like 11-22-63', () => {
         expect(cleanName('11-22-63')).toBe('11-22-63');
@@ -2274,7 +2320,25 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       },
     ];
 
-    const allSeeds = [...flatSingleFile, ...authorSeriesNumbered, ...singleSegment];
+    // Whole-title-bracket names (#1316). Cleaned now unwraps the bracket to a
+    // usable title; raw still preserves the literal brackets (identity transform,
+    // no cleaning step runs), so both rows are raw-divergent.
+    const wholeTitleBracket = [
+      {
+        name: 'Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]',
+        parts: ['Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]'],
+        cleaned: { title: 'Bobiverse 03 All These Worlds – 3', author: 'Dennis E Taylor', series: null },
+        raw: { title: '[Bobiverse 03 All These Worlds – 3]', author: 'Dennis E. Taylor', series: null },
+      },
+      {
+        name: 'Dennis E. Taylor - [Bobiverse 03 All These Worlds - 3]',
+        parts: ['Dennis E. Taylor - [Bobiverse 03 All These Worlds - 3]'],
+        cleaned: { title: 'Bobiverse 03 All These Worlds - 3', author: 'Dennis E Taylor', series: null },
+        raw: { title: '[Bobiverse 03 All These Worlds - 3]', author: 'Dennis E. Taylor', series: null },
+      },
+    ];
+
+    const allSeeds = [...flatSingleFile, ...authorSeriesNumbered, ...singleSegment, ...wholeTitleBracket];
 
     it.each(allSeeds)('parseFolderStructure pins cleaned output — $name', ({ parts, cleaned }) => {
       expect(parseFolderStructure(parts)).toEqual(cleaned);

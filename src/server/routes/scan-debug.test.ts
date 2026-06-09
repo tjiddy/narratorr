@@ -395,6 +395,26 @@ describe('POST /api/library/scan-debug', () => {
       const bracketTagStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'bracketTagStrip');
       expect(bracketTagStep.output).toBe('Title');
     });
+
+    it('unwraps a whole-title bracket instead of deleting it (issue #1316)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]' },
+      });
+
+      const body = JSON.parse(res.payload);
+      // The bracketTagStrip step unwraps rather than blanking the title.
+      const bracketTagStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'bracketTagStrip');
+      expect(bracketTagStep.output).not.toBe('');
+      expect(bracketTagStep.output).toMatch(/^[^[\]]*$/);
+      // The resolved title and the derived search query carry no bracket characters.
+      expect(body.cleaning.title.result).toMatch(/^[^[\]]*$/);
+      expect(body.search.initialQuery).toMatch(/^[^[\]]*$/);
+    });
   });
 
   describe('search step', () => {
