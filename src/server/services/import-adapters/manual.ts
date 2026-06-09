@@ -8,6 +8,7 @@ import { copyToLibrary } from '../import-orchestration.helpers.js';
 import type { ImportConfirmItem } from '../library-scan.service.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
+import { reconstructDiscGroup } from '../../utils/import-helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
 import type { RenameableBook } from '../../utils/paths.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
@@ -84,6 +85,12 @@ export class ManualImportAdapter implements ImportAdapter {
 
       const item = toImportConfirmItem(payload);
       const extracted = extractImportMetadata(item);
+
+      // Pointer (in-place) mode cannot represent a multi-disc set as one book directory — the
+      // discs live as separate sibling folders. Reject rather than silently registering Disc 1.
+      if (!mode && (await reconstructDiscGroup(item.path)).length >= 2) {
+        throw new Error('Cannot import a multi-disc set in pointer (in-place) mode — re-import with copy or move so the discs flatten into one book folder');
+      }
 
       let finalPath = payload.path;
       if (mode) {

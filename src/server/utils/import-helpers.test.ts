@@ -17,6 +17,8 @@ import {
   getPathSize,
   containsAudioFiles,
   copyAudioFiles,
+  copyDiscGroup,
+  reconstructDiscGroup,
   countAudioFiles,
   COPY_VERIFICATION_THRESHOLD,
 } from './import-helpers.js';
@@ -705,6 +707,126 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     const destNames = getCopiedDestNames();
     // Non-disc files first (original name), then sequential disc files
     expect(destNames).toEqual(['root_track.mp3', '1.mp3', '2.mp3']);
+  });
+
+  // ---- Embedded disc-marker source folders (#1272) ----
+
+  it('detects embedded "Disc N of M" source subfolders and flattens without a basename collision', async () => {
+    // Each disc holds an identically-named "01.mp3" — collectFlatFiles would throw on the dupe;
+    // the multi-disc path sequentially renames them instead.
+    setupDiscLayout([
+      ['2005 Non Fiction David McCullough - 1776 Disc 1 of 10 - File ~ of 28 - yEnc', ['01.mp3']],
+      ['2005 Non Fiction David McCullough - 1776 Disc 2 of 10 - File ~ of 28 - yEnc', ['01.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('detects embedded "CD NN of M" source subfolders', async () => {
+    setupDiscLayout([
+      ['Stephen King - It CD 01 of 03', ['01.mp3']],
+      ['Stephen King - It CD 02 of 03', ['01.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('sorts embedded-marker discs by parsed disc number — shared parser with discovery', async () => {
+    // Names match ONLY the embedded grammar (not DISC_FOLDER_PATTERN / parseTitledDiscFolder),
+    // so correct ordering proves extractDiscNumber routes through parseEmbeddedDiscMarker.
+    setupDiscLayout([
+      ['Author - Long Book Disc 10 of 10', ['ten.mp3']],
+      ['Author - Long Book Disc 2 of 10', ['two.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('Disc 2 of 10');
+    expect(srcPaths[1]).toContain('Disc 10 of 10');
+  });
+});
+
+describe('reconstructDiscGroup', () => {
+  it('returns [path] for a non-disc folder without touching the filesystem', async () => {
+    const result = await reconstructDiscGroup('/lib/Author/Book Title');
+    expect(result).toEqual(['/lib/Author/Book Title']);
+    expect(readdir).not.toHaveBeenCalled();
+  });
+
+  it('reconstructs the ordered member set from sibling disc folders', async () => {
+    vi.mocked(readdir).mockResolvedValueOnce([
+      makeDirent('Author - Book Disc 2 of 3', false, true),
+      makeDirent('Author - Book Disc 1 of 3', false, true),
+      makeDirent('Author - Book Disc 3 of 3', false, true),
+    ] as never);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
+
+    expect(result).toEqual([
+      '/downloads/Author - Book Disc 1 of 3',
+      '/downloads/Author - Book Disc 2 of 3',
+      '/downloads/Author - Book Disc 3 of 3',
+    ]);
+  });
+
+  it('filters to siblings sharing the stem — ignores a different group under the same parent', async () => {
+    vi.mocked(readdir).mockResolvedValueOnce([
+      makeDirent('1776 Disc 1 of 2', false, true),
+      makeDirent('1776 Disc 2 of 2', false, true),
+      makeDirent('Slaughterhouse Disc 1 of 2', false, true),
+      makeDirent('Slaughterhouse Disc 2 of 2', false, true),
+    ] as never);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 2');
+
+    expect(result).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
+  });
+
+  it('does NOT reconstruct a set with inconsistent "of M" totals (mirrors discovery guard)', async () => {
+    vi.mocked(readdir).mockResolvedValueOnce([
+      makeDirent('Author - Book Disc 1 of 10', false, true),
+      makeDirent('Author - Book Disc 2 of 8', false, true),
+    ] as never);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
+
+    // Discovery left these separate → reconstruction must too (length 1 → callers skip flatten)
+    expect(result).toEqual(['/downloads/Author - Book Disc 1 of 10']);
+  });
+
+  it('does NOT reconstruct when a markerless sibling shares the stem (all-or-nothing guard)', async () => {
+    vi.mocked(readdir).mockResolvedValueOnce([
+      makeDirent('Author - Book Disc 1 of 3', false, true),
+      makeDirent('Author - Book Disc 2 of 3', false, true),
+      makeDirent('Author - Book Bonus Material', false, true),
+    ] as never);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
+
+    expect(result).toEqual(['/downloads/Author - Book Disc 1 of 3']);
+  });
+});
+
+describe('copyDiscGroup', () => {
+  it('flattens an ordered member-disc set into target with sequential renaming', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)  // disc 1 files
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never); // disc 2 files
+
+    await copyDiscGroup(
+      ['/downloads/Author - Book Disc 1 of 2', '/downloads/Author - Book Disc 2 of 2'],
+      '/dest',
+    );
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    const destNames = (cp as Mock).mock.calls.map((c: unknown[]) => norm(c[1] as string).split('/').pop());
+    expect(destNames).toEqual(['1.mp3', '2.mp3']);
   });
 });
 

@@ -11,7 +11,7 @@ import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { buildTargetPath, getAudioPathSize, COPY_VERIFICATION_THRESHOLD } from '../utils/import-helpers.js';
+import { buildTargetPath, getAudioPathSize, COPY_VERIFICATION_THRESHOLD, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -76,6 +76,13 @@ export async function copyToLibrary(
     throw new Error('Source path is inside the library root — cannot import a path already managed by the library');
   }
 
+  // Coalesced disc-group row: `item.path` is only the lowest-disc member. Reconstruct the full
+  // member set from disk and flatten every disc into one target (AC7), instead of copying just one.
+  const memberPaths = await reconstructDiscGroup(item.path);
+  if (memberPaths.length >= 2) {
+    return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, onProgress);
+  }
+
   await mkdir(targetPath, { recursive: true });
   log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
   if (onProgress) {
@@ -94,6 +101,42 @@ export async function copyToLibrary(
   if (mode === 'move') {
     await rm(item.path, { recursive: true });
     log.info({ source: item.path }, 'Source directory removed after move');
+  }
+
+  return targetPath;
+}
+
+/**
+ * Flatten a reconstructed multi-disc set into the library target. Aggregates source size across
+ * all member discs for copy verification and removes every member folder on `move`.
+ */
+async function copyDiscGroupToLibrary(
+  item: ImportConfirmItem,
+  targetPath: string,
+  memberPaths: string[],
+  mode: ImportMode,
+  deps: ImportPipelineDeps,
+  onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
+): Promise<string> {
+  const { log } = deps;
+  log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode }, 'Flattening multi-disc group to library');
+  await copyDiscGroup(memberPaths, targetPath, onProgress);
+
+  let sourceSize = 0;
+  for (const memberPath of memberPaths) {
+    sourceSize += await getAudioPathSize(memberPath);
+  }
+  const targetSize = await getAudioPathSize(targetPath);
+  log.debug({ discMembers: memberPaths.length, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Multi-disc copy verification');
+  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
+    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
+  }
+
+  if (mode === 'move') {
+    for (const memberPath of memberPaths) {
+      await rm(memberPath, { recursive: true });
+    }
+    log.info({ discMembers: memberPaths.length }, 'Source disc folders removed after move');
   }
 
   return targetPath;

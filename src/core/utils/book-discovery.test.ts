@@ -32,9 +32,11 @@ vi.mock('./audio-scanner.js', () => ({
 import {
   discoverBooks,
   parseTitledDiscFolder,
+  parseEmbeddedDiscMarker,
   normalizeAlbumForComparison,
   type DiscoveryLogger,
 } from './book-discovery.js';
+import { parseFolderStructure } from '../../server/utils/folder-parsing.js';
 import { readdir, stat } from 'node:fs/promises';
 import { readAlbumTag } from './audio-scanner.js';
 
@@ -521,6 +523,215 @@ describe('discoverBooks', () => {
         expect(await isDiscMerged(name)).toBe(false);
       },
     );
+  });
+
+  // ---- Embedded per-disc folder-set coalescing (#1272) ----
+
+  describe('embedded disc-marker sibling coalescing', () => {
+    /** Build sibling disc folders under one parent, each with a single audio file. */
+    function discSiblings(
+      parent: string,
+      names: string[],
+      audioName = '01.mp3',
+      size = 100,
+    ): Record<string, { name: string; isFile: boolean; size?: number }[]> {
+      const tree: Record<string, { name: string; isFile: boolean; size?: number }[]> = {};
+      tree[parent] = names.map(name => ({ name, isFile: false }));
+      for (const name of names) {
+        tree[`${parent}/${name}`] = [{ name: audioName, isFile: true, size }];
+      }
+      return tree;
+    }
+
+    it('coalesces the 1776 set (10 discs) into a single discovery', async () => {
+      const names = Array.from(
+        { length: 10 },
+        (_, i) => `2005 Non Fiction David McCullough - 1776 Disc ${i + 1} of 10 - File ~ of 28 - yEnc`,
+      );
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      // path is the lowest-disc member (Disc 1)
+      expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
+      // counts aggregate across all 10 discs
+      expect(result[0]!.audioFileCount).toBe(10);
+      expect(result[0]!.totalSize).toBe(1000);
+      // synthesized folderParts parse to the real author/title (year + category stripped)
+      const parsed = parseFolderStructure(result[0]!.folderParts);
+      expect(parsed.title).toContain('1776');
+      expect(parsed.author).toBe('David McCullough');
+    });
+
+    it('coalesces the Slaughterhouse-Five set (5 discs, no "of M")', async () => {
+      const names = Array.from(
+        { length: 5 },
+        (_, i) => `Kurt Vonnegut - Slaughterhouse-Five - Disc ${i + 1}`,
+      );
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
+      expect(result[0]!.audioFileCount).toBe(5);
+      const parsed = parseFolderStructure(result[0]!.folderParts);
+      expect(parsed.title).toBe('Slaughterhouse-Five');
+      expect(parsed.author).toBe('Kurt Vonnegut');
+    });
+
+    it('emits one row per stem group when two groups share a parent', async () => {
+      const mcc = Array.from(
+        { length: 10 },
+        (_, i) => `2005 Non Fiction David McCullough - 1776 Disc ${i + 1} of 10 - yEnc`,
+      );
+      const kv = Array.from({ length: 5 }, (_, i) => `Kurt Vonnegut - Slaughterhouse-Five - Disc ${i + 1}`);
+      setupFs(discSiblings('/audiobooks', [...mcc, ...kv]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(2);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual([`/audiobooks/${kv[0]}`, `/audiobooks/${mcc[0]}`].sort());
+      const byAuthor = Object.fromEntries(
+        result.map(r => {
+          const parsed = parseFolderStructure(r.folderParts);
+          return [parsed.author, parsed.title];
+        }),
+      );
+      expect(byAuthor['David McCullough']).toContain('1776');
+      expect(byAuthor['Kurt Vonnegut']).toBe('Slaughterhouse-Five');
+    });
+
+    it('coalesces the "CD NN of M" marker shape', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Stephen King - It CD 0${i + 1} of 03`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
+      expect(result[0]!.audioFileCount).toBe(3);
+    });
+
+    it('groups mixed-case and zero-padded markers as the same disc number', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc 1 of 3',
+        'Author - Book DISC 2 OF 3',
+        'Author - Book disc 03 of 3',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+    });
+
+    // ---- Negatives (must NOT coalesce) ----
+
+    it('keeps 8 distinct Dune titles (no markers) as 8 books', async () => {
+      const titles = [
+        'Dune', 'Dune Messiah', 'Children of Dune', 'God Emperor of Dune',
+        'Heretics of Dune', 'Chapterhouse Dune', 'The Butlerian Jihad', 'The Machine Crusade',
+      ];
+      setupFs({
+        '/audiobooks': [{ name: 'Frank Herbert', isFile: false }],
+        ...discSiblings('/audiobooks/Frank Herbert', titles),
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(8);
+    });
+
+    it('keeps distinct sibling novels without markers separate', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Lee Child - Killing Floor',
+        'Lee Child - Die Trying',
+        'Lee Child - Tripwire',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(3);
+    });
+
+    it('does NOT coalesce siblings with inconsistent "of M" totals', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc 1 of 10',
+        'Author - Book Disc 2 of 8',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(2);
+    });
+
+    it('does NOT coalesce when only some stem-sharing siblings carry a marker', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc 1 of 3',
+        'Author - Book Disc 2 of 3',
+        'Author - Book Bonus Material',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(3);
+    });
+
+    it('does NOT merge two multi-disc sets with divergent core titles', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        '2005 Non Fiction Author A - Book A Disc 1 of 2',
+        '2005 Non Fiction Author A - Book A Disc 2 of 2',
+        '2005 Non Fiction Author A - Book B Disc 1 of 2',
+        '2005 Non Fiction Author A - Book B Disc 2 of 2',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      // Two distinct stems → two coalesced books, not one merged blob
+      expect(result).toHaveLength(2);
+    });
+
+    // ---- Robustness ----
+
+    it('does not treat a marker keyword without a digit as a disc member', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc of 10',        // malformed — no disc number
+        'Author - Book Disc 1 of 10',      // lone valid disc
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      // Malformed excluded, valid disc is a lone (size-1) group → both stay as ordinary rows
+      expect(result).toHaveLength(2);
+    });
+
+    it('leaves a single embedded-marker disc folder as an ordinary discovery', async () => {
+      setupFs(discSiblings('/audiobooks', ['Author - Book Disc 1 of 10']));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Author - Book Disc 1 of 10');
+      // Ordinary leaf row — parent-relative folderParts, not a synthesized stem
+      expect(result[0]!.folderParts).toEqual(['Author - Book Disc 1 of 10']);
+    });
+  });
+
+  // ---- parseEmbeddedDiscMarker unit coverage ----
+
+  describe('parseEmbeddedDiscMarker', () => {
+    it('extracts stem, disc number, and total from an embedded "Disc N of M"', () => {
+      expect(parseEmbeddedDiscMarker('2005 Non Fiction David McCullough - 1776 Disc 1 of 10 - yEnc'))
+        .toEqual({ stem: '2005 Non Fiction David McCullough - 1776', discNumber: 1, total: 10 });
+    });
+
+    it('omits total when there is no "of M"', () => {
+      expect(parseEmbeddedDiscMarker('Kurt Vonnegut - Slaughterhouse-Five - Disc 1'))
+        .toEqual({ stem: 'Kurt Vonnegut - Slaughterhouse-Five', discNumber: 1 });
+    });
+
+    it('returns empty stem for bare tokens (left to DISC_FOLDER_PATTERN)', () => {
+      expect(parseEmbeddedDiscMarker('CD1')).toEqual({ stem: '', discNumber: 1 });
+    });
+
+    it('returns null for a marker keyword with no digit', () => {
+      expect(parseEmbeddedDiscMarker('Author - Book Disc of 10')).toBeNull();
+    });
+
+    it('returns null when there is no marker', () => {
+      expect(parseEmbeddedDiscMarker('Children of Dune')).toBeNull();
+    });
   });
 
   // ---- Parent has audio files (leaf folder behavior) ----
