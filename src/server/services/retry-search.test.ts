@@ -13,7 +13,8 @@ import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { BYTES_PER_GB } from '../../shared/constants.js';
 
-vi.mock('../utils/enrich-usenet-languages.js', () => ({
+vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
   enrichUsenetLanguages: vi.fn(),
 }));
 
@@ -704,6 +705,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
       expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
       expect.anything(),
       expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
+      { maxPhase2Fetches: 10 },
     );
   });
 

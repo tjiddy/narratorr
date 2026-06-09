@@ -4,6 +4,7 @@ import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, Downloa
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect, mapNetworkError, redactUrlsFromMessage } from '../utils/network-service.js';
 import { DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
 import { getErrorMessage } from '../../shared/error-message.js';
+import { getUserAgent } from '../../shared/user-agent.js';
 
 export interface BlackholeConfig {
   watchDir: string;
@@ -55,6 +56,7 @@ export class BlackholeClient implements DownloadClientAdapter {
       try {
         response = await fetchWithSsrfRedirect(artifact.url, {
           dispatcher,
+          headers: { 'User-Agent': getUserAgent() },
           ...(artifact.lanAllowlist && { lanAllowlist: artifact.lanAllowlist.hostPort }),
         });
       } catch (error: unknown) {

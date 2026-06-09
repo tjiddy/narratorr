@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, filterByLanguage, filterMultiPartUsenet } from '../../core/utils/index.js';
 import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
-import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
@@ -280,7 +280,9 @@ export async function postProcessSearchResults(
 
   // Enrich Usenet results with language from newsgroup metadata. Forwarding
   // the LAN allowlist lets the NZB fetch reach a configured-indexer host:port
-  // even at a private IP (#1149).
+  // even at a private IP (#1149). This interactive/post-process display path
+  // stays uncapped (omit maxPhase2Fetches) so enrichment is unaffected; it
+  // still benefits from the shared enrichment cache (#1315).
   const lanAllowlist = await indexerService.getLanAllowlist();
   await enrichUsenetLanguages(filteredResults, logger, lanAllowlist);
 
@@ -404,7 +406,7 @@ async function searchWithBroadcaster(
     return { result: 'no_results' };
   }
 
-  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist());
+  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
   const broadcasterInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
@@ -494,7 +496,7 @@ export async function searchAndGrabForBook(
     return { result: 'no_results' };
   }
 
-  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist());
+  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
   const grabInputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);

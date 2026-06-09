@@ -4,14 +4,121 @@ import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, parseNzbName, parseNzbFileSubject } from '../../core/utils/detect-usenet-language.js';
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
 import type { LanAllowlist } from '../../core/utils/download-url.js';
+import { getUserAgent } from '../../shared/user-agent.js';
 import { Semaphore } from './semaphore.js';
 import { serializeError } from './serialize-error.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
+import { enrichmentCache, type EnrichmentCacheValue } from './enrichment-cache.js';
 
 const NZB_FETCH_CONCURRENCY = 5;
 const NZB_FETCH_TIMEOUT_MS = 5000;
 
+/**
+ * Phase-2 fetch cap for auto-grab call sites (scheduled/interactive grab, retry
+ * search, RSS). The interactive/post-process display path stays uncapped. #1315.
+ */
+export const AUTO_GRAB_PHASE2_CAP = 10;
+
 type Phase2Source = 'newsgroup' | 'name' | 'title' | 'unresolved';
+
+export interface EnrichUsenetOptions {
+  /**
+   * Cap on the number of Phase-2 NZB fetches per run. When set, after the cache
+   * is consulted the remaining cache-miss candidates are ranked (matchScore,
+   * then seeders, then grabs; all desc, missing lowest) and only the top N are
+   * fetched — the rest keep their Phase-1 result and are NOT fetched. Omit for
+   * today's uncapped behavior (used by the interactive/post-process path).
+   */
+  maxPhase2Fetches?: number;
+}
+
+/** Cache key for a release: prefer the stable `guid`, fall back to `downloadUrl`. */
+function cacheKeyFor(result: SearchResult): string | undefined {
+  return result.guid ?? result.downloadUrl;
+}
+
+/**
+ * Compare two optional numbers descending; missing (`undefined`) ranks lowest.
+ * Avoids Infinity arithmetic (which yields NaN for two missing values and
+ * corrupts `Array.sort`).
+ */
+function cmpDesc(a: number | undefined, b: number | undefined): number {
+  const av = a ?? -Infinity;
+  const bv = b ?? -Infinity;
+  if (av === bv) return 0;
+  return av > bv ? -1 : 1;
+}
+
+/** Phase-2 ranking tuple: matchScore, then seeders, then grabs — all descending. */
+function comparePhase2(a: SearchResult, b: SearchResult): number {
+  return cmpDesc(a.matchScore, b.matchScore)
+    || cmpDesc(a.seeders, b.seeders)
+    || cmpDesc(a.grabs, b.grabs);
+}
+
+/**
+ * Apply a cached enrichment outcome to a result. Returns `true` when it set a
+ * language (so the caller can bump the audit counter). Reapplies the cached
+ * `nzbName` so the downstream multi-part filter still sees it on a hit; on a
+ * `fetch-failed` entry `nzbName` is intentionally absent.
+ */
+function applyCacheHit(result: SearchResult, entry: EnrichmentCacheValue, logger: FastifyBaseLogger): boolean {
+  let detected = false;
+  if (entry.language && !result.language) {
+    result.language = entry.language;
+    detected = true;
+  }
+  if (entry.nzbName && !result.nzbName) {
+    result.nzbName = entry.nzbName;
+  }
+  logger.debug(
+    { title: result.title, signal: 'cache-hit', outcome: entry.outcome, language: entry.language ?? null },
+    'Phase-2: served from enrichment cache',
+  );
+  return detected;
+}
+
+/**
+ * Consult the cache for every fetch candidate. Cache hits are applied in-place
+ * and dropped from the returned `misses` set; misses (no live entry) survive to
+ * Phase-2 fetching. A stored `undefined` language is a HIT, never a miss.
+ */
+function consultCache(
+  needsFetch: SearchResult[],
+  logger: FastifyBaseLogger,
+): { misses: SearchResult[]; hitsDetected: number } {
+  const misses: SearchResult[] = [];
+  let hitsDetected = 0;
+  for (const result of needsFetch) {
+    const key = cacheKeyFor(result);
+    const entry = key ? enrichmentCache.get(key) : undefined;
+    if (entry) {
+      if (applyCacheHit(result, entry, logger)) hitsDetected++;
+    } else {
+      misses.push(result);
+    }
+  }
+  return { misses, hitsDetected };
+}
+
+/**
+ * Apply the per-call-site Phase-2 cap to the cache-miss candidate set. When the
+ * cap is unset or not exceeded, returns the candidates unchanged. Otherwise
+ * ranks by `comparePhase2`, keeps the top `cap`, and logs the skipped count.
+ */
+function selectCappedCandidates(
+  candidates: SearchResult[],
+  cap: number | undefined,
+  logger: FastifyBaseLogger,
+): SearchResult[] {
+  if (cap === undefined || candidates.length <= cap) return candidates;
+  const ranked = [...candidates].sort(comparePhase2);
+  logger.debug(
+    { candidates: candidates.length, cap, skipped: candidates.length - cap },
+    'Phase-2 fetch cap applied — skipped lowest-ranked candidates',
+  );
+  return ranked.slice(0, cap);
+}
 
 /**
  * Defense-in-depth title fallback for fetch-failure branches (non-OK response or
@@ -91,8 +198,10 @@ export async function enrichUsenetLanguages(
   results: SearchResult[],
   logger: FastifyBaseLogger,
   lanAllowlist?: LanAllowlist,
+  options?: EnrichUsenetOptions,
 ): Promise<void> {
   const startMs = Date.now();
+  const userAgent = getUserAgent();
   let nzbFetched = 0;
   let languagesDetected = 0;
 
@@ -151,12 +260,23 @@ export async function enrichUsenetLanguages(
     }
   }
 
+  // Cache consult: serve releases enriched by any prior run (this is the #1315
+  // fix — a release seen by ANY call site is never re-fetched within its TTL).
+  // Hits are applied in-place and dropped; misses proceed to the (capped) fetch.
+  const { misses, hitsDetected } = consultCache(needsFetch, logger);
+  languagesDetected += hitsDetected;
+
+  // Per-call-site Phase-2 cap (ranked) applied to the cache-miss set, before
+  // any semaphore permit is acquired so capped-out candidates don't consume slots.
+  const toFetch = selectCappedCandidates(misses, options?.maxPhase2Fetches, logger);
+
   // Phase 2: Fetch NZBs in parallel with concurrency limit
   const semaphore = new Semaphore(NZB_FETCH_CONCURRENCY);
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
     await semaphore.acquire();
     nzbFetched++;
+    const cacheKey = cacheKeyFor(result)!;
     const dispatcher = createSsrfSafeDispatcher(lanAllowlist?.hostname);
     const safeUrl = sanitizeLogUrl(result.downloadUrl!);
     try {
@@ -164,6 +284,7 @@ export async function enrichUsenetLanguages(
       const response = await fetchWithSsrfRedirect(result.downloadUrl!, {
         dispatcher,
         timeoutMs: NZB_FETCH_TIMEOUT_MS,
+        headers: { 'User-Agent': userAgent },
         ...(lanAllowlist && { lanAllowlist: lanAllowlist.hostPort }),
       });
       logger.debug({
@@ -177,6 +298,10 @@ export async function enrichUsenetLanguages(
           'NZB fetch failed with non-OK status',
         );
         if (tryTitleFallback(result, logger)) languagesDetected++;
+        // Short failure TTL: a transient indexer error self-heals after ~1h.
+        // Preserve any title-fallback language; nzbName stays absent (came from
+        // the title, not the NZB body) so a later success can populate it.
+        enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
         return;
       }
       const xml = await response.text();
@@ -203,6 +328,15 @@ export async function enrichUsenetLanguages(
       const source = detectPhase2Source(result, groups, logger);
       if (source !== 'unresolved') languagesDetected++;
 
+      // Cache the successful outcome under the long TTL. `unresolved` (no signal
+      // matched) is cached too — a stored `undefined` language is a HIT, so it
+      // is never re-fetched within the TTL. nzbName is preserved either way.
+      enrichmentCache.set(cacheKey, {
+        outcome: source === 'unresolved' ? 'unresolved' : 'resolved',
+        language: result.language,
+        nzbName: result.nzbName,
+      });
+
       logger.debug({
         title: result.title,
         finalLanguage: result.language ?? null,
@@ -214,13 +348,14 @@ export async function enrichUsenetLanguages(
         'NZB fetch failed',
       );
       if (tryTitleFallback(result, logger)) languagesDetected++;
+      enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
     } finally {
       await dispatcher.close().catch(() => { /* best-effort cleanup */ });
       semaphore.release();
     }
   }
 
-  await Promise.all(needsFetch.map((r) => fetchAndEnrich(r)));
+  await Promise.all(toFetch.map((r) => fetchAndEnrich(r)));
 
   const totalFetchMs = Date.now() - startMs;
   logger.info(

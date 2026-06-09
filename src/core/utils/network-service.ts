@@ -390,6 +390,12 @@ export interface FetchWithSsrfRedirectOptions {
   timeoutMs?: number;
   maxHops?: number;
   /**
+   * Request headers applied to every hop (e.g. a `User-Agent`). Forwarded
+   * verbatim into each `fetch` call so callers can identify themselves to
+   * indexers without reaching into the redirect loop.
+   */
+  headers?: Record<string, string>;
+  /**
    * Pre-flight host:port allowlist. When set, a hop whose canonical
    * `host:port` (lowercased hostname, scheme-default port if absent, IPv6
    * brackets stripped) is in the set may resolve to a private/loopback
@@ -414,11 +420,32 @@ export interface FetchWithSsrfRedirectOptions {
  * - Throws UnsupportedRedirectSchemeError when a 3xx Location is not http(s);
  *   the helper does not interpret per-site artifacts (e.g. magnet:).
  */
+/**
+ * Resolve the next hop URL from a 3xx response: cancel the redirect body (so
+ * undici sockets release), validate the Location header is present and points
+ * at http(s), and return the absolute next URL. Throws on a missing Location or
+ * an unsupported scheme. Extracted so the redirect walker stays under the
+ * cyclomatic-complexity cap.
+ */
+async function resolveRedirectTarget(response: Response, currentUrl: string, parsed: URL): Promise<string> {
+  const location = response.headers.get('location');
+  if (!location) {
+    await response.body?.cancel().catch(() => { /* best-effort */ });
+    throw new Error('Redirect with no Location header');
+  }
+  const nextHref = new URL(location, currentUrl).href;
+  await response.body?.cancel().catch(() => { /* best-effort */ });
+  if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
+    throw new UnsupportedRedirectSchemeError(nextHref, parsed);
+  }
+  return nextHref;
+}
+
 export async function fetchWithSsrfRedirect(
   startUrl: string,
   opts: FetchWithSsrfRedirectOptions = {},
 ): Promise<Response> {
-  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist } = opts;
+  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist, headers = {} } = opts;
   const visited = new Set<string>();
   let currentUrl = startUrl;
 
@@ -438,6 +465,7 @@ export async function fetchWithSsrfRedirect(
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
       dispatcher,
+      headers,
     };
 
     const response = await fetchWithOptionalDispatcher(currentUrl, fetchOptions);
@@ -446,20 +474,7 @@ export async function fetchWithSsrfRedirect(
       return response;
     }
 
-    const location = response.headers.get('location');
-    if (!location) {
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      throw new Error('Redirect with no Location header');
-    }
-
-    const nextHref = new URL(location, currentUrl).href;
-    if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      throw new UnsupportedRedirectSchemeError(nextHref, parsed);
-    }
-
-    await response.body?.cancel().catch(() => { /* best-effort */ });
-    currentUrl = nextHref;
+    currentUrl = await resolveRedirectTarget(response, currentUrl, parsed);
   }
 
   throw new Error('Too many redirects');

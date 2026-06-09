@@ -2487,7 +2487,8 @@ describe('filterAndRankResults — nzbName reject/required word filtering (#502)
   });
 });
 
-vi.mock('../utils/enrich-usenet-languages.js', () => ({
+vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
   enrichUsenetLanguages: vi.fn(),
 }));
 
@@ -2527,6 +2528,7 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
       expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
       log,
       expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
+      { maxPhase2Fetches: 10 },
     );
   });
 
