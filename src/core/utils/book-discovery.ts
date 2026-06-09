@@ -365,10 +365,16 @@ function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
  * Synthesize folderParts from a coalesced group's cleaned common stem. Strips a leading
  * 4-digit year token and a leading release-category run (Fiction / Non Fiction / Nonfiction)
  * so the dash parser resolves the author rather than the yEnc release prefix.
+ *
+ * The leading-year strip fires ONLY when the year is immediately followed by the
+ * release-category run — the two strips are tied together so a real year-title stem
+ * (`2001 A Space Odyssey`) keeps its leading token instead of degrading to `A Space Odyssey`
+ * (#1280). yEnc prefixes are always `<year> <Fiction|Non Fiction> …`, so requiring the
+ * category lookahead preserves the strip for real release prefixes while protecting titles.
  */
 function synthesizeStemParts(stem: string): string[] {
   const cleaned = stem
-    .replace(/^(?:19|20)\d{2}\s+/, '')
+    .replace(/^(?:19|20)\d{2}\s+(?=(?:non[\s-]?fiction|fiction)\s+)/i, '')
     .replace(/^(?:non[\s-]?fiction|fiction)\s+/i, '')
     .trim();
   return [cleaned || stem];

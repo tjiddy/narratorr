@@ -37,6 +37,7 @@ import {
   type DiscoveryLogger,
 } from './book-discovery.js';
 import { parseFolderStructure } from '../../server/utils/folder-parsing.js';
+import { reconstructDiscGroup } from '../../server/utils/import-helpers.js';
 import { readdir, stat } from 'node:fs/promises';
 import { readAlbumTag } from './audio-scanner.js';
 
@@ -706,6 +707,66 @@ describe('discoverBooks', () => {
       // Ordinary leaf row — parent-relative folderParts, not a synthesized stem
       expect(result[0]!.folderParts).toEqual(['Author - Book Disc 1 of 10']);
     });
+
+    // ---- Discovery/import parity (#1280) ----
+
+    it('discovery and reconstruction group the SAME audio-bearing member set (1776 + artwork sibling)', async () => {
+      const stem = '2005 Non Fiction David McCullough - 1776';
+      const discNames = Array.from({ length: 10 }, (_, i) => `${stem} Disc ${i + 1} of 10 - yEnc`);
+      const tree: Record<string, { name: string; isFile: boolean; size?: number }[]> = {
+        '/audiobooks': [
+          ...discNames.map(n => ({ name: n, isFile: false })),
+          { name: `${stem} Artwork`, isFile: false },
+        ],
+      };
+      for (const n of discNames) tree[`/audiobooks/${n}`] = [{ name: 'track.mp3', isFile: true, size: 1000 }];
+      // audioless stem-sharing sibling — discovery filters it out, import must too
+      tree[`/audiobooks/${stem} Artwork`] = [
+        { name: 'cover.jpg', isFile: true, size: 50 },
+        { name: 'info.nfo', isFile: true, size: 10 },
+      ];
+      setupFs(tree);
+
+      const discoveryMembers = discNames.map(n => `/audiobooks/${n}`);
+
+      // Discovery side: one coalesced row anchored at disc 1, aggregating all 10 discs.
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe(discoveryMembers[0]);
+      expect(result[0]!.audioFileCount).toBe(10);
+
+      // Import side: reconstruct from the persisted anchor → identical 10-member set.
+      const reconstructed = await reconstructDiscGroup(result[0]!.path);
+      expect(reconstructed).toEqual(discoveryMembers);
+      expect(reconstructed).not.toContain(`/audiobooks/${stem} Artwork`);
+    });
+
+    // ---- Bundled polish A: leading-year strip tied to release category (#1280) ----
+
+    it('preserves a real leading year-title in synthesized folderParts (2001 A Space Odyssey)', async () => {
+      const names = Array.from({ length: 2 }, (_, i) => `2001 A Space Odyssey Disc ${i + 1} of 2`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      // year is part of the real title (no Fiction/Non Fiction category follows) → not stripped
+      expect(result[0]!.folderParts[0]).toContain('2001');
+      expect(result[0]!.folderParts[0]).toContain('A Space Odyssey');
+    });
+
+    // ---- Bundled polish B: lone embedded `D<n>` no longer coalesces distinct siblings (#1280) ----
+
+    it('keeps distinct `D<n>`-token siblings sharing a stem prefix separate', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Star Wars D2 Adventures',
+        'Star Wars D3 Adventures',
+        'Star Wars D4 Adventures',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      // No embedded marker parsed from a bare `D<n>` token → three standalone books, not one merge
+      expect(result).toHaveLength(3);
+    });
   });
 
   // ---- parseEmbeddedDiscMarker unit coverage ----
@@ -731,6 +792,11 @@ describe('discoverBooks', () => {
 
     it('returns null when there is no marker', () => {
       expect(parseEmbeddedDiscMarker('Children of Dune')).toBeNull();
+    });
+
+    it('does NOT treat a lone embedded `D<n>` token as a disc marker (#1280)', () => {
+      // bare D-tokens are owned by DISC_FOLDER_PATTERN / parseTitledDiscFolder, not the embedded grammar
+      expect(parseEmbeddedDiscMarker('Star Wars D2 Adventures')).toBeNull();
     });
   });
 

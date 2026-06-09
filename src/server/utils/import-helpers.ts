@@ -122,6 +122,20 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Audio-bearing check for disc-group reconstruction. Mirrors discovery's `scanDir`, which
+ * catches `readdir` failures and treats an unreadable subtree as zero-audio
+ * (`book-discovery.ts` scanDir) — so an unreadable sibling is excluded from the member set
+ * rather than failing the whole import.
+ */
+async function isAudioBearingDir(dirPath: string): Promise<boolean> {
+  try {
+    return await containsAudioFiles(dirPath);
+  } catch {
+    return false;
+  }
+}
+
 /** Recursively collect all audio file paths from a source directory. */
 async function collectAudioFiles(
   dir: string,
@@ -313,7 +327,17 @@ export async function copyAudioFiles(
  *
  * Replays discovery's `discGroupGuardsPass` consistency + all-or-nothing guards so a row that
  * discovery intentionally left ungrouped (inconsistent `of M` totals, or a markerless stem-sharing
- * sibling) is NOT flattened/rejected as a coalesced set here — reconstruction mirrors discovery.
+ * sibling) is NOT flattened/rejected as a coalesced set here.
+ *
+ * Both the guard input AND the member collection run over **audio-bearing sibling directories
+ * only**, exactly mirroring discovery, which groups over `audioChildren` (children with
+ * `countAudioFilesDeep > 0`). Without this filter, an audioless stem-sharing sibling — a usenet
+ * pack's `<stem> Artwork`/`Sample`/NFO folder — is invisible to discovery's all-or-nothing guard
+ * (passes, coalesces) but seen by import's guard (fails, refuses), silently dropping discs 2..N
+ * (#1280). Filtering to audio-bearing dirs gives true parity: a markerless-audioless sibling is
+ * excluded before the guard, and a marker-carrying audioless sibling (a stray zero-file
+ * `<stem> Disc 11 of 10`) is excluded from `memberPaths` so reconstructed members are exactly the
+ * audio-bearing disc directories discovery persisted.
  */
 export async function reconstructDiscGroup(memberPath: string): Promise<string[]> {
   const marker = parseEmbeddedDiscMarker(basename(memberPath));
@@ -329,10 +353,18 @@ export async function reconstructDiscGroup(memberPath: string): Promise<string[]
     return [memberPath];
   }
 
-  const siblingDirNames = entries.filter(e => e.isDirectory()).map(e => e.name);
-  if (!discGroupGuardsPass(siblingDirNames, key)) return [memberPath];
+  // Filter siblings to audio-bearing dirs once, before BOTH the guard and the member map,
+  // so the set fed to discGroupGuardsPass matches discovery's audio-bearing `audioChildren`.
+  const audioBearingNames: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory() && await isAudioBearingDir(join(parent, entry.name))) {
+      audioBearingNames.push(entry.name);
+    }
+  }
 
-  return siblingDirNames
+  if (!discGroupGuardsPass(audioBearingNames, key)) return [memberPath];
+
+  return audioBearingNames
     .map(name => ({ path: join(parent, name), marker: parseEmbeddedDiscMarker(name) }))
     .filter((e): e is { path: string; marker: EmbeddedDiscMarker } =>
       e.marker !== null && e.marker.stem !== '' && normalizeStem(e.marker.stem) === key)
