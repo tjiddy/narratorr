@@ -12,7 +12,8 @@ import type { SearchResult } from '../../core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '../../shared/constants.js';
 
-vi.mock('../utils/enrich-usenet-languages.js', () => ({
+vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
   enrichUsenetLanguages: vi.fn(),
 }));
 
