@@ -32,12 +32,13 @@ import {
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
-import { removeImportSibling } from './import-staging.js';
+import { removeImportSibling, removeMarker, BackupRecoveryError } from './import-staging.js';
 
 // Staged-import siblings machinery (.import-tmp/.import-bak) lives in import-staging.ts;
 // re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
 export {
   prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
+  BackupRecoveryError,
 } from './import-staging.js';
 export type {
   PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,
@@ -345,17 +346,24 @@ export interface HandleImportFailureArgs {
 
 /** Clean up after a failed import: remove files, revert DB statuses. Rethrows. */
 export async function handleImportFailure(args: HandleImportFailureArgs): Promise<never> {
-  const { targetPath, stagingPath, backupPath, libraryRoot, protectTarget, log } = args;
+  const { error, targetPath, stagingPath, backupPath, libraryRoot, protectTarget, log } = args;
 
-  // Always clean up the transient staging/backup siblings (guarded, nonfatal).
+  // A BackupRecoveryError means a kill-recovery was mid-flight: the originals still
+  // in `.import-bak` and the commit-pending marker MUST survive for the next boot's
+  // recovery attempt (#1290). Skip removing both; staging is still re-derivable scratch.
+  const preserveBackup = error instanceof BackupRecoveryError;
+
+  // Always clean up the transient staging sibling (guarded, nonfatal).
   if (stagingPath) await removeImportSibling(stagingPath, libraryRoot, log, 'staging');
-  if (backupPath) await removeImportSibling(backupPath, libraryRoot, log, 'backup');
+  if (backupPath && !preserveBackup) await removeImportSibling(backupPath, libraryRoot, log, 'backup');
+  if (targetPath && !preserveBackup) await removeMarker(targetPath, libraryRoot, log);
 
   // Only blanket-remove targetPath when it is NOT a protected pre-existing book
-  // folder. `targetPath` is always derived from librarySettings.path via
+  // folder, and never during a preserved recovery (the half-restored originals live
+  // there). `targetPath` is always derived from librarySettings.path via
   // buildTargetPath() at the single call site (import.service.ts) — guarded by
   // libraryRoot when provided (#759).
-  if (targetPath && !protectTarget) {
+  if (targetPath && !protectTarget && !preserveBackup) {
     if (libraryRoot) {
       try {
         assertPathInsideLibrary(targetPath, libraryRoot);
