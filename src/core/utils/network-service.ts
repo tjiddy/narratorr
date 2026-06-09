@@ -390,6 +390,12 @@ export interface FetchWithSsrfRedirectOptions {
   timeoutMs?: number;
   maxHops?: number;
   /**
+   * Request headers applied to every hop (e.g. a `User-Agent`). Forwarded
+   * verbatim into each `fetch` call so callers can identify themselves to
+   * indexers without reaching into the redirect loop.
+   */
+  headers?: Record<string, string>;
+  /**
    * Pre-flight host:port allowlist. When set, a hop whose canonical
    * `host:port` (lowercased hostname, scheme-default port if absent, IPv6
    * brackets stripped) is in the set may resolve to a private/loopback
@@ -418,7 +424,7 @@ export async function fetchWithSsrfRedirect(
   startUrl: string,
   opts: FetchWithSsrfRedirectOptions = {},
 ): Promise<Response> {
-  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist } = opts;
+  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist, headers } = opts;
   const visited = new Set<string>();
   let currentUrl = startUrl;
 
@@ -438,6 +444,7 @@ export async function fetchWithSsrfRedirect(
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
       dispatcher,
+      ...(headers && { headers }),
     };
 
     const response = await fetchWithOptionalDispatcher(currentUrl, fetchOptions);

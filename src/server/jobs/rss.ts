@@ -11,7 +11,7 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
-import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -120,6 +120,12 @@ export async function runRssJob(
       continue;
     }
 
+    // Persist the match score so the enrichment Phase-2 cap ranks by it. RSS
+    // computes bestScore here for matching and would otherwise discard it,
+    // leaving the cap to rank only by seeders/grabs (usually absent on usenet)
+    // and effectively falling back to feed order (#1315).
+    item.matchScore = bestScore;
+
     const existing = itemsPerBook.get(bestCandidate.id);
     if (existing) {
       existing.results.push(item);
@@ -140,8 +146,9 @@ export async function runRssJob(
   for (const [bookId, { results: bookResults, candidate }] of itemsPerBook) {
     matched++;
 
-    // Enrich Usenet results before filtering
-    await enrichUsenetLanguages(bookResults, log, lanAllowlist);
+    // Enrich Usenet results before filtering. Auto-grab path: cap Phase-2
+    // fetches to the top-ranked candidates (#1315).
+    await enrichUsenetLanguages(bookResults, log, lanAllowlist, { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
     // Filter multi-part Usenet posts (after enrichment so nzbName is available)
     const { filtered: afterMultipart, rejectedTitles: rssMultipartRejections } = filterMultiPartUsenet(bookResults);
