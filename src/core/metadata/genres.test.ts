@@ -157,8 +157,7 @@ describe('normalizeGenres', () => {
 
 describe('findUnmatchedGenres', () => {
   it('identifies genres not in any known list', () => {
-    const normalized = ['Fantasy', 'Cozy Mystery', 'Progression Fantasy'];
-    const unmatched = findUnmatchedGenres(normalized, normalized);
+    const unmatched = findUnmatchedGenres(['Fantasy', 'Cozy Mystery', 'Progression Fantasy']);
 
     // Fantasy is a known fiction child, so it's matched
     expect(unmatched).not.toContain('Fantasy');
@@ -168,11 +167,25 @@ describe('findUnmatchedGenres', () => {
   });
 
   it('returns empty for null input', () => {
-    expect(findUnmatchedGenres(null, null)).toEqual([]);
+    expect(findUnmatchedGenres(null)).toEqual([]);
   });
 
   it('returns empty when all genres are known', () => {
-    const result = findUnmatchedGenres(['Fantasy', 'Science Fiction'], ['Fantasy', 'Science Fiction']);
+    const result = findUnmatchedGenres(['Fantasy', 'Science Fiction']);
     expect(result).toEqual([]);
+  });
+
+  it('does not flag synonym keys or BISAC paths once normalized', () => {
+    // Raw provider genres the normalizer fully handles: a synonym key,
+    // a BISAC path, and a generic parent removed alongside its child.
+    const raw = ['Sci-Fi', 'Fiction / Fantasy / Epic', 'Fiction'];
+    const result = findUnmatchedGenres(normalizeGenres(raw));
+    expect(result).toEqual([]);
+  });
+
+  it('flags only the genuinely unknown genre from a mixed raw list', () => {
+    const raw = ['Sci-Fi', 'Weird Western'];
+    const result = findUnmatchedGenres(normalizeGenres(raw));
+    expect(result).toEqual(['Weird Western']);
   });
 });
