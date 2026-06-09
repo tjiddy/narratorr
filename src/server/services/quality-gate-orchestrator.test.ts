@@ -867,7 +867,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: '/downloads/test-book' }),
-        expect.stringContaining('fallback deleted'),
+        expect.stringContaining('deleted output path'),
       );
     });
 
@@ -875,13 +875,14 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, log } = createOrchestrator();
       const download = { ...baseDownload, outputPath: '/downloads/missing' };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
-      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+      const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(enoent);
 
       await orchestrator.reject(1);
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: '/downloads/missing' }),
-        expect.stringContaining('does not exist'),
+        expect.stringContaining('already gone'),
       );
     });
 
@@ -911,6 +912,8 @@ describe('QualityGateOrchestrator', () => {
 
       expect(downloadClientService.getAdapter).not.toHaveBeenCalled();
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      // Negative twin (#1293 F2): missing-client proceed path STILL runs the fallback outputPath delete
+      expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
 
     it('skips adapter call when externalId is null', async () => {
@@ -924,6 +927,24 @@ describe('QualityGateOrchestrator', () => {
 
       expect(downloadClientService.getAdapter).not.toHaveBeenCalled();
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      // Negative twin (#1293 F2): missing-externalId proceed path STILL runs the fallback outputPath delete
+      expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
+    });
+
+    it('runs fallback outputPath delete on the no-adapter proceed path (#1293 F2)', async () => {
+      const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator();
+      // Adapter unresolvable (client id present but getAdapter returns null) — removeDownload is a
+      // no-op, but the AC requires the fallback outputPath deletion to still run.
+      downloadClientService.getAdapter.mockResolvedValue(null);
+      const download = { ...baseDownload, outputPath: '/downloads/test-book' };
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
+      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
+      (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      await orchestrator.reject(1);
+
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
   });
 
@@ -1630,6 +1651,27 @@ describe('QualityGateOrchestrator', () => {
         return payload && 'pendingCleanup' in payload && payload.pendingCleanup === null;
       });
       expect(clearCall).toBeDefined();
+    });
+
+    it('null adapter on proceed path counts as adapter-success → both markers cleared after file delete (#1293 F3)', async () => {
+      // getAdapter returns null (client deleted): no removeDownload call is made, but the AC requires
+      // a null adapter to count as adapter-success so a successful outputPath delete clears BOTH markers.
+      const { orchestrator, qualityGateService, db, downloadClientService } = setupWithSettings(importSettings);
+      downloadClientService.getAdapter.mockResolvedValue(null);
+      qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
+
+      await orchestrator.cleanupDeferredRejections();
+
+      // No client-side removal happened (adapter unresolvable), but files were deleted via fallback
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
+      // Both pendingCleanup and outputPath must be cleared (no-adapter treated as adapter-success)
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const clearBothCall = setCalls.find((call: unknown[]) => {
+        const payload = call[0] as Record<string, unknown>;
+        return payload && payload.pendingCleanup === null && payload.outputPath === null;
+      });
+      expect(clearBothCall).toBeDefined();
     });
   });
 
