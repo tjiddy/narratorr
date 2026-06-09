@@ -787,6 +787,30 @@ describe('reconstructDiscGroup', () => {
 
     expect(result).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
   });
+
+  it('does NOT reconstruct a set with inconsistent "of M" totals (mirrors discovery guard)', async () => {
+    vi.mocked(readdir).mockResolvedValueOnce([
+      makeDirent('Author - Book Disc 1 of 10', false, true),
+      makeDirent('Author - Book Disc 2 of 8', false, true),
+    ] as never);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
+
+    // Discovery left these separate → reconstruction must too (length 1 → callers skip flatten)
+    expect(result).toEqual(['/downloads/Author - Book Disc 1 of 10']);
+  });
+
+  it('does NOT reconstruct when a markerless sibling shares the stem (all-or-nothing guard)', async () => {
+    vi.mocked(readdir).mockResolvedValueOnce([
+      makeDirent('Author - Book Disc 1 of 3', false, true),
+      makeDirent('Author - Book Disc 2 of 3', false, true),
+      makeDirent('Author - Book Bonus Material', false, true),
+    ] as never);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
+
+    expect(result).toEqual(['/downloads/Author - Book Disc 1 of 3']);
+  });
 });
 
 describe('copyDiscGroup', () => {

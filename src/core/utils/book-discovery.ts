@@ -3,10 +3,10 @@ import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
-import { parseEmbeddedDiscMarker, normalizeStem, type EmbeddedDiscMarker } from './disc-marker.js';
+import { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
 
 // Re-exported so existing importers (import-helpers.ts, tests) keep a single entry point.
-export { parseEmbeddedDiscMarker, normalizeStem, type EmbeddedDiscMarker } from './disc-marker.js';
+export { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
 export interface DiscoveryLogger {
@@ -325,24 +325,17 @@ interface EmbeddedDiscGroup {
   members: DirInfo[];
 }
 
-/** True when `name`'s normalized form begins with `key` at a separator/word boundary. */
-function sharesStemPrefix(name: string, key: string): boolean {
-  const n = normalizeStem(name);
-  if (n === key) return true;
-  if (!n.startsWith(key)) return false;
-  const next = n.charAt(key.length);
-  return next === ' ' || next === '-' || next === '_' || next === ':' || next === ',';
-}
-
 /**
  * Group sibling audio folders that carry an embedded disc marker by their common stem.
  *
- * A group is collapsible only when (a) ≥2 members share an identical normalized stem,
- * (b) any explicit `of <M>` totals agree (consistency guard), and (c) every stem-sharing
- * sibling carries a marker (all-or-nothing — a markerless sharer makes the set ambiguous).
- * Bare-token names (empty stem) are excluded so the DISC_FOLDER_PATTERN path is untouched.
+ * A group is collapsible only when ≥2 members share an identical normalized stem AND the
+ * shared `discGroupGuardsPass` consistency (`of M` totals agree) + all-or-nothing (every
+ * stem-sharing sibling carries a marker) guards hold. Bare-token names (empty stem) are
+ * excluded so the DISC_FOLDER_PATTERN path is untouched. Import-time reconstruction replays
+ * the same `discGroupGuardsPass` guards so both sides coalesce identical sets.
  */
 function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
+  const siblingNames = audioChildren.map(folderNameOf);
   const byStem = new Map<string, { info: DirInfo; marker: EmbeddedDiscMarker }[]>();
   for (const child of audioChildren) {
     const name = folderNameOf(child);
@@ -360,16 +353,7 @@ function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
   const groups: EmbeddedDiscGroup[] = [];
   for (const [key, members] of byStem) {
     if (members.length < 2) continue;
-
-    const totals = new Set(members.map(m => m.marker.total).filter((t): t is number => t !== undefined));
-    if (totals.size > 1) continue; // inconsistent `of M` totals → ambiguous
-
-    const stemSharers = audioChildren.filter(c => sharesStemPrefix(folderNameOf(c), key));
-    const allMarked = stemSharers.every(c => {
-      const m = parseEmbeddedDiscMarker(folderNameOf(c));
-      return m !== null && m.stem !== '';
-    });
-    if (!allMarked) continue; // a markerless stem-sharer → all-or-nothing bail
+    if (!discGroupGuardsPass(siblingNames, key)) continue;
 
     const sorted = members.slice().sort((a, b) => a.marker.discNumber - b.marker.discNumber);
     groups.push({ stem: sorted[0]!.marker.stem, members: sorted.map(m => m.info) });

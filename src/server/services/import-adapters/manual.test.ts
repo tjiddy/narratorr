@@ -323,6 +323,47 @@ describe('ManualImportAdapter', () => {
         expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
         expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
       });
+
+      it('mode=copy: inconsistent-total sibling set falls back to single-path copy, not a flatten', async () => {
+        const fs = await import('node:fs/promises');
+        vi.mocked(fs.readdir).mockResolvedValueOnce([
+          makeDirent('Author - Book Disc 1 of 10', false),
+          makeDirent('Author - Book Disc 2 of 8', false),
+        ] as never);
+        const { copyDiscGroup } = await import('../../utils/import-helpers.js');
+        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Author - Book Disc 1 of 10', title: 'Test Book', authorName: 'Author', mode: 'copy',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // Discovery left this row ungrouped → import copies only its single folder
+        expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+        expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
+          '/audiobooks/Author - Book Disc 1 of 10', TARGET_PATH, expect.any(Function),
+        );
+      });
+
+      it('pointer mode: partial-marker sibling set is NOT rejected (discovery left it ungrouped)', async () => {
+        const fs = await import('node:fs/promises');
+        vi.mocked(fs.readdir).mockResolvedValueOnce([
+          makeDirent('Author - Book Disc 1 of 3', false),
+          makeDirent('Author - Book Disc 2 of 3', false),
+          makeDirent('Author - Book Bonus Material', false),
+        ] as never);
+        const { copyDiscGroup } = await import('../../utils/import-helpers.js');
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Author - Book Disc 1 of 3', title: 'Test Book', authorName: 'Author', // pointer
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // No multi-disc rejection, no flatten — ordinary pointer registration of the single folder
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).toContain('fetching_metadata');
+        expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+      });
     });
 
     describe('single-file payloads (issue #982)', () => {

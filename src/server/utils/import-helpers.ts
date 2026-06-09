@@ -6,7 +6,7 @@ import { join, extname, basename, dirname } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 import {
-  DISC_FOLDER_PATTERN, parseTitledDiscFolder, parseEmbeddedDiscMarker, normalizeStem,
+  DISC_FOLDER_PATTERN, parseTitledDiscFolder, parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass,
   type EmbeddedDiscMarker,
 } from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
@@ -310,6 +310,10 @@ export async function copyAudioFiles(
  * set is re-derived server-side from `dirname(path)` — siblings whose normalized stem matches
  * and that carry a disc marker, ordered by disc number. Returns `[memberPath]` unchanged when
  * the path is not an embedded-marker disc member (so callers gate on `length >= 2`).
+ *
+ * Replays discovery's `discGroupGuardsPass` consistency + all-or-nothing guards so a row that
+ * discovery intentionally left ungrouped (inconsistent `of M` totals, or a markerless stem-sharing
+ * sibling) is NOT flattened/rejected as a coalesced set here — reconstruction mirrors discovery.
  */
 export async function reconstructDiscGroup(memberPath: string): Promise<string[]> {
   const marker = parseEmbeddedDiscMarker(basename(memberPath));
@@ -325,9 +329,11 @@ export async function reconstructDiscGroup(memberPath: string): Promise<string[]
     return [memberPath];
   }
 
-  return entries
-    .filter(e => e.isDirectory())
-    .map(e => ({ path: join(parent, e.name), marker: parseEmbeddedDiscMarker(e.name) }))
+  const siblingDirNames = entries.filter(e => e.isDirectory()).map(e => e.name);
+  if (!discGroupGuardsPass(siblingDirNames, key)) return [memberPath];
+
+  return siblingDirNames
+    .map(name => ({ path: join(parent, name), marker: parseEmbeddedDiscMarker(name) }))
     .filter((e): e is { path: string; marker: EmbeddedDiscMarker } =>
       e.marker !== null && e.marker.stem !== '' && normalizeStem(e.marker.stem) === key)
     .sort((a, b) => a.marker.discNumber - b.marker.discNumber)
