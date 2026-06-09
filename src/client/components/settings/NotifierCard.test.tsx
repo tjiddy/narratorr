@@ -4,8 +4,23 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
 import { NotifierCard } from './NotifierCard';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES, type NotifierType } from '../../../shared/notifier-registry.js';
 import type { Notifier, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
+
+// Every settings key declared by a notifier type OTHER than `ownType`, minus any key
+// `ownType` also declares (e.g. slack/discord both use `webhookUrl`). Registry-derived so
+// the #908 guard automatically covers new notifier types without test edits.
+function foreignNotifierKeys(ownType: NotifierType): string[] {
+  const ownKeys = new Set(Object.keys(NOTIFIER_REGISTRY[ownType].defaultSettings));
+  return [
+    ...new Set(
+      NOTIFIER_TYPES.filter((t) => t !== ownType)
+        .flatMap((t) => Object.keys(NOTIFIER_REGISTRY[t].defaultSettings))
+        .filter((k) => !ownKeys.has(k)),
+    ),
+  ];
+}
 
 const mockNotifier: Notifier = createMockNotifier({ id: 1 });
 
@@ -577,7 +592,7 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
 // needed — the existing overlay already prevents the leak (regress it by seeding from a union
 // of all types' defaults and these assertions go red).
 describe('NotifierCard — #908 settingsFromNotifier registry overlay (no foreign-type leak)', () => {
-  it('webhook entity edit Test payload preserves webhook keys and leaks no discord keys', async () => {
+  it('webhook entity edit Test payload preserves webhook keys and leaks no foreign-type keys', async () => {
     const onFormTest = vi.fn();
     const user = userEvent.setup();
     const webhookNotifier: Notifier = createMockNotifier({
@@ -609,12 +624,18 @@ describe('NotifierCard — #908 settingsFromNotifier registry overlay (no foreig
     expect(payloadSettings).toHaveProperty('method', 'POST');
     expect(payloadSettings).toHaveProperty('bodyTemplate', '{{title}}');
 
-    // Discord-only keys MUST NOT leak.
-    expect(payloadSettings).not.toHaveProperty('webhookUrl');
-    expect(payloadSettings).not.toHaveProperty('includeCover');
+    // NO key from ANY other notifier type may leak — AC1/CLAUDE.md require the selected
+    // type's payload to carry no foreign keys (the strict per-type server schema rejects them).
+    // Covers discord (webhookUrl/includeCover) plus script/email/telegram/slack/pushover/ntfy/gotify.
+    const foreignKeys = foreignNotifierKeys('webhook');
+    expect(foreignKeys).toContain('webhookUrl');
+    expect(foreignKeys).toContain('botToken');
+    for (const key of foreignKeys) {
+      expect(payloadSettings).not.toHaveProperty(key);
+    }
   });
 
-  it('discord entity edit Test payload preserves discord keys and leaks no webhook keys', async () => {
+  it('discord entity edit Test payload preserves discord keys and leaks no foreign-type keys', async () => {
     const onFormTest = vi.fn();
     const user = userEvent.setup();
     const discordNotifier: Notifier = createMockNotifier({
@@ -646,9 +667,14 @@ describe('NotifierCard — #908 settingsFromNotifier registry overlay (no foreig
     expect(payloadSettings).toHaveProperty('webhookUrl', 'https://discord.com/api/webhooks/x');
     expect(payloadSettings).toHaveProperty('includeCover', false);
 
-    // Webhook-only keys MUST NOT leak.
-    expect(payloadSettings).not.toHaveProperty('url');
-    expect(payloadSettings).not.toHaveProperty('method');
-    expect(payloadSettings).not.toHaveProperty('bodyTemplate');
+    // NO key from ANY other notifier type may leak. `webhookUrl` is shared with slack so it
+    // is the discord type's own key (correctly excluded); webhook keys (url/method/headers/
+    // bodyTemplate) plus script/email/telegram/pushover/ntfy/gotify keys MUST all be absent.
+    const foreignKeys = foreignNotifierKeys('discord');
+    expect(foreignKeys).toContain('url');
+    expect(foreignKeys).not.toContain('webhookUrl');
+    for (const key of foreignKeys) {
+      expect(payloadSettings).not.toHaveProperty(key);
+    }
   });
 });

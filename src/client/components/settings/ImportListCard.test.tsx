@@ -3,8 +3,24 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ImportListCard } from './ImportListCard';
+import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '../../../shared/import-list-registry.js';
 import type { ImportList } from '@/lib/api';
 import type { Mock } from 'vitest';
+
+// Every settings key declared by an import-list type OTHER than `ownType`, minus any key
+// `ownType` also declares (e.g. all three share `apiKey`). Registry-derived so the #908
+// guard covers new provider types — and the full foreign set, not just the prior type's
+// keys — without test edits.
+function foreignImportListKeys(ownType: ImportListType): string[] {
+  const ownKeys = new Set(Object.keys(IMPORT_LIST_REGISTRY[ownType].defaultSettings));
+  return [
+    ...new Set(
+      IMPORT_LIST_TYPES.filter((t) => t !== ownType)
+        .flatMap((t) => Object.keys(IMPORT_LIST_REGISTRY[t].defaultSettings))
+        .filter((k) => !ownKeys.has(k)),
+    ),
+  ];
+}
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -472,9 +488,13 @@ describe('ImportListCard', () => {
       expect(onFormTest).toHaveBeenCalled();
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // abs-only keys MUST NOT survive the switch.
-      expect(payloadSettings).not.toHaveProperty('serverUrl');
-      expect(payloadSettings).not.toHaveProperty('libraryId');
+      // No key from any non-nyt provider may survive the switch — covers abs (serverUrl/
+      // libraryId) AND hardcover (listType), matching the full no-foreign-keys contract.
+      const foreignKeys = foreignImportListKeys('nyt');
+      expect(foreignKeys).toEqual(expect.arrayContaining(['serverUrl', 'libraryId', 'listType']));
+      for (const key of foreignKeys) {
+        expect(payloadSettings).not.toHaveProperty(key);
+      }
 
       // nyt defaults MUST be present (value-checked so the reset is confirmed).
       expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
@@ -500,8 +520,13 @@ describe('ImportListCard', () => {
       expect(onFormTest).toHaveBeenCalled();
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // nyt-only key MUST NOT survive the switch.
-      expect(payloadSettings).not.toHaveProperty('list');
+      // No key from any non-abs provider may survive the switch — covers nyt (list) AND
+      // hardcover (listType), matching the full no-foreign-keys contract.
+      const foreignKeys = foreignImportListKeys('abs');
+      expect(foreignKeys).toEqual(expect.arrayContaining(['list', 'listType']));
+      for (const key of foreignKeys) {
+        expect(payloadSettings).not.toHaveProperty(key);
+      }
 
       // abs defaults MUST be present.
       expect(payloadSettings).toHaveProperty('serverUrl', '');
