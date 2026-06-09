@@ -867,7 +867,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: '/downloads/test-book' }),
-        expect.stringContaining('fallback deleted'),
+        expect.stringContaining('deleted output path'),
       );
     });
 
@@ -875,13 +875,14 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, log } = createOrchestrator();
       const download = { ...baseDownload, outputPath: '/downloads/missing' };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
-      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+      const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      (stat as ReturnType<typeof vi.fn>).mockRejectedValue(enoent);
 
       await orchestrator.reject(1);
 
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: '/downloads/missing' }),
-        expect.stringContaining('does not exist'),
+        expect.stringContaining('already gone'),
       );
     });
 

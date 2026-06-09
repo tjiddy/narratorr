@@ -20,7 +20,7 @@ import {
   verifyCopy, commitStagedImport, cleanupOldBookPath, handleImportFailure,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
-import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
+import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -259,34 +259,38 @@ export class ImportService {
     if (!download.downloadClientId || !download.externalId) return;
 
     try {
-      // Fetch current ratio from download client if ratio gating is enabled
-      let currentRatio = 0;
-      if (importSettings.minSeedRatio > 0) {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-        if (!liveState) {
-          // Cannot determine ratio — defer for retry
-          this.log.info({ downloadId: download.id }, 'Skipping torrent removal — cannot fetch current state, deferring');
-          await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-          return;
-        }
-        currentRatio = liveState.ratio;
-      }
-
-      if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
-        this.log.info({ downloadId: download.id, currentRatio, minSeedRatio: importSettings.minSeedRatio, minSeedTime: importSettings.minSeedTime }, 'Skipping torrent removal — seed conditions not met, deferring');
-        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-        return;
-      }
-
-      const client = await this.downloadClientService.getById(download.downloadClientId);
-      const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-      if (adapter) {
-        await adapter.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type, deleteFiles: true }, 'Torrent removed from client after import');
-      }
+      // The import path defers when the live ratio cannot be fetched — it treats "unknown
+      // state" as "not yet safe to remove". outputPath-nulling is intentionally NOT done here.
+      const result = await removeOrDeferTorrent(download, importSettings,
+        { downloadClientService: this.downloadClientService, log: this.log },
+        { deferOnUnavailableRatio: true });
+      await this.applyImportRemovalResult(download, importSettings, result);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed to remove torrent after import');
+    }
+  }
+
+  /** Map the shared removal result onto the initial-import bookkeeping (defer markers + logs). */
+  private async applyImportRemovalResult(download: DownloadRow, importSettings: { minSeedTime: number; minSeedRatio: number }, result: TorrentRemovalResult): Promise<void> {
+    switch (result.outcome) {
+      case 'live-state-unavailable':
+        this.log.info({ downloadId: download.id }, 'Skipping torrent removal — cannot fetch current state, deferring');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+        return;
+      case 'deferred':
+        this.log.info({ downloadId: download.id, currentRatio: result.currentRatio, minSeedRatio: importSettings.minSeedRatio, minSeedTime: importSettings.minSeedTime }, 'Skipping torrent removal — seed conditions not met, deferring');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+        return;
+      case 'removed': {
+        const client = await this.downloadClientService.getById(download.downloadClientId!);
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type, deleteFiles: true }, 'Torrent removed from client after import');
+        return;
+      }
+      case 'remove-failed':
+        this.log.error({ error: serializeError(result.error), downloadId: download.id }, 'Failed to remove torrent after import');
+        return;
+      case 'no-adapter':
+        return;
     }
   }
 
@@ -314,25 +318,36 @@ export class ImportService {
       try {
         if (!download.downloadClientId || !download.externalId) continue;
 
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-        const currentRatio = liveState?.ratio ?? 0;
-
-        if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
-          continue; // Still deferred — leave pendingCleanup for next cycle
-        }
-
-        if (!adapter) {
-          this.log.warn({ downloadId: download.id }, 'Deferred torrent removal skipped — adapter not found, will retry');
-          continue;
-        }
-        const client = await this.downloadClientService.getById(download.downloadClientId);
-        await adapter.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
-        await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
+        const result = await removeOrDeferTorrent(download, importSettings,
+          { downloadClientService: this.downloadClientService, log: this.log },
+          { deferOnUnavailableRatio: false });
+        await this.applyDeferredImportResult(download, result);
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
       }
+    }
+  }
+
+  /** Map the shared removal result onto the deferred-import retry bookkeeping (clears pendingCleanup on success). */
+  private async applyDeferredImportResult(download: DownloadRow, result: TorrentRemovalResult): Promise<void> {
+    switch (result.outcome) {
+      case 'no-adapter':
+        this.log.warn({ downloadId: download.id }, 'Deferred torrent removal skipped — adapter not found, will retry');
+        return;
+      case 'remove-failed':
+        this.log.error({ error: serializeError(result.error), downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
+        return;
+      case 'removed': {
+        const client = await this.downloadClientService.getById(download.downloadClientId!);
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
+        await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
+        return;
+      }
+      // 'deferred' (seed conditions not yet met) and 'live-state-unavailable' (unreachable with
+      // deferOnUnavailableRatio: false) both leave the existing pendingCleanup marker for next cycle.
+      case 'deferred':
+      case 'live-state-unavailable':
+        return;
     }
   }
 }

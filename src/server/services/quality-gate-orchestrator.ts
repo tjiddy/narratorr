@@ -20,10 +20,9 @@ import { getErrorMessage } from '../utils/error-message.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
-import { rm, stat } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
-import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
+import { removeOrDeferTorrent, deleteDownloadOutputPath, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
@@ -366,60 +365,32 @@ export class QualityGateOrchestrator {
       return;
     }
 
-    const currentRatio = await this.fetchCurrentRatio(download, importSettings.minSeedRatio);
+    // Rejection cleanup folds a missing adapter / live state into ratio 0 (deferOnUnavailableRatio:
+    // false) so non-torrent / seed-time-only downloads still proceed.
+    const result = await removeOrDeferTorrent(download, importSettings,
+      { downloadClientService: this.downloadClientService, log: this.log },
+      { deferOnUnavailableRatio: false });
 
-    if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+    if (result.outcome === 'deferred' || result.outcome === 'live-state-unavailable') {
       this.log.info({ downloadId: download.id }, 'Quality gate: deferring rejection cleanup — seed conditions not met');
       await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-    } else {
-      await this.removeDownloadFiles(download);
-      await this.fallbackFileDelete(download);
-    }
-  }
-
-  /** Fetch current ratio from download client for ratio-gated torrents. Returns 0 if not applicable. */
-  private async fetchCurrentRatio(download: DownloadRow, minSeedRatio: number): Promise<number> {
-    if (minSeedRatio <= 0 || !download.downloadClientId || !download.externalId) return 0;
-    const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-    const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-    return liveState?.ratio ?? 0;
-  }
-
-  /** Delete downloaded files via the download client adapter. */
-  private async removeDownloadFiles(download: DownloadRow): Promise<void> {
-    try {
-      if (download.downloadClientId && download.externalId) {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        if (adapter) {
-          await adapter.removeDownload(download.externalId, true);
-          this.log.info({ downloadId: download.id }, 'Quality gate: deleted rejected download files');
-        }
-      }
-    } catch (error: unknown) {
-      this.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Quality gate: failed to delete download files');
-    }
-  }
-
-  /** Attempt direct file deletion from persisted outputPath when adapter removal may have been incomplete. */
-  private async fallbackFileDelete(download: DownloadRow): Promise<void> {
-    if (!download.outputPath) {
-      this.log.debug({ downloadId: download.id }, 'Quality gate: fallback delete skipped — no outputPath');
       return;
     }
 
-    try {
-      await stat(download.outputPath);
-    } catch {
-      this.log.debug({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: fallback delete skipped — path does not exist');
-      return;
-    }
+    this.logRejectionRemoval(download, result);
+    // Best-effort fallback delete of the persisted outputPath — the boolean is intentionally
+    // ignored here (rejection cleanup tolerates failure), and it runs even on the no-adapter path.
+    await deleteDownloadOutputPath(download, this.log);
+  }
 
-    try {
-      await rm(download.outputPath, { recursive: true, force: true });
-      this.log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: fallback deleted orphaned files');
-    } catch (error: unknown) {
-      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error: serializeError(error) }, 'Quality gate: fallback file deletion failed');
+  /** Log the client-removal outcome for the rejection-cleanup proceed path (matches prior best-effort logging). */
+  private logRejectionRemoval(download: DownloadRow, result: TorrentRemovalResult): void {
+    if (result.outcome === 'removed') {
+      this.log.info({ downloadId: download.id }, 'Quality gate: deleted rejected download files');
+    } else if (result.outcome === 'remove-failed') {
+      this.log.warn({ downloadId: download.id, error: serializeError(result.error) }, 'Quality gate: failed to delete download files');
     }
+    // 'no-adapter': no removal call was made — stay silent, as before.
   }
 
   /** Fire-and-forget event recording — swallows errors to avoid breaking the caller. */
