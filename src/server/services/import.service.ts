@@ -157,7 +157,7 @@ export class ImportService {
       // Copy, rename and verify the new version into `.import-tmp`. The existing
       // targetPath is never touched here, so a copy failure can't destroy the
       // current book — old audio, cover and metadata all remain in place.
-      await prepareImportSiblings({ stagingPath, backupPath, libraryRoot, log: this.log });
+      await prepareImportSiblings({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
       await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
         sourcePath, targetPath: stagingPath, sourceStats, log: this.log,

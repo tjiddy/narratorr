@@ -521,10 +521,11 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      expect(writeFile).toHaveBeenCalled();
-      const writeCall = vi.mocked(writeFile).mock.calls[0];
-      expect(writeCall![0]).toMatch(/cover\.png$/);
-      expect(writeCall![1]).toBe(coverData);
+      // The commit-pending marker (#1290) also uses writeFile, so match the cover
+      // write specifically rather than asserting on the first call.
+      const coverCall = vi.mocked(writeFile).mock.calls.find((c) => /cover\.png$/.test(String(c[0])));
+      expect(coverCall).toBeDefined();
+      expect(coverCall![1]).toBe(coverData);
 
       const enrichmentCall = getEnrichmentUpdate();
       expect(enrichmentCall!.coverUrl).toBe('/api/books/1/cover');
@@ -547,7 +548,10 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      expect(writeFile).not.toHaveBeenCalled();
+      // No cover write happens (book already has a cover). The commit-pending marker
+      // (#1290) may still use writeFile, so assert specifically that no cover was written.
+      const coverCall = vi.mocked(writeFile).mock.calls.find((c) => /cover\./.test(String(c[0])));
+      expect(coverCall).toBeUndefined();
     });
 
     it('continues gracefully when scanner returns null', async () => {

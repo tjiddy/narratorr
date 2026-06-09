@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { stagedAudioReplace } from './import-steps.js';
+import { stagedAudioReplace, prepareImportSiblings, BackupRecoveryError } from './import-steps.js';
 import { copyAudioFiles, copyDiscGroup, getAudioPathSize } from './import-helpers.js';
 
 /**
@@ -210,5 +210,185 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(files).not.toContain('old.m4b');
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
+  it('#1290: a successful replace over a populated target leaves no commit-pending marker behind', async () => {
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    await replaceFromSource();
+
+    expect(await pathExists(`${target}.import-commit-pending`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+});
+
+/**
+ * #1290 — a process-killed commit (SIGKILL/OOM/power loss) leaves originals stranded
+ * in `.import-bak` and a commit-pending marker on disk; the in-process rollback never
+ * ran. On the next import the marker drives recovery: the originals are restored to the
+ * target before any deletion, instead of the prior strict-clear that deleted them.
+ * These tests stage that interrupted on-disk state over a real tmpdir and drive the
+ * real entry path (`prepareImportSiblings` / `stagedAudioReplace`).
+ */
+describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
+  let libraryRoot: string;
+  let target: string;
+  let staging: string;
+  let backup: string;
+  let marker: string;
+
+  beforeEach(async () => {
+    libraryRoot = mkdtempSync(join(tmpdir(), 'narratorr-1290-'));
+    target = join(libraryRoot, 'Author', 'Title');
+    staging = `${target}.import-tmp`;
+    backup = `${target}.import-bak`;
+    marker = `${target}.import-commit-pending`;
+    await mkdir(target, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(libraryRoot, { recursive: true, force: true });
+  });
+
+  /** Re-enter the import pre-step exactly as the startup-recovery re-run would. */
+  function recover(): Promise<void> {
+    return prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot, log: makeLog() });
+  }
+
+  it('AC: restores a flat backed-up original into the target, then clears backup + marker', async () => {
+    const originalBytes = Buffer.alloc(400, 9);
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old.m4b'), originalBytes);
+    await writeFile(marker, '');
+
+    await recover();
+
+    expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it('AC: detects + restores nested-only backups (Disc 1/old.mp3), recreating the subdir', async () => {
+    const bytes = Buffer.alloc(300, 3);
+    await mkdir(join(backup, 'Disc 1'), { recursive: true });
+    await mkdir(join(backup, 'Disc 2'), { recursive: true });
+    await writeFile(join(backup, 'Disc 1', 'track01.mp3'), bytes);
+    await writeFile(join(backup, 'Disc 2', 'track02.mp3'), bytes);
+    await writeFile(marker, '');
+
+    await recover();
+
+    const files = await listAllFiles(target);
+    expect(files).toContain('Disc 1/track01.mp3');
+    expect(files).toContain('Disc 2/track02.mp3');
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it('AC: interrupted move-in conflict — backup overwrites the half-moved-in same-name target file', async () => {
+    const original = Buffer.from('ORIGINAL-EDITION');
+    const halfMovedIn = Buffer.from('STAGED-NEW-EDITION');
+    // A kill mid move-in: the new staged file already sits at target/book.m4b...
+    await writeFile(join(target, 'book.m4b'), halfMovedIn);
+    // ...while the original is in the backup, and the marker proves the interruption.
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'book.m4b'), original);
+    await writeFile(marker, '');
+
+    await recover();
+
+    // The backup is authoritative: the original overwrites the half-moved-in file.
+    expect(await readFile(join(target, 'book.m4b'))).toEqual(original);
+  });
+
+  it('AC: leaves non-audio in the target untouched while restoring backed-up audio', async () => {
+    await writeFile(join(target, 'cover.jpg'), Buffer.from('JPEGDATA'));
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old.m4b'), Buffer.alloc(200, 1));
+    await writeFile(marker, '');
+
+    await recover();
+
+    expect(await readFile(join(target, 'cover.jpg'), 'utf8')).toBe('JPEGDATA');
+    expect(await pathExists(join(target, 'old.m4b'))).toBe(true);
+  });
+
+  it('AC (idempotency): a recovery failure preserves the unrestored backup + marker; a second run converges', async () => {
+    const aBytes = Buffer.from('A-ORIGINAL');
+    const zBytes = Buffer.from('Z-ORIGINAL');
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'a.m4b'), aBytes);
+    await writeFile(join(backup, 'z.m4b'), zBytes);
+    await writeFile(marker, '');
+    // Block the restore of z.m4b: a non-empty directory at the destination makes the
+    // file→dir rename throw partway through the restore loop.
+    await mkdir(join(target, 'z.m4b'), { recursive: true });
+    await writeFile(join(target, 'z.m4b', 'blocker'), Buffer.from('x'));
+
+    // Drive the full caller chain so the preserve-backup cleanup path is exercised.
+    await expect(stagedAudioReplace({
+      targetPath: target, libraryRoot, log: makeLog(), sourceAudioSize: 1,
+      stage: async () => { /* unreached — recovery throws first */ },
+    })).rejects.toBeInstanceOf(BackupRecoveryError);
+
+    // The unrestored original AND the marker survive for the next boot.
+    expect(await pathExists(join(backup, 'z.m4b'))).toBe(true);
+    expect(await pathExists(marker)).toBe(true);
+
+    // Next boot: clear the blocker, re-run recovery → converges, both files restored.
+    await rm(join(target, 'z.m4b'), { recursive: true, force: true });
+    await recover();
+
+    expect(await readFile(join(target, 'a.m4b'))).toEqual(aBytes);
+    expect(await readFile(join(target, 'z.m4b'))).toEqual(zBytes);
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it('false-positive guard: a stale non-empty .import-bak with NO marker is strict-cleared, target NOT regressed', async () => {
+    const committedBytes = Buffer.from('NEW-COMMITTED');
+    const staleBytes = Buffer.from('OLD-STALE');
+    // Success-leftover shape: target holds the correctly committed new audio, the
+    // backup holds stale old audio, and there is NO marker.
+    await writeFile(join(target, 'book.m4b'), committedBytes);
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'book.m4b'), staleBytes);
+
+    const log = makeLog();
+    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot, log });
+
+    // Backup strict-cleared, committed target audio untouched, no recovery log.
+    expect(await pathExists(backup)).toBe(false);
+    expect(await readFile(join(target, 'book.m4b'))).toEqual(committedBytes);
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/Recovering interrupted import commit/i));
+  });
+
+  it('negative twin: empty .import-bak with no marker → no recovery, backup cleared', async () => {
+    await mkdir(backup, { recursive: true });
+
+    await recover();
+
+    expect(await pathExists(backup)).toBe(false);
+  });
+
+  it('negative twin: absent .import-bak with no marker → happy path, nothing restored', async () => {
+    await writeFile(join(target, 'keep.jpg'), Buffer.from('cover'));
+
+    await recover();
+
+    // Target untouched; no backup conjured.
+    expect(await listAllFiles(target)).toEqual(['keep.jpg']);
+    expect(await pathExists(backup)).toBe(false);
+  });
+
+  it('negative twin: a populated .import-tmp is cleared unconditionally, never restored into target', async () => {
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, 'scratch.mp3'), Buffer.alloc(100, 5));
+
+    await recover();
+
+    expect(await pathExists(staging)).toBe(false);
+    expect(await pathExists(join(target, 'scratch.mp3'))).toBe(false);
   });
 });
