@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -9,6 +9,11 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { mkdir, writeFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ImportConfirmItem } from './library-scan.service.js';
 
 vi.mock('./enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('./enrichment-orchestration.helpers.js')),
@@ -403,6 +408,82 @@ describe('copyToLibrary — token precedence (#1028)', () => {
       deps,
     );
     expect(path).toBe(targetPath);
+  });
+});
+
+describe('copyToLibrary — populated-target staged swap (#1287)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
+
+  beforeEach(async () => {
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1287-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('routes a populated target through the staged swap — replaces audio, no Frankenbook', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(target, 'cover.jpg'), Buffer.from('JPEGDATA'));
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(source, 'b.mp3'), Buffer.alloc(300, 2));
+
+    const result = await copyToLibrary(item(), null, 'copy', buildDeps());
+
+    expect(result).toBe(target);
+    const files = (await readdir(target)).sort();
+    // Old edition's audio gone; new audio present; non-audio cover preserved.
+    expect(files).toEqual(['a.mp3', 'b.mp3', 'cover.jpg']);
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
+  it('keeps the direct-copy fast path for an empty target — no staging siblings (AC3)', async () => {
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+
+    await copyToLibrary(item(), null, 'copy', buildDeps());
+
+    expect(await readdir(target)).toContain('a.mp3');
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
+  it('move mode over a populated target removes the source only after the verified swap', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    await copyToLibrary(item(), null, 'move', buildDeps());
+
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    expect(await pathExists(source)).toBe(false);
   });
 });
 

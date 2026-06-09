@@ -735,6 +735,51 @@ describe('commitStagedImport', () => {
     expect(rename).not.toHaveBeenCalled();
     expect(rm).not.toHaveBeenCalled();
   });
+
+  it('backs up nested existing target audio recursively, preserving the relative path (#1287 F7)', async () => {
+    const log = createMockLog();
+    // Target audio lives under a subdirectory; the gate (recursive getAudioPathSize)
+    // admits it, so the backup must descend into `Disc 1` or the old audio survives.
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      if (p === target) return [dirent('Disc 1', false), dirent('cover.jpg')] as never;
+      if (p === `${target}/Disc 1`) return [dirent('old.mp3'), dirent('disc.nfo')] as never;
+      if (p === staging) return [dirent('new.m4b')] as never;
+      return [] as never;
+    });
+
+    await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    // Nested audio backed up under its relative path inside the backup dir...
+    expect(mkdir).toHaveBeenCalledWith(`${backup}/Disc 1`, { recursive: true });
+    expect(rename).toHaveBeenCalledWith(`${target}/Disc 1/old.mp3`, `${backup}/Disc 1/old.mp3`);
+    // ...nested non-audio (disc.nfo) and top-level cover left untouched...
+    expect(rename).not.toHaveBeenCalledWith(`${target}/Disc 1/disc.nfo`, expect.anything());
+    expect(rename).not.toHaveBeenCalledWith(`${target}/cover.jpg`, expect.anything());
+    // ...and the new staged file moved into the target top level.
+    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+  });
+
+  it('rolls a nested backed-up file back to its original relative path on commit failure (#1287 F7)', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      if (p === target) return [dirent('Disc 1', false)] as never;
+      if (p === `${target}/Disc 1`) return [dirent('old.mp3')] as never;
+      if (p === staging) return [dirent('new.m4b')] as never;
+      return [] as never;
+    });
+    vi.mocked(rename)
+      .mockResolvedValueOnce(undefined)                     // backup Disc 1/old.mp3 -> backup
+      .mockRejectedValueOnce(new Error('EIO staged move'))  // staging/new.m4b -> target FAILS
+      .mockResolvedValue(undefined);                        // rollback restore
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toThrow('EIO staged move');
+
+    // Rollback recreates the subdir, then restores the nested backup to its origin.
+    expect(mkdir).toHaveBeenCalledWith(`${target}/Disc 1`, { recursive: true });
+    expect(rename).toHaveBeenCalledWith(`${backup}/Disc 1/old.mp3`, `${target}/Disc 1/old.mp3`);
+  });
 });
 
 // ── handleImportFailure ─────────────────────────────────────────────────
