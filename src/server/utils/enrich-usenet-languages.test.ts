@@ -1260,7 +1260,17 @@ describe('enrichUsenetLanguages', () => {
   });
 
   describe('User-Agent (#1315)', () => {
+    afterEach(() => {
+      // Restore GIT_TAG so the env stub never leaks into other suites.
+      vi.unstubAllEnvs();
+    });
+
     it('sends User-Agent: Narratorr/<version> on the enrichment NZB fetch', async () => {
+      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
+      // ambient env AND so deleting getUserAgent()'s tagged-version branch makes
+      // this fail. The unset/unknown fallbacks are covered in
+      // src/shared/user-agent.test.ts.
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
       mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(germanNzbXml(), { status: 200 }),
       );
@@ -1268,10 +1278,9 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      // GIT_TAG is unset in tests, so getVersion() resolves to "dev".
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
         'http://nzb.test/1',
-        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/dev' } }),
+        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/v9.9.9' } }),
       );
     });
   });

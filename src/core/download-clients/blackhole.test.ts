@@ -95,6 +95,8 @@ describe('BlackholeClient', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Restore GIT_TAG so the User-Agent test's env stub never leaks.
+    vi.unstubAllEnvs();
   });
 
   describe('addDownload', () => {
@@ -144,15 +146,20 @@ describe('BlackholeClient', () => {
     });
 
     it('sends User-Agent: Narratorr/<version> on the nzb-url self-download (#1315)', async () => {
+      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
+      // ambient env (a CI/release env that exports GIT_TAG would otherwise flip
+      // the expected value) AND so deleting getUserAgent()'s tagged-version
+      // branch makes this fail. The unset/unknown fallbacks are covered in
+      // src/shared/user-agent.test.ts.
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
       const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
       mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
 
       await client.addDownload({ type: 'nzb-url', url: 'https://example.com/api/download/123' });
 
-      // GIT_TAG is unset in tests, so getUserAgent() resolves to "Narratorr/dev".
       expect(ssrfRedirectWalker).toHaveBeenCalledWith(
         'https://example.com/api/download/123',
-        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/dev' } }),
+        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/v9.9.9' } }),
       );
     });
 

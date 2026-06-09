@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -32,6 +32,11 @@ describe('NewznabIndexer', () => {
     indexer = new NewznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
   });
 
+  afterEach(() => {
+    // Restore GIT_TAG so the User-Agent test's env stub never leaks.
+    vi.unstubAllEnvs();
+  });
+
   describe('properties', () => {
     it('has correct type and name', () => {
       expect(indexer.type).toBe('newznab');
@@ -49,6 +54,12 @@ describe('NewznabIndexer', () => {
 
   describe('search', () => {
     it('sends a User-Agent: Narratorr/<version> header on the API request (#1315)', async () => {
+      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
+      // ambient env (a CI/release env that exports GIT_TAG would otherwise flip
+      // the expected value) AND so deleting getUserAgent()'s tagged-version
+      // branch makes this fail. The unset/unknown fallbacks are covered in
+      // src/shared/user-agent.test.ts.
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
       let userAgent: string | null = null;
       server.use(
         http.get(`${API_BASE}/api`, ({ request }) => {
@@ -59,8 +70,7 @@ describe('NewznabIndexer', () => {
 
       await indexer.search('Brandon Sanderson');
 
-      // GIT_TAG is unset in tests, so getUserAgent() resolves to "Narratorr/dev".
-      expect(userAgent).toBe('Narratorr/dev');
+      expect(userAgent).toBe('Narratorr/v9.9.9');
     });
 
     it('parses search results from XML', async () => {
