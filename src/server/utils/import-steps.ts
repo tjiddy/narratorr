@@ -1,8 +1,8 @@
-import { stat, rm, statfs, mkdir, cp, readdir, rename } from 'node:fs/promises';
+import { stat, rm, statfs, mkdir, cp } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { Stats, Dirent } from 'node:fs';
+import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -32,6 +32,16 @@ import {
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { removeImportSibling } from './import-staging.js';
+
+// Staged-import siblings machinery (.import-tmp/.import-bak) lives in import-staging.ts;
+// re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
+export {
+  prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
+} from './import-staging.js';
+export type {
+  PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,
+} from './import-staging.js';
 
 // ── isContentFailure ────────────────────────────────────────────────────
 
@@ -137,172 +147,6 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpac
   }
 
   return { freeGB, requiredGB };
-}
-
-// ── staged-import siblings (.import-tmp / .import-bak) ───────────────────
-
-/**
- * Guarded recursive removal of a transient import sibling (staging or backup).
- * Verifies the path is inside the library root before deleting.
- *
- * `strict` controls failure handling:
- *  - `false` (default) — best-effort: a failed `rm` is logged and swallowed.
- *    Used for post-success and failure-path cleanup, where a cleanup hiccup must
- *    never abort an already-committed import or mask the controlling error.
- *  - `true` — a real `rm` failure propagates. Used pre-stage (see
- *    `prepareImportSiblings`): a leftover staging dir that can't be cleared would
- *    otherwise be enumerated and committed into the target by `commitStagedImport`
- *    (F1), so the import must abort instead. `force: true` still suppresses the
- *    common no-stale-dir ENOENT case, so the happy path never throws.
- */
-async function removeImportSibling(
-  path: string,
-  libraryRoot: string | undefined,
-  log: FastifyBaseLogger,
-  label: 'staging' | 'backup',
-  opts?: { strict?: boolean },
-): Promise<void> {
-  if (libraryRoot) {
-    try {
-      assertPathInsideLibrary(path, libraryRoot);
-    } catch (gateError: unknown) {
-      if (gateError instanceof PathOutsideLibraryError) {
-        log.error({ path, libraryRoot, label }, 'Refusing to remove import sibling outside library root — leaving foreign path untouched');
-        return;
-      }
-      throw gateError;
-    }
-  }
-  if (opts?.strict) {
-    await rm(path, { recursive: true, force: true });
-    return;
-  }
-  await rm(path, { recursive: true, force: true })
-    .catch((rmError: unknown) => log.warn({ error: serializeError(rmError), path, label }, 'Failed to remove import sibling — continuing'));
-}
-
-/** List bare file names in a directory; empty array when the dir doesn't exist. */
-async function listDirFileNames(dir: string, audioOnly: boolean): Promise<string[]> {
-  let entries: Dirent[];
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (readError: unknown) {
-    if ((readError as NodeJS.ErrnoException).code === 'ENOENT') return [];
-    throw readError;
-  }
-  return entries
-    .filter((e) => e.isFile() && (!audioOnly || AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase())))
-    .map((e) => e.name);
-}
-
-// ── prepareImportSiblings ───────────────────────────────────────────────
-
-export interface PrepareImportSiblingsArgs {
-  stagingPath: string;
-  backupPath: string;
-  libraryRoot: string;
-  log: FastifyBaseLogger;
-}
-
-/**
- * Clear any stale `.import-tmp` / `.import-bak` siblings left behind by a
- * previously interrupted import before staging a fresh one. Guarded and STRICT:
- * a stale staging dir that survives cleanup would be enumerated and committed
- * into the target by `commitStagedImport` (F1), and a surviving backup dir could
- * shadow a fresh backup, so a real `rm` failure aborts the import rather than
- * proceeding over leftover state. `force: true` suppresses the common
- * no-stale-dir ENOENT case, so the happy path never throws.
- */
-export async function prepareImportSiblings(args: PrepareImportSiblingsArgs): Promise<void> {
-  const { stagingPath, backupPath, libraryRoot, log } = args;
-  await removeImportSibling(stagingPath, libraryRoot, log, 'staging', { strict: true });
-  await removeImportSibling(backupPath, libraryRoot, log, 'backup', { strict: true });
-}
-
-// ── commitStagedImport ──────────────────────────────────────────────────
-
-export interface CommitStagedImportArgs {
-  stagingPath: string;
-  targetPath: string;
-  backupPath: string;
-  libraryRoot: string;
-  log: FastifyBaseLogger;
-}
-
-/**
- * Roll the just-disturbed audio set back into place after a commit fails:
- * remove any staged files already moved into the target, then move the
- * backed-up originals back. Each step is best-effort and logged; failures here
- * never mask the original commit error (the caller rethrows that).
- */
-async function rollbackStagedCommit(
-  targetPath: string,
-  backupPath: string,
-  movedIn: string[],
-  backedUp: string[],
-  log: FastifyBaseLogger,
-): Promise<void> {
-  for (const name of movedIn) {
-    await rm(join(targetPath, name), { force: true })
-      .catch((rollbackError: unknown) => log.error({ error: serializeError(rollbackError), file: name }, 'Rollback: failed to remove staged file from target'));
-  }
-  for (const name of backedUp) {
-    await rename(join(backupPath, name), join(targetPath, name))
-      .catch((rollbackError: unknown) => log.error({ error: serializeError(rollbackError), file: name }, 'Rollback: failed to restore backed-up audio to target'));
-  }
-}
-
-/**
- * Commit a verified staged import into `targetPath` reversibly.
- *
- * For a same-path re-import `targetPath` IS the user's existing book folder, so
- * the swap must never destroy the old version before the new one is in place:
- *   1. Back up existing audio — per-file `rename()` into the `.import-bak`
- *      sibling. Non-audio files (cover, metadata) stay in `targetPath` untouched.
- *   2. Move the verified staged audio files from `.import-tmp` into `targetPath`.
- *   3. On any failure in 1–2, roll back: remove staged files already moved in
- *      and restore the backed-up audio, leaving the existing book intact.
- *   4. On success, remove the backup + staging siblings — only the new version
- *      remains in `targetPath`.
- *
- * For a first import / move-path re-import there is no existing audio, so the
- * backup step is a no-op and this reduces to "move staged files in". Every
- * destructive step is guarded by `assertPathInsideLibrary` (#759).
- */
-export async function commitStagedImport(args: CommitStagedImportArgs): Promise<void> {
-  const { stagingPath, targetPath, backupPath, libraryRoot, log } = args;
-  assertPathInsideLibrary(stagingPath, libraryRoot);
-  assertPathInsideLibrary(backupPath, libraryRoot);
-  assertPathInsideLibrary(targetPath, libraryRoot);
-
-  await mkdir(targetPath, { recursive: true });
-
-  const existingAudio = await listDirFileNames(targetPath, true);
-  const stagedFiles = await listDirFileNames(stagingPath, false);
-
-  const backedUp: string[] = [];
-  const movedIn: string[] = [];
-  try {
-    if (existingAudio.length > 0) {
-      await mkdir(backupPath, { recursive: true });
-      for (const name of existingAudio) {
-        await rename(join(targetPath, name), join(backupPath, name));
-        backedUp.push(name);
-      }
-    }
-    for (const name of stagedFiles) {
-      await rename(join(stagingPath, name), join(targetPath, name));
-      movedIn.push(name);
-    }
-  } catch (commitError: unknown) {
-    log.error({ error: serializeError(commitError), targetPath }, 'Import commit failed — rolling back to pre-import state');
-    await rollbackStagedCommit(targetPath, backupPath, movedIn, backedUp, log);
-    throw commitError;
-  }
-
-  log.info({ targetPath, replaced: backedUp.length, added: movedIn.length }, 'Committed staged import');
-  await removeImportSibling(backupPath, libraryRoot, log, 'backup');
-  await removeImportSibling(stagingPath, libraryRoot, log, 'staging');
 }
 
 // ── copyToLibrary ───────────────────────────────────────────────────────

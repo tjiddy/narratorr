@@ -138,7 +138,13 @@ describe('ManualImportAdapter', () => {
 
     const { getAudioPathSize } = await import('../../utils/import-helpers.js');
     // Source/target return equal sizes so target/source >= 0.99 verification passes.
+    // mockReset drains any leftover *Once() queue from a prior test before we re-seed
+    // (clearAllMocks does not — see CLAUDE.md). The first read is the #1287 pre-copy
+    // target gate: default it to 0 (empty target) so standard tests exercise the
+    // direct-copy fast path; the staged-swap tests below override the gate to > 0.
+    vi.mocked(getAudioPathSize).mockReset();
     vi.mocked(getAudioPathSize).mockResolvedValue(100);
+    vi.mocked(getAudioPathSize).mockResolvedValueOnce(0);
 
     mockDb = createMockDb();
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
@@ -307,7 +313,9 @@ describe('ManualImportAdapter', () => {
         // Single-path copy must NOT run — the whole group is flattened, not just Disc 1
         expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
         // AC2: verification sums every member size, then reads the target — not item.path alone.
+        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
         expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [TARGET_PATH],
           [MEMBER_PATHS[0]],
           [MEMBER_PATHS[1]],
           [MEMBER_PATHS[2]],
@@ -333,7 +341,9 @@ describe('ManualImportAdapter', () => {
         }
         // AC2: move-mode runs the same full-member copy verification before the rm sweep —
         // every member size is read, then the target, not item.path alone.
+        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
         expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [TARGET_PATH],
           [MEMBER_PATHS[0]],
           [MEMBER_PATHS[1]],
           [MEMBER_PATHS[2]],
@@ -424,7 +434,9 @@ describe('ManualImportAdapter', () => {
         // not silently fall back to checking only the anchor disc (item.path) against the target.
         // The exact call sequence proves all 3 member sizes are accumulated before the target read;
         // a regression to single-path verification would yield only [item.path, target] (2 calls).
+        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
         expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [TARGET_PATH],
           [MEMBER_PATHS[0]],
           [MEMBER_PATHS[1]],
           [MEMBER_PATHS[2]],
