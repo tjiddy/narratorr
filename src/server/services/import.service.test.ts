@@ -2185,6 +2185,10 @@ describe('ImportService consolidation (issue #79)', () => {
       await service.importDownload(1);
 
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
+      // Negative twin (#1293 F1): initial-import success must NOT null outputPath
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const outputPathClear = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'outputPath' in (call[0] as Record<string, unknown>));
+      expect(outputPathClear).toBeUndefined();
     });
 
     it('skips removal when minSeedTime met but minSeedRatio not met', async () => {
@@ -2289,6 +2293,12 @@ describe('ImportService consolidation (issue #79)', () => {
       expect(result.downloadId).toBe(1);
       // When getDownload returns null, cannot determine ratio — should set pendingCleanup for retry
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      // Negative twin (#1293 F1): live-state-unavailable defers via pendingCleanup, without nulling outputPath
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      expect(pendingCall).toBeDefined();
+      expect((pendingCall![0] as Record<string, unknown>).pendingCleanup).toBeInstanceOf(Date);
+      expect('outputPath' in (pendingCall![0] as Record<string, unknown>)).toBe(false);
     });
 
     it('handles getDownload throwing — error logged, import succeeds', async () => {
@@ -2342,6 +2352,8 @@ describe('ImportService consolidation (issue #79)', () => {
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
       expect(clearCall).toBeDefined();
+      // Negative twin (#1293 F1): deferred-import success clears pendingCleanup ONLY — must NOT null outputPath
+      expect('outputPath' in (clearCall![0] as Record<string, unknown>)).toBe(false);
     });
 
     it('skips removal when ratio still below threshold, pendingCleanup left for next cycle', async () => {
