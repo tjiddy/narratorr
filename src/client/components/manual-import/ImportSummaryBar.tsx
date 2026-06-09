@@ -46,7 +46,6 @@ type ImportSummaryBarProps = ImportSummaryBarBaseProps & (
   | { hideMode?: false; onModeChange: (mode: ImportMode) => void }
 );
 
-// eslint-disable-next-line complexity -- compound condition is the least-indirection way to express disabled state and pending label
 export function ImportSummaryBar({
   readyCount,
   reviewCount,
