@@ -2,6 +2,7 @@
 // main module under the file-size cap; behaviour is unchanged from inlining.
 
 import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing.js';
+import type { ParsedFolder } from './folder-parsing.js';
 
 /**
  * `<title> - <series>, Book N [by Author] [(Narrator)]` — rightmost-dash split.
@@ -151,6 +152,92 @@ export function tryCrossSegmentAgreement(
     author: null,
     series: transform(seriesFolder),
     seriesPosition: position,
+    ...asinTail,
+  };
+}
+
+/**
+ * Anchored descriptor: a full ` - `-delimited segment that IS a
+ * `Book N of [the] <Series> Series|Saga|Trilogy|Cycle|Chronicles` unit (#1271).
+ * The series-keyword tail is part of the anchor, so a bare title word like
+ * "The Saga of Pliocene Exile" (no leading `Book N of`) never matches. Group 1 is
+ * the position (Arabic decimal or Roman); group 2 is the series name.
+ */
+const BOOK_OF_SERIES_DESCRIPTOR_REGEX =
+  /^Book\s+(\d+(?:\.\d+)?|[IVXLCDM]+)\s+of\s+(?:the\s+)?(.+?)\s+(?:series|saga|trilogy|cycle|chronicles)\s*$/i;
+
+/** Split an input into ` - ` / ` – ` / ` — `-delimited segments (each trimmed). */
+function splitDashSegments(input: string): string[] {
+  return input.split(/\s+[-–—]\s+/).map((s) => s.trim());
+}
+
+/** Locate the first segment that IS a `Book N of <Series> Saga` descriptor. */
+function findDescriptorSegment(segments: string[]): { index: number; match: RegExpMatchArray } | null {
+  for (let i = 0; i < segments.length; i++) {
+    const match = segments[i]!.match(BOOK_OF_SERIES_DESCRIPTOR_REGEX);
+    if (match) return { index: i, match };
+  }
+  return null;
+}
+
+/** Build the `{ series, seriesPosition? }` overlay captured from a descriptor match. */
+function descriptorSeriesOverlay(
+  match: RegExpMatchArray,
+  transform: (s: string) => string,
+): { series: string; seriesPosition?: number } {
+  const position = parseRomanOrArabicPosition(match[1]!);
+  const series = transform(match[2]!.trim());
+  return position !== undefined ? { series, seriesPosition: position } : { series };
+}
+
+/**
+ * Recognize an inline `Book N of [the] <Series> Series|Saga|Trilogy|Cycle|Chronicles`
+ * descriptor segment and resolve title/author around it (#1271). Two structural shapes:
+ *
+ * - **Trailing descriptor** — `Author - Title - <descriptor>`: strip the descriptor and let
+ *   the existing `Author - Title` first-dash heuristic (`resolveAuthorTitle`) resolve the
+ *   remainder.
+ * - **Middle descriptor** — `Title - <descriptor> - Author`: the real author is the TRAILING
+ *   segment and the real title is the LEADING segment, so assign them directly — a naive strip
+ *   would leave `Title - Author`, which the first-dash heuristic would invert.
+ *
+ * The series-keyword tail is part of the anchored segment match, so a bare title word
+ * (`The Saga of Pliocene Exile`, `The Chronicles of Amber`) never triggers the strip. Returns
+ * null when no descriptor segment is present, when it sits at the leading edge with trailing
+ * content (no title to assign), or when stripping would blank the name (degenerate
+ * `Book 1 of the Series` falls through to the title-only path). `transform` is `cleanName`
+ * for the cleaned parser, `identity` for raw — both paths run this branch identically.
+ */
+export function tryBookOfSeriesDescriptor(
+  input: string,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+  resolveAuthorTitle: (residual: string) => ParsedFolder | null,
+): ParsedFolder | null {
+  const segments = splitDashSegments(input);
+  if (segments.length < 2) return null;
+  const found = findDescriptorSegment(segments);
+  if (!found) return null;
+  const overlay = descriptorSeriesOverlay(found.match, transform);
+
+  // Trailing descriptor — strip it, reuse the existing dash/by heuristic on the remainder.
+  if (found.index === segments.length - 1) {
+    const residual = segments.slice(0, found.index).join(' - ');
+    if (!residual) return null; // descriptor-only — fall back to the title-only path (AC6)
+    const resolved = resolveAuthorTitle(residual)
+      ?? { title: transform(residual), author: null, series: null, ...asinTail };
+    return { ...resolved, ...overlay, ...asinTail };
+  }
+
+  // Middle descriptor — leading segment is the title, trailing segment(s) the author.
+  if (found.index === 0) return null; // no leading title segment to assign
+  const title = segments.slice(0, found.index).join(' - ');
+  const author = segments.slice(found.index + 1).join(' - ');
+  if (!title) return null;
+  return {
+    title: transform(title),
+    author: author ? applyLastFirstSwap(transform(author)) : null,
+    ...overlay,
     ...asinTail,
   };
 }
