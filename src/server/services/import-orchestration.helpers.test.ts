@@ -485,6 +485,37 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(source)).toBe(false);
   });
+
+  it('AC5: routes a reconstructed disc group through the staged swap when the target is populated (F1)', async () => {
+    // End-to-end through copyToLibrary: reconstructDiscGroup() resolves the coalesced
+    // member set from disk, and the populated target must route through the staged swap —
+    // not the direct merge-copy that would coexist the old .m4b with the new discs.
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    // Populated target: a stale single-file edition plus user cover art.
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(target, 'cover.jpg'), Buffer.from('JPEGDATA'));
+
+    // item.path is the lowest-disc member; reconstructDiscGroup expands it to both members.
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
+
+    expect(result).toBe(target);
+    const files = (await readdir(target)).sort();
+    // Old edition's audio gone; both discs flattened (sequentially renamed) into the top level;
+    // non-audio cover preserved. A regression to the direct merge-copy path would leave old.m4b.
+    expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
+    expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    expect(files).toContain('cover.jpg');
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
 });
 
 
