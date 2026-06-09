@@ -7,6 +7,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { makeTestSchema } from '../utils/secret-codec.js';
 import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';
+import { absLibrariesResponseSchema } from '../../core/import-lists/abs-provider.js';
 
 const SENTINEL = '********';
 
@@ -61,8 +62,14 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
         if (!res.ok) {
           return await reply.status(502).send({ error: `ABS API returned ${res.status}` });
         }
-        const data = await res.json() as { libraries?: Array<{ id: string; name: string }> };
-        return { libraries: data.libraries ?? [] };
+        const raw: unknown = await res.json();
+        const parsed = absLibrariesResponseSchema.safeParse(raw);
+        if (!parsed.success) {
+          return await reply.status(502).send({
+            error: `ABS API returned an unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          });
+        }
+        return { libraries: parsed.data.libraries };
       } catch (error: unknown) {
         return reply.status(502).send({
           error: `Connection failed: ${getErrorMessage(error)}`,

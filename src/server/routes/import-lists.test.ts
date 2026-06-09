@@ -263,6 +263,72 @@ describe('import-lists routes', () => {
       vi.restoreAllMocks();
     });
 
+    // #1299 — validate ABS response with the shared schema, not a bare cast
+    it('returns 502 for a wrong-shape HTTP 200 response (ABS error object)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ error: 'unauthorized' }),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toContain('unexpected response');
+      vi.restoreAllMocks();
+    });
+
+    it('returns 502 when libraries is not an array', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ libraries: 'nope' }),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      vi.restoreAllMocks();
+    });
+
+    it('returns 502 when the libraries key is missing (not a silent empty list)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      vi.restoreAllMocks();
+    });
+
+    it('returns 502 for a malformed array element (null name)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ libraries: [{ id: 'lib', name: null }] }),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      vi.restoreAllMocks();
+    });
+
     it('returns 400 when apiKey is missing', async () => {
       const res = await app.inject({
         method: 'POST',

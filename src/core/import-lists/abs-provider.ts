@@ -32,7 +32,7 @@ const absItemsResponseSchema = z.object({
   results: z.array(absItemSchema),
 }).passthrough();
 
-const absLibrariesResponseSchema = z.object({
+export const absLibrariesResponseSchema = z.object({
   libraries: z.array(z.object({
     id: z.string(),
     name: z.string(),
