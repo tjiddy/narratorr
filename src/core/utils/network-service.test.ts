@@ -22,6 +22,7 @@ import {
   normalizedHostPortFromUrl,
   normalizeHostname,
   resolveAndValidate,
+  stripCrossOriginCredentialHeaders,
   undiciFetch,
   UnsupportedRedirectSchemeError,
   validatingLookup,
@@ -1088,6 +1089,183 @@ describe('fetchWithSsrfRedirect', () => {
       ).rejects.toThrow(/Refused/);
       expect(fetchSpy).not.toHaveBeenCalled();
     });
+  });
+
+  // #1327 — caller headers forwarded into each real fetch hop; credential-class
+  // headers stripped on cross-origin redirect hops (non-dispatcher path).
+  describe('header forwarding across redirect hops (#1327)', () => {
+    function headersOfCall(spy: ReturnType<typeof vi.spyOn>, nth: number): Record<string, string> {
+      return (spy.mock.calls[nth][1] as { headers: Record<string, string> }).headers;
+    }
+
+    it('forwards headers to the real fetch on a direct 200', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com/file', { headers: { 'User-Agent': 'X/1.0' } });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(headersOfCall(fetchSpy, 0)).toEqual(expect.objectContaining({ 'User-Agent': 'X/1.0' }));
+    });
+
+    it('preserves all headers (incl. credentials) across a same-origin 302 chain', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://a.com/2'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com/1', {
+        headers: { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t', 'Cookie': 'sid=1' },
+      });
+
+      const expected = { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t', 'Cookie': 'sid=1' };
+      expect(headersOfCall(fetchSpy, 0)).toEqual(expect.objectContaining(expected));
+      expect(headersOfCall(fetchSpy, 1)).toEqual(expect.objectContaining(expected));
+    });
+
+    it('strips credential headers but keeps identity on a cross-origin 302', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://b.com/2'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com/1', {
+        headers: {
+          'User-Agent': 'X/1.0',
+          'Authorization': 'Bearer t',
+          'Cookie': 'sid=1',
+          'Proxy-Authorization': 'Basic z',
+        },
+      });
+
+      const hop2 = headersOfCall(fetchSpy, 1);
+      expect(hop2).toEqual(expect.objectContaining({ 'User-Agent': 'X/1.0' }));
+      expect(hop2).not.toHaveProperty('Authorization');
+      expect(hop2).not.toHaveProperty('Cookie');
+      expect(hop2).not.toHaveProperty('Proxy-Authorization');
+    });
+
+    it('strips credential headers case-insensitively on a cross-origin 302', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://b.com/2'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com/1', {
+        headers: {
+          'User-Agent': 'X/1.0',
+          'AUTHORIZATION': 'Bearer t',
+          'Cookie': 'sid=1',
+          'PROXY-AUTHORIZATION': 'Basic z',
+        },
+      });
+
+      const hop2 = headersOfCall(fetchSpy, 1);
+      expect(hop2).toEqual({ 'User-Agent': 'X/1.0' });
+    });
+
+    it('treats default-port/hostname-casing variants as same origin and preserves credentials', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://A.COM/2'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com:443/1', {
+        headers: { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' },
+      });
+
+      expect(headersOfCall(fetchSpy, 1)).toEqual(
+        expect.objectContaining({ 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' }),
+      );
+    });
+
+    it('A → B → A strips credentials on the B hop and restores them on the final A hop', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://b.com/2'))
+        .mockResolvedValueOnce(makeRedirect('https://a.com/3'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com/1', {
+        headers: { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' },
+      });
+
+      // Hop 1 (B, cross-origin): credential stripped, identity kept.
+      const hopB = headersOfCall(fetchSpy, 1);
+      expect(hopB).toEqual({ 'User-Agent': 'X/1.0' });
+      // Hop 2 (back to A, same origin as start): credential restored.
+      expect(headersOfCall(fetchSpy, 2)).toEqual(
+        expect.objectContaining({ 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' }),
+      );
+    });
+
+    it('no-headers caller follows a redirect chain without error (cover-download/download-url shape)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://b.com/2'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      const response = await fetchWithSsrfRedirect('https://a.com/1');
+      expect(response.status).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // #1315 regression guard: the headers spread at the real-fetch layer is the
+    // forwarding fix behind the abuse-warning UA. This pins it so removing the
+    // spread breaks a test.
+    it('forwards User-Agent to the real fetch mock across a hop (regression guard for #1315)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://a.com/2'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://a.com/1', { headers: { 'User-Agent': 'undici' } });
+
+      expect(headersOfCall(fetchSpy, 0)).toEqual(expect.objectContaining({ 'User-Agent': 'undici' }));
+      expect(headersOfCall(fetchSpy, 1)).toEqual(expect.objectContaining({ 'User-Agent': 'undici' }));
+    });
+  });
+});
+
+// #1327 — pure helper behind the cross-origin credential-strip policy. Direct
+// unit tests cover both fetch paths by construction (the redirect walker hands
+// the single computed object to fetchWithOptionalDispatcher → plain fetch or
+// undiciFetch alike).
+describe('stripCrossOriginCredentialHeaders', () => {
+  const credentialHeaders = {
+    'User-Agent': 'X/1.0',
+    'Accept': 'application/json',
+    'Authorization': 'Bearer t',
+    'Cookie': 'sid=1',
+    'Proxy-Authorization': 'Basic z',
+  };
+
+  it('preserves every header on a same-origin hop', () => {
+    expect(stripCrossOriginCredentialHeaders(credentialHeaders, false)).toEqual(credentialHeaders);
+  });
+
+  it('drops credential headers and keeps identity headers on a cross-origin hop', () => {
+    expect(stripCrossOriginCredentialHeaders(credentialHeaders, true)).toEqual({
+      'User-Agent': 'X/1.0',
+      'Accept': 'application/json',
+    });
+  });
+
+  it('matches credential keys case-insensitively', () => {
+    const mixed = {
+      'User-Agent': 'X/1.0',
+      'AUTHORIZATION': 'Bearer t',
+      'cookie': 'sid=1',
+      'Proxy-AUTHORIZATION': 'Basic z',
+    };
+    expect(stripCrossOriginCredentialHeaders(mixed, true)).toEqual({ 'User-Agent': 'X/1.0' });
+  });
+
+  it('preserves the original casing of surviving keys', () => {
+    const result = stripCrossOriginCredentialHeaders({ 'uSeR-aGeNt': 'X/1.0', 'Cookie': 'sid=1' }, true);
+    expect(result).toEqual({ 'uSeR-aGeNt': 'X/1.0' });
+  });
+
+  it('does not mutate the caller input (returns a fresh object)', () => {
+    const input = { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' };
+    const sameOrigin = stripCrossOriginCredentialHeaders(input, false);
+    const crossOrigin = stripCrossOriginCredentialHeaders(input, true);
+
+    expect(input).toEqual({ 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' });
+    expect(sameOrigin).not.toBe(input);
+    expect(crossOrigin).not.toBe(input);
   });
 });
 
