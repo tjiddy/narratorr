@@ -143,7 +143,13 @@ export class DiscoveryService {
     const staleIds = currentPending
       .filter(p => !regeneratedAsins.has(p.asin))
       .map(p => p.id);
-    if (staleIds.length > 0) await this.db.delete(suggestions).where(inArray(suggestions.id, staleIds));
+    // SQLite bind-param limit is 999 — chunk the stale-ID delete so a refresh
+    // with > 999 stale suggestions still deletes all of them.
+    if (staleIds.length > 0) {
+      for (const chunk of chunkArray(staleIds, 999)) {
+        await this.db.delete(suggestions).where(inArray(suggestions.id, chunk));
+      }
+    }
 
     this.log.info({ added, removed: staleIds.length, expired, total: candidates.length }, 'Discovery refresh complete');
     return { added, removed: staleIds.length, warnings };

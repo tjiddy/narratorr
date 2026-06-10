@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { blacklist } from '../../db/schema.js';
 import type { SettingsService } from './settings.service.js';
 import type { BlacklistRow } from './types.js';
+import { chunkArray } from '../utils/batch.js';
 
 type NewBlacklist = typeof blacklist.$inferInsert;
 
@@ -143,34 +144,61 @@ export class BlacklistService {
       gt(blacklist.expiresAt, now),
     );
 
-    const identifierFilters = [];
-    if (hashes && hashes.length > 0) {
-      identifierFilters.push(inArray(blacklist.infoHash, hashes));
-    }
-    if (guids && guids.length > 0) {
-      identifierFilters.push(inArray(blacklist.guid, guids));
-    }
+    const blacklistedHashes = new Set<string>();
+    const blacklistedGuids = new Set<string>();
+    const hashList = hashes ?? [];
+    const guidList = guids ?? [];
 
-    let rows: BlacklistRow[];
-    if (identifierFilters.length > 0) {
-      rows = await this.db
-        .select()
-        .from(blacklist)
-        .where(and(or(...identifierFilters), expiryFilter));
-    } else {
-      rows = await this.db
+    // Empty/omitted input: the expiry-only query returns every active row's
+    // identifiers (relied on by getBlacklistedHashes/isBlacklisted). chunkArray([])
+    // yields no chunks, so this branch must stay explicit — not folded into the
+    // chunk loops below, which would issue zero queries and return empty Sets.
+    if (hashList.length === 0 && guidList.length === 0) {
+      const rows: BlacklistRow[] = await this.db
         .select()
         .from(blacklist)
         .where(expiryFilter);
+      for (const row of rows) {
+        if (row.infoHash) blacklistedHashes.add(row.infoHash);
+        if (row.guid) blacklistedGuids.add(row.guid);
+      }
+      return { blacklistedHashes, blacklistedGuids };
     }
 
-    const blacklistedHashes = new Set<string>();
-    const blacklistedGuids = new Set<string>();
-    for (const row of rows) {
-      if (row.infoHash) blacklistedHashes.add(row.infoHash);
-      if (row.guid) blacklistedGuids.add(row.guid);
+    // Chunk each identifier list's inArray query (SQLite bind-param limit is 999),
+    // applying the expiry predicate per chunk and unioning every returned row's
+    // identifiers into both Sets — so a row matched via one identifier still
+    // contributes the other (preserving the old combined-query cross-population).
+    if (hashList.length > 0) {
+      await this.accumulateBlacklisted(blacklist.infoHash, hashList, expiryFilter, blacklistedHashes, blacklistedGuids);
+    }
+    if (guidList.length > 0) {
+      await this.accumulateBlacklisted(blacklist.guid, guidList, expiryFilter, blacklistedHashes, blacklistedGuids);
     }
     return { blacklistedHashes, blacklistedGuids };
+  }
+
+  // The expiry predicate adds 2 fixed binds per chunk query; 480 leaves ample
+  // headroom under the 999 limit (in-repo convention ceiling is 998).
+  private static readonly IDENTIFIER_CHUNK_SIZE = 480;
+
+  private async accumulateBlacklisted(
+    column: Parameters<typeof inArray>[0],
+    values: string[],
+    expiryFilter: ReturnType<typeof or>,
+    blacklistedHashes: Set<string>,
+    blacklistedGuids: Set<string>,
+  ): Promise<void> {
+    for (const chunk of chunkArray(values, BlacklistService.IDENTIFIER_CHUNK_SIZE)) {
+      const rows: BlacklistRow[] = await this.db
+        .select()
+        .from(blacklist)
+        .where(and(inArray(column, chunk), expiryFilter));
+      for (const row of rows) {
+        if (row.infoHash) blacklistedHashes.add(row.infoHash);
+        if (row.guid) blacklistedGuids.add(row.guid);
+      }
+    }
   }
 
   /** Backward-compatible wrapper — returns only blacklisted infoHashes. */
