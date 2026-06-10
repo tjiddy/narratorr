@@ -738,15 +738,31 @@ describe('startJobs', () => {
 
   // #1225 — run version-check once on startup so the update banner reflects reality
   describe('startup version check (#1225)', () => {
-    it('invokes checkForUpdate exactly once on startup', async () => {
+    it('routes the boot check through runTask and stamps lastRun (#1317)', async () => {
+      // #1317 — the boot check goes through the registry (not a direct checkForUpdate
+      // call) so the run stamps `lastRun`; otherwise the Jobs page shows `—` until the
+      // 2 AM cron. spyOn keeps the real implementation, so the registered callback still
+      // runs and lastRun gets stamped after it resolves.
+      const runTaskSpy = vi.spyOn(services.taskRegistry, 'runTask');
+
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
       await new Promise((resolve) => setTimeout(resolve, 10));
 
+      // The boot path runs the registered task exactly once.
+      expect(runTaskSpy).toHaveBeenCalledTimes(1);
+      expect(runTaskSpy).toHaveBeenCalledWith('version-check');
+
+      // Routing through the registry invokes the registered callback, which still
+      // calls checkForUpdate with the #1262 onUpdateChanged nudge wired in.
       expect(checkForUpdate).toHaveBeenCalledTimes(1);
-      // #1262 — the boot check is wired with the onUpdateChanged nudge callback.
       expect(checkForUpdate).toHaveBeenCalledWith(log, expect.any(Function));
+
+      // AC1: after the boot run resolves, version-check reports a non-null lastRun
+      // (rendered as a timestamp, not `—`).
+      const versionCheck = services.taskRegistry.getAll().find((t) => t.name === 'version-check');
+      expect(versionCheck?.lastRun).not.toBeNull();
     });
 
     it('does not await checkForUpdate — startJobs returns promptly even when the check never settles', async () => {
