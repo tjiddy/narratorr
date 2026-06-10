@@ -9,6 +9,7 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
+import { PathOutsideLibraryError } from '../utils/paths.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -1256,16 +1257,19 @@ describe('books routes', () => {
       expect(JSON.parse(res.payload).error).toBe('Book not found');
     });
 
-    it('maps path_outside_library → 400 with the service-provided message', async () => {
+    it('maps path_outside_library → 400 with the real ancestry-guard message', async () => {
+      // Use the real PathOutsideLibraryError message (not a fabricated string) so
+      // this pins the actual `error: error.message` pass-through end-to-end.
+      const realMessage = new PathOutsideLibraryError('/etc/passwd', '/audiobooks').message;
       (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
         outcome: 'path_outside_library',
-        error: 'Refusing to operate on path outside library root',
+        error: realMessage,
       });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
       expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.payload).error).toMatch(/library root/i);
+      expect(JSON.parse(res.payload).error).toMatch(/not inside library root/);
     });
 
     it('maps file_deletion_failed → 500 with the service-provided message', async () => {
