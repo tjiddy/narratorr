@@ -57,6 +57,54 @@ describe('normalizeGenres', () => {
     });
   });
 
+  describe('Audible taxonomy harvest (#1322)', () => {
+    describe('DROP_GENRES', () => {
+      it('drops "Genre Fiction" leaving the meaningful sibling', () => {
+        expect(normalizeGenres(['Genre Fiction', 'Thriller & Suspense'])).toEqual(['Thriller']);
+      });
+
+      it('returns undefined when a dropped genre is the sole entry', () => {
+        expect(normalizeGenres(['Genre Fiction'])).toBeUndefined();
+      });
+    });
+
+    describe('synonym additions', () => {
+      it('maps "Teen & Young Adult" to "Young Adult"', () => {
+        expect(normalizeGenres(['Teen & Young Adult'])).toEqual(['Young Adult']);
+      });
+
+      it('maps "Comedy & Humor" to "Humor"', () => {
+        expect(normalizeGenres(['Comedy & Humor'])).toEqual(['Humor']);
+      });
+
+      it('maps "Historical" to "Historical Fiction"', () => {
+        expect(normalizeGenres(['Historical'])).toEqual(['Historical Fiction']);
+      });
+
+      it('maps "Epic" to "Epic Fantasy" and coexists with Fantasy', () => {
+        expect(normalizeGenres(['Epic', 'Fantasy'])).toEqual(['Epic Fantasy', 'Fantasy']);
+      });
+    });
+
+    describe('Audible generic parents', () => {
+      it('removes "Science Fiction & Fantasy" when a child is present', () => {
+        expect(normalizeGenres(['Science Fiction & Fantasy', 'Space Opera'])).toEqual(['Space Opera']);
+      });
+
+      it('collapses two Audible parents to the lone known child', () => {
+        expect(
+          normalizeGenres(['Literature & Fiction', 'Mystery, Thriller & Suspense', 'Crime Thrillers']),
+        ).toEqual(['Crime Thrillers']);
+      });
+
+      it('keeps a lone Audible parent when no child is present', () => {
+        expect(normalizeGenres(['Mystery, Thriller & Suspense'])).toEqual([
+          'Mystery, Thriller & Suspense',
+        ]);
+      });
+    });
+  });
+
   describe('compound removal', () => {
     it('removes "Science Fiction & Fantasy" when both components exist', () => {
       const result = normalizeGenres(['Fantasy', 'Science Fiction', 'Science Fiction & Fantasy']);
@@ -187,5 +235,23 @@ describe('findUnmatchedGenres', () => {
     const raw = ['Sci-Fi', 'Weird Western'];
     const result = findUnmatchedGenres(normalizeGenres(raw));
     expect(result).toEqual(['Weird Western']);
+  });
+
+  it('treats newly-harvested Audible children as known (#1322)', () => {
+    expect(findUnmatchedGenres(['Space Opera', 'Crime Thrillers', 'Military'])).toEqual([]);
+  });
+
+  it('treats a raw dropped genre as known for defense in depth (#1322)', () => {
+    expect(findUnmatchedGenres(['genre fiction'])).toEqual([]);
+  });
+
+  it('reports no unmatched genres across the full harvested AC corpus (#1322)', () => {
+    const raw = [
+      'Science Fiction & Fantasy', 'Space Opera',
+      'Literature & Fiction', 'Mystery, Thriller & Suspense', 'Crime Thrillers',
+      'Teen & Young Adult', 'Epic', 'Fantasy',
+      'Genre Fiction', 'Thriller & Suspense',
+    ];
+    expect(findUnmatchedGenres(normalizeGenres(raw))).toEqual([]);
   });
 });
