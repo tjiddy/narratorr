@@ -72,7 +72,7 @@ export const NOTIFIER_REGISTRY = {
     label: 'ntfy',
     defaultSettings: { ntfyTopic: '', ntfyServer: '' },
     requiredFields: [{ path: 'ntfyTopic', message: 'Topic is required' }],
-    viewSubtitle: (s) => (s.ntfyTopic as string) || 'Ntfy',
+    viewSubtitle: (s) => extractHostname(s.ntfyServer as string, 'ntfy.sh'),
   },
   gotify: {
     label: 'Gotify',

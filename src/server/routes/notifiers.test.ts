@@ -473,16 +473,17 @@ describe('notifiers routes', () => {
     });
 
     it('GET /api/notifiers/:id masks secrets per-type', async () => {
-      const cases: Array<[string, Record<string, unknown>, string[]]> = [
+      const cases: Array<[string, Record<string, unknown>, string[], Record<string, unknown>?]> = [
         ['discord', { webhookUrl: 'https://discord.com/api/webhooks/1/x', includeCover: true }, ['webhookUrl']],
         ['slack', { webhookUrl: 'https://hooks.slack.com/x' }, ['webhookUrl']],
         ['telegram', { botToken: '1:abc', chatId: '-100' }, ['botToken']],
         ['email', { smtpHost: 's', smtpPass: 'pw', fromAddress: 'a@b.c', toAddress: 'c@d.e' }, ['smtpPass']],
-        ['pushover', { pushoverToken: 'tok', pushoverUser: 'u' }, ['pushoverToken']],
+        ['pushover', { pushoverToken: 'tok', pushoverUser: 'u' }, ['pushoverToken', 'pushoverUser']],
         ['gotify', { gotifyUrl: 'https://gotify.test', gotifyToken: 'tok' }, ['gotifyToken']],
+        ['ntfy', { ntfyTopic: 't-xyz', ntfyServer: 'https://ntfy.sh' }, ['ntfyTopic'], { ntfyServer: 'https://ntfy.sh' }],
       ];
 
-      for (const [type, settings, secretKeys] of cases) {
+      for (const [type, settings, secretKeys, plaintext] of cases) {
         vi.mocked(services.notifier.getById).mockResolvedValue({
           id: 1, name: type, type, enabled: true, events: ['on_grab'],
           settings, createdAt: new Date(),
@@ -493,6 +494,9 @@ describe('notifiers routes', () => {
         const body = res.json();
         for (const key of secretKeys) {
           expect(body.settings[key]).toBe('********');
+        }
+        for (const [key, value] of Object.entries(plaintext ?? {})) {
+          expect(body.settings[key]).toBe(value);
         }
       }
     });
