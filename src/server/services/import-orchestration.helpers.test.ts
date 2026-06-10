@@ -9,6 +9,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { ContentFailureError } from '../utils/import-helpers.js';
 import { mkdir, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -659,9 +660,38 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     fsMocks.cp.mockImplementation(async () => {});
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toThrow(/Copy verification failed/);
+    // The single-source path now throws the typed ContentFailureError (#1304).
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
     // The throw precedes cleanup — the source is left intact, never removed.
     expect(await pathExists(source)).toBe(true);
     expect(fsMocks.rm).not.toHaveBeenCalledWith(source, expect.anything());
+  });
+
+  it('throws a typed ContentFailureError when the multi-disc copy falls below threshold (#1304)', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    // Empty target keeps the direct copyDiscGroup path; a no-op cp undersizes the
+    // target so the shared verification helper throws ContentFailureError.
+    fsMocks.cp.mockImplementation(async () => {});
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+  });
+
+  it('throws a typed ContentFailureError when the staged-swap copy falls below threshold (#1304)', async () => {
+    // Populated target routes through stagedAudioReplace; a no-op cp leaves the
+    // staged audio undersized so the shared verification helper throws.
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+    fsMocks.cp.mockImplementation(async () => {});
+
+    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
   });
 });
 

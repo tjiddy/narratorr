@@ -12,7 +12,7 @@ import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { buildTargetPath, getAudioPathSize, COPY_VERIFICATION_THRESHOLD, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
+import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -136,9 +136,7 @@ export async function copyToLibrary(
   const sourceSize = await getAudioPathSize(item.path);
   const targetSize = await getAudioPathSize(targetPath);
   log.debug({ source: item.path, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Copy verification');
-  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-  }
+  assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
     await rm(item.path, { recursive: true });
@@ -201,9 +199,7 @@ async function copyDiscGroupToLibrary(
   }
   const targetSize = await getAudioPathSize(targetPath);
   log.debug({ discMembers: memberPaths.length, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Multi-disc copy verification');
-  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-  }
+  assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
     for (const memberPath of memberPaths) {

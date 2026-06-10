@@ -11,7 +11,7 @@ import { join, extname, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { serializeError } from './serialize-error.js';
-import { getAudioPathSize, COPY_VERIFICATION_THRESHOLD } from './import-helpers.js';
+import { getAudioPathSize, assertCopyVerified } from './import-helpers.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 
 // ── commit-pending marker ───────────────────────────────────────────────
@@ -461,9 +461,7 @@ export async function stagedAudioReplace(args: StagedAudioReplaceArgs): Promise<
     await prepareImportSiblings({ stagingPath, targetPath, backupPath, libraryRoot, log });
     await stage(stagingPath);
     const stagedSize = await getAudioPathSize(stagingPath);
-    if (stagedSize < sourceAudioSize * COPY_VERIFICATION_THRESHOLD) {
-      throw new Error(`Copy verification failed: source ${sourceAudioSize} bytes, target ${stagedSize} bytes`);
-    }
+    assertCopyVerified(sourceAudioSize, stagedSize);
     await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log });
     return stagedSize;
   } catch (error: unknown) {

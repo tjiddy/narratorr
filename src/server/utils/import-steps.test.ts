@@ -32,7 +32,7 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
 import { stat, rm, statfs, readdir, mkdir, rename, writeFile } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
-import { getPathSize, getAudioPathSize } from './import-helpers.js';
+import { getPathSize, getAudioPathSize, ContentFailureError } from './import-helpers.js';
 import { PathOutsideLibraryError } from './paths.js';
 import type { Stats } from 'node:fs';
 
@@ -1284,6 +1284,16 @@ describe('isContentFailure classifier (#504)', () => {
     expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
   });
 
+  it('returns true for a ContentFailureError via the instanceof path (#1304)', () => {
+    expect(isContentFailure(new ContentFailureError('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
+  });
+
+  it('classifies a reworded ContentFailureError by type, not message text (#1304 mutation check)', () => {
+    // No 'Copy verification failed' substring — proves the instanceof path, not the string,
+    // drives classification. Rewording any throw site can no longer silently break it.
+    expect(isContentFailure(new ContentFailureError('audio bytes mismatch after copy'))).toBe(true);
+  });
+
   it('returns false for environment errors (path not found, disk space)', () => {
     expect(isContentFailure(new Error('Path not found: /downloads/book'))).toBe(false);
     expect(isContentFailure(new Error('Import blocked — insufficient disk space'))).toBe(false);
@@ -1326,5 +1336,13 @@ describe('verifyCopy', () => {
 
     await expect(verifyCopy({ targetPath: '/lib/book', sourcePath: '/src/book' }))
       .rejects.toThrow('Copy verification failed: source 1000 bytes, target 400 bytes');
+  });
+
+  it('throws a typed ContentFailureError on a size mismatch (#1304)', async () => {
+    vi.mocked(getPathSize).mockResolvedValue(400);
+    vi.mocked(getAudioPathSize).mockResolvedValue(1000);
+
+    await expect(verifyCopy({ targetPath: '/lib/book', sourcePath: '/src/book' }))
+      .rejects.toBeInstanceOf(ContentFailureError);
   });
 });

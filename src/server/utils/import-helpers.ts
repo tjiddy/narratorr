@@ -16,6 +16,31 @@ import type { authors } from '../../db/schema.js';
 /** Minimum ratio of target/source file size for copy verification to pass. */
 export const COPY_VERIFICATION_THRESHOLD = 0.99;
 
+/**
+ * Typed marker for import failures caused by bad release content (not host/environment).
+ * `isContentFailure` recognizes this via `instanceof` so the failure classification no longer
+ * depends on substring-matching the message text. Mirrors the existing custom-error convention
+ * (`BackupRecoveryError`): extend `Error`, set `this.name`, preserve a descriptive message.
+ */
+export class ContentFailureError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'ContentFailureError';
+  }
+}
+
+/**
+ * Single source of truth for the copy-verification check shared by all four copy paths
+ * (`verifyCopy`, `stagedAudioReplace`, `copyToLibrary`, `copyDiscGroupToLibrary`). Throws a
+ * `ContentFailureError` — whose message retains the source/target byte sizes for diagnostics —
+ * when the copied target is smaller than `sourceSize * COPY_VERIFICATION_THRESHOLD`.
+ */
+export function assertCopyVerified(sourceSize: number, targetSize: number): void {
+  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
+    throw new ContentFailureError(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
+  }
+}
+
 export type { BookRow } from '../services/types.js';
 export type AuthorRow = typeof authors.$inferSelect;
 

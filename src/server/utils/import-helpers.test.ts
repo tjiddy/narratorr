@@ -21,6 +21,8 @@ import {
   reconstructDiscGroup,
   countAudioFiles,
   COPY_VERIFICATION_THRESHOLD,
+  assertCopyVerified,
+  ContentFailureError,
 } from './import-helpers.js';
 
 /** Normalize backslashes to forward slashes for cross-platform test assertions. */
@@ -57,6 +59,30 @@ describe('extractYear', () => {
 describe('COPY_VERIFICATION_THRESHOLD', () => {
   it('is 0.99', () => {
     expect(COPY_VERIFICATION_THRESHOLD).toBe(0.99);
+  });
+});
+
+describe('assertCopyVerified (#1304)', () => {
+  it('throws a ContentFailureError when target is below source * threshold', () => {
+    expect(() => assertCopyVerified(1000, 400)).toThrow(ContentFailureError);
+  });
+
+  it('retains the source/target byte sizes in the diagnostic message', () => {
+    expect(() => assertCopyVerified(1000, 400))
+      .toThrow('Copy verification failed: source 1000 bytes, target 400 bytes');
+  });
+
+  it('does not throw exactly at the threshold boundary (source * 0.99)', () => {
+    // 1000 * 0.99 === 990 — equal is not "below", so it passes.
+    expect(() => assertCopyVerified(1000, 990)).not.toThrow();
+  });
+
+  it('does not throw above the threshold', () => {
+    expect(() => assertCopyVerified(1000, 1000)).not.toThrow();
+  });
+
+  it('throws just below the threshold boundary', () => {
+    expect(() => assertCopyVerified(1000, 989)).toThrow(ContentFailureError);
   });
 });
 

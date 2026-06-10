@@ -27,7 +27,7 @@ export type {
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import {
   containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize, getAudioPathSize,
-  COPY_VERIFICATION_THRESHOLD,
+  assertCopyVerified, ContentFailureError,
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
@@ -46,7 +46,13 @@ export type {
 
 // ── isContentFailure ────────────────────────────────────────────────────
 
-/** Content-failure signatures — errors caused by bad release content, not host/environment. */
+/**
+ * Content-failure signatures — errors caused by bad release content, not host/environment.
+ * Used as a fallback for fs-originated / non-typed messages (and for any deserialized/plain
+ * error that has lost its prototype). Copy-verification failures are now classified via
+ * `instanceof ContentFailureError` first; `'Copy verification failed'` is retained here so a
+ * plain (e.g. cross-process/deserialized) error carrying that message still classifies.
+ */
 const CONTENT_FAILURE_PATTERNS = [
   'No audio files found',
   'not a supported audio format',
@@ -56,10 +62,13 @@ const CONTENT_FAILURE_PATTERNS = [
 
 /**
  * Classify an import error as content-caused (bad release) or environment-caused (host/config).
- * Uses a positive allowlist — only known content-failure signatures return true.
- * All unrecognized errors (including Audio processing failed) default to false (conservative).
+ * Recognizes the typed `ContentFailureError` first (drives copy-verification classification by
+ * type, not message text), then falls back to a positive allowlist of known content-failure
+ * signatures. All unrecognized errors (including Audio processing failed) default to false
+ * (conservative).
  */
 export function isContentFailure(error: unknown): boolean {
+  if (error instanceof ContentFailureError) return true;
   if (!(error instanceof Error)) return false;
   const msg = error.message;
   return CONTENT_FAILURE_PATTERNS.some((pattern) => msg.includes(pattern));
@@ -206,9 +215,7 @@ export async function verifyCopy(args: VerifyCopyArgs): Promise<number> {
   const { targetPath, sourcePath } = args;
   const targetSize = await getPathSize(targetPath);
   const sourceSize = await getAudioPathSize(sourcePath);
-  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-  }
+  assertCopyVerified(sourceSize, targetSize);
   return targetSize;
 }
 
