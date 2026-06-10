@@ -12,7 +12,13 @@ import type { Db } from '../../db/index.js';
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   cp: vi.fn().mockResolvedValue(undefined),
-  stat: vi.fn().mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1024 }),
+  // The commit-pending marker (#1290/#1336) must read as ABSENT — these mocked flows never
+  // write one, and the failure-cleanup gate keys on real marker presence, so a blanket
+  // "everything exists" stat would spuriously preserve `.import-bak` on ordinary failures.
+  stat: vi.fn().mockImplementation(async (p: unknown) =>
+    String(p).endsWith('.import-commit-pending')
+      ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+      : { isFile: () => false, isDirectory: () => true, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
@@ -281,8 +287,13 @@ describe('ImportService', () => {
     vi.mocked(cp).mockReset();
     vi.mocked(cp).mockResolvedValue(undefined);
 
-    // Default: stat returns a directory for source, then directory for target (size verification)
-    vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+    // Default: stat returns a directory for source/target (size verification). The
+    // commit-pending marker (#1290/#1336) reads as ABSENT — see the fs-mock factory note;
+    // a blanket resolve would spuriously trip the disk-state preservation gate on failure.
+    vi.mocked(stat).mockImplementation(async (p: unknown) =>
+      String(p).endsWith('.import-commit-pending')
+        ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+        : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
 
     // readdir returns one audio file
     vi.mocked(readdir).mockResolvedValue([
@@ -918,6 +929,30 @@ describe('ImportService', () => {
       // ...and both transient siblings are cleaned up.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+    });
+
+    it('#1336 window 4: a pre-flight validateSource throw with a marker on disk preserves .import-bak + the marker', async () => {
+      // A prior commit was killed (marker + populated .import-bak live), then on the
+      // recovery boot the downloads mount isn't up yet → validateSource throws BEFORE
+      // prepareImportSiblings/recovery runs. The error reaches handleImportFailure as a
+      // plain Error; the prior identity-gate deleted the stranded originals through this
+      // door (#1290's loss). The disk-state gate must preserve them.
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Marker present on disk; the source save path is missing → validateSource throws.
+      vi.mocked(stat).mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending')
+          ? (undefined as never)
+          : Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })));
+
+      await expect(service.importDownload(1)).rejects.toThrow(/Path not found/);
+
+      // The backup and the marker both survive for the next boot's recovery attempt.
+      expect(rm).not.toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+      expect(rm).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, { force: true });
     });
 
     it('F1: aborts before staging when a stale staging sibling cannot be cleared (never commits leftovers)', async () => {

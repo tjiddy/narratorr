@@ -43,7 +43,10 @@ function markerPathFor(targetPath: string): string {
   return `${targetPath}.import-commit-pending`;
 }
 
-/** True when the commit-pending marker exists; false on ENOENT. */
+/** True when the commit-pending marker exists; false on ENOENT. A non-ENOENT stat
+ * error propagates raw — callers decide how to treat it (recovery wraps it as a
+ * `BackupRecoveryError`; the failure-cleanup gate `markerPresent` fails toward
+ * preservation). */
 async function markerExists(markerPath: string): Promise<boolean> {
   try {
     await stat(markerPath);
@@ -51,6 +54,36 @@ async function markerExists(markerPath: string): Promise<boolean> {
   } catch (statError: unknown) {
     if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw statError;
+  }
+}
+
+/**
+ * Marker-presence gate for the FAILURE-CLEANUP paths (`handleImportFailure` in
+ * import-steps.ts and `stagedAudioReplace`'s catch): `.import-bak` and the marker must
+ * NEVER be deleted while the commit-pending marker is on disk, regardless of which error
+ * type reached cleanup (#1336). The prior gate keyed on error IDENTITY
+ * (`error instanceof BackupRecoveryError`), so any failure that propagated as a plain
+ * Error — a raw readdir/stat error during recovery, a pre-flight throw before recovery
+ * even runs, or a `BackupRecoveryError` re-wrapped via `new Error(msg, { cause })` —
+ * slipped past it and deleted the sole surviving copy of the stranded originals (the #1290
+ * loss through a different door). The durable disk-state signal is authoritative; error
+ * identity is no longer load-bearing.
+ *
+ * Derives the marker path from `targetPath` (markers are derived, never stored) and FAILS
+ * TOWARD PRESERVATION: a non-ENOENT stat error returns `true` (treat as present). The only
+ * safe wrong answer is keeping a disposable backup an extra boot — the next run's recovery
+ * no-ops and clears it; the unsafe wrong answer is deleting the only copy of stranded
+ * originals because a stat flaked.
+ */
+export async function markerPresent(targetPath: string, log: FastifyBaseLogger): Promise<boolean> {
+  try {
+    return await markerExists(markerPathFor(targetPath));
+  } catch (statError: unknown) {
+    log.warn(
+      { error: serializeError(statError), targetPath },
+      'Commit-pending marker stat failed — treating marker as present to preserve backup (#1336)',
+    );
+    return true;
   }
 }
 
@@ -197,12 +230,36 @@ export interface PrepareImportSiblingsArgs {
  */
 export async function prepareImportSiblings(args: PrepareImportSiblingsArgs): Promise<void> {
   const { stagingPath, targetPath, backupPath, libraryRoot, log } = args;
-  await removeImportSibling(stagingPath, libraryRoot, log, 'staging', { strict: true });
-  if (await markerExists(markerPathFor(targetPath))) {
-    await recoverInterruptedBackup({ targetPath, backupPath, libraryRoot, log });
-  } else {
-    await removeImportSibling(backupPath, libraryRoot, log, 'backup', { strict: true });
+
+  // Consult the marker FIRST (#1336 defense-in-depth). Once we've seen it, a destructive
+  // commit was interrupted and EVERYTHING that follows — the staging clear included — must
+  // surface as a `BackupRecoveryError` so the failure-cleanup path preserves `.import-bak`
+  // and the marker for the next boot rather than deleting the stranded originals. A
+  // non-ENOENT marker stat error must not propagate raw (it would reach cleanup as a plain
+  // Error and delete the backup); convert it to a recovery failure → preserve.
+  let markerPresentOnDisk: boolean;
+  try {
+    markerPresentOnDisk = await markerExists(markerPathFor(targetPath));
+  } catch (statError: unknown) {
+    throw new BackupRecoveryError(targetPath, { cause: statError });
   }
+
+  if (!markerPresentOnDisk) {
+    // No interrupted commit: both siblings are disposable scratch, strict-cleared as before.
+    await removeImportSibling(stagingPath, libraryRoot, log, 'staging', { strict: true });
+    await removeImportSibling(backupPath, libraryRoot, log, 'backup', { strict: true });
+    return;
+  }
+
+  // Marker present: a killed commit characteristically leaves a populated `.import-tmp`, so
+  // an EBUSY/EACCES on the staging clear is most likely on exactly this recovery boot. Wrap
+  // it (and the recovery itself) so a failure preserves the backup instead of propagating raw.
+  try {
+    await removeImportSibling(stagingPath, libraryRoot, log, 'staging', { strict: true });
+  } catch (clearError: unknown) {
+    throw new BackupRecoveryError(targetPath, { cause: clearError });
+  }
+  await recoverInterruptedBackup({ targetPath, backupPath, libraryRoot, log });
 }
 
 // ── commitStagedImport ──────────────────────────────────────────────────
@@ -297,16 +354,19 @@ export interface RecoverInterruptedBackupArgs {
  */
 async function recoverInterruptedBackup(args: RecoverInterruptedBackupArgs): Promise<void> {
   const { targetPath, backupPath, libraryRoot, log } = args;
-  const backedUp = await listAudioFilesRecursive(backupPath);
-  if (backedUp.length > 0) {
-    log.info({ targetPath, files: backedUp.length }, 'Recovering interrupted import commit — restoring backed-up audio from .import-bak');
-    try {
+  // Enumeration sits INSIDE the wrapping try (#1336): a transient readdir EIO/EACCES here
+  // must surface as a `BackupRecoveryError` (→ preserve), not propagate raw to the cleanup
+  // path where it would delete `.import-bak` + the marker — the originals it strands.
+  try {
+    const backedUp = await listAudioFilesRecursive(backupPath);
+    if (backedUp.length > 0) {
+      log.info({ targetPath, files: backedUp.length }, 'Recovering interrupted import commit — restoring backed-up audio from .import-bak');
       assertPathInsideLibrary(targetPath, libraryRoot);
       assertPathInsideLibrary(backupPath, libraryRoot);
       await restoreBackedUpFiles(targetPath, backupPath, backedUp, log, { strict: true });
-    } catch (recoveryError: unknown) {
-      throw new BackupRecoveryError(targetPath, { cause: recoveryError });
     }
+  } catch (recoveryError: unknown) {
+    throw new BackupRecoveryError(targetPath, { cause: recoveryError });
   }
   // All originals restored (or the marker was present with an empty backup — an
   // in-process rollback already restored them, so nothing to do). Clear the now-empty
@@ -397,9 +457,11 @@ export interface CleanupImportSiblingsArgs {
   libraryRoot?: string | undefined;
   log: FastifyBaseLogger;
   /**
-   * True when the controlling failure was a `BackupRecoveryError` — a kill-recovery
-   * was mid-flight, so `.import-bak` and the marker MUST survive for the next boot
-   * (#1290). Staging is still cleared (always re-derivable scratch).
+   * True when the commit-pending marker is present on disk — a kill-recovery was
+   * mid-flight (or a marker-protected commit failed), so `.import-bak` and the marker
+   * MUST survive for the next boot (#1290/#1336). Computed from disk marker state by the
+   * caller (`markerPresent`), NOT from the error's identity. Staging is still cleared
+   * (always re-derivable scratch).
    */
   preserveBackup?: boolean | undefined;
 }
@@ -411,8 +473,8 @@ export interface CleanupImportSiblingsArgs {
  * rolls the target back; this just clears the leftover scratch dirs). A cleanup
  * hiccup is logged, never thrown.
  *
- * When `preserveBackup` is set (the failure was a recovery failure), the backup and
- * marker are left on disk so the next boot can re-attempt recovery — only staging is
+ * When `preserveBackup` is set (the commit-pending marker is present on disk), the backup
+ * and marker are left on disk so the next boot can re-attempt recovery — only staging is
  * cleared. Otherwise the marker is removed too so it does not accumulate.
  */
 export async function cleanupImportSiblings(args: CleanupImportSiblingsArgs): Promise<void> {
@@ -465,7 +527,10 @@ export async function stagedAudioReplace(args: StagedAudioReplaceArgs): Promise<
     await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log });
     return stagedSize;
   } catch (error: unknown) {
-    await cleanupImportSiblings({ stagingPath, backupPath, targetPath, libraryRoot, log, preserveBackup: error instanceof BackupRecoveryError });
+    // #1336: preservation rides on the durable disk marker, not the error's identity — a
+    // kill-recovery (or any failure while a marker is live) must keep `.import-bak` + the
+    // marker for the next boot, even when the failure reached us as a plain Error.
+    await cleanupImportSiblings({ stagingPath, backupPath, targetPath, libraryRoot, log, preserveBackup: await markerPresent(targetPath, log) });
     throw error;
   }
 }

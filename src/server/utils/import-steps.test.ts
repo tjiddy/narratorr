@@ -663,6 +663,31 @@ describe('prepareImportSiblings', () => {
     expect(rm).not.toHaveBeenCalledWith(backup, { recursive: true, force: true });
     expect(rm).not.toHaveBeenCalledWith(marker, { force: true });
   });
+
+  it('non-ENOENT marker stat → BackupRecoveryError, never the raw error, so cleanup preserves (#1336 window 2)', async () => {
+    const log = createMockLog();
+    // A non-ENOENT marker stat must not propagate raw (it would reach cleanup as a plain
+    // Error and delete the backup). It surfaces as a BackupRecoveryError → preserve.
+    vi.mocked(stat).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(
+      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toBeInstanceOf(BackupRecoveryError);
+    // Neither sibling is strict-cleared — the marker sighting was inconclusive, fail toward preservation.
+    expect(rm).not.toHaveBeenCalledWith(backup, { recursive: true, force: true });
+  });
+
+  it('marker present, staging strict-clear fails (EBUSY) → BackupRecoveryError, backup preserved (#1336 window 3)', async () => {
+    const log = createMockLog();
+    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    // A killed commit leaves a populated .import-tmp; an EBUSY clearing it on the recovery
+    // boot must surface as BackupRecoveryError (→ preserve), not propagate raw.
+    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    await expect(
+      prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).rejects.toBeInstanceOf(BackupRecoveryError);
+    expect(rm).not.toHaveBeenCalledWith(backup, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(marker, { force: true });
+  });
 });
 
 // ── commitStagedImport ──────────────────────────────────────────────────
@@ -937,6 +962,14 @@ describe('commitStagedImport', () => {
 
 describe('handleImportFailure', () => {
   const mockDb = { update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn() }) }) };
+  const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+
+  beforeEach(() => {
+    // Default: NO commit-pending marker on disk → ordinary cleanup. Preservation now rides
+    // on the durable disk marker (#1336), not the error's identity, so the gate stats the
+    // marker; an absent marker (ENOENT) means "delete the disposable backup as before".
+    vi.mocked(stat).mockRejectedValue(enoent());
+  });
 
   it('cleans up targetPath when set', async () => {
     const log = createMockLog();
@@ -1035,9 +1068,10 @@ describe('handleImportFailure', () => {
     expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-bak', { recursive: true, force: true });
   });
 
-  it('preserves .import-bak and the commit-pending marker on a BackupRecoveryError, clears only staging (#1290)', async () => {
+  it('preserves .import-bak and the commit-pending marker while the marker is on disk, clears only staging (#1290/#1336)', async () => {
     const log = createMockLog();
     const target = '/library/Author/Title';
+    vi.mocked(stat).mockResolvedValue(undefined as never); // marker present on disk
     await expect(handleImportFailure({
       error: new BackupRecoveryError(target), targetPath: target,
       stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
@@ -1049,6 +1083,58 @@ describe('handleImportFailure', () => {
     // ...but the backup and marker survive for the next boot's recovery.
     expect(rm).not.toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
     expect(rm).not.toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
+  });
+
+  it('preserves the backup for a PLAIN Error when the marker is on disk — identity is no longer load-bearing (#1336)', async () => {
+    const log = createMockLog();
+    const target = '/library/Author/Title';
+    vi.mocked(stat).mockResolvedValue(undefined as never); // marker present on disk
+    // A raw readdir/stat error or pre-flight throw reaches cleanup as a plain Error — the
+    // prior `instanceof BackupRecoveryError` gate would have deleted the stranded originals.
+    await expect(handleImportFailure({
+      error: new Error('EIO during recovery enumeration'), targetPath: target,
+      stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
+      libraryRoot: '/library', protectTarget: true, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: target }, log,
+    })).rejects.toThrow('EIO during recovery enumeration');
+    expect(rm).toHaveBeenCalledWith(`${target}.import-tmp`, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
+  });
+
+  it('preserves the backup for a cause-chain-WRAPPED BackupRecoveryError when the marker is on disk (#1336)', async () => {
+    const log = createMockLog();
+    const target = '/library/Author/Title';
+    vi.mocked(stat).mockResolvedValue(undefined as never); // marker present on disk
+    // `new Error(msg, { cause })` strips the BackupRecoveryError identity — the disk gate holds.
+    const wrapped = new Error('wrapped commit failure', { cause: new BackupRecoveryError(target) });
+    await expect(handleImportFailure({
+      error: wrapped, targetPath: target,
+      stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
+      libraryRoot: '/library', protectTarget: true, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: target }, log,
+    })).rejects.toBe(wrapped);
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
+  });
+
+  it('fails toward preservation when the marker stat errors with a non-ENOENT code (#1336)', async () => {
+    const log = createMockLog();
+    const target = '/library/Author/Title';
+    // A non-ENOENT marker stat error must NOT be read as "marker absent" → delete; treat as present.
+    vi.mocked(stat).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(handleImportFailure({
+      error: new Error('ordinary'), targetPath: target,
+      stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
+      libraryRoot: '/library', protectTarget: true, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: target }, log,
+    })).rejects.toThrow('ordinary');
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: target }),
+      expect.stringMatching(/marker stat failed/i),
+    );
   });
 
   it('removes the commit-pending marker on an ordinary (non-recovery) failure (#1290)', async () => {
