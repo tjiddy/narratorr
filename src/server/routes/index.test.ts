@@ -155,6 +155,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -185,6 +186,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = mockMigrate;
       this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -211,6 +213,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsDefault = mockMigrate;
       this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -239,6 +242,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsDefault = v1Migrate;
       this.migrateRejectWordsAbridgedDefault = v2Migrate;
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -255,6 +259,36 @@ describe('createServices', () => {
     expect(callOrder).toEqual(['v1', 'v2']);
   });
 
+  // ===== #1367 — migrateMaxConcurrentProcessingDefaults called on startup AFTER rejectWords migrations =====
+  it('invokes migrateMaxConcurrentProcessingDefaults on startup, after rejectWords migrations', async () => {
+    const { SettingsService } = await import('../services/index.js');
+
+    const callOrder: string[] = [];
+    const v2Migrate = vi.fn().mockImplementation(() => { callOrder.push('v2'); return Promise.resolve(); });
+    const maxConcurrentMigrate = vi.fn().mockImplementation(() => { callOrder.push('maxConcurrent'); return Promise.resolve(); });
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = v2Migrate;
+      this.migrateMaxConcurrentProcessingDefaults = maxConcurrentMigrate;
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    expect(maxConcurrentMigrate).toHaveBeenCalledOnce();
+    expect(callOrder).toEqual(['v2', 'maxConcurrent']);
+  });
+
   it('invokes bootstrapProcessingDefaults with detectFfmpegPath on startup', async () => {
     const { SettingsService } = await import('../services/index.js');
     const { detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
@@ -268,6 +302,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -297,6 +332,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
@@ -350,6 +386,7 @@ describe('createServices', () => {
       this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
       this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
     } as never);
 
     const { createServices } = await import('./index.js');
