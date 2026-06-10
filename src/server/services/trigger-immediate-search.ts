@@ -1,10 +1,10 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
-import type { IndexerSearchService, SettingsService, IndexerService } from '../services/index.js';
-import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
-import type { BlacklistService } from '../services/blacklist.service.js';
-import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
-import type { EventHistoryService } from '../services/event-history.service.js';
+import { searchAndGrabForBook, buildNarratorPriority } from './search-pipeline.js';
+import type { IndexerSearchService, SettingsService, IndexerService } from './index.js';
+import type { DownloadOrchestrator } from './download-orchestrator.js';
+import type { BlacklistService } from './blacklist.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 

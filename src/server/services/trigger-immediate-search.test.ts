@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 
-vi.mock('../services/search-pipeline.js', () => ({
+vi.mock('./search-pipeline.js', () => ({
   searchAndGrabForBook: vi.fn().mockResolvedValue(undefined),
   buildNarratorPriority: vi.fn().mockReturnValue([]),
 }));
 
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
-import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
+import { searchAndGrabForBook, buildNarratorPriority } from './search-pipeline.js';
 
 function createMockDeps(): ImmediateSearchDeps {
   return {
