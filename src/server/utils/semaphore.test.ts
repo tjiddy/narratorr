@@ -64,4 +64,29 @@ describe('Semaphore', () => {
     const sem = new Semaphore(0);
     expect(sem.tryAcquire()).toBe(false);
   });
+
+  it('release does not wake a waiter that would exceed a shrunk max', async () => {
+    const sem = new Semaphore(2);
+    await sem.acquire(); // active 1
+    await sem.acquire(); // active 2 (at max)
+
+    let resolved = false;
+    const waiting = sem.acquire().then(() => { resolved = true; }); // queued waiter
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // Operator shrinks capacity below the active count.
+    sem.setMax(1);
+
+    // Releasing one slot leaves active (1) at the new max — the waiter must NOT wake,
+    // otherwise active would climb back to 2 and exceed max.
+    sem.release();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // Dropping below max finally wakes the waiter.
+    sem.release();
+    await waiting;
+    expect(resolved).toBe(true);
+  });
 });

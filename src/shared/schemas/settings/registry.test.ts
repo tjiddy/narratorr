@@ -211,6 +211,16 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
+    it('accepts maxConcurrentProcessing=8 (maximum)', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 8 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects maxConcurrentProcessing=9 (above maximum)', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 9 });
+      expect(result.success).toBe(false);
+    });
+
     it('defaults to 1 when absent', () => {
       const result = settingsRegistry.processing.schema.parse({});
       expect(result.maxConcurrentProcessing).toBe(1);

@@ -203,6 +203,9 @@ describe('ProcessingSettingsSection', () => {
       expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
       expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(1);
     });
+    // Upper bound of 8 is enforced at the field level (mirrors the shared schema's .max(8)).
+    expect(screen.getByLabelText('Max Concurrent Jobs').getAttribute('min')).toBe('1');
+    expect(screen.getByLabelText('Max Concurrent Jobs').getAttribute('max')).toBe('8');
   });
 
   it('bitrate, postProcessingScriptTimeout, and maxConcurrentProcessing inputs use integer step', async () => {

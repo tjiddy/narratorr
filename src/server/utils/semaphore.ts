@@ -35,13 +35,21 @@ export class Semaphore {
     return false;
   }
 
-  /** Release a slot, unblocking the next waiter in FIFO order. */
+  /**
+   * Release a slot, unblocking the next waiter in FIFO order.
+   * Only wakes a waiter when capacity allows — guards against a prior
+   * setMax() shrink that left active above the new max (waking then would
+   * push active past max). Latent today (no blocking acquire() caller), but
+   * keeps the invariant active <= max for any future setMax()+acquire() combo.
+   */
   release(): void {
     this.active--;
-    const next = this.queue.shift();
-    if (next) {
-      this.active++;
-      next();
+    if (this.active < this.max) {
+      const next = this.queue.shift();
+      if (next) {
+        this.active++;
+        next();
+      }
     }
   }
 }
