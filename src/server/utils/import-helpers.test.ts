@@ -84,6 +84,12 @@ describe('assertCopyVerified (#1304)', () => {
   it('throws just below the threshold boundary', () => {
     expect(() => assertCopyVerified(1000, 989)).toThrow(ContentFailureError);
   });
+
+  it('does not throw for a zero-byte source/target (audio-free folder edge, #1346)', () => {
+    // Reachable when an audio-free folder slips through (0 < 0 * 0.99 === 0 < 0 is false),
+    // so verification is a no-op here rather than a false content failure. Pinned deliberately.
+    expect(() => assertCopyVerified(0, 0)).not.toThrow();
+  });
 });
 
 describe('buildTargetPath', () => {
@@ -343,7 +349,11 @@ describe('copyAudioFiles', () => {
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never);
 
-    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('01.mp3');
+    // #1346: the flat-collision site (collectFlatFiles) throws a typed ContentFailureError
+    // with byte-identical message so blacklist+retry classification rides the type.
+    const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ContentFailureError);
+    expect((err as Error).message).toContain('Duplicate filename "01.mp3" found during import flattening');
   });
 
   it('collision detection runs before any files are copied — no partial state on cp mock', async () => {
@@ -651,7 +661,10 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       .mockResolvedValueOnce([makeDirent('b.mp3', true, false)] as never) // Disc 02
       .mockResolvedValueOnce([makeDirent('1.mp3', true, false)] as never); // Extras — collides with sequential "1.mp3"
 
-    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('1.mp3');
+    // #1346: the disc/non-disc sequential-collision site throws a typed ContentFailureError.
+    const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ContentFailureError);
+    expect((err as Error).message).toContain('collides with sequential disc numbering');
     expect(cp).not.toHaveBeenCalled();
   });
 
@@ -688,7 +701,10 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never) // Extras
       .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never); // Bonus
 
-    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('cover.mp3');
+    // #1346: the non-disc collision site (collectMultiDiscFiles) throws a typed ContentFailureError.
+    const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ContentFailureError);
+    expect((err as Error).message).toContain('Duplicate filename "cover.mp3" found during import flattening');
     expect(cp).not.toHaveBeenCalled();
   });
 

@@ -38,6 +38,7 @@ import type { Stats } from 'node:fs';
 
 import {
   validateSource,
+  copyToLibrary,
   checkDiskSpace,
   verifyCopy,
   embedTagsForImport,
@@ -92,14 +93,16 @@ describe('validateSource', () => {
     expect(result.sourceStats.isDirectory()).toBe(true);
   });
 
-  it('throws when directory has no audio files', async () => {
+  it('throws a typed ContentFailureError with byte-identical message when directory has no audio files (#1346)', async () => {
     vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true } as unknown as Stats);
     const { readdir } = await import('node:fs/promises');
     vi.mocked(readdir).mockResolvedValue([
       { name: 'readme.txt', isFile: () => true, isDirectory: () => false },
     ] as never);
 
-    await expect(validateSource('/downloads/book', undefined, null)).rejects.toThrow('No audio files found');
+    // Type drives classification; message text is byte-for-byte unchanged so log greps still match.
+    await expect(validateSource('/downloads/book', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/book', undefined, null)).rejects.toThrow('No audio files found in /downloads/book');
   });
 
   it('returns fileCount=1 for single file', async () => {
@@ -134,6 +137,22 @@ describe('validateSource', () => {
     vi.mocked(stat).mockRejectedValue(eperm);
 
     await expect(validateSource('/downloads/book', undefined, null)).rejects.toThrow('EPERM');
+  });
+});
+
+// ── copyToLibrary ─────────────────────────────────────────────────────────
+
+describe('copyToLibrary', () => {
+  it('throws a typed ContentFailureError with byte-identical message for a non-audio source file (#1346)', async () => {
+    const args = {
+      sourcePath: '/downloads/book.txt',
+      targetPath: '/lib/book',
+      sourceStats: { isDirectory: () => false, isFile: () => true, size: 100 } as unknown as Stats,
+      log: createMockLog(),
+    };
+
+    await expect(copyToLibrary(args)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(copyToLibrary(args)).rejects.toThrow('Source file is not a supported audio format: book.txt');
   });
 });
 
@@ -1267,31 +1286,47 @@ describe('checkDiskSpace return type (#229)', () => {
   });
 });
 
-describe('isContentFailure classifier (#504)', () => {
-  it('returns true for "No audio files found in /path"', () => {
-    expect(isContentFailure(new Error('No audio files found in /downloads/book'))).toBe(true);
-  });
-
-  it('returns true for "not a supported audio format"', () => {
-    expect(isContentFailure(new Error('Source file is not a supported audio format: track.xyz'))).toBe(true);
-  });
-
-  it('returns true for "Duplicate filename"', () => {
-    expect(isContentFailure(new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
-  });
-
-  it('returns true for "Copy verification failed"', () => {
-    expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
-  });
-
-  it('returns true for a ContentFailureError via the instanceof path (#1304)', () => {
+describe('isContentFailure classifier (#504, #1346)', () => {
+  it('returns true for each typed content-failure message (the five migrated throw sites)', () => {
+    // Classification rides the type, not the substring (#1346) — every content-failure site
+    // constructs a ContentFailureError, so these pass via the instanceof path.
+    expect(isContentFailure(new ContentFailureError('No audio files found in /downloads/book'))).toBe(true);
+    expect(isContentFailure(new ContentFailureError('Source file is not a supported audio format: track.xyz'))).toBe(true);
+    expect(isContentFailure(new ContentFailureError('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"'))).toBe(true);
     expect(isContentFailure(new ContentFailureError('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(true);
   });
 
-  it('classifies a reworded ContentFailureError by type, not message text (#1304 mutation check)', () => {
-    // No 'Copy verification failed' substring — proves the instanceof path, not the string,
-    // drives classification. Rewording any throw site can no longer silently break it.
+  it('classifies a reworded ContentFailureError by type, not message text (#1304/#1346 mutation check)', () => {
+    // No recognizable substring — proves the instanceof path, not the string, drives
+    // classification. Rewording any throw site can no longer silently break it.
     expect(isContentFailure(new ContentFailureError('audio bytes mismatch after copy'))).toBe(true);
+  });
+
+  it('walks error.cause: a wrapped ContentFailureError still classifies (#1346)', () => {
+    // Mirrors the in-file wrap-with-cause pattern (import-steps.ts) — instanceof on the
+    // outer error is false, but the bounded cause walk reaches the typed inner cause.
+    const wrapped = new Error('Import step failed', { cause: new ContentFailureError('No audio files found in /x') });
+    expect(isContentFailure(wrapped)).toBe(true);
+  });
+
+  it('walks a nested cause chain up to the depth cap, then terminates (#1346)', () => {
+    // A ContentFailureError buried a few levels deep still classifies...
+    const deep = new Error('a', { cause: new Error('b', { cause: new Error('c', { cause: new ContentFailureError('d') }) }) });
+    expect(isContentFailure(deep)).toBe(true);
+
+    // ...but a self-referential chain cannot spin (cycle detection) and a plain chain
+    // deeper than the cap with no typed link returns false rather than looping forever.
+    const cyclic = new Error('loop');
+    (cyclic as Error & { cause: unknown }).cause = cyclic;
+    expect(isContentFailure(cyclic)).toBe(false);
+  });
+
+  it('returns false for an environment error whose message contains a former pattern substring (#1346)', () => {
+    // The substring fallback is gone: a plain Error carrying a former pattern no longer
+    // mis-classifies as content — this is the steering vector #1346 closes.
+    expect(isContentFailure(new Error('Path not found: /downloads/No audio files found'))).toBe(false);
+    expect(isContentFailure(new Error('Duplicate filename in log line, but a real disk error'))).toBe(false);
+    expect(isContentFailure(new Error('Copy verification failed: source 1000 bytes, target 500 bytes'))).toBe(false);
   });
 
   it('returns false for environment errors (path not found, disk space)', () => {
@@ -1310,8 +1345,14 @@ describe('isContentFailure classifier (#504)', () => {
     expect(isContentFailure(new Error('something unexpected'))).toBe(false);
   });
 
-  it('returns false for non-Error throwable', () => {
+  it('returns false for non-Error throwables — including a plain object carrying a former pattern (#1346)', () => {
+    // Corrected docblock claim: a JSON-revived plain object that lost its prototype is NOT
+    // an Error, so it never classifies regardless of message text.
     expect(isContentFailure('a string error')).toBe(false);
+    expect(isContentFailure({ message: 'No audio files found' })).toBe(false);
+    expect(isContentFailure({ name: 'ContentFailureError', message: 'Copy verification failed' })).toBe(false);
+    expect(isContentFailure(null)).toBe(false);
+    expect(isContentFailure(undefined)).toBe(false);
   });
 });
 
