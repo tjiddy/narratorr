@@ -14,6 +14,40 @@ const TITLE_DASH_SERIES_BOOK_REGEX = /^(.+)\s+-\s+(.+?)\s*,\s*Book\s+(\d+(?:\.\d
 
 const SERIES_KEYWORD_REGEX = /\b(?:series|saga|chronicles|trilogy|cycle)\b/i;
 
+/** Release-tag phrases NOT in `CODEC_TAGS` (which covers single codec/format labels
+ * only); denied from `bracketTagStrip`'s whole-title unwrap as release metadata,
+ * not titles. Compared case-insensitively against the normalized inner. (#1331) */
+const TAG_PHRASE_DENYLIST = new Set(
+  ['Graphic Audio', 'GraphicAudio', 'GA', 'Dramatized Adaptation', 'Dramatized', 'Full Cast', 'Full-Cast']
+    .map((p) => p.toLowerCase()),
+);
+const BITRATE_TOKEN_REGEX = /^\d+\s*k(bps)?$/i; // `64k`, `128kbps`
+const SAMPLE_RATE_TOKEN_REGEX = /^\d+\s*khz$/i; // `22khz`, `44khz`
+const PURE_BRACKET_REGEX = /^\[([^\]]*)\]$/; // whole string is one bracketed group
+
+/**
+ * True when `trimmedInner` is entirely release-tag tokens (codec/format label,
+ * bitrate `64k`, sample rate `22khz`) or a known release-tag phrase (`Graphic
+ * Audio`). Such inners are release metadata, so `bracketTagStrip` keeps deleting
+ * them rather than unwrapping. Any non-tag token ⇒ `false`. Exported for tests. (#1331)
+ */
+export function isReleaseTagInner(trimmedInner: string): boolean {
+  const normalized = trimmedInner.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (TAG_PHRASE_DENYLIST.has(normalized)) return true;
+  const tokens = normalized.split(' ').filter(Boolean);
+  return tokens.length > 0 && tokens.every(
+    (t) => CODEC_TEST_REGEX.test(t) || BITRATE_TOKEN_REGEX.test(t) || SAMPLE_RATE_TOKEN_REGEX.test(t),
+  );
+}
+
+/** True when `segment` is wholly a single bracketed release tag (`[Graphic Audio]`,
+ * `[64k 22khz]`, `[MP3 64k]`) — used by the author/title dash split so a pure tag
+ * segment is not treated as a title. (#1331) */
+export function isPureReleaseTagBracket(segment: string): boolean {
+  const m = segment.trim().match(PURE_BRACKET_REGEX);
+  return m !== null && isReleaseTagInner(m[1]!.trim());
+}
+
 function isNarratorDisambiguatorParen(content: string): boolean {
   const trimmed = content.trim();
   if (!trimmed) return false;

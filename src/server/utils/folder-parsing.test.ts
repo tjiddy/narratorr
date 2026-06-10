@@ -11,6 +11,7 @@ import {
   normalizeFolderName,
   CODEC_TEST_REGEX,
 } from './folder-parsing.js';
+import { isReleaseTagInner } from './folder-parsing-patterns.js';
 
 describe('folder-parsing (extracted from library-scan.service)', () => {
   describe('parseFolderStructure', () => {
@@ -1307,9 +1308,12 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(cleanName('Some Title []')).toBe('Some Title');
     });
 
-    // Per-step preservation for codec/bitrate/year tag forms — these have real
-    // title text outside the brackets, so bracketTagStrip strips the tag exactly
-    // as before; the #1316 unwrap guard must not regress them (issue #1316).
+    // End-to-end cleanName preservation for codec/bitrate/year tag forms. NOTE:
+    // these do NOT all exercise bracketTagStrip — `[M4B]` is codec-stripped to
+    // `[]` by `normalize` (consumed by emptyBracketStrip), and `[2021]` is
+    // consumed by the earlier `yearBracketStrip` step. Only `[64k]` actually
+    // reaches bracketTagStrip with a populated inner. The dedicated step-output
+    // assertion for bracketTagStrip lives in the #1331 trace test below.
     it('strips [M4B] codec tag, leaving the bare title', () => {
       expect(cleanName('Title [M4B]')).toBe('Title');
     });
@@ -1350,6 +1354,102 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(step!.output).toBe('Dennis E Taylor - Bobiverse 03 All These Worlds – 3');
         expect(step!.output).not.toBe('');
         expect(step!.output).toMatch(/^[^[\]]*$/);
+      });
+    });
+
+    // Issue #1331 — the #1316 whole-title-bracket unwrap false-fired on
+    // `Title - [Multi Word Tag]` shapes: codec-stripped `[MP3 64k]` inners were
+    // unwrapped (leaking `64k` into the title and, via P10, fabricating series
+    // metadata), and genuine multi-token release tags (`[Dramatized Adaptation]`,
+    // `[64k 22khz]`) leaked their text into titles. The fix restores the
+    // pre-#1316, fuzzy-matchable, tag-free titles while preserving the #1316
+    // Bobiverse unwrap win.
+    describe('release-tag false-fire on "Title - [Multi Word Tag]" (issue #1331)', () => {
+      it('deletes codec-stripped [MP3 64k] without leaking 64k or fabricating series', () => {
+        const parsed = parseFolderStructure(['J.K. Rowling - Harry Potter 1 - [MP3 64k]']);
+        expect(parsed.title).not.toContain('64k');
+        // Pre-#1316 output — trailing ` -` preserved by design (scope decision).
+        expect(parsed.title).toBe('Harry Potter 1 -');
+        // The headline P10-fabrication guard: re-injected `… 1 - 64k` must NOT
+        // produce a series/position.
+        expect(parsed.series).toBeNull();
+        expect(parsed.seriesPosition).toBeUndefined();
+      });
+
+      it('deletes codec-stripped [M4B 64k] without leaking 64k or fabricating series', () => {
+        const parsed = parseFolderStructure(['Brandon Sanderson - The Way of Kings - [M4B 64k]']);
+        expect(parsed.title).not.toContain('64k');
+        // Same codec-stripped shape — trailing ` -` preserved, NOT removed.
+        expect(parsed.title).toBe('The Way of Kings -');
+        expect(parsed.series).toBeNull();
+      });
+
+      it('denylists the multi-token [Dramatized Adaptation] tag (no tag text in title)', () => {
+        const parsed = parseFolderStructure(['Wool Omnibus - [Dramatized Adaptation]']);
+        expect(parsed.title).not.toContain('Dramatized Adaptation');
+        expect(parsed.title).toBe('Wool Omnibus -');
+      });
+
+      it('denylists the [64k 22khz] bitrate+sample-rate tag without fabricating series', () => {
+        const parsed = parseFolderStructure(['Author - Series 03 - [64k 22khz]']);
+        expect(parsed.title).not.toMatch(/64k|22khz/);
+        // The re-injected tokens must not be parsed into a fabricated series.
+        expect(parsed.series).toBeNull();
+        expect(parsed.seriesPosition).toBeUndefined();
+      });
+
+      it('denylists the [Graphic Audio] tag (no tag text in title)', () => {
+        const parsed = parseFolderStructure(['Wool - [Graphic Audio]']);
+        expect(parsed.title).not.toContain('Graphic Audio');
+        expect(parsed.title).toBe('Wool -');
+      });
+
+      it('still unwraps a genuine multi-word title inner — #1316 Bobiverse win preserved', () => {
+        const parsed = parseFolderStructure(['Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]']);
+        expect(parsed.title).toBe('Bobiverse 03 All These Worlds – 3');
+        expect(parsed.author).toBe('Dennis E Taylor');
+        expect(parsed.title).toMatch(/^[^[\]]*$/);
+      });
+
+      it('deletes a leading/trailing-space inner [ 64k ] (trim before multi-word test)', () => {
+        // `/\S\s+\S/` on the trimmed inner sees the single token `64k`, so it is
+        // deleted — the permissive `/\s/.test()` would have unwrapped the space.
+        expect(cleanName('Title - [ 64k ]')).not.toContain('64k');
+        expect(cleanName('Title - [ 64k ]')).toBe('Title -');
+      });
+
+      it('still unwraps a genuine multi-word inner via cleanName (not denylisted)', () => {
+        expect(cleanName('Author - [Bobiverse 03 All These Worlds – 3]'))
+          .toBe('Author - Bobiverse 03 All These Worlds – 3');
+      });
+
+      describe('isReleaseTagInner predicate', () => {
+        it.each([
+          '64k 22khz',
+          'Graphic Audio',
+          'GraphicAudio',
+          'GA',
+          'Dramatized Adaptation',
+          'MP3 64k',
+        ])('returns true for release-tag inner %j', (inner) => {
+          expect(isReleaseTagInner(inner)).toBe(true);
+        });
+
+        it('returns false for a real multi-word title inner', () => {
+          expect(isReleaseTagInner('Bobiverse 03 All These Worlds – 3')).toBe(false);
+        });
+      });
+
+      it('bracketTagStrip step (not an earlier step) deletes a populated single-token tag', () => {
+        // `[64k]` survives normalize (not a codec) and yearBracketStrip (not a
+        // 4-digit year), so bracketTagStrip is the step that removes it. Mirrors
+        // the trace-lookup pattern in the #1316 step-output test above.
+        const trace = cleanNameWithTrace('Title [64k]');
+        const idx = trace.steps.findIndex((s) => s.name === 'bracketTagStrip');
+        expect(idx).toBeGreaterThan(0);
+        // The tag still present going IN, gone coming OUT of bracketTagStrip.
+        expect(trace.steps[idx - 1]!.output).toContain('[64k]');
+        expect(trace.steps[idx]!.output).toBe('Title');
       });
     });
 
