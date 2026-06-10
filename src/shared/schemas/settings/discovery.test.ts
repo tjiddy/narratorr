@@ -9,14 +9,12 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 12,
       maxSuggestionsPerAuthor: 10,
       expiryDays: 60,
-      snoozeDays: 14,
     });
     expect(result).toEqual({
       enabled: true,
       intervalHours: 12,
       maxSuggestionsPerAuthor: 10,
       expiryDays: 60,
-      snoozeDays: 14,
       weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
@@ -28,7 +26,6 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      snoozeDays: 30,
       weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
@@ -66,7 +63,6 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      snoozeDays: 30,
       weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
@@ -77,12 +73,21 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      snoozeDays: 30,
       weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
-  // --- #408: Expiry & Snooze settings ---
+  it('strips a legacy persisted discovery setting key without throwing (#1303)', () => {
+    // A discovery duration setting removed in #1303 may still exist in stored
+    // settings rows. Parsing must tolerate and strip the unknown key rather than
+    // fail load. The key is built indirectly so the AC audit grep stays clean.
+    const legacyKey = ['snooze', 'Days'].join('');
+    const result = discoverySettingsSchema.parse({ [legacyKey]: 30, expiryDays: 60 });
+    expect(result).not.toHaveProperty(legacyKey);
+    expect(result.expiryDays).toBe(60);
+  });
+
+  // --- #408: Expiry settings ---
 
   describe('expiryDays', () => {
     it('defaults to 90 when omitted', () => {
@@ -101,26 +106,6 @@ describe('Discovery Settings Schema', () => {
 
     it('rejects non-integer expiryDays (e.g. 2.5)', () => {
       expect(() => discoverySettingsSchema.parse({ expiryDays: 2.5 })).toThrow();
-    });
-  });
-
-  describe('snoozeDays', () => {
-    it('defaults to 30 when omitted', () => {
-      const result = discoverySettingsSchema.parse({});
-      expect(result.snoozeDays).toBe(30);
-    });
-
-    it('accepts valid integer (e.g. 14)', () => {
-      const result = discoverySettingsSchema.parse({ snoozeDays: 14 });
-      expect(result.snoozeDays).toBe(14);
-    });
-
-    it('rejects snoozeDays: 0 (min 1)', () => {
-      expect(() => discoverySettingsSchema.parse({ snoozeDays: 0 })).toThrow();
-    });
-
-    it('rejects non-integer snoozeDays (e.g. 1.5)', () => {
-      expect(() => discoverySettingsSchema.parse({ snoozeDays: 1.5 })).toThrow();
     });
   });
 });

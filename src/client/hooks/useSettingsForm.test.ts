@@ -51,7 +51,7 @@ const fullSettings = {
   rss: { intervalMinutes: 30, enabled: false },
   system: { backupIntervalMinutes: 10080, backupRetention: 7 },
   library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
-  discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: {} },
+  discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, weightMultipliers: {} },
   testSection: { enabled: true, value: 42 },
 };
 
