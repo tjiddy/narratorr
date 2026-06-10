@@ -66,7 +66,7 @@ import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { BookRejectionService } from '../services/book-rejection.service.js';
 import { BookDeletionService } from '../services/book-deletion.service.js';
-import { createRetrySearchDeps, type RetrySearchDeps } from '../services/retry-search.js';
+import { createRetrySearchDeps } from '../services/retry-search.js';
 import { ImportQueueWorker } from '../services/import-queue-worker.js';
 import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
@@ -74,90 +74,12 @@ import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
 import { importPreviewRoute } from './import-preview.js';
 
-export interface Services {
-  settings: SettingsService;
-  auth: AuthService;
-  indexer: IndexerService;
-  indexerSearch: IndexerSearchService;
-  downloadClient: DownloadClientService;
-  book: BookService;
-  bookImport: BookImportService;
-  bookList: BookListService;
-  download: DownloadService;
-  downloadOrchestrator: DownloadOrchestrator;
-  metadata: MetadataService;
-  import: ImportService;
-  importOrchestrator: ImportOrchestrator;
-  libraryScan: LibraryScanService;
-  matchJob: MatchJobService;
-  notifier: NotifierService;
-  blacklist: BlacklistService;
-  remotePathMapping: RemotePathMappingService;
-  rename: RenameService;
-  merge: MergeService;
-  eventHistory: EventHistoryService;
-  tagging: TaggingService;
-  qualityGate: QualityGateService;
-  qualityGateOrchestrator: QualityGateOrchestrator;
-  retryBudget: RetryBudget;
-  eventBroadcaster: EventBroadcasterService;
-  backup: BackupService;
-  healthCheck: HealthCheckService;
-  taskRegistry: TaskRegistry;
-  importList: ImportListService;
-  discovery: DiscoveryService;
-  bulkOperation: BulkOperationService;
-  bookRejection: BookRejectionService;
-  bookDeletion: BookDeletionService;
-  importQueueWorker: ImportQueueWorker;
-  retrySearchDeps: RetrySearchDeps;
-  seriesCard: SeriesCardService;
-}
-
-/**
- * Runtime list of all service keys, kept in sync with the Services interface.
- * The `satisfies` clause ensures TS errors if a key is added to Services but
- * not listed here — `Record<keyof Services, true>` requires every key present.
- */
-export const SERVICE_KEYS = Object.keys({
-  settings: true,
-  auth: true,
-  indexer: true,
-  indexerSearch: true,
-  downloadClient: true,
-  book: true,
-  bookImport: true,
-  bookList: true,
-  download: true,
-  downloadOrchestrator: true,
-  metadata: true,
-  import: true,
-  importOrchestrator: true,
-  libraryScan: true,
-  matchJob: true,
-  notifier: true,
-  blacklist: true,
-  remotePathMapping: true,
-  rename: true,
-  merge: true,
-  eventHistory: true,
-  tagging: true,
-  qualityGate: true,
-  qualityGateOrchestrator: true,
-  retryBudget: true,
-  eventBroadcaster: true,
-  backup: true,
-  healthCheck: true,
-  taskRegistry: true,
-  importList: true,
-  discovery: true,
-  bulkOperation: true,
-  bookRejection: true,
-  bookDeletion: true,
-  importQueueWorker: true,
-  retrySearchDeps: true,
-  seriesCard: true,
-} satisfies Record<keyof Services, true>) as (keyof Services)[];
+// The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
+// (the correct layer — routes depend on services, not the reverse). Imported for
+// local use here and re-exported so existing route consumers (health-routes.ts,
+// system.ts) keep importing `Services` from the routes barrel.
+import type { Services } from '../services/di.js';
+export { type Services, SERVICE_KEYS } from '../services/di.js';
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
   const settings = new SettingsService(db, log);

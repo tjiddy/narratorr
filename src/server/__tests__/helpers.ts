@@ -6,7 +6,8 @@ import {
 } from 'fastify-type-provider-zod';
 import { vi, type Mock } from 'vitest';
 import type { Db } from '../../db/index.js';
-import { registerRoutes, SERVICE_KEYS, type Services } from '../routes/index.js';
+import { registerRoutes } from '../routes/index.js';
+import { SERVICE_KEYS, type Services } from '../services/di.js';
 import { RetryBudget } from '../services/retry-budget.js';
 import { createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { AppSettings, SettingsCategory } from '../../shared/schemas/settings/registry.js';

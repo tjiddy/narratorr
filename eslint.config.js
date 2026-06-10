@@ -132,6 +132,19 @@ export default tseslint.config(
       }],
     },
   },
+  {
+    // Jobs are a lower layer than routes — they must not import from routes/.
+    // Production-only: test files legitimately reach into routes/. The DI
+    // container type (`Services`) now lives in services/di.ts so jobs import it
+    // from there, not "upward" from routes/.
+    files: ['**/src/server/jobs/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/routes/**', '**/routes/*'],
+      }],
+    },
+  },
 
   // Custom rules for all files
   {

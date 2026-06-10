@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import type { Services } from '../routes/index.js';
+import type { Services } from '../services/di.js';
 import { createMockServices, createMockLogger } from '../__tests__/helpers.js';
 import { TaskRegistry } from '../services/task-registry.js';
 
