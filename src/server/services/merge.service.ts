@@ -6,6 +6,7 @@ import type { Db } from '../../db/index.js';
 import { books } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { AppSettings } from '../../shared/schemas/settings/registry.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
@@ -21,6 +22,17 @@ import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 
+
+/**
+ * Clamp a runtime concurrency value to a safe semaphore size (>= 1, integer).
+ * setMax() performs no validation, so a NaN/0/negative/fractional value read
+ * from settings must be coerced here — `Math.max(1, NaN)` is `NaN`, which would
+ * poison the semaphore. Unreachable via the Zod-validated path today, but the
+ * clamp's whole job is defense against an unvalidated read.
+ */
+export function clampConcurrency(value: number | undefined): number {
+  return Number.isInteger(value) && (value as number) >= 1 ? (value as number) : 1;
+}
 
 export interface MergeResult {
   bookId: number;
@@ -101,8 +113,12 @@ export class MergeService {
     }
   }
 
-  /** Pre-enqueue validation: throws MergeError for invalid requests. Duplicate checks are in enqueueMerge (synchronous). */
-  private async validateBookForMerge(bookId: number): Promise<void> {
+  /**
+   * Pre-enqueue validation: throws MergeError for invalid requests. Duplicate checks are
+   * in enqueueMerge (synchronous). Returns the processing settings it already fetched so
+   * the caller can size the semaphore without a second (rejection-prone) read.
+   */
+  private async validateBookForMerge(bookId: number): Promise<AppSettings['processing']> {
     const book = await this.bookService.getById(bookId);
     if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
     if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
@@ -112,6 +128,7 @@ export class MergeService {
     const allEntries = await readdir(book.path);
     const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+    return processingSettings;
   }
 
   /** Public API: validate and enqueue a merge. Returns acknowledgement immediately. */
@@ -120,21 +137,23 @@ export class MergeService {
     if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
     if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
 
-    // Mark in-progress immediately to block concurrent same-book requests during async validation
+    // Mark in-progress immediately to block concurrent same-book requests during async validation.
+    // The settings read + setMax live INSIDE this try so a rejecting read cleans up inProgress
+    // rather than stranding the book in inProgress (every later attempt would 409 until restart).
     this.inProgress.add(bookId);
     try {
-      await this.validateBookForMerge(bookId);
+      // validateBookForMerge already reads get('processing') for the ffmpeg check — reuse its
+      // return value to size the semaphore, avoiding a duplicate (rejection-prone) read.
+      const processing = await this.validateBookForMerge(bookId);
+      // Refresh the concurrency limit before the start-vs-queue decision. setMax() does not wake
+      // already-queued waiters; FIFO ordering is preserved by the enqueue-time drain below (promote
+      // front-of-queue first) and the release-path drain in processNext(). Clamp defensively — a
+      // NaN/0 read would poison setMax (Math.max(1, NaN) is NaN).
+      this.semaphore.setMax(clampConcurrency(processing?.maxConcurrentProcessing));
     } catch (error: unknown) {
-      this.inProgress.delete(bookId); // Clean up on validation failure
+      this.inProgress.delete(bookId); // Clean up on validation / settings-read failure
       throw error;
     }
-
-    // Refresh the concurrency limit from settings before the start-vs-queue decision.
-    // setMax() does not wake already-queued waiters; FIFO ordering is preserved by the
-    // enqueue-time drain below (promote front-of-queue first) and the release-path drain
-    // in processNext(). Clamp defensively to >= 1 — setMax() performs no validation.
-    const processing = await this.settingsService.get('processing');
-    this.semaphore.setMax(Math.max(1, processing?.maxConcurrentProcessing ?? 1));
 
     // Start the new request immediately ONLY when nothing is queued ahead of it and a
     // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
@@ -165,7 +184,13 @@ export class MergeService {
     // request just appended to the tail.
     this.drainQueue();
 
-    return { status: 'queued', bookId, position };
+    // Re-check reality before acknowledging: drainQueue (or the getById await above) may have
+    // promoted this very book if the read raised capacity by ≥2. The pre-drain `position` would
+    // then be a stale lie. Report the live state — started if promoted, else the current index.
+    if (!this.queue.includes(bookId)) {
+      return { status: 'started', bookId };
+    }
+    return { status: 'queued', bookId, position: this.queue.indexOf(bookId) + 1 };
   }
 
   /** Promote queued jobs from the front while free slots can be acquired. */
@@ -176,19 +201,20 @@ export class MergeService {
     }
   }
 
-  /** Drain the queue: pass the semaphore slot to the next queued merge, or release if empty. */
+  /**
+   * Drain step after a merge finishes: release the held slot, then re-drain through the
+   * capacity-checked promotion path. Both calls are synchronous (single-threaded), so there
+   * is no release/re-acquire interleave window — the old slot-pass pattern existed only to
+   * guard a gap that cannot occur here, and it bypassed capacity entirely (a SHRINK never
+   * took effect while a backlog existed because the slot was handed forward without
+   * consulting max). Releasing first lets drainQueue's tryAcquire honor the current max.
+   */
   private processNext(): void {
-    if (this.queue.length === 0) {
-      this.semaphore.release(); // No more work — release the slot
-      return;
-    }
-
-    // Keep the semaphore slot — pass it directly to the next job (no release + re-acquire gap)
-    const nextBookId = this.queue.shift()!;
-    this.startQueuedMerge(nextBookId);
+    this.semaphore.release();
+    this.drainQueue();
   }
 
-  /** Run a queued merge that already holds a semaphore slot (passed by processNext or acquired by drainQueue). */
+  /** Run a queued merge that already holds a semaphore slot (acquired by drainQueue's tryAcquire). */
   private startQueuedMerge(bookId: number): void {
     this.inProgress.add(bookId);
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
-import { MergeService } from './merge.service.js';
+import { MergeService, clampConcurrency } from './merge.service.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -1274,10 +1274,9 @@ describe('#257 merge observability — merge service', () => {
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
       const startedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_started');
       const startedBookIds = startedEvents.map((c: unknown[]) => (c[1] as { book_id: number }).book_id);
-      // Book 43 should start before book 44 (FIFO)
-      const idx43 = startedBookIds.indexOf(43);
-      const idx44 = startedBookIds.indexOf(44);
-      expect(idx43).toBeLessThan(idx44);
+      // AC4 liveness pin: assert the full global start order after the final release, not just
+      // pairwise — proves no jump-ahead and that the drain path promotes every queued job.
+      expect(startedBookIds).toEqual([42, 43, 44]);
     });
   });
 
@@ -1655,7 +1654,7 @@ describe('#257 merge observability — merge service', () => {
       await service.enqueueMerge(42); // starts — takes the semaphore slot
       await service.enqueueMerge(43); // queues
 
-      // Complete first merge — should promote book 43 (passing the slot, not releasing)
+      // Complete first merge — release + drainQueue promotes book 43 into the freed slot
       resolveFirst();
       await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -1680,7 +1679,12 @@ describe('#257 merge observability — merge service', () => {
         await new Promise<void>((resolve) => releasers.push(() => { active--; resolve(); }));
         return { success: true, outputFiles: ['/staging/out.m4b'] };
       });
-      return { peak: () => peak, releaseAll: () => { for (const r of releasers.splice(0)) r(); } };
+      return {
+        peak: () => peak,
+        active: () => active,
+        releaseAll: () => { for (const r of releasers.splice(0)) r(); },
+        releaseOne: () => { const r = releasers.shift(); if (r) r(); },
+      };
     }
 
     function setupMultiBook(ids: number[]) {
@@ -1813,6 +1817,139 @@ describe('#257 merge observability — merge service', () => {
       await settle();
       gate.releaseAll();
       await settle();
+    });
+
+    it('#1368 shrink takes effect mid-drain: a queued job waits for ALL slots to free, not just one', async () => {
+      const { bookService } = setupMultiBook([42, 43, 44]);
+      const gate = gatedProcessing();
+
+      // Mutable concurrency so the test can lower capacity between enqueues.
+      const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 2 };
+      const settingsService = inject<SettingsService>({
+        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : undefined)),
+        getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn(),
+      });
+      const { service, startedIds } = buildService(bookService, settingsService);
+
+      // Capacity 2: A (42) + B (43) active.
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
+      await settle();
+      expect(startedIds()).toEqual([42, 43]);
+      expect(gate.peak()).toBe(2);
+
+      // Operator lowers capacity to 1; the next enqueue applies setMax(1). C (44) queues.
+      processing.maxConcurrentProcessing = 1;
+      const cAck = await service.enqueueMerge(44);
+      await settle();
+      expect(cAck.status).toBe('queued');
+
+      // First active merge finishes — but capacity is now 1 and B is still in-flight, so the
+      // queued C must NOT start (the old slot-pass would have started it regardless of max).
+      gate.releaseOne();
+      await settle();
+      expect(startedIds()).toEqual([42, 43]); // C still waiting
+
+      // Second active merge finishes — now a slot is genuinely free under max=1, so C starts.
+      gate.releaseOne();
+      await settle();
+      expect(startedIds()).toEqual([42, 43, 44]);
+
+      gate.releaseAll();
+      await settle();
+    });
+
+    it('#1368 no settings-read wedge: a rejecting get(\'processing\') leaves inProgress clean (retry not 409)', async () => {
+      const { bookService } = setupMultiBook([42]);
+      gatedProcessing();
+      const get = vi.fn()
+        .mockRejectedValueOnce(new Error('settings cache DB error'))
+        .mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? { ...processingOverrides.processing } : undefined));
+      const settingsService = inject<SettingsService>({ get, getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn() });
+      const { service } = buildService(bookService, settingsService);
+
+      // First attempt: the (only) processing read rejects — must propagate AND leave inProgress clean.
+      await expect(service.enqueueMerge(42)).rejects.toThrow('settings cache DB error');
+
+      // Retry for the same book must NOT 409 with ALREADY_IN_PROGRESS (the book was not stranded).
+      const ack = await service.enqueueMerge(42);
+      expect(ack.status).toBe('started');
+    });
+
+    it('#1368 no duplicate settings read: the enqueue validate+size path reads get(\'processing\') once', async () => {
+      const { bookService } = setupMultiBook([42, 43]);
+      const gate = gatedProcessing();
+      const get = vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? { ...processingOverrides.processing } : undefined));
+      const settingsService = inject<SettingsService>({ get, getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn() });
+      const { service } = buildService(bookService, settingsService);
+
+      // A (42) starts and holds the only slot (max=1), gated in processAudioFiles.
+      await service.enqueueMerge(42);
+      await settle();
+
+      // Isolate the next enqueue's reads — exclude A's validate read and executeMerge's
+      // legitimate execution-time read (the F2 distinction: only the enqueue sizing path counts).
+      get.mockClear();
+
+      // B (43) queues (no slot, so no executeMerge). Its validate read must be reused for setMax —
+      // exactly one processing read across the whole start-vs-queue decision.
+      const bAck = await service.enqueueMerge(43);
+      expect(bAck.status).toBe('queued');
+      const processingReads = get.mock.calls.filter((c: unknown[]) => c[0] === 'processing');
+      expect(processingReads).toHaveLength(1);
+
+      gate.releaseAll();
+      await settle();
+    });
+
+    it('#1368 honest queued ack: a capacity raise that promotes the new book acks status=started', async () => {
+      const { bookService } = setupMultiBook([42, 43, 44]);
+      const gate = gatedProcessing();
+
+      const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 1 };
+      const settingsService = inject<SettingsService>({
+        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : undefined)),
+        getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn(),
+      });
+      const { service, startedIds } = buildService(bookService, settingsService);
+
+      // Capacity 1: A (42) active, B (43) queued.
+      await service.enqueueMerge(42);
+      await service.enqueueMerge(43);
+      await settle();
+      expect(startedIds()).toEqual([42]);
+
+      // Raise capacity to 3, then enqueue C (44). drainQueue promotes BOTH B (front) and C, so
+      // C's acknowledgement must reflect post-drain reality: started, not a stale 'queued' position.
+      processing.maxConcurrentProcessing = 3;
+      const cAck = await service.enqueueMerge(44);
+      await settle();
+
+      expect(cAck).toEqual({ status: 'started', bookId: 44 });
+      // FIFO preserved: B started before C.
+      const ids = startedIds();
+      expect(ids.indexOf(43)).toBeLessThan(ids.indexOf(44));
+
+      gate.releaseAll();
+      await settle();
+    });
+  });
+
+  describe('#1368 clampConcurrency', () => {
+    it('coerces NaN to 1 (Math.max(1, NaN) would be NaN)', () => {
+      expect(clampConcurrency(NaN)).toBe(1);
+    });
+
+    it('coerces 0, negative, fractional, and undefined to 1', () => {
+      expect(clampConcurrency(0)).toBe(1);
+      expect(clampConcurrency(-3)).toBe(1);
+      expect(clampConcurrency(2.5)).toBe(1);
+      expect(clampConcurrency(undefined)).toBe(1);
+    });
+
+    it('passes through valid integers >= 1', () => {
+      expect(clampConcurrency(1)).toBe(1);
+      expect(clampConcurrency(8)).toBe(8);
     });
   });
 

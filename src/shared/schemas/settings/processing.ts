@@ -12,7 +12,7 @@ export const processingSettingsSchema = z.object({
   keepOriginalBitrate: z.boolean().default(true),
   bitrate: z.number().int().min(32).max(512).default(128),
   mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
-  maxConcurrentProcessing: z.number().int().min(1).default(1),
+  maxConcurrentProcessing: z.number().int().min(1).max(8).default(1),
   postProcessingScript: z.string().default(''),
   postProcessingScriptTimeout: z.number().int().min(1).default(300),
 });
@@ -27,7 +27,7 @@ export const processingFormSchema = z.object({
   keepOriginalBitrate: z.boolean(),
   bitrate: z.number().int().min(32).max(512),
   mergeBehavior: mergeBehaviorSchema,
-  maxConcurrentProcessing: z.number().int().min(1),
+  maxConcurrentProcessing: z.number().int().min(1).max(8),
   postProcessingScript: z.string(),
   postProcessingScriptTimeout: z.number().int().min(1).optional(),
 });

@@ -20,7 +20,7 @@ const processingFormSchema = z.object({
   keepOriginalBitrate: z.boolean(),
   bitrate: z.number().int().min(32).max(512),
   mergeBehavior: mergeBehaviorSchema,
-  maxConcurrentProcessing: z.number().int().min(1),
+  maxConcurrentProcessing: z.number().int().min(1).max(8),
   postProcessingScript: z.string(),
   postProcessingScriptTimeout: z.number().int().min(1).optional(),
   taggingEnabled: z.boolean(),
@@ -270,6 +270,7 @@ export function ProcessingSettingsSection() {
             registration={register('maxConcurrentProcessing', { valueAsNumber: true })}
             error={errors.maxConcurrentProcessing}
             min={1}
+            max={8}
             step={1}
             placeholder="1"
             hint="Maximum number of manual merge jobs that can run simultaneously. Higher values use more CPU and disk I/O."

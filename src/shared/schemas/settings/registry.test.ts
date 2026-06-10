@@ -13,7 +13,7 @@ import {
   type AppSettings,
 } from './registry.js';
 import { importSettingsSchema } from './import.js';
-import { processingSettingsSchema } from './processing.js';
+import { processingSettingsSchema, processingFormSchema } from './processing.js';
 import { generalFormSchema } from './general.js';
 import { discoveryFormSchema } from './discovery.js';
 import { qualityFormSchema } from './quality.js';
@@ -208,6 +208,28 @@ describe('settingsRegistry', () => {
 
     it('rejects non-integer maxConcurrentProcessing', () => {
       const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 1.5 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts maxConcurrentProcessing=8 (maximum)', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 8 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects maxConcurrentProcessing=9 (above maximum)', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 9 });
+      expect(result.success).toBe(false);
+    });
+
+    // The form-validation path is a separate schema from the settings schema above — without
+    // these, deleting `.max(8)` from processingFormSchema would leave the suite green (F1).
+    it('form schema accepts maxConcurrentProcessing=8 (maximum)', () => {
+      const result = processingFormSchema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 8 });
+      expect(result.success).toBe(true);
+    });
+
+    it('form schema rejects maxConcurrentProcessing=9 (above maximum)', () => {
+      const result = processingFormSchema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 9 });
       expect(result.success).toBe(false);
     });
 

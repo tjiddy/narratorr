@@ -203,6 +203,57 @@ describe('ProcessingSettingsSection', () => {
       expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
       expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(1);
     });
+    // Upper bound of 8 is enforced at the field level (mirrors the shared schema's .max(8)).
+    expect(screen.getByLabelText('Max Concurrent Jobs').getAttribute('min')).toBe('1');
+    expect(screen.getByLabelText('Max Concurrent Jobs').getAttribute('max')).toBe('8');
+  });
+
+  it('rejects save when maxConcurrentProcessing exceeds the form-schema max of 8', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
+    mockApi.updateSettings.mockResolvedValue(configuredProcessingSettings);
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(1);
+    });
+
+    // Drive the value above the bound. jsdom doesn't enforce the HTML max attribute, so this
+    // exercises the client-local processingFormSchema's .max(8) zodResolver rejection directly.
+    const input = screen.getByLabelText('Max Concurrent Jobs');
+    await user.clear(input);
+    await user.type(input, '9');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('accepts save when maxConcurrentProcessing is at the form-schema max of 8', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
+    mockApi.updateSettings.mockResolvedValue(configuredProcessingSettings);
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(1);
+    });
+
+    const input = screen.getByLabelText('Max Concurrent Jobs');
+    await user.clear(input);
+    await user.type(input, '8');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ processing: expect.objectContaining({ maxConcurrentProcessing: 8 }) }),
+      );
+    });
   });
 
   it('bitrate, postProcessingScriptTimeout, and maxConcurrentProcessing inputs use integer step', async () => {
