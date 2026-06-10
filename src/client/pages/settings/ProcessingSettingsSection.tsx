@@ -271,8 +271,8 @@ export function ProcessingSettingsSection() {
             error={errors.maxConcurrentProcessing}
             min={1}
             step={1}
-            placeholder="2"
-            hint="Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O."
+            placeholder="1"
+            hint="Maximum number of manual merge jobs that can run simultaneously. Higher values use more CPU and disk I/O."
           />
         </div>
 

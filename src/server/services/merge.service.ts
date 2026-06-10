@@ -129,8 +129,17 @@ export class MergeService {
       throw error;
     }
 
-    if (this.semaphore.tryAcquire()) {
-      // Slot available — start immediately, fire-and-forget
+    // Refresh the concurrency limit from settings before the start-vs-queue decision.
+    // setMax() does not wake already-queued waiters; FIFO ordering is preserved by the
+    // enqueue-time drain below (promote front-of-queue first) and the release-path drain
+    // in processNext(). Clamp defensively to >= 1 — setMax() performs no validation.
+    const processing = await this.settingsService.get('processing');
+    this.semaphore.setMax(Math.max(1, processing?.maxConcurrentProcessing ?? 1));
+
+    // Start the new request immediately ONLY when nothing is queued ahead of it and a
+    // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
+    // the new request never grabs a freed slot ahead of older queued work.
+    if (this.queue.length === 0 && this.semaphore.tryAcquire()) {
       this.executeMerge(bookId)
         .catch((error: unknown) => {
           this.log.error({ error: serializeError(error) }, 'Merge failed for book %d', bookId);
@@ -142,7 +151,7 @@ export class MergeService {
       return { status: 'started', bookId };
     }
 
-    // No slot — move from inProgress to queue
+    // No immediate slot — append the new book to the tail of the queue.
     this.inProgress.delete(bookId);
     this.queue.push(bookId);
     const position = this.queue.length;
@@ -150,7 +159,21 @@ export class MergeService {
     if (book) {
       this.emitQueueEvent('merge_queued', bookId, book.title, position);
     }
+
+    // Drain from the FRONT of the queue while slots are free (e.g. after a capacity raise).
+    // Promoting front-first guarantees older queued jobs win freed slots before the newer
+    // request just appended to the tail.
+    this.drainQueue();
+
     return { status: 'queued', bookId, position };
+  }
+
+  /** Promote queued jobs from the front while free slots can be acquired. */
+  private drainQueue(): void {
+    while (this.queue.length > 0 && this.semaphore.tryAcquire()) {
+      const nextBookId = this.queue.shift()!;
+      this.startQueuedMerge(nextBookId);
+    }
   }
 
   /** Drain the queue: pass the semaphore slot to the next queued merge, or release if empty. */
@@ -162,18 +185,23 @@ export class MergeService {
 
     // Keep the semaphore slot — pass it directly to the next job (no release + re-acquire gap)
     const nextBookId = this.queue.shift()!;
-    this.inProgress.add(nextBookId);
+    this.startQueuedMerge(nextBookId);
+  }
+
+  /** Run a queued merge that already holds a semaphore slot (passed by processNext or acquired by drainQueue). */
+  private startQueuedMerge(bookId: number): void {
+    this.inProgress.add(bookId);
 
     this.emitQueuePositionUpdates().catch((error: unknown) => {
       this.log.debug({ error: serializeError(error) }, 'Failed to emit queue position updates');
     });
 
-    this.executeWithRevalidation(nextBookId)
+    this.executeWithRevalidation(bookId)
       .catch((error: unknown) => {
-        this.log.error({ error: serializeError(error) }, 'Queued merge failed for book %d', nextBookId);
+        this.log.error({ error: serializeError(error) }, 'Queued merge failed for book %d', bookId);
       })
       .finally(() => {
-        this.inProgress.delete(nextBookId);
+        this.inProgress.delete(bookId);
         this.processNext(); // Pass the slot or release if empty
       });
   }
