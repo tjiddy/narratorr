@@ -34,8 +34,12 @@ export type SecretEntity =
 // field, append it here. Contributors per subtype:
 //   webhook:  url, headers           discord:  webhookUrl
 //   slack:    webhookUrl             telegram: botToken
-//   email:    smtpPass               pushover: pushoverToken
-//   gotify:   gotifyToken            (script/ntfy: no secrets in current schema)
+//   email:    smtpPass               pushover: pushoverToken, pushoverUser
+//   gotify:   gotifyToken            ntfy:     ntfyTopic
+//   (script: no secrets in current schema)
+// pushoverUser (a documented-private user key) and ntfyTopic (the topic name IS
+// the publish/subscribe capability on public ntfy servers) are credential-shaped
+// and registered here so they are encrypted at rest and masked in responses (#1307).
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   indexer: ['apiKey', 'apiUrl', 'flareSolverrUrl', 'mamId'],
   downloadClient: ['password', 'apiKey'],
@@ -44,7 +48,7 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   network: ['proxyUrl'],
   metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
-  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'],
+  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────
