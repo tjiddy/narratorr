@@ -45,6 +45,10 @@ export interface SearchStreamActions {
   cancelIndexer: (indexerId: number) => void;
   showResults: () => void;
   reset: () => void;
+  /** Drop a single result from the held results set by its blacklist identity
+   *  (`infoHash` when present, else `guid`). One-shot local filter; a no-op when
+   *  no held result matches. */
+  removeResult: (identity: string) => void;
 }
 
 // ============================================================================
@@ -218,6 +222,15 @@ export function useSearchStream(
     }, finalizingTimeoutMs);
   }, [indexers, cancelIndexer, finalizingTimeoutMs, clearFinalizingTimeout, cleanup]);
 
+  const removeResult = useCallback((identity: string) => {
+    setResults(prev => {
+      if (!prev) return prev;
+      const filtered = prev.results.filter(r => (r.infoHash || r.guid) !== identity);
+      if (filtered.length === prev.results.length) return prev;
+      return { ...prev, results: filtered };
+    });
+  }, []);
+
   const reset = useCallback(() => {
     cleanup();
     setPhase('idle');
@@ -237,6 +250,6 @@ export function useSearchStream(
 
   return {
     state: { phase, sessionId, indexers, results, error, hasResults, authReady },
-    actions: { start, cancelIndexer, showResults, reset },
+    actions: { start, cancelIndexer, showResults, reset, removeResult },
   };
 }

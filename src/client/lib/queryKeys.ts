@@ -48,7 +48,6 @@ export const queryKeys = {
   filesystem: {
     browse: (path: string) => ['filesystem', 'browse', path] as const,
   },
-  searchReleases: (bookId: number, query: string) => ['search-releases', bookId, query] as const,
   backups: () => ['backups'] as const,
   health: {
     status: () => ['health', 'status'] as const,
