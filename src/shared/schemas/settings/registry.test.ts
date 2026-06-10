@@ -14,9 +14,25 @@ import {
 } from './registry.js';
 import { importSettingsSchema } from './import.js';
 import { processingSettingsSchema, processingFormSchema } from './processing.js';
-import { generalFormSchema } from './general.js';
-import { discoveryFormSchema } from './discovery.js';
+import { generalSettingsSchema, generalFormSchema } from './general.js';
+import { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
 import { qualityFormSchema } from './quality.js';
+
+// Single documented source of truth for fields a pick-based / page form schema
+// intentionally omits from its category schema. The sibling invariant below
+// subtracts these before comparing keys, so an *unintentional* omission fails
+// while an intentional hidden field is explicit and auditable.
+//   general → welcomeSeen      (managed by Layout.tsx onboarding; see general.ts:13-16)
+//   discovery → weightMultipliers (computed by DiscoveryService, not user-editable)
+// INVARIANT: a key-omitting form schema must NEVER be registered as a registry
+// `formSchema` override. Overrides are key-aligned by the #1308 guard above and
+// would fail on the omitted key; a "consistency" fix that re-adds welcomeSeen to
+// satisfy the guard would clobber onboarding state. Hidden fields belong here,
+// in the allowlist, not in a registry override.
+const HIDDEN_FIELD_ALLOWLIST: Record<string, readonly string[]> = {
+  general: ['welcomeSeen'],
+  discovery: ['weightMultipliers'],
+};
 
 describe('settingsRegistry', () => {
   describe('invariants', () => {
@@ -58,11 +74,23 @@ describe('settingsRegistry', () => {
     // stripDefaults() and therefore cannot drift, so they are skipped.
     // Scope is top-level keys only — validator internals (e.g. processing's
     // .optional() timeout) differ intentionally and are out of scope by design.
+    //
+    // The override read is plain `entry.formSchema` (NOT an `as` cast):
+    // defineCategory's return type already declares `formSchema?`, so the cast
+    // was dead. The cast also opened a rename-vacuity hole — renaming the
+    // property would have left every read `undefined`, skipping every category
+    // and passing the guard vacuously at the exact moment getFormSchema falls
+    // back to stripDefaults. The non-vacuity backstop below closes that hole:
+    // we collect every category actually checked and assert the list contains
+    // the only two registered overrides. A rename now empties that list and
+    // trips the assertion instead of silently skipping everything.
     it('every formSchema override has the same top-level keys as its category schema', () => {
+      const checkedCategories: string[] = [];
       for (const key of SETTINGS_CATEGORIES) {
         const entry = settingsRegistry[key];
-        const formSchema = (entry as { formSchema?: z.ZodObject<z.ZodRawShape> }).formSchema;
+        const formSchema = entry.formSchema;
         if (!formSchema) continue;
+        checkedCategories.push(key);
         const schemaKeys = Object.keys(entry.schema.shape).sort();
         const formKeys = Object.keys(formSchema.shape).sort();
         const missingFromForm = schemaKeys.filter((k) => !formKeys.includes(k));
@@ -72,6 +100,66 @@ describe('settingsRegistry', () => {
           `Category '${key}' formSchema override drifted from its schema — missing from formSchema: [${missingFromForm.join(', ')}], extra in formSchema: [${extraInForm.join(', ')}]`,
         ).toEqual(schemaKeys);
       }
+      // Non-vacuity backstop (encodes #1308 AC3): the guard above must have
+      // actually exercised the two registered overrides, not skipped every
+      // category. If the `formSchema` property were renamed, this list would be
+      // empty and the assertion would fail rather than passing vacuously.
+      expect(checkedCategories.sort()).toContain('library');
+      expect(checkedCategories.sort()).toContain('processing');
+      expect(checkedCategories.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // Sibling invariant: pick-based / page form schemas (generalFormSchema,
+    // discoveryFormSchema) bypass the registry override path entirely — they are
+    // consumed directly by client pages and never registered. They are the same
+    // drift class on a different surface. Assert each one's keys equal its
+    // category schema's keys minus the documented HIDDEN_FIELD_ALLOWLIST, so an
+    // unintentional omission fails while an intentional hidden field is explicit.
+    const siblingSchemas = [
+      { category: 'general', categorySchema: generalSettingsSchema, formSchema: generalFormSchema },
+      { category: 'discovery', categorySchema: discoverySettingsSchema, formSchema: discoveryFormSchema },
+    ] as const;
+
+    function expectedFormKeys(categorySchema: { shape: Record<string, unknown> }, allowlist: readonly string[]): string[] {
+      return Object.keys(categorySchema.shape)
+        .filter((k) => !allowlist.includes(k))
+        .sort();
+    }
+
+    for (const { category, categorySchema, formSchema } of siblingSchemas) {
+      it(`${category}FormSchema keys equal its category schema keys minus the hidden-field allowlist`, () => {
+        const formKeys = Object.keys(formSchema.shape).sort();
+        const expected = expectedFormKeys(categorySchema, HIDDEN_FIELD_ALLOWLIST[category]!);
+        expect(formKeys).toEqual(expected);
+      });
+
+      it(`${category}FormSchema sibling invariant fails on a non-allowlisted omission`, () => {
+        // Simulate dropping a real, non-allowlisted field from the form schema.
+        const allKeys = Object.keys(formSchema.shape);
+        const droppable = allKeys.find((k) => !HIDDEN_FIELD_ALLOWLIST[category]!.includes(k));
+        expect(droppable, `${category}FormSchema should have at least one non-allowlisted key`).toBeDefined();
+        const brokenFormKeys = allKeys.filter((k) => k !== droppable).sort();
+        const expected = expectedFormKeys(categorySchema, HIDDEN_FIELD_ALLOWLIST[category]!);
+        expect(brokenFormKeys).not.toEqual(expected);
+      });
+    }
+
+    it('every HIDDEN_FIELD_ALLOWLIST entry exists in its category schema (no stale allowlist masking a real omission)', () => {
+      for (const { category, categorySchema } of siblingSchemas) {
+        const schemaKeys = Object.keys(categorySchema.shape);
+        for (const hidden of HIDDEN_FIELD_ALLOWLIST[category]!) {
+          expect(schemaKeys, `${category} allowlist entry '${hidden}' must exist in its category schema`).toContain(hidden);
+        }
+      }
+    });
+
+    // No-registration rider: the intentionally key-omitting form schemas must NOT
+    // be registered as registry `formSchema` overrides — they belong to the
+    // allowlist pattern. A "consistency" registration would fail the override
+    // guard on the omitted key and tempt a fix that re-adds the hidden field.
+    it('intentionally key-omitting form schemas are not registered as registry overrides', () => {
+      expect(settingsRegistry.general.formSchema).toBeUndefined();
+      expect(settingsRegistry.discovery.formSchema).toBeUndefined();
     });
   });
 
