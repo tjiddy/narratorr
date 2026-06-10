@@ -45,24 +45,43 @@ import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
 import { importJobsApi } from './import-jobs.js';
 
-export const api = {
-  ...booksApi,
-  ...searchApi,
-  ...activityApi,
-  ...indexersApi,
-  ...downloadClientsApi,
-  ...notifiersApi,
-  ...blacklistApi,
-  ...settingsApi,
-  ...libraryScanApi,
-  ...systemApi,
-  ...authApi,
-  ...filesystemApi,
-  ...remotePathMappingsApi,
-  ...eventHistoryApi,
-  ...backupsApi,
-  ...importListsApi,
-  ...discoverApi,
-  ...bulkOperationsApi,
-  ...importJobsApi,
-};
+/**
+ * Single source of truth for the API barrel. Both the runtime `api` object and
+ * the collision test (`api-collision.test.ts`) derive from this one collection,
+ * so a module added here is automatically merged into `api` AND covered by the
+ * collision guard — there is no second list to keep in sync. Each entry carries
+ * its module name so the collision test can report which modules define a
+ * duplicate key (see CLAUDE.md: domain-prefixed API method names).
+ */
+export const apiModules = [
+  { name: 'booksApi', api: booksApi },
+  { name: 'searchApi', api: searchApi },
+  { name: 'activityApi', api: activityApi },
+  { name: 'indexersApi', api: indexersApi },
+  { name: 'downloadClientsApi', api: downloadClientsApi },
+  { name: 'notifiersApi', api: notifiersApi },
+  { name: 'blacklistApi', api: blacklistApi },
+  { name: 'settingsApi', api: settingsApi },
+  { name: 'libraryScanApi', api: libraryScanApi },
+  { name: 'systemApi', api: systemApi },
+  { name: 'authApi', api: authApi },
+  { name: 'filesystemApi', api: filesystemApi },
+  { name: 'remotePathMappingsApi', api: remotePathMappingsApi },
+  { name: 'eventHistoryApi', api: eventHistoryApi },
+  { name: 'backupsApi', api: backupsApi },
+  { name: 'importListsApi', api: importListsApi },
+  { name: 'discoverApi', api: discoverApi },
+  { name: 'bulkOperationsApi', api: bulkOperationsApi },
+  { name: 'importJobsApi', api: importJobsApi },
+];
+
+type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (
+  arg: infer I,
+) => void
+  ? I
+  : never;
+
+/** Merged shape of every module's exported methods — the intersection of all `apiModules[*].api` types. */
+export type Api = UnionToIntersection<(typeof apiModules)[number]['api']>;
+
+export const api = Object.assign({}, ...apiModules.map((m) => m.api)) as Api;
