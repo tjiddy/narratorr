@@ -1,8 +1,8 @@
 import { formatBytes } from '@/lib/api';
 import { capitalize } from '@/lib/eventReasonHelpers';
+import { qualityGateReasonSchema } from '@/lib/qualityGateReasonSchema';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
-import type { QualityGateData } from '@/lib/api/activity';
 
 type IndexerMap = Map<number, string>;
 
@@ -67,7 +67,9 @@ function ErrorDetails({ reason }: { reason: Record<string, unknown> }) {
 }
 
 function HeldForReviewDetails({ reason }: { reason: Record<string, unknown> }) {
-  return <QualityComparisonPanel data={reason as unknown as QualityGateData} />;
+  const parsed = qualityGateReasonSchema.safeParse(reason);
+  if (!parsed.success) return <GenericDetails reason={reason} />;
+  return <QualityComparisonPanel data={parsed.data} />;
 }
 
 function GrabFailedDetails({ reason }: { reason: Record<string, unknown> }) {
