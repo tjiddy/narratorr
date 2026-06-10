@@ -390,9 +390,15 @@ export interface FetchWithSsrfRedirectOptions {
   timeoutMs?: number;
   maxHops?: number;
   /**
-   * Request headers applied to every hop (e.g. a `User-Agent`). Forwarded
-   * verbatim into each `fetch` call so callers can identify themselves to
-   * indexers without reaching into the redirect loop.
+   * Request headers forwarded into each `fetch` call so callers can identify
+   * themselves to indexers without reaching into the redirect loop. Intended
+   * for identity headers only (`User-Agent`, `Accept`).
+   *
+   * Credential-bearing headers (`Authorization`, `Cookie`, `Proxy-Authorization`,
+   * any casing) are stripped on cross-origin redirect hops — mirroring WHATWG
+   * fetch / undici / browser behavior — so a malicious or compromised indexer
+   * cannot 302 to a collector host and harvest a forwarded credential. They are
+   * preserved on same-origin hops (origin compared via `URL.origin`).
    */
   headers?: Record<string, string>;
   /**
@@ -441,11 +447,43 @@ async function resolveRedirectTarget(response: Response, currentUrl: string, par
   return nextHref;
 }
 
+/** Request headers stripped on cross-origin redirect hops (lower-cased keys). */
+const CREDENTIAL_HEADER_KEYS = new Set(['authorization', 'cookie', 'proxy-authorization']);
+
+/**
+ * Per-hop request-header filter for the SSRF redirect walker. On a cross-origin
+ * hop, drops credential-class headers (`Authorization`, `Cookie`,
+ * `Proxy-Authorization`, matched case-insensitively) so they are not forwarded
+ * to a host chosen by an indexer-supplied `Location` — mirroring WHATWG fetch /
+ * undici / browser behavior. Identity headers (`User-Agent`, `Accept`) always
+ * survive.
+ *
+ * Returns a fresh object (never mutates the caller's `headers`) and preserves
+ * the original casing of surviving keys. On a same-origin hop, returns a copy
+ * with every header intact.
+ */
+export function stripCrossOriginCredentialHeaders(
+  headers: Record<string, string>,
+  isCrossOrigin: boolean,
+): Record<string, string> {
+  if (!isCrossOrigin) {
+    return { ...headers };
+  }
+  const filtered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (!CREDENTIAL_HEADER_KEYS.has(key.toLowerCase())) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
+}
+
 export async function fetchWithSsrfRedirect(
   startUrl: string,
   opts: FetchWithSsrfRedirectOptions = {},
 ): Promise<Response> {
   const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist, headers = {} } = opts;
+  const startOrigin = new URL(startUrl).origin;
   const visited = new Set<string>();
   let currentUrl = startUrl;
 
@@ -465,7 +503,7 @@ export async function fetchWithSsrfRedirect(
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
       dispatcher,
-      headers,
+      headers: stripCrossOriginCredentialHeaders(headers, parsed.origin !== startOrigin),
     };
 
     const response = await fetchWithOptionalDispatcher(currentUrl, fetchOptions);
