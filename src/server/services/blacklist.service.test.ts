@@ -640,11 +640,22 @@ describe('BlacklistService', () => {
       expect(result.blacklistedGuids.size).toBe(0);
     });
 
-    it('handles empty input arrays gracefully', async () => {
-      db.select.mockReturnValue(mockDbChain([]));
+    it('runs the expiry-only query and returns all active identifiers for empty input arrays', async () => {
+      // AC3: getBlacklistedIdentifiers([], []) must take the expiry-only branch
+      // (returning every active row's identifiers), NOT short-circuit to empty
+      // Sets. Active-row fixtures with NON-empty expected Sets prove the query
+      // actually ran — a regression that iterated chunkArray([]) and returned
+      // empty Sets without querying would fail here.
+      const activeHash = { ...mockEntry, infoHash: 'active-hash', guid: null };
+      const activeGuid = { ...mockEntry2, infoHash: null, guid: 'active-guid' };
+      db.select.mockReturnValue(mockDbChain([activeHash, activeGuid]));
+
       const result = await service.getBlacklistedIdentifiers([], []);
-      expect(result.blacklistedHashes.size).toBe(0);
-      expect(result.blacklistedGuids.size).toBe(0);
+
+      // Exactly one expiry-only query issued (no per-chunk queries for empty input)
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(result.blacklistedHashes.has('active-hash')).toBe(true);
+      expect(result.blacklistedGuids.has('active-guid')).toBe(true);
     });
 
     it('filters by infoHash only when guid array is empty', async () => {
@@ -724,15 +735,21 @@ describe('BlacklistService', () => {
       expect(result.blacklistedGuids).toEqual(new Set(['guid0', 'guid599']));
     });
 
-    it('cross-populates both identifiers when a row matched via one list carries both (F3)', async () => {
+    it('cross-populates both identifiers when a row matched via one list carries both', async () => {
       // Row carries both identifiers but is matched only through the hash list.
       const bothRow = { ...mockEntry, infoHash: 'hashA', guid: 'guidA' };
-      db.select.mockReturnValue(mockDbChain([bothRow]));
+      // Per-query responses: the hash chunk query returns the both-identifier row;
+      // the unrelated-guid chunk query returns nothing. So guidA can ONLY enter
+      // blacklistedGuids via cross-population from the hash query's row — proving
+      // the split per-column implementation preserves the old combined-query
+      // behavior. (A shared mockReturnValue would let the guid query also return
+      // bothRow, making the cross-population assertion vacuous.)
+      db.select
+        .mockReturnValueOnce(mockDbChain([bothRow]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getBlacklistedIdentifiers(['hashA'], ['unrelated-guid']);
 
-      // Both identifiers land in their respective Sets — preserving the old
-      // combined-query cross-population despite the split per-column queries.
       expect(result.blacklistedHashes.has('hashA')).toBe(true);
       expect(result.blacklistedGuids.has('guidA')).toBe(true);
     });

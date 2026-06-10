@@ -18,6 +18,12 @@ function toSQL(expr: unknown): string {
   return dialect.sqlToQuery((expr as any).getSQL()).sql;
 }
 
+/** Extract the bound parameter values from a Drizzle SQL expression (for asserting IN(...) contents). */
+function toParams(expr: unknown): unknown[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).params;
+}
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -2335,11 +2341,28 @@ describe('DiscoveryService', () => {
         // Every stale ID reported as removed
         expect(result.removed).toBe(1100);
 
-        // Isolate the stale-delete calls (inArray on suggestions.id) from the
-        // separate expireSuggestions() delete (filters status + created_at).
-        const whereSql = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls.map(c => toSQL(c[0]));
-        const staleDeleteCalls = whereSql.filter(sql => /"id"\s+in\s+\(/i.test(sql));
-        expect(staleDeleteCalls).toHaveLength(2);
+        // Isolate the stale-delete predicates (inArray on suggestions.id) from the
+        // separate expireSuggestions() delete (filters status + created_at), and
+        // capture the bound ID values from each chunk's IN(...) clause.
+        const staleChunks = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls
+          .filter(c => /"id"\s+in\s+\(/i.test(toSQL(c[0])))
+          .map(c => toParams(c[0]) as number[]);
+
+        // Two chunks: 999 + 101
+        expect(staleChunks).toHaveLength(2);
+        expect(staleChunks[0]).toHaveLength(999);
+        expect(staleChunks[1]).toHaveLength(101);
+
+        // Boundary IDs land in the expected chunks (1 & 999 in the first, 1000 & 1100 in the second)
+        expect(staleChunks[0]).toContain(1);
+        expect(staleChunks[0]).toContain(999);
+        expect(staleChunks[1]).toContain(1000);
+        expect(staleChunks[1]).toContain(1100);
+
+        // The union of both chunks targets every stale ID exactly once — no
+        // dropped tail, no repeated chunk, no wrong IDs.
+        const targetedIds = staleChunks.flat().sort((a, b) => a - b);
+        expect(targetedIds).toEqual(stalePending.map(p => p.id));
       });
     });
   });
