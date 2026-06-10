@@ -53,19 +53,10 @@ const mockStreamActions = {
   cancelIndexer: vi.fn(),
   showResults: vi.fn(),
   reset: vi.fn(),
-  // Mirror the real hook: filter the held results by blacklist identity
-  // (`infoHash` when truthy, else `guid`). Mutating the shared mockStreamState
-  // is observed on the mutation-success re-render the component performs.
-  removeResult: vi.fn((identity: string) => {
-    if (!mockStreamState.results) return;
-    mockStreamState = {
-      ...mockStreamState,
-      results: {
-        ...mockStreamState.results,
-        results: mockStreamState.results.results.filter(r => (r.infoHash || r.guid) !== identity),
-      },
-    };
-  }),
+  // The real hook owns identity matching (independent OR-match on either
+  // identifier) — exercised against the real filter in useSearchStream.test.tsx.
+  // Here we only assert the modal forwards the pair-shaped blacklist identifiers.
+  removeResult: vi.fn(),
 };
 
 let mockStreamState: {
@@ -843,7 +834,7 @@ describe('SearchReleasesModal', () => {
     });
   });
 
-  it('shows error toast when blacklist fails', async () => {
+  it('shows error toast, keeps the row, and does not call removeResult when blacklist fails', async () => {
     setStreamResults(mockResults);
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));
     const user = userEvent.setup();
@@ -860,9 +851,13 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
+    // Removal only fires on success — a future optimistic-removal refactor that
+    // dropped the row before the API resolved would fail these pins.
+    expect(mockStreamActions.removeResult).not.toHaveBeenCalled();
+    expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
   });
 
-  it('removes a torrent (infoHash) result from the open list after blacklisting', async () => {
+  it('forwards the infoHash identifier to removeResult after blacklisting a torrent result', async () => {
     setStreamResults(mockResults);
     vi.mocked(api.addToBlacklist).mockResolvedValue({
       id: 1,
@@ -882,18 +877,18 @@ describe('SearchReleasesModal', () => {
 
     await user.click(screen.getAllByText('Blacklist')[0]!);
 
+    // The hook owns identity matching; the modal just forwards the pair-shaped
+    // identifiers. infoHash is present, guid absent (never coalesced into a string).
     await waitFor(() => {
-      expect(mockStreamActions.removeResult).toHaveBeenCalledWith('abc123');
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123' }),
+      );
     });
-    // Row disappears immediately, no refetch; the other result remains.
-    await waitFor(() => {
-      expect(screen.queryByText('The Way of Kings [Unabridged]')).not.toBeInTheDocument();
-    });
-    expect(screen.getByText('Way of Kings (Graphic Audio)')).toBeInTheDocument();
+    expect(mockStreamActions.removeResult.mock.calls[0]![0]).not.toHaveProperty('guid');
     expect(toast.success).toHaveBeenCalledWith('Release blacklisted');
   });
 
-  it('removes a usenet (guid-only) result keyed off guid, not the render key', async () => {
+  it('forwards the guid identifier to removeResult for a usenet (guid-only) result', async () => {
     const guidResult: SearchResult[] = [
       {
         title: 'GUID Only Removal',
@@ -926,15 +921,17 @@ describe('SearchReleasesModal', () => {
 
     await user.click(screen.getByText('Blacklist'));
 
+    // guid is forwarded; the empty-string infoHash is dropped at the payload
+    // boundary, so removeResult sees only the guid identifier.
     await waitFor(() => {
-      expect(mockStreamActions.removeResult).toHaveBeenCalledWith('https://indexer.example/details/guid789');
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
+        expect.objectContaining({ guid: 'https://indexer.example/details/guid789' }),
+      );
     });
-    await waitFor(() => {
-      expect(screen.queryByText('GUID Only Removal')).not.toBeInTheDocument();
-    });
+    expect(mockStreamActions.removeResult.mock.calls[0]![0]).not.toHaveProperty('infoHash');
   });
 
-  it('forwards both identifiers in the blacklist payload while removing by infoHash', async () => {
+  it('forwards both identifiers to the blacklist payload and to removeResult', async () => {
     const dualIdentifierResult: SearchResult[] = [
       {
         title: 'Dual Identifier Release',
@@ -981,9 +978,15 @@ describe('SearchReleasesModal', () => {
         expect.anything(),
       );
     });
-    // Local removal key is infoHash (truthy) — not guid.
+    // Both identifiers are forwarded to removeResult unchanged — the hook
+    // OR-matches them independently (no coalescing to a single primary).
     await waitFor(() => {
-      expect(mockStreamActions.removeResult).toHaveBeenCalledWith('hash999');
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          infoHash: 'hash999',
+          guid: 'https://indexer.example/details/guid999',
+        }),
+      );
     });
   });
 

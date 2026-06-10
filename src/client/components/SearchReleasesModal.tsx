@@ -143,11 +143,11 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     onSuccess: (_data, variables) => {
       toast.success('Release blacklisted');
       queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
-      // Drop the blacklisted row from the open results immediately (local-state
-      // only, no refetch). Identity is `infoHash` when present, else `guid` —
-      // NOT the render key, which never consults `guid`.
-      const identity = variables.infoHash || variables.guid;
-      if (identity) actions.removeResult(identity);
+      // Drop the blacklisted row(s) from the open results immediately (local-state
+      // only, no refetch). The mutation variables already carry `{ infoHash?, guid? }`,
+      // so pass them straight through — the hook owns identity matching (independent
+      // OR-match on either identifier), NOT the render key, which never consults `guid`.
+      actions.removeResult(variables);
     },
     onError: (err: Error) => {
       toast.error(`Failed to blacklist: ${getErrorMessage(err)}`);

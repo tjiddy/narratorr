@@ -199,55 +199,129 @@ describe('useSearchStream', () => {
   });
 
   describe('removeResult', () => {
-    const multiResult = {
-      results: [
-        { title: 'Torrent A', indexer: 'ABB', protocol: 'torrent' as const, infoHash: 'hashA' },
-        { title: 'Usenet B', indexer: 'NZB', protocol: 'usenet' as const, guid: 'guidB' },
-        { title: 'Torrent C', indexer: 'ABB', protocol: 'torrent' as const, infoHash: 'hashC' },
-      ],
-      durationUnknown: false,
-      unsupportedResults: { count: 0, titles: [] },
+    type Fixture = {
+      title: string;
+      indexer: string;
+      protocol: 'torrent' | 'usenet';
+      infoHash?: string;
+      guid?: string;
     };
 
-    async function startWithResults() {
+    async function startWithResults(results: Fixture[]) {
       const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
       await waitForAuth(result);
       act(() => { result.current.actions.start(); });
-      act(() => { MockEventSource.instances[0]!.emit('search-complete', multiResult); });
+      act(() => {
+        MockEventSource.instances[0]!.emit('search-complete', {
+          results,
+          durationUnknown: false,
+          unsupportedResults: { count: 0, titles: [] },
+        });
+      });
       return result;
     }
 
-    it('drops the result matching an infoHash identity and leaves others intact', async () => {
-      const result = await startWithResults();
+    // Server-parity OR-match: a dual-identifier row is removed by EITHER identifier
+    // on its own. Dropping the infoHash clause from the matcher fails this case.
+    it('removes a dual-identifier row matched by its infoHash alone', async () => {
+      const result = await startWithResults([
+        { title: 'Dual D', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashD', guid: 'guidD' },
+        { title: 'Control', indexer: 'NZB', protocol: 'usenet', guid: 'guidZ' },
+      ]);
 
-      act(() => { result.current.actions.removeResult('hashA'); });
+      act(() => { result.current.actions.removeResult({ infoHash: 'hashD' }); });
 
-      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Usenet B', 'Torrent C']);
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
     });
 
-    it('drops a guid-only result matched by its guid identity', async () => {
-      const result = await startWithResults();
+    // Dropping the guid clause from the matcher fails this case.
+    it('removes a dual-identifier row matched by its guid alone', async () => {
+      const result = await startWithResults([
+        { title: 'Dual D', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashD', guid: 'guidD' },
+        { title: 'Control', indexer: 'NZB', protocol: 'usenet', guid: 'guidZ' },
+      ]);
 
-      act(() => { result.current.actions.removeResult('guidB'); });
+      act(() => { result.current.actions.removeResult({ guid: 'guidD' }); });
 
-      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Torrent A', 'Torrent C']);
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
     });
 
-    it('is a no-op when the identity matches no held result', async () => {
-      const result = await startWithResults();
+    // Guid-sibling seam (the named user-visible behavior change): blacklisting a
+    // dual-identifier row also removes a distinct sibling sharing only its guid.
+    // The old coalesced-primary filter left the sibling visible.
+    it('removes a guid-only sibling sharing the blacklisted row guid', async () => {
+      const result = await startWithResults([
+        { title: 'Dual A', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashA', guid: 'guidA' },
+        { title: 'Guid Sibling', indexer: 'NZB', protocol: 'usenet', guid: 'guidA' },
+        { title: 'Control', indexer: 'MAM', protocol: 'torrent', infoHash: 'hashZ' },
+      ]);
+
+      // The modal passes the dual row's identifiers; the sibling matches on guid.
+      act(() => { result.current.actions.removeResult({ infoHash: 'hashA', guid: 'guidA' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
+    });
+
+    // Empty-string identifiers must contribute nothing (truthiness guard, not
+    // `!= null`). A `!= null` infoHash guard would match both empty-infoHash rows
+    // and wrongly remove the guidY row.
+    it('treats an empty-string identifier as a non-match', async () => {
+      const result = await startWithResults([
+        { title: 'Empty X', indexer: 'NZB', protocol: 'usenet', infoHash: '', guid: 'guidX' },
+        { title: 'Empty Y', indexer: 'NZB', protocol: 'usenet', infoHash: '', guid: 'guidY' },
+      ]);
+
+      act(() => { result.current.actions.removeResult({ infoHash: '', guid: 'guidX' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Empty Y']);
+    });
+
+    // Intentional Array.filter semantics: one call removes every row sharing the
+    // identity, mirroring server-side content-identity blacklisting. A future
+    // findIndex+splice "fix" would regress this visibly.
+    it('removes every row sharing one infoHash', async () => {
+      const result = await startWithResults([
+        { title: 'Shared 1', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashS' },
+        { title: 'Shared 2', indexer: 'MAM', protocol: 'torrent', infoHash: 'hashS' },
+        { title: 'Control', indexer: 'NZB', protocol: 'usenet', guid: 'guidZ' },
+      ]);
+
+      act(() => { result.current.actions.removeResult({ infoHash: 'hashS' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
+    });
+
+    it('is a no-op for an empty/absent ref, returning the same prev reference', async () => {
+      const result = await startWithResults([
+        { title: 'Row', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashR' },
+      ]);
       const before = result.current.state.results;
 
-      act(() => { result.current.actions.removeResult('not-present'); });
+      act(() => { result.current.actions.removeResult({}); });
+      expect(result.current.state.results).toBe(before);
 
+      act(() => { result.current.actions.removeResult({ infoHash: '', guid: '' }); });
       // Same reference — unchanged set, no spurious re-render churn.
       expect(result.current.state.results).toBe(before);
-      expect(result.current.state.results?.results).toHaveLength(3);
+      expect(result.current.state.results?.results).toHaveLength(1);
+    });
+
+    it('is a no-op when the ref matches no held result, returning the same prev reference', async () => {
+      const result = await startWithResults([
+        { title: 'Row', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashR' },
+      ]);
+      const before = result.current.state.results;
+
+      act(() => { result.current.actions.removeResult({ infoHash: 'not-present' }); });
+
+      expect(result.current.state.results).toBe(before);
+      expect(result.current.state.results?.results).toHaveLength(1);
     });
 
     it('is a no-op when there are no results yet', () => {
       const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
-      act(() => { result.current.actions.removeResult('anything'); });
+      act(() => { result.current.actions.removeResult({ infoHash: 'anything' }); });
 
       expect(result.current.state.results).toBeNull();
     });
