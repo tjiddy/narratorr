@@ -82,6 +82,8 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
         return reply.status(500).send({ error: result.error });
       case 'deleted':
         return { success: true };
+      default:
+        return result satisfies never;
     }
 });
 }

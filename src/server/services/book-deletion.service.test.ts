@@ -81,6 +81,7 @@ describe('BookDeletionService', () => {
       const result = await service.deleteBook(1, { deleteFiles: false });
 
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
     });
 
     it('records a deleted event whose snapshot joins authors and narrators (#71)', async () => {
@@ -127,6 +128,20 @@ describe('BookDeletionService', () => {
       expect(filesOrder).toBeLessThan(deleteOrder);
       expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Sanderson/Way of Kings', '/audiobooks');
     });
+
+    it('cancels active downloads BEFORE the DB delete', async () => {
+      const cancel = vi.fn().mockResolvedValue(true);
+      const { service, bookService } = createService({
+        downloadService: { getActiveByBookId: vi.fn().mockResolvedValue([{ id: 10 }]) },
+        downloadOrchestrator: { cancel },
+      });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      const cancelOrder = cancel.mock.invocationCallOrder[0]!;
+      const deleteOrder = (bookService.delete as Mock).mock.invocationCallOrder[0]!;
+      expect(cancelOrder).toBeLessThan(deleteOrder);
+    });
   });
 
   describe('best-effort failures do not block deletion', () => {
@@ -168,6 +183,9 @@ describe('BookDeletionService', () => {
       const result = await service.deleteBook(1, { deleteFiles: false });
 
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      // Positive call assertion also consumes the mockRejectedValueOnce queue,
+      // closing the documented clearAllMocks + *Once() leak.
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
     });
   });
 
@@ -183,7 +201,12 @@ describe('BookDeletionService', () => {
 
       const result = await service.deleteBook(1, { deleteFiles: true });
 
-      expect(result.outcome).toBe('path_outside_library');
+      // Pin the real PathOutsideLibraryError message pass-through, not just the
+      // outcome — swapping `error: error.message` for a generic string must fail.
+      expect(result).toEqual({
+        outcome: 'path_outside_library',
+        error: expect.stringMatching(/not inside library root/),
+      });
       expect(downloadService.getActiveByBookId).not.toHaveBeenCalled();
       expect(eventHistory!.create).not.toHaveBeenCalled();
       expect(bookService.delete).not.toHaveBeenCalled();
