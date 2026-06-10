@@ -11,18 +11,15 @@ import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, processingFormSchema as sharedProcessingFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-const processingFormSchema = z.object({
-  ffmpegPath: z.string(),
-  outputFormat: outputFormatSchema,
-  keepOriginalBitrate: z.boolean(),
-  bitrate: z.number().int().min(32).max(512),
-  mergeBehavior: mergeBehaviorSchema,
-  maxConcurrentProcessing: z.number().int().min(1).max(8),
-  postProcessingScript: z.string(),
-  postProcessingScriptTimeout: z.number().int().min(1).optional(),
+// Consume the registry-guarded shared processing form schema (#1308 guard covers
+// its key alignment with processingSettingsSchema) and extend it with the three
+// page-local tagging fields this combined form also edits. The NaN→undefined
+// coercion for cleared numeric inputs still lives at the form layer via
+// register()'s setValueAs below — the shared schema carries no z.preprocess.
+const processingFormSchema = sharedProcessingFormSchema.extend({
   taggingEnabled: z.boolean(),
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
