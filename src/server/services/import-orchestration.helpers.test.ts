@@ -537,6 +537,180 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
   });
 });
 
+describe('copyToLibrary — interrupted-commit recovery before direct-copy (#1337)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+  const markerPath = (): string => `${target}.import-commit-pending`;
+  const bakPath = (): string => `${target}.import-bak`;
+  const tmpPath = (): string => `${target}.import-tmp`;
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
+
+  // Reproduce the post-kill state of a commit killed after the backup-out renames
+  // but before the first move-in (#1290 window): an audio-EMPTY target, a populated
+  // `.import-bak` holding the stranded originals, and the commit-pending marker armed.
+  async function armInterruptedCommit(originals: Record<string, Buffer>): Promise<void> {
+    await mkdir(target, { recursive: true }); // target exists but holds no audio
+    await mkdir(bakPath(), { recursive: true });
+    for (const [name, buf] of Object.entries(originals)) {
+      await writeFile(join(bakPath(), name), buf);
+    }
+    await writeFile(markerPath(), '');
+  }
+
+  beforeEach(async () => {
+    // Defensive passthrough reset — the #1291 suite mutates these module-level
+    // fs wrappers and only restores them in its own beforeEach.
+    fsMocks.rm.mockReset();
+    fsMocks.cp.mockReset();
+    fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+    fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1337-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsMocks.real.rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('single-file: recovers the stranded originals before the manual import, then consumes the marker + backup', async () => {
+    await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(source, 'b.mp3'), Buffer.alloc(300, 2));
+
+    const result = await copyToLibrary(item(), null, 'copy', buildDeps());
+
+    expect(result).toBe(target);
+    // Recovery restored old.m4b → target was populated → the staged swap replaced
+    // it with the manual import's audio. The stale edition is gone (no Frankenbook).
+    expect((await readdir(target)).sort()).toEqual(['a.mp3', 'b.mp3']);
+    // The armed marker + backup were CONSUMED by recovery, not orphaned (the bug):
+    // an orphaned marker would fire bogus recovery on a later import.
+    expect(await pathExists(markerPath())).toBe(false);
+    expect(await pathExists(bakPath())).toBe(false);
+    expect(await pathExists(tmpPath())).toBe(false);
+  });
+
+  it('disc-group: recovers before the staged flatten, consuming the marker + backup', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
+
+    expect(result).toBe(target);
+    const files = (await readdir(target)).sort();
+    // Old single-file edition replaced; both discs flattened into the top level.
+    expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
+    expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    expect(await pathExists(markerPath())).toBe(false);
+    expect(await pathExists(bakPath())).toBe(false);
+    expect(await pathExists(tmpPath())).toBe(false);
+  });
+
+  it('a later import performs no bogus recovery — the marker was consumed (AC3)', async () => {
+    await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+    await copyToLibrary(item(), null, 'copy', buildDeps());
+    expect(await pathExists(markerPath())).toBe(false);
+
+    // A second import to the now-populated, marker-less target routes through the
+    // ordinary staged swap (no recovery). Its audio replaces the first import's, and
+    // the long-gone stale original is NOT resurrected over the manually-imported files.
+    const source2 = join(baseDir, 'downloads', 'release2');
+    await mkdir(source2, { recursive: true });
+    await writeFile(join(source2, 'c.mp3'), Buffer.alloc(400, 3));
+    await copyToLibrary({ path: source2, title: 'Title', authorName: 'Author' }, null, 'copy', buildDeps());
+
+    const files = (await readdir(target)).sort();
+    expect(files).toEqual(['c.mp3']);
+    expect(files).not.toContain('old.m4b');
+    expect(await pathExists(markerPath())).toBe(false);
+    expect(await pathExists(bakPath())).toBe(false);
+  });
+
+  it('marker-absent empty target keeps the direct-copy fast path — no recovery, no staging siblings (AC4)', async () => {
+    // No marker, no `.import-bak`, empty target — the new pre-gate recovery is a no-op.
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+
+    await copyToLibrary(item(), null, 'copy', buildDeps());
+
+    expect(await readdir(target)).toContain('a.mp3');
+    expect(await pathExists(markerPath())).toBe(false);
+    expect(await pathExists(bakPath())).toBe(false);
+    expect(await pathExists(tmpPath())).toBe(false);
+  });
+
+  it('marker-absent stale .import-bak is strict-cleared, never restored, and the direct copy still runs (F1)', async () => {
+    // A disposable post-success leftover backup with NO marker must not trigger
+    // recovery: prepareImportSiblings strict-clears it and the fast path proceeds,
+    // so its contents are never restored over the manual import.
+    await mkdir(bakPath(), { recursive: true });
+    await writeFile(join(bakPath(), 'stale.m4b'), Buffer.alloc(500, 9));
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+
+    await copyToLibrary(item(), null, 'copy', buildDeps());
+
+    const files = await readdir(target);
+    expect(files).toContain('a.mp3');
+    expect(files).not.toContain('stale.m4b');
+    expect(await pathExists(bakPath())).toBe(false);
+    expect(await pathExists(tmpPath())).toBe(false);
+  });
+
+  it('move mode: source removed after the recovered swap, and a later import does not resurrect the originals (AC5)', async () => {
+    await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    await copyToLibrary(item(), null, 'move', buildDeps());
+
+    // Recovery restored old.m4b → staged swap replaced it with new.mp3 → source removed.
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    expect(await pathExists(source)).toBe(false);
+    expect(await pathExists(markerPath())).toBe(false);
+    expect(await pathExists(bakPath())).toBe(false);
+
+    // Later import to the same target: no marker, so no stale restore.
+    const source2 = join(baseDir, 'downloads', 'release2');
+    await mkdir(source2, { recursive: true });
+    await writeFile(join(source2, 'final.mp3'), Buffer.alloc(600, 3));
+    await copyToLibrary({ path: source2, title: 'Title', authorName: 'Author' }, null, 'copy', buildDeps());
+
+    const files = (await readdir(target)).sort();
+    expect(files).toEqual(['final.mp3']);
+    expect(files).not.toContain('old.m4b');
+  });
+});
+
 describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => {
   let baseDir: string;
   let libraryRoot: string;
