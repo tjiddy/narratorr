@@ -45,6 +45,30 @@ export interface SearchStreamActions {
   cancelIndexer: (indexerId: number) => void;
   showResults: () => void;
   reset: () => void;
+  /** Drop a single result from the held results set by its blacklist identity
+   *  (`infoHash` when present, else `guid`). One-shot local filter; a no-op when
+   *  no held result matches. */
+  removeResult: (identity: string) => void;
+}
+
+/** Build the SSE stream URL with query, context, and api-key params. */
+function buildStreamUrl(query: string, context: SearchContext | undefined, apiKey: string): string {
+  const params = new URLSearchParams({ q: query });
+  if (context?.author) params.set('author', context.author);
+  if (context?.title) params.set('title', context.title);
+  if (context?.bookDuration) params.set('bookDuration', String(context.bookDuration));
+  if (apiKey) params.set('apikey', apiKey);
+  return `${URL_BASE}/api/search/stream?${params.toString()}`;
+}
+
+/** Drop the result matching `identity` (`infoHash` when truthy, else `guid`)
+ *  from a held response. Returns the same reference when nothing matches so the
+ *  setState is a no-op (no spurious re-render). */
+function removeResultByIdentity(prev: SearchResponse | null, identity: string): SearchResponse | null {
+  if (!prev) return prev;
+  const filtered = prev.results.filter(r => (r.infoHash || r.guid) !== identity);
+  if (filtered.length === prev.results.length) return prev;
+  return { ...prev, results: filtered };
 }
 
 // ============================================================================
@@ -106,15 +130,7 @@ export function useSearchStream(
     setSessionId(null);
     cancelledRef.current.clear();
 
-    const params = new URLSearchParams({ q: query });
-    if (context?.author) params.set('author', context.author);
-    if (context?.title) params.set('title', context.title);
-    if (context?.bookDuration) params.set('bookDuration', String(context.bookDuration));
-
-    const apiKey = authConfig.apiKey ?? '';
-    if (apiKey) params.set('apikey', apiKey);
-
-    const url = `${URL_BASE}/api/search/stream?${params.toString()}`;
+    const url = buildStreamUrl(query, context, authConfig.apiKey ?? '');
     const es = new EventSource(url);
     esRef.current = es;
 
@@ -218,6 +234,10 @@ export function useSearchStream(
     }, finalizingTimeoutMs);
   }, [indexers, cancelIndexer, finalizingTimeoutMs, clearFinalizingTimeout, cleanup]);
 
+  const removeResult = useCallback((identity: string) => {
+    setResults(prev => removeResultByIdentity(prev, identity));
+  }, []);
+
   const reset = useCallback(() => {
     cleanup();
     setPhase('idle');
@@ -237,6 +257,6 @@ export function useSearchStream(
 
   return {
     state: { phase, sessionId, indexers, results, error, hasResults, authReady },
-    actions: { start, cancelIndexer, showResults, reset },
+    actions: { start, cancelIndexer, showResults, reset, removeResult },
   };
 }

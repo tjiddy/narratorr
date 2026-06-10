@@ -198,6 +198,61 @@ describe('useSearchStream', () => {
     expect(es!.closed).toBe(true);
   });
 
+  describe('removeResult', () => {
+    const multiResult = {
+      results: [
+        { title: 'Torrent A', indexer: 'ABB', protocol: 'torrent' as const, infoHash: 'hashA' },
+        { title: 'Usenet B', indexer: 'NZB', protocol: 'usenet' as const, guid: 'guidB' },
+        { title: 'Torrent C', indexer: 'ABB', protocol: 'torrent' as const, infoHash: 'hashC' },
+      ],
+      durationUnknown: false,
+      unsupportedResults: { count: 0, titles: [] },
+    };
+
+    async function startWithResults() {
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      act(() => { MockEventSource.instances[0]!.emit('search-complete', multiResult); });
+      return result;
+    }
+
+    it('drops the result matching an infoHash identity and leaves others intact', async () => {
+      const result = await startWithResults();
+
+      act(() => { result.current.actions.removeResult('hashA'); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Usenet B', 'Torrent C']);
+    });
+
+    it('drops a guid-only result matched by its guid identity', async () => {
+      const result = await startWithResults();
+
+      act(() => { result.current.actions.removeResult('guidB'); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Torrent A', 'Torrent C']);
+    });
+
+    it('is a no-op when the identity matches no held result', async () => {
+      const result = await startWithResults();
+      const before = result.current.state.results;
+
+      act(() => { result.current.actions.removeResult('not-present'); });
+
+      // Same reference — unchanged set, no spurious re-render churn.
+      expect(result.current.state.results).toBe(before);
+      expect(result.current.state.results?.results).toHaveLength(3);
+    });
+
+    it('is a no-op when there are no results yet', () => {
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+      act(() => { result.current.actions.removeResult('anything'); });
+
+      expect(result.current.state.results).toBeNull();
+    });
+  });
+
   it('sends POST to cancel endpoint with correct sessionId and indexerId', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 

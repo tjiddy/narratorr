@@ -53,6 +53,19 @@ const mockStreamActions = {
   cancelIndexer: vi.fn(),
   showResults: vi.fn(),
   reset: vi.fn(),
+  // Mirror the real hook: filter the held results by blacklist identity
+  // (`infoHash` when truthy, else `guid`). Mutating the shared mockStreamState
+  // is observed on the mutation-success re-render the component performs.
+  removeResult: vi.fn((identity: string) => {
+    if (!mockStreamState.results) return;
+    mockStreamState = {
+      ...mockStreamState,
+      results: {
+        ...mockStreamState.results,
+        results: mockStreamState.results.results.filter(r => (r.infoHash || r.guid) !== identity),
+      },
+    };
+  }),
 };
 
 let mockStreamState: {
@@ -847,6 +860,163 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
+  });
+
+  it('removes a torrent (infoHash) result from the open list after blacklisting', async () => {
+    setStreamResults(mockResults);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 1,
+      infoHash: 'abc123',
+      title: 'The Way of Kings [Unabridged]',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    await user.click(screen.getAllByText('Blacklist')[0]!);
+
+    await waitFor(() => {
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith('abc123');
+    });
+    // Row disappears immediately, no refetch; the other result remains.
+    await waitFor(() => {
+      expect(screen.queryByText('The Way of Kings [Unabridged]')).not.toBeInTheDocument();
+    });
+    expect(screen.getByText('Way of Kings (Graphic Audio)')).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith('Release blacklisted');
+  });
+
+  it('removes a usenet (guid-only) result keyed off guid, not the render key', async () => {
+    const guidResult: SearchResult[] = [
+      {
+        title: 'GUID Only Removal',
+        author: 'Author',
+        protocol: 'usenet',
+        infoHash: '',
+        guid: 'https://indexer.example/details/guid789',
+        downloadUrl: 'https://indexer.example/nzb/456',
+        size: 1024,
+        seeders: 0,
+        indexer: 'TestIndexer',
+      },
+    ];
+    setStreamResults(guidResult);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 2,
+      guid: 'https://indexer.example/details/guid789',
+      title: 'GUID Only Removal',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('GUID Only Removal');
+
+    await user.click(screen.getByText('Blacklist'));
+
+    await waitFor(() => {
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith('https://indexer.example/details/guid789');
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('GUID Only Removal')).not.toBeInTheDocument();
+    });
+  });
+
+  it('forwards both identifiers in the blacklist payload while removing by infoHash', async () => {
+    const dualIdentifierResult: SearchResult[] = [
+      {
+        title: 'Dual Identifier Release',
+        author: 'Author',
+        protocol: 'torrent',
+        infoHash: 'hash999',
+        guid: 'https://indexer.example/details/guid999',
+        downloadUrl: 'magnet:?xt=urn:btih:hash999',
+        size: 1024,
+        seeders: 5,
+        indexer: 'TestIndexer',
+      },
+    ];
+    setStreamResults(dualIdentifierResult);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 3,
+      infoHash: 'hash999',
+      guid: 'https://indexer.example/details/guid999',
+      title: 'Dual Identifier Release',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('Dual Identifier Release');
+
+    await user.click(screen.getByText('Blacklist'));
+
+    await waitFor(() => {
+      // Payload is unchanged: both identifiers forwarded when both exist.
+      expect(api.addToBlacklist).toHaveBeenCalledWith(
+        {
+          infoHash: 'hash999',
+          guid: 'https://indexer.example/details/guid999',
+          title: 'Dual Identifier Release',
+          bookId: mockBook.id,
+          reason: 'other',
+        },
+        expect.anything(),
+      );
+    });
+    // Local removal key is infoHash (truthy) — not guid.
+    await waitFor(() => {
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith('hash999');
+    });
+  });
+
+  it('invalidates the blacklist query and does not invalidate a dead search-releases key on success', async () => {
+    setStreamResults(mockResults);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 1,
+      infoHash: 'abc123',
+      title: 'The Way of Kings [Unabridged]',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    await user.click(screen.getAllByText('Blacklist')[0]!);
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.blacklist() });
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['search-releases'] });
   });
 
   it('Grab, Blacklist, and unsupported-toggle buttons have explicit type="button"', async () => {
