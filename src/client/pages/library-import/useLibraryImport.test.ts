@@ -139,6 +139,41 @@ describe('useLibraryImport hook (#133)', () => {
     expect(pathDupRow?.selected).toBe(false);
   });
 
+  it('match results merge: confidence=medium (Review) deselects non-duplicate row; reviewCount increments, selectedCount excludes it', async () => {
+    // Medium-confidence ("Review" badge) rows must NOT default to checked — a human
+    // should eyeball the match before importing it (#1318).
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1',
+      status: 'completed',
+      total: 1,
+      matched: 1,
+      results: [
+        { path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] },
+      ],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    // Before poll fires: non-dup starts selected
+    const nonDupRowBefore = result.current.rows.find(r => !r.book.isDuplicate);
+    expect(nonDupRowBefore?.selected).toBe(true);
+
+    // After poll fires: non-dup row deselected due to confidence='medium'
+    await waitFor(() => {
+      const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+      expect(nonDupRow?.matchResult?.confidence).toBe('medium');
+      expect(nonDupRow?.selected).toBe(false);
+    }, { timeout: 5000 });
+
+    // reviewCount counts the medium row; selectedCount must not include it
+    expect(result.current.reviewCount).toBe(1);
+    const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+    expect(result.current.selectedCount).toBe(0);
+    expect(nonDupRow?.selected).toBe(false);
+  });
+
   it('Select All: only selects rows where isDuplicate=false', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
@@ -512,7 +547,7 @@ describe('match merge — selection behavior (#185)', () => {
     mockCancelMatchJob.mockResolvedValue({ cancelled: true });
   });
 
-  it('high/medium confidence preserves existing row.selected value (no auto-select)', async () => {
+  it('high confidence preserves existing row.selected value (no auto-select of a deselected row)', async () => {
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{
@@ -537,6 +572,33 @@ describe('match merge — selection behavior (#185)', () => {
     }, { timeout: 5000 });
 
     expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+  });
+
+  it('high confidence keeps a default (still-checked) non-duplicate row selected', async () => {
+    // Regression guard: 'high' must preserve the default checked state — only
+    // 'medium' and 'none' flip to unchecked (#1318).
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{
+        path: '/audiobooks/AuthorA/Book1',
+        confidence: 'high',
+        bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] },
+        alternatives: [],
+      }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    // Do NOT touch the row — it starts selected by default
+    await waitFor(() => {
+      const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+      expect(nonDupRow?.matchResult?.confidence).toBe('high');
+    }, { timeout: 5000 });
+
+    const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+    expect(nonDupRow?.selected).toBe(true);
+    expect(result.current.readyCount).toBe(1);
   });
 });
 

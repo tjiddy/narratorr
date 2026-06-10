@@ -85,6 +85,20 @@ describe('ImportCard', () => {
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
+    it('renders a Review (medium) row with selected=false as an unchecked checkbox (#1318)', () => {
+      // Medium-confidence rows default to unchecked so the human reviews before import.
+      render(
+        <ImportCard
+          {...defaultProps}
+          row={makeRow({ selected: false, matchResult: makeMatchResult({ confidence: 'medium' }) })}
+        />,
+      );
+      expect(screen.getByText('Review')).toBeInTheDocument();
+      // Unchecked rows expose the "Select" affordance; checked rows expose "Deselect".
+      expect(screen.getByLabelText('Select')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Deselect')).not.toBeInTheDocument();
+    });
+
     it('shows red "No Match" badge for none confidence', () => {
       render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'none', bestMatch: null }) })} />);
       expect(screen.getByText('No Match')).toBeInTheDocument();

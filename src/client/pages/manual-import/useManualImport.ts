@@ -45,8 +45,10 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       // Duplicate rows are not in the match job — if a result somehow arrives, don't auto-select
       if (row.book.isDuplicate) return row;
 
-      // Auto-uncheck no-match rows (spec: 0 matches → Unchecked)
-      const selected = match.confidence === 'none' ? false : row.selected;
+      // Auto-uncheck no-match and Review (medium-confidence) rows — only
+      // 'high' confidence preserves the prior selection so the unsafe path
+      // (importing an unreviewed match) is never the default (#1318).
+      const selected = match.confidence === 'high' ? row.selected : false;
 
       // Auto-populate edited fields from best match if not already manually edited
       const wasEdited = row.edited.metadata !== undefined;

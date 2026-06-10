@@ -1308,6 +1308,80 @@ describe('match merge — boundary values (#185)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('confidence=medium (Review) auto-unchecks the row (selected → false)', async () => {
+    // Medium-confidence rows must default to unchecked so a human reviews the
+    // match before importing — only 'high' stays checked (#1318).
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: { title: 'Official Title', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // Row starts selected
+      expect(result.current.state.rows[0]!.selected).toBe(true);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // After match merge with confidence=medium, row is auto-unchecked
+      expect(result.current.state.rows[0]!.selected).toBe(false);
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('autoCheck re-checks a medium row deselected by the merge when metadata is supplied via edit', async () => {
+    // A merge deselects the medium row; supplying metadata through the edit flow
+    // is explicit user intent, so the row re-checks (#1318 / #185 autoCheck).
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'medium',
+          bestMatch: { title: 'Official Title', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // Merge deselected the medium row
+      expect(result.current.state.rows[0]!.selected).toBe(false);
+
+      // Supplying metadata via the edit flow re-checks the row
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: MATCH_METADATA,
+        });
+      });
+
+      expect(result.current.state.rows[0]!.selected).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('handleEdit — auto-check and confidence upgrade (#185)', () => {

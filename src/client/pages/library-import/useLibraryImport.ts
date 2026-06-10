@@ -62,7 +62,10 @@ export function useLibraryImport() {
       if (!match) return row;
       if (isDbDuplicate(row.book)) return row;
 
-      const selected = match.confidence === 'none' ? false : row.selected;
+      // Auto-uncheck no-match and Review (medium-confidence) rows — only
+      // 'high' confidence preserves the prior selection so the unsafe path
+      // (importing an unreviewed match) is never the default (#1318).
+      const selected = match.confidence === 'high' ? row.selected : false;
       const wasEdited = row.edited.metadata !== undefined;
       if (!wasEdited && match.bestMatch) {
         return {

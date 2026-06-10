@@ -660,7 +660,8 @@ describe('LibraryImportPage (#133)', () => {
 
       await act(async () => { vi.advanceTimersByTime(2000); });
 
-      // reviewCount = all medium → 1 (B2) — while B2 is still selected
+      // reviewCount = all medium → 1 (B2). B2 is auto-deselected on merge (#1318),
+      // but reviewCount is selection-independent so it still reports 1.
       await waitFor(() => {
         expect(screen.getByText('1 review')).toBeInTheDocument();
       });
