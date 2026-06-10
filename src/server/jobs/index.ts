@@ -109,10 +109,15 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   });
 
   // Run the version check once on boot so the update banner reflects reality
-  // before the 2 AM cron fires (#1225). Fire-and-forget: checkForUpdate swallows
-  // and logs its own errors, and the trailing .catch guards against any unexpected
-  // rejection so a failed check never blocks or crashes startup.
-  checkForUpdate(log, onUpdateChanged).catch((error: unknown) => {
+  // before the 2 AM cron fires (#1225). Route through the registry (rather than
+  // calling checkForUpdate directly) so the boot run stamps `lastRun` — otherwise
+  // the Jobs page shows `Last Run: —` until the 2 AM cron, even though a check
+  // just ran (#1317). runTask invokes the registered `version-check` callback,
+  // which closes over the same `onUpdateChanged` health nudge (#1262). Fire-and-
+  // forget: the trailing .catch guards against any rejection (including a
+  // NOT_FOUND/ALREADY_RUNNING TaskRegistryError) so a failed check never blocks
+  // or crashes startup.
+  reg.runTask('version-check').catch((error: unknown) => {
     log.error({ error: serializeError(error) }, 'Startup version check failed — jobs continue normally');
   });
 }
