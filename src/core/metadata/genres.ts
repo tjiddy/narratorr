@@ -23,6 +23,29 @@ const SYNONYM_MAP = new Map<string, string>([
   ['self help', 'Self-Help'],
   ['self-improvement', 'Self-Help'],
   ['true crime', 'True Crime'],
+  // Audible category-taxonomy strings harvested from unmatched_genres (#1322)
+  ['teen & young adult', 'Young Adult'],
+  ['epic', 'Epic Fantasy'],
+  ['comedy & humor', 'Humor'],
+  ['humorous', 'Humor'],
+  ['paranormal & urban', 'Urban Fantasy'],
+  ['thriller & suspense', 'Thriller'],
+  ['fantasy & magic', 'Fantasy'],
+  ["children's audiobooks", "Children's"],
+  ['historical', 'Historical Fiction'],
+]);
+
+/**
+ * Non-genres to delete outright during normalization — pure noise that
+ * carries no meaning even when it's the only signal. Unlike GENERIC_PARENTS
+ * (removed only when a known child is present), DROP_GENRES is always removed.
+ * Keys are lowercase. Harvested from unmatched_genres (#1322).
+ */
+const DROP_GENRES = new Set([
+  'genre fiction',
+  'movie, tv & video game tie-ins',
+  'united states',
+  'difficult situations',
 ]);
 
 /** Generic parent genres that should be removed when children exist */
@@ -32,6 +55,11 @@ const GENERIC_PARENTS = new Set([
   'nonfiction',
   'juvenile fiction',
   'juvenile nonfiction',
+  // Audible category parents harvested from unmatched_genres (#1322) —
+  // removed only when a recognized GENRE_CHILDREN member is present.
+  'science fiction & fantasy',
+  'literature & fiction',
+  'mystery, thriller & suspense',
 ]);
 
 /** Known child genres that make their parent redundant */
@@ -43,6 +71,12 @@ const GENRE_CHILDREN = new Set([
   'dystopian', 'urban fantasy', 'epic fantasy', 'high fantasy',
   'dark fantasy', 'paranormal', 'contemporary', 'action & adventure',
   'young adult', 'litrpg',
+  // Audible fiction subcategories harvested from unmatched_genres (#1322)
+  'space opera', 'hard science fiction', 'sword & sorcery', 'military',
+  'classics', "women's fiction", 'family life', 'psychological',
+  'domestic thrillers', 'crime thrillers', 'espionage', 'fairy tales',
+  'superhero', 'dragons & mythical creatures', 'sagas', 'world literature',
+  "children's",
   // Non-fiction children
   'true crime', 'biography', 'autobiography', 'memoir', 'history',
   'science', 'philosophy', 'psychology', 'self-help', 'travel',
@@ -126,9 +160,10 @@ function removeGenericParents(genres: string[]): string[] {
  * Rules applied in order:
  * 1. Split BISAC paths
  * 2. Apply synonym map
- * 3. Deduplicate (case-insensitive, preserves first occurrence)
- * 4. Remove compound genres when components exist separately
- * 5. Remove generic parent genres when children exist
+ * 3. Drop pure-noise non-genres
+ * 4. Deduplicate (case-insensitive, preserves first occurrence)
+ * 5. Remove compound genres when components exist separately
+ * 6. Remove generic parent genres when children exist
  */
 export function normalizeGenres(genres: string[] | undefined | null): string[] | undefined {
   if (!genres || genres.length === 0) return undefined;
@@ -142,7 +177,12 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
     return normalized ?? genre;
   });
 
-  // Step 3: Deduplicate (case-insensitive, keep first occurrence)
+  // Step 3: Drop pure-noise non-genres (after synonym mapping so a synonym
+  // can never map into a dropped key, and before dedup so dropped entries
+  // don't occupy dedup slots).
+  result = result.filter((genre) => !DROP_GENRES.has(genre.toLowerCase()));
+
+  // Step 4: Deduplicate (case-insensitive, keep first occurrence)
   const seen = new Set<string>();
   result = result.filter((genre) => {
     const lower = genre.toLowerCase();
@@ -151,10 +191,10 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
     return true;
   });
 
-  // Step 4: Remove compounds
+  // Step 5: Remove compounds
   result = removeCompounds(result);
 
-  // Step 5: Remove generic parents
+  // Step 6: Remove generic parents
   result = removeGenericParents(result);
 
   return result.length > 0 ? result : undefined;
@@ -182,6 +222,9 @@ export function findUnmatchedGenres(
     if (GENRE_CHILDREN.has(lower)) return false;
     // If it's a generic parent, it's "known"
     if (GENERIC_PARENTS.has(lower)) return false;
+    // If it's a dropped non-genre, it's "known" (removed by normalizeGenres
+    // before it ever reaches tracking; checked here for defense in depth).
+    if (DROP_GENRES.has(lower)) return false;
     // Otherwise it passed through unmatched
     return true;
   });
