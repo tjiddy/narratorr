@@ -89,7 +89,6 @@ describe('normalizeGenres', () => {
         ['Thriller & Suspense', 'Thriller'],
         ['Fantasy & Magic', 'Fantasy'],
         ["Children's Audiobooks", "Children's"],
-        ['Historical', 'Historical Fiction'],
       ];
 
       it.each(SYNONYMS)('maps "%s" to "%s"', (raw, canonical) => {
@@ -98,6 +97,39 @@ describe('normalizeGenres', () => {
 
       it('maps "Epic" to "Epic Fantasy" and coexists with Fantasy', () => {
         expect(normalizeGenres(['Epic', 'Fantasy'])).toEqual(['Epic Fantasy', 'Fantasy']);
+      });
+    });
+
+    describe("contextual 'historical' remap (#1383)", () => {
+      // Bare 'Historical' is fiction-side ONLY when no non-fiction marker
+      // co-occurs. Audible files non-fiction "Historical" under these markers,
+      // where remapping fabricates a wrong fiction label (live-verified on
+      // Endurance B002V9ZA6C — narrative non-fiction acquiring Historical Fiction).
+      const NONFICTION_MARKERS = ['Biographies & Memoirs', 'History', 'Computers & Technology'];
+
+      it.each(NONFICTION_MARKERS)(
+        'does NOT map "Historical" to "Historical Fiction" alongside marker "%s"',
+        (marker) => {
+          expect(normalizeGenres(['Historical', marker])).not.toContain('Historical Fiction');
+        },
+      );
+
+      it('matches non-fiction markers case-insensitively', () => {
+        expect(normalizeGenres(['Historical', 'biographies & memoirs'])).not.toContain(
+          'Historical Fiction',
+        );
+      });
+
+      it('maps bare "Historical" to "Historical Fiction" with no non-fiction marker', () => {
+        expect(normalizeGenres(['Historical'])).toEqual(['Historical Fiction']);
+      });
+
+      it('maps "Historical" with fiction siblings (no non-fiction marker)', () => {
+        expect(normalizeGenres(['Historical', 'Fantasy'])).toContain('Historical Fiction');
+      });
+
+      it('maps BISAC "Fiction / Historical" to "Historical Fiction"', () => {
+        expect(normalizeGenres(['Fiction / Historical'])).toContain('Historical Fiction');
       });
     });
 
@@ -112,10 +144,33 @@ describe('normalizeGenres', () => {
         ).toEqual(['Crime Thrillers']);
       });
 
-      it('keeps a lone Audible parent when no child is present', () => {
-        expect(normalizeGenres(['Mystery, Thriller & Suspense'])).toEqual([
-          'Mystery, Thriller & Suspense',
-        ]);
+      // Lone-parent survival pinned for ALL three new Audible parents: each
+      // survives unchanged when no child is present AND is not tracked as an
+      // unmatched genre (it's a known GENERIC_PARENTS member). (#1383)
+      const NEW_PARENTS = [
+        'Science Fiction & Fantasy',
+        'Literature & Fiction',
+        'Mystery, Thriller & Suspense',
+      ];
+
+      it.each(NEW_PARENTS)('keeps lone parent "%s" and does not track it', (parent) => {
+        expect(normalizeGenres([parent])).toEqual([parent]);
+        expect(findUnmatchedGenres(normalizeGenres([parent]))).toEqual([]);
+      });
+    });
+
+    describe('GENERIC_PARENTS BISAC dual-consumer pins (#1383)', () => {
+      // splitBisacPath collapses a parent-prefixed path to its leaf — pin exact
+      // output for all three new parents so a future parent-batch edit can't
+      // silently alter BISAC output (the unpinned change from #1322).
+      const BISAC_PINS: [string, string[]][] = [
+        ['Science Fiction & Fantasy / Space Opera', ['Space Opera']],
+        ['Literature & Fiction / Classics', ['Classics']],
+        ['Mystery, Thriller & Suspense / Crime Thrillers', ['Crime Thrillers']],
+      ];
+
+      it.each(BISAC_PINS)('splits "%s" to exact output', (path, expected) => {
+        expect(normalizeGenres([path])).toEqual(expected);
       });
     });
   });
@@ -286,6 +341,12 @@ describe('findUnmatchedGenres', () => {
       'Teen & Young Adult', 'Epic', 'Fantasy',
       'Genre Fiction', 'Thriller & Suspense',
     ];
+    // Pin the EXACT normalized output, not just tracking emptiness — the
+    // tracking-only check passes even if the pipeline regresses (e.g. parent
+    // removal disabled entirely). (#1383)
+    expect(normalizeGenres(raw)).toEqual([
+      'Space Opera', 'Crime Thrillers', 'Young Adult', 'Epic Fantasy', 'Fantasy', 'Thriller',
+    ]);
     expect(findUnmatchedGenres(normalizeGenres(raw))).toEqual([]);
   });
 });
