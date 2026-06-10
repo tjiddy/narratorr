@@ -429,7 +429,7 @@ describe('startJobs', () => {
   describe('housekeeping callback (#477)', () => {
     it('executeTracked housekeeping calls VACUUM, pruneOlderThan, and deleteExpired with correct args', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 14 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
@@ -446,7 +446,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       // Re-mock after clearAllMocks
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 14 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -466,9 +466,9 @@ describe('startJobs', () => {
       expect(log.warn).not.toHaveBeenCalled();
     });
 
-    it('uses fallback retention of 90 when housekeepingRetentionDays is null and 30 when seriesCacheRetentionDays is null', async () => {
+    it('uses fallback retention of 90 when housekeepingRetentionDays is null', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: null, seriesCacheRetentionDays: null };
+        if (category === 'general') return { housekeepingRetentionDays: null };
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
@@ -483,7 +483,7 @@ describe('startJobs', () => {
 
       vi.clearAllMocks();
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: null, seriesCacheRetentionDays: null };
+        if (category === 'general') return { housekeepingRetentionDays: null };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -504,7 +504,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -516,7 +516,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(new Error('VACUUM failed'));
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
@@ -538,7 +538,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -550,7 +550,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('prune failed'));
@@ -571,7 +571,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -583,7 +583,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
@@ -641,7 +641,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -656,7 +656,7 @@ describe('startJobs', () => {
       const deleteError = new Error('delete failed');
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(vacuumError);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(pruneError);
