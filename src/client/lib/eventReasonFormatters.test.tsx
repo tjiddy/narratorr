@@ -249,10 +249,10 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
     expect(box?.textContent).toContain('Action');
   });
 
-  it('#1362: parse failure emits a console.debug signal carrying the Zod error', () => {
-    const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  it('#1362: parse failure emits a once-guarded console.warn carrying the Zod error', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     renderHeld({ ...nullReason, holdReasons: null });
-    expect(spy).toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledTimes(1);
     const carriedZodError = spy.mock.calls.some((args) =>
       args.some((a) => a instanceof Error || (!!a && typeof a === 'object' && 'issues' in (a as object))),
     );
@@ -260,8 +260,20 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
     spy.mockRestore();
   });
 
-  it('#1362: a well-formed blob does NOT emit a console.debug signal', () => {
-    const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  it('#1362: the once-guard does not re-fire across re-renders of the same card', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const malformed = { ...nullReason, holdReasons: null };
+    const { rerender } = render(
+      <EventReasonDetails eventType="held_for_review" reason={malformed} indexerMap={emptyMap} />,
+    );
+    rerender(<EventReasonDetails eventType="held_for_review" reason={malformed} indexerMap={emptyMap} />);
+    rerender(<EventReasonDetails eventType="held_for_review" reason={malformed} indexerMap={emptyMap} />);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it('#1362: a well-formed blob does NOT emit a console.warn signal', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     renderHeld(fullReason);
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();

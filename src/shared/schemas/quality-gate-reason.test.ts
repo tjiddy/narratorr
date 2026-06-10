@@ -1,5 +1,5 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { qualityGateReasonSchema, type QualityGateReason } from './quality-gate-reason.js';
 import type { QualityDecisionReason } from '../../server/services/quality-gate.types.js';
 import type { QualityGateData } from '../../client/lib/api/activity.js';
