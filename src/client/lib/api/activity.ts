@@ -1,6 +1,6 @@
 import { fetchApi } from './client.js';
 import type { DownloadProtocol } from '../../../core/indexers/types.js';
-import type { DownloadStatus } from '../../../shared/schemas.js';
+import type { DownloadStatus, QualityGateReason } from '../../../shared/schemas.js';
 
 export interface Download {
   id: number;
@@ -31,24 +31,8 @@ export interface Download {
   completedAt: string | null;
 }
 
-export interface QualityGateData {
-  action: 'imported' | 'rejected' | 'held';
-  mbPerHour: number | null;
-  existingMbPerHour: number | null;
-  narratorMatch: boolean | null;
-  existingNarrator: string | null;
-  downloadNarrator: string | null;
-  durationDelta: number | null;
-  existingDuration: number | null;
-  downloadedDuration: number | null;
-  codec: string | null;
-  channels: number | null;
-  existingCodec: string | null;
-  existingChannels: number | null;
-  probeFailure: boolean;
-  probeError: string | null;
-  holdReasons: string[];
-}
+/** Quality gate comparison data — derived from the shared `qualityGateReasonSchema`. */
+export type QualityGateData = QualityGateReason;
 
 export interface ActivityCounts {
   active: number;

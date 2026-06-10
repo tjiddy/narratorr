@@ -866,6 +866,52 @@ describe('QualityGateService', () => {
       const result = await service.getQualityGateData(1);
       expect(result).toEqual(reason);
     });
+
+    // #1362 — the read path safeParses the persisted blob. A present-`null` non-null
+    // field is the live crash class: the old `{ ...NULL_REASON, ...stored }` spread
+    // repaired MISSING keys but a stored `holdReasons: null` overwrote the empty-array
+    // default and survived, crashing `.holdReasons.length` downstream. safeParse rejects
+    // it → null → the activity card takes its no-qualityGate branch.
+    it('#1362: present-null holdReasons fails safeParse → returns null (crash-class regression)', async () => {
+      const { service, db } = createService();
+      const reason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: null,
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      const result = await service.getQualityGateData(1);
+      expect(result).toBeNull();
+    });
+
+    // #1362: observable behavior change — the old cast+spread repaired missing keys via
+    // NULL_REASON; the new safeParse treats the 16 launch fields as required, so a legacy
+    // row missing a key now parse-fails to null (the activity card's no-data branch)
+    // rather than being silently back-filled into a partial object.
+    it('#1362: missing required key fails safeParse → returns null (was previously spread-repaired)', async () => {
+      const { service, db } = createService();
+      const reason = {
+        action: 'held' as const,
+        // mbPerHour intentionally omitted
+        existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      const result = await service.getQualityGateData(1);
+      expect(result).toBeNull();
+    });
   });
 
   describe('getQualityGateDataBatch', () => {
@@ -989,6 +1035,63 @@ describe('QualityGateService', () => {
       const result = await service.getQualityGateDataBatch([1]);
       expect(result.get(1)).toEqual(newestReason);
     });
+
+    // #1362 — batch feeder safeParses too. A null-feeder row maps to null (not a partial
+    // object), and a valid row in the same batch is unaffected.
+    it('#1362: present-null holdReasons row maps to null; valid sibling row unaffected', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
+          { downloadId: 2, reason: batchReason },
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1, 2]);
+      expect(result.get(1)).toBeNull();
+      expect(result.get(2)).toEqual(batchReason);
+    });
+
+    it('#1362: missing required key row maps to null (was previously spread-repaired)', async () => {
+      const { service, db } = createService();
+      const { mbPerHour: _m, ...missing } = batchReason;
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: missing }]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toBeNull();
+    });
+
+    it('#1362: a valid full reason parses and returns unchanged', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: batchReason }]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toEqual(batchReason);
+    });
+
+    // #1362 F1 — newest-event-wins must hold even when the newest event parses to null.
+    // The desc-ordered events list puts the malformed newest event first; it maps to null,
+    // and the older valid event MUST NOT overwrite it (otherwise the batch path disagrees
+    // with getQualityGateData, which limit(1)s to the newest row).
+    it('#1362 F1: malformed newest event maps to null and is NOT overwritten by an older valid event', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } }, // newest (desc), malformed
+          { downloadId: 1, reason: batchReason },                            // older, valid
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toBeNull();
+    });
   });
 });
 
@@ -1076,11 +1179,18 @@ describe('Quality gate — narrator array comparison (#71)', () => {
     expect(result.reason.narratorMatch).toBeNull();
   });
 
-  // #300 — Legacy backward compatibility (readback normalization)
-  describe('getQualityGateData — legacy event normalization', () => {
-    it('returns null for new fields when stored reason JSON predates the schema change', async () => {
+  // #300/#1362 — Legacy backward compatibility (readback normalization).
+  // BEHAVIOR CHANGE (#1362): the old `{ ...NULL_REASON, ...stored }` spread back-filled
+  // missing keys so legacy rows that predate a field addition still resolved. The read
+  // path now safeParses against the shared schema, where the 16 launch fields are
+  // REQUIRED — so a legacy row missing keys parse-fails to null and the activity card
+  // takes its no-qualityGate branch (no partial object leaks downstream). This is the
+  // intended trade: the field-addition rule (post-1.0 fields must be `.nullish()`) is
+  // what keeps future additions backward-compatible, not the lossy spread.
+  describe('getQualityGateData — legacy event normalization (#1362 supersedes #300 spread)', () => {
+    it('a legacy row missing required keys parse-fails to null (no longer spread-repaired)', async () => {
       const { service, db } = createService();
-      // Legacy reason missing the 4 new fields
+      // Legacy reason missing the 4 fields added in a later schema growth.
       const legacyReason = {
         action: 'held' as const,
         mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
@@ -1094,19 +1204,12 @@ describe('Quality gate — narrator array comparison (#71)', () => {
 
       const result = await service.getQualityGateData(1);
 
-      expect(result).not.toBeNull();
-      expect(result!.existingCodec).toBeNull();
-      expect(result!.existingChannels).toBeNull();
-      expect(result!.existingDuration).toBeNull();
-      expect(result!.downloadedDuration).toBeNull();
-      // Existing fields preserved
-      expect(result!.mbPerHour).toBe(60);
-      expect(result!.codec).toBe('AAC');
+      expect(result).toBeNull();
     });
   });
 
-  describe('getQualityGateDataBatch — legacy event normalization', () => {
-    it('normalizes legacy events identically — missing keys become null, not undefined', async () => {
+  describe('getQualityGateDataBatch — legacy event normalization (#1362 supersedes #300 spread)', () => {
+    it('a legacy row missing required keys maps to null (no longer spread-repaired)', async () => {
       const { service, db } = createService();
       const legacyReason = {
         action: 'held' as const,
@@ -1120,14 +1223,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
 
       const result = await service.getQualityGateDataBatch([1]);
 
-      const data = result.get(1);
-      expect(data).not.toBeNull();
-      expect(data!.existingCodec).toBeNull();
-      expect(data!.existingChannels).toBeNull();
-      expect(data!.existingDuration).toBeNull();
-      expect(data!.downloadedDuration).toBeNull();
-      // Existing fields preserved
-      expect(data!.mbPerHour).toBe(60);
+      expect(result.get(1)).toBeNull();
     });
   });
 

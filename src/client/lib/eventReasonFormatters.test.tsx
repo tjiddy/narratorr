@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { EventReasonDetails } from './eventReasonFormatters';
-import { qualityGateReasonSchema } from './qualityGateReasonSchema';
+import { qualityGateReasonSchema } from '../../shared/schemas.js';
 
 /** A fully-populated, well-formed held_for_review reason blob. */
 const fullReason = {
@@ -232,6 +232,51 @@ describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
     expect(screen.getByText('60 MB/hr')).toBeInTheDocument();
     expect(screen.getByText('40 MB/hr')).toBeInTheDocument();
     expect(screen.getByText('narrator mismatch')).toBeInTheDocument();
+  });
+
+  // #1362 — the held_for_review fallback path is the rider this issue fixes: failed-parse
+  // legacy rows must render inside the standard generic-details container (they previously
+  // dumped bare), and the parse failure must emit a debug-level signal (previously silent).
+  it('#1362: failed parse renders the generic fallback inside the standard boxed container', () => {
+    const { container } = renderHeld({ ...nullReason, holdReasons: null });
+    const box = container.querySelector('.bg-muted\\/50');
+    expect(box).not.toBeNull();
+    expect(box?.className).toContain('mt-2');
+    expect(box?.className).toContain('p-3');
+    expect(box?.className).toContain('rounded-xl');
+    expect(box?.className).toContain('border');
+    // the generic dump of surviving keys renders inside the box
+    expect(box?.textContent).toContain('Action');
+  });
+
+  it('#1362: parse failure emits a once-guarded console.warn carrying the Zod error', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    renderHeld({ ...nullReason, holdReasons: null });
+    expect(spy).toHaveBeenCalledTimes(1);
+    const carriedZodError = spy.mock.calls.some((args) =>
+      args.some((a) => a instanceof Error || (!!a && typeof a === 'object' && 'issues' in (a as object))),
+    );
+    expect(carriedZodError).toBe(true);
+    spy.mockRestore();
+  });
+
+  it('#1362: the once-guard does not re-fire across re-renders of the same card', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const malformed = { ...nullReason, holdReasons: null };
+    const { rerender } = render(
+      <EventReasonDetails eventType="held_for_review" reason={malformed} indexerMap={emptyMap} />,
+    );
+    rerender(<EventReasonDetails eventType="held_for_review" reason={malformed} indexerMap={emptyMap} />);
+    rerender(<EventReasonDetails eventType="held_for_review" reason={malformed} indexerMap={emptyMap} />);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it('#1362: a well-formed blob does NOT emit a console.warn signal', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    renderHeld(fullReason);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('AC1: legacy blob missing several keys (the QualityComparisonPanel legacy case) falls back', () => {

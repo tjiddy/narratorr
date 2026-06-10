@@ -1,6 +1,7 @@
+import { useEffect } from 'react';
 import { formatBytes } from '@/lib/api';
 import { capitalize } from '@/lib/eventReasonHelpers';
-import { qualityGateReasonSchema } from '@/lib/qualityGateReasonSchema';
+import { qualityGateReasonSchema } from '../../shared/schemas.js';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
 
@@ -67,8 +68,27 @@ function ErrorDetails({ reason }: { reason: Record<string, unknown> }) {
 }
 
 function HeldForReviewDetails({ reason }: { reason: Record<string, unknown> }) {
+  // Signal-on-failure, guarded against per-re-render spam. Logging in an effect keyed on
+  // `reason` fires once per distinct blob (not once per render of the same blob) and keeps
+  // the warn out of the render body. Type drift or a legacy/malformed blob lands in the
+  // fallback branch; without this signal the panel silently degrades to the generic dump
+  // with no trace of why. (console.debug is lint-forbidden; this mirrors the warn precedent
+  // in src/client/lib/sse/safe-parse-event.ts.)
+  useEffect(() => {
+    const result = qualityGateReasonSchema.safeParse(reason);
+    if (!result.success) {
+      console.warn('quality-gate reason failed schema validation', result.error);
+    }
+  }, [reason]);
+
   const parsed = qualityGateReasonSchema.safeParse(reason);
-  if (!parsed.success) return <GenericDetails reason={reason} />;
+  if (!parsed.success) {
+    return (
+      <div className="mt-2 p-3 bg-muted/50 rounded-xl border border-border/50 animate-fade-in">
+        <GenericDetails reason={reason} />
+      </div>
+    );
+  }
   return <QualityComparisonPanel data={parsed.data} />;
 }
 

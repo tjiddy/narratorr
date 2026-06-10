@@ -6,8 +6,9 @@ import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db
 import type { BookRow, DownloadRow } from './types.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
-import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
+import { QualityGateServiceError } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
+import { qualityGateReasonSchema } from '../../shared/schemas.js';
 
 export { QualityGateServiceError, type QualityDecisionReason } from './quality-gate.types.js';
 
@@ -243,8 +244,12 @@ export class QualityGateService {
 
     if (eventResults.length === 0) return null;
 
-    const stored = (eventResults[0]!.reason as QualityDecisionReason | null) ?? null;
-    return stored ? { ...NULL_REASON, ...stored } : null;
+    // Validate the persisted JSON at the read boundary. A malformed or legacy blob
+    // (missing a required key, or a present-`null` non-null field) collapses to null
+    // — the activity route omits the qualityGate field and the card takes its no-data
+    // branch, rather than leaking a partial object that crashes downstream readers.
+    const parsed = qualityGateReasonSchema.safeParse(eventResults[0]!.reason);
+    return parsed.success ? parsed.data : null;
   }
 
   /**
@@ -298,13 +303,19 @@ export class QualityGateService {
       allEvents.push(...rows);
     }
 
-    // Map events to downloads — take the first (most recent) event per download
+    // Map events to downloads — take the first (most recent, desc-ordered) event per
+    // download. Track processed IDs in a separate set rather than reusing the map's `null`
+    // value as the "unfilled" sentinel: a newest event that fails safeParse stores `null`,
+    // which is indistinguishable from unfilled — so without `processed`, the next older
+    // event for the same download would overwrite that null with stale valid data, breaking
+    // newest-event-wins and making the batch path disagree with getQualityGateData.
+    const processed = new Set<number>();
     for (const event of allEvents) {
-      if (event.downloadId !== null && !result.has(event.downloadId)) continue;
-      if (event.downloadId !== null && result.get(event.downloadId) === null) {
-        const stored = (event.reason as QualityDecisionReason | null) ?? null;
-        result.set(event.downloadId, stored ? { ...NULL_REASON, ...stored } : null);
-      }
+      const { downloadId } = event;
+      if (downloadId === null || !result.has(downloadId) || processed.has(downloadId)) continue;
+      processed.add(downloadId);
+      const parsed = qualityGateReasonSchema.safeParse(event.reason);
+      result.set(downloadId, parsed.success ? parsed.data : null);
     }
 
     return result;

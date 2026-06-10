@@ -1,3 +1,5 @@
+import type { QualityGateReason } from '../../shared/schemas.js';
+
 export class QualityGateServiceError extends Error {
   constructor(
     message: string,
@@ -8,25 +10,11 @@ export class QualityGateServiceError extends Error {
   }
 }
 
-/** Canonical reason JSON for every quality gate decision. */
-export interface QualityDecisionReason {
-  action: 'imported' | 'rejected' | 'held';
-  mbPerHour: number | null;
-  existingMbPerHour: number | null;
-  narratorMatch: boolean | null;
-  existingNarrator: string | null;
-  downloadNarrator: string | null;
-  durationDelta: number | null;
-  existingDuration: number | null;
-  downloadedDuration: number | null;
-  codec: string | null;
-  channels: number | null;
-  existingCodec: string | null;
-  existingChannels: number | null;
-  probeFailure: boolean;
-  probeError: string | null;
-  holdReasons: string[];
-}
+/**
+ * Canonical reason JSON for every quality gate decision.
+ * Derived from the shared `qualityGateReasonSchema` (single source of the shape).
+ */
+export type QualityDecisionReason = QualityGateReason;
 
 export const DURATION_TOLERANCE = 0.15; // 15%
 
