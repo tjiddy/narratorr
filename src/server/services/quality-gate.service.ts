@@ -303,13 +303,19 @@ export class QualityGateService {
       allEvents.push(...rows);
     }
 
-    // Map events to downloads — take the first (most recent) event per download
+    // Map events to downloads — take the first (most recent, desc-ordered) event per
+    // download. Track processed IDs in a separate set rather than reusing the map's `null`
+    // value as the "unfilled" sentinel: a newest event that fails safeParse stores `null`,
+    // which is indistinguishable from unfilled — so without `processed`, the next older
+    // event for the same download would overwrite that null with stale valid data, breaking
+    // newest-event-wins and making the batch path disagree with getQualityGateData.
+    const processed = new Set<number>();
     for (const event of allEvents) {
-      if (event.downloadId !== null && !result.has(event.downloadId)) continue;
-      if (event.downloadId !== null && result.get(event.downloadId) === null) {
-        const parsed = qualityGateReasonSchema.safeParse(event.reason);
-        result.set(event.downloadId, parsed.success ? parsed.data : null);
-      }
+      const { downloadId } = event;
+      if (downloadId === null || !result.has(downloadId) || processed.has(downloadId)) continue;
+      processed.add(downloadId);
+      const parsed = qualityGateReasonSchema.safeParse(event.reason);
+      result.set(downloadId, parsed.success ? parsed.data : null);
     }
 
     return result;

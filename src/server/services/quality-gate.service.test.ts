@@ -1075,6 +1075,23 @@ describe('QualityGateService', () => {
       const result = await service.getQualityGateDataBatch([1]);
       expect(result.get(1)).toEqual(batchReason);
     });
+
+    // #1362 F1 — newest-event-wins must hold even when the newest event parses to null.
+    // The desc-ordered events list puts the malformed newest event first; it maps to null,
+    // and the older valid event MUST NOT overwrite it (otherwise the batch path disagrees
+    // with getQualityGateData, which limit(1)s to the newest row).
+    it('#1362 F1: malformed newest event maps to null and is NOT overwritten by an older valid event', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } }, // newest (desc), malformed
+          { downloadId: 1, reason: batchReason },                            // older, valid
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toBeNull();
+    });
   });
 });
 
