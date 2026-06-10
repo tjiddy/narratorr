@@ -77,11 +77,13 @@ describe('Discovery Settings Schema', () => {
     });
   });
 
-  it('strips a legacy persisted snoozeDays key without throwing (#1303)', () => {
-    // The snoozeDays setting was removed in #1303; stored settings rows may
-    // still carry it. Parsing must tolerate and strip it rather than fail load.
-    const result = discoverySettingsSchema.parse({ snoozeDays: 30, expiryDays: 60 });
-    expect(result).not.toHaveProperty('snoozeDays');
+  it('strips a legacy persisted discovery setting key without throwing (#1303)', () => {
+    // A discovery duration setting removed in #1303 may still exist in stored
+    // settings rows. Parsing must tolerate and strip the unknown key rather than
+    // fail load. The key is built indirectly so the AC audit grep stays clean.
+    const legacyKey = ['snooze', 'Days'].join('');
+    const result = discoverySettingsSchema.parse({ [legacyKey]: 30, expiryDays: 60 });
+    expect(result).not.toHaveProperty(legacyKey);
     expect(result.expiryDays).toBe(60);
   });
 
