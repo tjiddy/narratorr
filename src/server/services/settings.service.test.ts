@@ -60,6 +60,23 @@ describe('SettingsService', () => {
       const result = await service.get('search');
       expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
     });
+
+    // #1345: post-#1301 upgraded installs still carry the removed `seriesCacheRetentionDays`
+    // key in their stored general blob. Zod's default strip mode must drop the fossil key
+    // WITHOUT routing parseCategory down its failure branch — that branch returns the whole
+    // DEFAULT_SETTINGS.general and silently resets non-default siblings. The logLevel: 'debug'
+    // assertion is what distinguishes strip-tolerance from full-category-reset; making
+    // generalSettingsSchema .strict() flips this test to red (logLevel falls back to 'info').
+    it('strips removed seriesCacheRetentionDays key while preserving non-default siblings', async () => {
+      const fossilGeneral = { logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false, seriesCacheRetentionDays: 30 };
+      db.select.mockReturnValue(mockDbChain([{ key: 'general', value: fossilGeneral }]));
+
+      const result = await service.get('general');
+
+      expect(result).not.toHaveProperty('seriesCacheRetentionDays');
+      expect(result.logLevel).toBe('debug');
+      expect(result).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false });
+    });
   });
 
   describe('getAll', () => {
