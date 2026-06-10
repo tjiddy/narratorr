@@ -1130,6 +1130,230 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
   });
 });
 
+describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+  const FLAG_ID = 'maxConcurrentProcessing-defaults-v1';
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('rewrites stored maxConcurrentProcessing=2 to 1, preserving other fields, and marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]); // flag check — not present
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2, postProcessingScript: '/x.sh' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    // Two writes: processing update + flag insert
+    expect(db.insert.mock.calls.length).toBe(2);
+    const processingWrite = getInsertCall(db, 0);
+    expect(processingWrite.table).toBe(settings);
+    expect((processingWrite.row as { value: Record<string, unknown> }).value).toEqual({
+      ffmpegPath: '/usr/bin/ffmpeg',
+      maxConcurrentProcessing: 1,
+      postProcessingScript: '/x.sh',
+    });
+
+    const flagWrite = getInsertCall(db, 1);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('clamps a raw stored value >8 to 8 (rescuing the category), reading the raw blob not parseCategory', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      // 10 would fail the .max(8) Zod schema; raw read still sees it.
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 10, postProcessingScript: '/x.sh' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(2);
+    const processingWrite = getInsertCall(db, 0);
+    expect(processingWrite.table).toBe(settings);
+    expect((processingWrite.row as { value: Record<string, unknown> }).value).toEqual({
+      ffmpegPath: '/usr/bin/ffmpeg',
+      maxConcurrentProcessing: 8,
+      postProcessingScript: '/x.sh',
+    });
+    expect(getInsertCall(db, 1).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 1).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('leaves an in-range deliberate value (4) untouched but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 4 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    // Only the flag insert — no processing write.
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('leaves a stored value of 1 untouched but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { maxConcurrentProcessing: 1 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('marks flag applied with the correct id when no processing row exists', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([]); // no processing row
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('does not rewrite when the field is missing or a non-numeric "2" string, but marks flag applied', async () => {
+    // Missing field
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+
+    // String "2" — strict === 2 fails on the string.
+    db.insert.mockClear();
+    db.select.mockReset();
+    callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { maxConcurrentProcessing: '2' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('is idempotent: returns early when the flag is already set, no processing read, value stays 2', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert).not.toHaveBeenCalled();
+    // Only the flag check happened — no processing read, so a stored 2 is never re-flipped.
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('end-to-end: no-row install sets flag -> user later stores 2 -> rerun does not re-flip it', async () => {
+    // First boot: no flag, no processing row — writes only the flag.
+    let phase1 = 0;
+    db.select.mockImplementation(() => {
+      phase1++;
+      if (phase1 === 1) return mockDbChain([]); // flag check
+      if (phase1 === 2) return mockDbChain([]); // no processing row
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+
+    // Later boot: flag present (user has since deliberately stored 2). Migration must NOT re-fire.
+    db.insert.mockClear();
+    db.select.mockReset();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates processing cache after a rewrite', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]); // prime cache
+      if (callCount === 2) return mockDbChain([]); // flag check
+      if (callCount === 3) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]); // raw read
+      return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 1 } }]); // post-migration get
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    const before = await service.get('processing');
+    expect(before.maxConcurrentProcessing).toBe(2);
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    const after = await service.get('processing');
+    expect(after.maxConcurrentProcessing).toBe(1);
+  });
+
+  it('logs warning and does not throw on DB error, leaving the flag unwritten', async () => {
+    db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
+    const log = createMockLogger();
+    const failingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await failingService.migrateMaxConcurrentProcessingDefaults();
+
+    expect(log.warn).toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+});
+
 describe('SettingsService — cache (#554)', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: SettingsService;

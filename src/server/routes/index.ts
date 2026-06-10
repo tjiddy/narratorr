@@ -223,6 +223,11 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Append `Abridged` to legacy packaged rejectWords default (one-time, idempotent)
   await settings.migrateRejectWordsAbridgedDefault();
 
+  // Reset legacy stored maxConcurrentProcessing=2 to 1, clamp >8 (one-time, idempotent).
+  // Must run before any read of settings.get('processing') so a >8 value is rescued
+  // before parseCategory's parse-failure fallback wipes the whole category.
+  await settings.migrateMaxConcurrentProcessingDefaults();
+
   // Health check service with system deps
   const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
   const healthCheck = new HealthCheckService(
