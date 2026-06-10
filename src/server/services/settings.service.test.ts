@@ -1197,6 +1197,46 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     expect(getInsertCall(db, 1).row).toEqual({ id: FLAG_ID });
   });
 
+  it('logs at info with migration metadata when it rewrites 2 -> 1', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+    const log = createMockLogger();
+    const loggingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await loggingService.migrateMaxConcurrentProcessingDefaults();
+
+    expect(log.info).toHaveBeenCalledWith(
+      { migration: FLAG_ID, from: 2, to: 1 },
+      'Migrated stored maxConcurrentProcessing',
+    );
+  });
+
+  it('logs at info with migration metadata when it clamps >8 -> 8', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 10 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+    const log = createMockLogger();
+    const loggingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await loggingService.migrateMaxConcurrentProcessingDefaults();
+
+    expect(log.info).toHaveBeenCalledWith(
+      { migration: FLAG_ID, from: 10, to: 8 },
+      'Migrated stored maxConcurrentProcessing',
+    );
+  });
+
   it('leaves an in-range deliberate value (4) untouched but marks flag applied', async () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
