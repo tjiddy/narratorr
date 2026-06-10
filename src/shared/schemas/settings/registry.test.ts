@@ -51,6 +51,28 @@ describe('settingsRegistry', () => {
     it('SETTINGS_CATEGORIES matches registry keys', () => {
       expect(SETTINGS_CATEGORIES.sort()).toEqual(Object.keys(settingsRegistry).sort());
     });
+
+    // Guards against silent settings-form drift: a field added to a category
+    // schema but not to its formSchema override vanishes from the settings form.
+    // Categories without an explicit override derive their form schema via
+    // stripDefaults() and therefore cannot drift, so they are skipped.
+    // Scope is top-level keys only — validator internals (e.g. processing's
+    // .optional() timeout) differ intentionally and are out of scope by design.
+    it('every formSchema override has the same top-level keys as its category schema', () => {
+      for (const key of SETTINGS_CATEGORIES) {
+        const entry = settingsRegistry[key];
+        const formSchema = (entry as { formSchema?: z.ZodObject<z.ZodRawShape> }).formSchema;
+        if (!formSchema) continue;
+        const schemaKeys = Object.keys(entry.schema.shape).sort();
+        const formKeys = Object.keys(formSchema.shape).sort();
+        const missingFromForm = schemaKeys.filter((k) => !formKeys.includes(k));
+        const extraInForm = formKeys.filter((k) => !schemaKeys.includes(k));
+        expect(
+          formKeys,
+          `Category '${key}' formSchema override drifted from its schema — missing from formSchema: [${missingFromForm.join(', ')}], extra in formSchema: [${extraInForm.join(', ')}]`,
+        ).toEqual(schemaKeys);
+      }
+    });
   });
 
   describe('schema-default alignment', () => {
