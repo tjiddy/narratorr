@@ -82,7 +82,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
       <h3 className="font-display text-lg font-semibold">{isEdit ? 'Edit Download Client' : 'Add Download Client'}</h3>
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="clientName" label="Name" registration={register('name')} error={errors.name} placeholder={DOWNLOAD_CLIENT_REGISTRY[selectedType]?.label} />
-        <SelectWithChevron id="clientType" label="Type" {...register('type')} error={!!errors.type}>
+        <SelectWithChevron id="clientType" label="Type" {...(isEdit ? { value: selectedType, disabled: true } : register('type'))} error={!!errors.type}>
           {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{DOWNLOAD_CLIENT_REGISTRY[t]?.label || t}</option>)}
         </SelectWithChevron>
         {selectedType === 'blackhole'

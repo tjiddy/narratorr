@@ -212,6 +212,20 @@ describe('NotifierCard — create mode', () => {
     expect(screen.getByText('Body Template')).toBeInTheDocument();
   });
 
+  it('#1342 Type selector is enabled and present in create mode', () => {
+    renderWithProviders(
+      <NotifierCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const typeSelect = screen.getByLabelText('Type');
+    expect(typeSelect).toBeInTheDocument();
+    expect(typeSelect).toBeEnabled();
+  });
+
   it('shows discord fields when type is changed', async () => {
     const user = userEvent.setup();
 
@@ -415,6 +429,40 @@ describe('NotifierCard — edit mode', () => {
     expect(screen.getByText('Save Changes')).toBeInTheDocument();
   });
 
+  it('#1342 Type selector is disabled and present in edit mode', () => {
+    renderWithProviders(
+      <NotifierCard
+        notifier={mockNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const typeSelect = screen.getByLabelText('Type');
+    expect(typeSelect).toBeInTheDocument();
+    expect(typeSelect).toBeDisabled();
+  });
+
+  it('#1342 in edit mode, Save fires and payload carries the original type', async () => {
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={mockNotifier}
+        mode="edit"
+        onSubmit={onSubmit}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText('Save Changes').closest('button')!);
+
+    expect(onSubmit).toHaveBeenCalled();
+    expect(onSubmit.mock.calls[0]![0]).toMatchObject({ type: mockNotifier.type });
+  });
+
   it('pre-fills event checkboxes from notifier data', () => {
     renderWithProviders(
       <NotifierCard
@@ -612,11 +660,14 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
 //
 // This suite mirrors the IndexerCard reference shape EXACTLY: no-switch, per-type. Each
 // case renders edit mode with an entity of one type and immediately fires Test — it never
-// switches the type selector. That is deliberate: the settings reset in NotifierCard.tsx:92-97
-// is create-mode only, so an in-edit type switch would leave stale source-type keys in RHF
-// state. The overlay is validated at hydration, per type, instead. No production change is
-// needed — the existing overlay already prevents the leak (regress it by seeding from a union
-// of all types' defaults and these assertions go red).
+// switches the type selector. As of #1342 that no-switch shape is the permanent documented
+// contract, not a workaround: the edit-mode Type selector is now rendered disabled and
+// unregistered (NotifierCardForm.tsx), so in-edit type switching is intentionally unreachable.
+// (Previously the selector was editable but the settings reset in NotifierCard.tsx:92-97 was
+// create-mode only, so a switch would have left stale source-type keys in RHF state.) The
+// overlay is validated at hydration, per type, instead. No production change is needed for
+// this suite — the existing overlay already prevents the leak (regress it by seeding from a
+// union of all types' defaults and these assertions go red).
 describe('NotifierCard — #908 settingsFromNotifier registry overlay (no foreign-type leak)', () => {
   it('webhook entity edit Test payload preserves webhook keys and leaks no foreign-type keys', async () => {
     const onFormTest = vi.fn();
