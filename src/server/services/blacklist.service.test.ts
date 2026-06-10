@@ -690,6 +690,88 @@ describe('BlacklistService', () => {
       expect(result.blacklistedHashes).toEqual(new Set(['hash1']));
       expect(result.blacklistedGuids.size).toBe(0);
     });
+
+    // ===== #1300 — chunked inArray (SQLite 999-bind limit) =====
+
+    // Mirrors the private IDENTIFIER_CHUNK_SIZE constant in blacklist.service.ts.
+    const CHUNK = 480;
+
+    it('chunks the hash list and unions matches across chunks (> 1 chunk)', async () => {
+      // 1000 hashes spanning 3 chunks (480 + 480 + 40)
+      const hashes = Array.from({ length: 1000 }, (_, i) => `hash${i}`);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: 'hash0', guid: null }]))
+        .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: 'hash500', guid: null }]))
+        .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: 'hash999', guid: null }]));
+
+      const result = await service.getBlacklistedIdentifiers(hashes, []);
+
+      // One select() per chunk
+      expect(db.select).toHaveBeenCalledTimes(3);
+      // Union of every chunk's matches
+      expect(result.blacklistedHashes).toEqual(new Set(['hash0', 'hash500', 'hash999']));
+    });
+
+    it('chunks the guid list independently of the hash list', async () => {
+      const guids = Array.from({ length: 600 }, (_, i) => `guid${i}`); // 2 chunks (480 + 120)
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: null, guid: 'guid0' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: null, guid: 'guid599' }]));
+
+      const result = await service.getBlacklistedIdentifiers([], guids);
+
+      expect(db.select).toHaveBeenCalledTimes(2);
+      expect(result.blacklistedGuids).toEqual(new Set(['guid0', 'guid599']));
+    });
+
+    it('cross-populates both identifiers when a row matched via one list carries both (F3)', async () => {
+      // Row carries both identifiers but is matched only through the hash list.
+      const bothRow = { ...mockEntry, infoHash: 'hashA', guid: 'guidA' };
+      db.select.mockReturnValue(mockDbChain([bothRow]));
+
+      const result = await service.getBlacklistedIdentifiers(['hashA'], ['unrelated-guid']);
+
+      // Both identifiers land in their respective Sets — preserving the old
+      // combined-query cross-population despite the split per-column queries.
+      expect(result.blacklistedHashes.has('hashA')).toBe(true);
+      expect(result.blacklistedGuids.has('guidA')).toBe(true);
+    });
+
+    it('applies the expiry predicate on every chunk query', async () => {
+      vi.mocked(and).mockClear();
+      const hashes = Array.from({ length: 1000 }, (_, i) => `h${i}`); // 3 chunks
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.getBlacklistedIdentifiers(hashes, []);
+
+      // and(inArray(chunk), expiryFilter) built once per chunk
+      expect(and).toHaveBeenCalledTimes(3);
+    });
+
+    it('issues a single query for exactly one chunk', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockClear();
+      await service.getBlacklistedIdentifiers(Array.from({ length: CHUNK }, (_, i) => `h${i}`), []);
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('issues two queries for chunk-size + 1 with the remainder in the second', async () => {
+      const firstChunk = mockDbChain([]);
+      const secondChunk = mockDbChain([{ ...mockEntry, infoHash: `h${CHUNK}`, guid: null }]);
+      db.select.mockReturnValueOnce(firstChunk).mockReturnValueOnce(secondChunk);
+      vi.mocked(inArray).mockClear();
+      db.select.mockClear();
+
+      const result = await service.getBlacklistedIdentifiers(
+        Array.from({ length: CHUNK + 1 }, (_, i) => `h${i}`),
+        [],
+      );
+
+      expect(db.select).toHaveBeenCalledTimes(2);
+      // Remainder (single ID) lands in the second chunk's query
+      expect(inArray).toHaveBeenLastCalledWith(blacklist.infoHash, [`h${CHUNK}`]);
+      expect(result.blacklistedHashes.has(`h${CHUNK}`)).toBe(true);
+    });
   });
 
   describe('getBlacklistedHashes — backward compatibility', () => {

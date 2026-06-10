@@ -2301,6 +2301,46 @@ describe('DiscoveryService', () => {
         expect(result.removed).toBe(1);
         expect(db.delete).toHaveBeenCalled();
       });
+
+      it('chunks the stale-ID delete when > 999 suggestions are stale (#1300)', async () => {
+        const db = createMockDb();
+        // Single chain so every delete().where(...) call accumulates on one spy.
+        const deleteChain = mockDbChain();
+        db.delete.mockReturnValue(deleteChain);
+
+        // 1100 stale pending suggestions → 2 chunks (999 + 101)
+        const stalePending = Array.from({ length: 1100 }, (_, i) => ({
+          id: i + 1,
+          asin: `STALE${i + 1}`,
+        }));
+
+        db.select
+          // dismissal stats
+          .mockReturnValueOnce(mockDbChain([]))
+          // analyzeLibrary: books
+          .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+          // analyzeLibrary: narrators
+          .mockReturnValueOnce(mockDbChain([]))
+          // existing books
+          .mockReturnValueOnce(mockDbChain([]))
+          // dismissed
+          .mockReturnValueOnce(mockDbChain([]))
+          // currentPending: all stale (no candidates regenerated)
+          .mockReturnValueOnce(mockDbChain(stalePending));
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+        const { service } = createService(db);
+        const result = await service.refreshSuggestions();
+
+        // Every stale ID reported as removed
+        expect(result.removed).toBe(1100);
+
+        // Isolate the stale-delete calls (inArray on suggestions.id) from the
+        // separate expireSuggestions() delete (filters status + created_at).
+        const whereSql = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls.map(c => toSQL(c[0]));
+        const staleDeleteCalls = whereSql.filter(sql => /"id"\s+in\s+\(/i.test(sql));
+        expect(staleDeleteCalls).toHaveLength(2);
+      });
     });
   });
 });
