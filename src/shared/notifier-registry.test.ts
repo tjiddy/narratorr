@@ -134,12 +134,18 @@ describe('NOTIFIER_REGISTRY', () => {
       expect(NOTIFIER_REGISTRY.pushover.viewSubtitle({})).toBe('Pushover');
     });
 
-    it('ntfy returns topic name', () => {
-      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyTopic: 'alerts' })).toBe('alerts');
+    it('ntfy returns server hostname', () => {
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyServer: 'https://ntfy.example.com' })).toBe('ntfy.example.com');
     });
 
-    it('ntfy returns "Ntfy" fallback for empty topic', () => {
-      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyTopic: '' })).toBe('Ntfy');
+    it('ntfy returns "ntfy.sh" fallback for unset/empty/malformed server', () => {
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({})).toBe('ntfy.sh');
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyServer: '' })).toBe('ntfy.sh');
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyServer: 'bad' })).toBe('ntfy.sh');
+    });
+
+    it('ntfy never renders the masked topic sentinel', () => {
+      expect(NOTIFIER_REGISTRY.ntfy.viewSubtitle({ ntfyTopic: '********', ntfyServer: '' })).toBe('ntfy.sh');
     });
 
     it('script returns path unchanged', () => {

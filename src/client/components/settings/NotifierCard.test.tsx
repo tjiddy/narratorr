@@ -157,6 +157,32 @@ describe('NotifierCard — view mode', () => {
 
     expect(screen.getByText(/Discord — Discord/)).toBeInTheDocument();
   });
+
+  it('shows ntfy subtitle as server hostname when settings are server-masked', () => {
+    const ntfyNotifier = createMockNotifier({
+      id: 4, name: 'My Ntfy', type: 'ntfy',
+      settings: { ntfyTopic: '********', ntfyServer: 'https://ntfy.example.com' },
+    });
+    renderWithProviders(
+      <NotifierCard notifier={ntfyNotifier} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/ntfy — ntfy\.example\.com/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*{8}/)).not.toBeInTheDocument();
+  });
+
+  it('shows ntfy subtitle as ntfy.sh fallback when server is unset', () => {
+    const ntfyNotifier = createMockNotifier({
+      id: 5, name: 'My Ntfy', type: 'ntfy',
+      settings: { ntfyTopic: '********', ntfyServer: '' },
+    });
+    renderWithProviders(
+      <NotifierCard notifier={ntfyNotifier} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/ntfy — ntfy\.sh/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*{8}/)).not.toBeInTheDocument();
+  });
 });
 
 describe('NotifierCard — create mode', () => {
