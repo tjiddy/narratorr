@@ -693,6 +693,26 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
 
     await expect(copyToLibrary(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
   });
+
+  it('throws a typed ContentFailureError on the multi-disc populated-target replace branch (#1346, helpers.ts:168-180)', async () => {
+    // Multi-disc group + already-populated target routes through the staged-swap branch
+    // (copyDiscGroupToLibrary's getTargetAudioSize > 0 guard). A no-op cp undersizes the
+    // staged audio so the shared verification throws the typed error — pin it by type, not
+    // by the 'Copy verification failed' message text.
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    fsMocks.cp.mockImplementation(async () => {});
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+  });
 });
 
 

@@ -46,32 +46,37 @@ export type {
 
 // ── isContentFailure ────────────────────────────────────────────────────
 
-/**
- * Content-failure signatures — errors caused by bad release content, not host/environment.
- * Used as a fallback for fs-originated / non-typed messages (and for any deserialized/plain
- * error that has lost its prototype). Copy-verification failures are now classified via
- * `instanceof ContentFailureError` first; `'Copy verification failed'` is retained here so a
- * plain (e.g. cross-process/deserialized) error carrying that message still classifies.
- */
-const CONTENT_FAILURE_PATTERNS = [
-  'No audio files found',
-  'not a supported audio format',
-  'Duplicate filename',
-  'Copy verification failed',
-] as const;
+/** Cause-chain walk bound — mirrors `serializeError`'s depth-5 cap with cycle detection
+ * (`serialize-error.ts`). Caps the wrapped-cause traversal below so a self-referential or
+ * pathologically deep chain can't spin. */
+const MAX_CAUSE_DEPTH = 5;
 
 /**
  * Classify an import error as content-caused (bad release) or environment-caused (host/config).
- * Recognizes the typed `ContentFailureError` first (drives copy-verification classification by
- * type, not message text), then falls back to a positive allowlist of known content-failure
- * signatures. All unrecognized errors (including Audio processing failed) default to false
- * (conservative).
+ *
+ * Classification rides ENTIRELY on the typed `ContentFailureError` (#1346): every content-failure
+ * throw site constructs one, so rewording any message can no longer silently break blacklist+retry
+ * routing — the failure mode the #1304 family exists to eliminate. The former
+ * `CONTENT_FAILURE_PATTERNS` substring fallback was retired here; an environment error whose
+ * message happens to contain a former pattern (e.g. `Path not found: .../No audio files found`)
+ * no longer mis-classifies.
+ *
+ * Walks `error.cause` (bounded + cycle-safe, mirroring `serializeError`) so a `ContentFailureError`
+ * wrapped via the in-file `new Error(msg, { cause })` pattern still classifies. Non-`Error` values
+ * never classify — a JSON-revived plain object that lost its prototype is treated conservatively as
+ * environment, not content (the sole production consumer, `ImportOrchestrator`, catches the error
+ * live and pre-serialization, so the typed `instanceof` path is always available there).
  */
 export function isContentFailure(error: unknown): boolean {
-  if (error instanceof ContentFailureError) return true;
-  if (!(error instanceof Error)) return false;
-  const msg = error.message;
-  return CONTENT_FAILURE_PATTERNS.some((pattern) => msg.includes(pattern));
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth++) {
+    if (current instanceof ContentFailureError) return true;
+    if (!(current instanceof Error) || seen.has(current)) return false;
+    seen.add(current);
+    current = current.cause;
+  }
+  return false;
 }
 
 // ── validateSource ──────────────────────────────────────────────────────
@@ -108,7 +113,7 @@ export async function validateSource(
   let fileCount = 0;
   if (sourceStats.isDirectory()) {
     if (!(await containsAudioFiles(savePath))) {
-      throw new Error(`No audio files found in ${savePath}`);
+      throw new ContentFailureError(`No audio files found in ${savePath}`);
     }
     fileCount = await countAudioFiles(savePath);
   } else if (sourceStats.isFile()) {
@@ -181,7 +186,7 @@ export async function copyToLibrary(args: CopyToLibraryArgs): Promise<void> {
   }
 
   if (!AUDIO_EXTENSIONS.has(extname(sourcePath).toLowerCase())) {
-    throw new Error(`Source file is not a supported audio format: ${basename(sourcePath)}`);
+    throw new ContentFailureError(`Source file is not a supported audio format: ${basename(sourcePath)}`);
   }
 
   const destPath = join(targetPath, basename(sourcePath));

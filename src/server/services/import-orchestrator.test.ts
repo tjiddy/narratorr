@@ -404,7 +404,7 @@ describe('ImportOrchestrator', () => {
     });
 
     it('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, blacklistType, and retry-gating deps', async () => {
-      const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
+      const contentError = new ContentFailureError('Copy verification failed: source 1000 bytes, target 500 bytes');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -440,7 +440,7 @@ describe('ImportOrchestrator', () => {
     it('guid-only usenet content failure propagates guid to blacklistAndRetrySearch', async () => {
       const usenetCtx = { ...mockContext, infoHash: null, guid: 'usenet-guid-abc' };
       (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(usenetCtx);
-      const contentError = new Error('No audio files found in /path');
+      const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -451,7 +451,7 @@ describe('ImportOrchestrator', () => {
     });
 
     it('content failure (duplicate filename) triggers blacklistAndRetrySearch — original loop scenario', async () => {
-      const dupeError = new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"');
+      const dupeError = new ContentFailureError('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(dupeError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -483,7 +483,7 @@ describe('ImportOrchestrator', () => {
     it('blacklist call failure does not suppress original import error and logs warning', async () => {
       const blacklistError = new Error('DB blacklist error');
       vi.mocked(blacklistAndRetrySearch).mockRejectedValueOnce(blacklistError);
-      const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
+      const contentError = new ContentFailureError('Copy verification failed: source 1000 bytes, target 500 bytes');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toBe(contentError);
@@ -499,7 +499,7 @@ describe('ImportOrchestrator', () => {
 
     it('batch path: content failure blacklisting verified via importDownload (not processCompletedDownloads which now enqueues)', async () => {
       // processCompletedDownloads now enqueues jobs — blacklisting happens when the adapter runs importDownload
-      const contentError = new Error('No audio files found in /path');
+      const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -523,7 +523,7 @@ describe('ImportOrchestrator', () => {
 
     it('importDownload() content-failure path throws ServiceWireError when called before wire()', async () => {
       const unwired = makeUnwiredOrchestrator();
-      const contentError = new Error('No audio files found in /path');
+      const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       // The throw happens inside dispatchFailureSideEffects; it replaces the

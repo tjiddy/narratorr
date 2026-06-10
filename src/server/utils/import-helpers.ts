@@ -23,6 +23,11 @@ export const COPY_VERIFICATION_THRESHOLD = 0.99;
  * (`BackupRecoveryError`): extend `Error`, set `this.name`, preserve a descriptive message.
  */
 export class ContentFailureError extends Error {
+  /** Serialization-safe discriminant (#1346) — survives prototype loss across a process/JSON
+   * boundary the way `instanceof` cannot. Matches the `BackupRecoveryError` / `PathOutsideLibraryError`
+   * convention. */
+  readonly code = 'CONTENT_FAILURE' as const;
+
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = 'ContentFailureError';
@@ -220,7 +225,7 @@ async function collectMultiDiscFiles(
   for (const file of nonDiscFiles) {
     const existing = seenNonDisc.get(file.name);
     if (existing) {
-      throw new Error(
+      throw new ContentFailureError(
         `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
       );
     }
@@ -231,7 +236,7 @@ async function collectMultiDiscFiles(
   const sequentialNames = new Set(sequentialFiles.map(f => f.name));
   for (const file of nonDiscFiles) {
     if (sequentialNames.has(file.name)) {
-      throw new Error(
+      throw new ContentFailureError(
         `Duplicate filename "${file.name}" found during import flattening: non-disc file "${file.srcPath}" collides with sequential disc numbering`,
       );
     }
@@ -256,7 +261,7 @@ async function collectFlatFiles(
   for (const file of files) {
     const existing = seen.get(file.name);
     if (existing) {
-      throw new Error(
+      throw new ContentFailureError(
         `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
       );
     }
