@@ -192,6 +192,20 @@ describe('IndexerCard — create mode', () => {
     expect(screen.queryByPlaceholderText('audiobookbay.lu')).not.toBeInTheDocument();
   });
 
+  it('#1342 Type selector is enabled and present in create mode', () => {
+    renderWithProviders(
+      <IndexerCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const typeSelect = screen.getByLabelText('Type');
+    expect(typeSelect).toBeInTheDocument();
+    expect(typeSelect).toBeEnabled();
+  });
+
   it('does not show enabled/priority fields in create mode', () => {
     renderWithProviders(
       <IndexerCard
@@ -590,8 +604,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(selectParent.querySelector('svg')).not.toBeNull();
     });
 
-    it('selecting an indexer type via SelectWithChevron updates form state', async () => {
-      const user = userEvent.setup();
+    it('#1342 Type select is disabled in edit mode (type is immutable identity)', () => {
       renderWithProviders(
         <IndexerCard
           indexer={mockIndexer}
@@ -601,8 +614,9 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      await user.selectOptions(screen.getByLabelText('Type'), 'torznab');
-      expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('torznab');
+      const select = screen.getByLabelText('Type');
+      expect(select).toBeInTheDocument();
+      expect(select).toBeDisabled();
     });
 
     it('type select shows border-destructive when errors.type is present', async () => {
@@ -906,6 +920,34 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
       expect(onFormTest.mock.calls[0]![0]).not.toHaveProperty('id');
+      expect(onFormTest.mock.calls[0]![0]).toMatchObject({ type: mamIndexer.type });
+    });
+
+    it('#1342 edit-mode Save fires and payload carries the original type', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      const mamIndexer: Indexer = createMockIndexer({
+        id: 22,
+        name: 'MAM Save Type',
+        type: 'myanonamouse',
+        settings: { mamId: '********', baseUrl: '', searchLanguages: [1], searchType: 'active' },
+      });
+
+      renderWithProviders(
+        <IndexerCard
+          indexer={mamIndexer}
+          mode="edit"
+          onSubmit={onSubmit}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0]![0]).toMatchObject({ type: mamIndexer.type });
     });
 
     it('renders language hint for MAM indexer with empty searchLanguages', () => {
@@ -1043,6 +1085,12 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     });
   });
 
+  // #908 family — settingsFromIndexer registry-overlay guard (siblings:
+  // NotifierCard.test.tsx, DownloadClientForm.test.tsx). Each case renders edit mode with an
+  // entity of one type and fires Test without switching the type selector. As of #1342 that
+  // no-switch shape is the permanent documented contract: the edit-mode Type selector is now
+  // rendered disabled and unregistered (IndexerCard.tsx), so in-edit type switching is
+  // intentionally unreachable. The overlay is validated at hydration, per type, instead.
   describe('#908 — settingsFromIndexer registry overlay (no foreign-type leak)', () => {
     it('MAM edit Test payload contains no non-MAM keys and round-trips persisted MAM-specific keys', async () => {
       const onFormTest = vi.fn();

@@ -104,8 +104,21 @@ describe('DownloadClientForm (#201)', () => {
       expect(newHostInput).toHaveValue('');
     });
 
-    it('type change in edit mode does NOT reset settings (preserves saved config)', async () => {
-      const user = userEvent.setup();
+    it('#1342 Type selector is enabled and present in create mode', () => {
+      renderWithProviders(
+        <DownloadClientForm
+          mode="create"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const typeSelect = screen.getByLabelText('Type');
+      expect(typeSelect).toBeInTheDocument();
+      expect(typeSelect).toBeEnabled();
+    });
+
+    it('#1342 Type select is disabled in edit mode (type switch is unreachable)', () => {
       const client = createMockDownloadClient({
         id: 1,
         name: 'My Client',
@@ -125,14 +138,12 @@ describe('DownloadClientForm (#201)', () => {
       // Verify pre-filled data
       expect(screen.getByPlaceholderText('localhost')).toHaveValue('saved-host');
 
-      // Change type in edit mode — settings should NOT reset because the useEffect skips when isEdit
-      await user.selectOptions(screen.getByLabelText('Type'), 'sabnzbd');
-
-      // The edit-mode reset effect re-applies the client's original data, not the new type's defaults
-      // The host should remain from the original client data after the reset
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('localhost')).toHaveValue('saved-host');
-      });
+      // The edit-mode Type select is now disabled + display-only (#1342), so the prior
+      // "switch type then assert no reset" interaction is no longer reachable — a disabled
+      // <select> cannot be changed via userEvent.selectOptions. The type is immutable identity.
+      const typeSelect = screen.getByLabelText('Type');
+      expect(typeSelect).toBeInTheDocument();
+      expect(typeSelect).toBeDisabled();
     });
   });
 
@@ -245,6 +256,34 @@ describe('DownloadClientForm (#201)', () => {
         expect(onFormTest).toHaveBeenCalled();
       });
       expect(onFormTest.mock.calls[0]![0]).not.toHaveProperty('id');
+      expect(onFormTest.mock.calls[0]![0]).toMatchObject({ type: client.type });
+    });
+
+    it('#1342 edit-mode Save fires and payload carries the original type', async () => {
+      const onSubmit = vi.fn();
+      const user = userEvent.setup();
+      const client = createMockDownloadClient({
+        id: 43,
+        name: 'My Saved Client',
+        type: 'qbittorrent',
+        settings: { host: 'h', port: 8080, username: 'admin', password: 'pass', useSsl: false },
+      });
+
+      renderWithProviders(
+        <DownloadClientForm
+          client={client}
+          mode="edit"
+          onSubmit={onSubmit}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalled();
+      });
+      expect(onSubmit.mock.calls[0]![0]).toMatchObject({ type: client.type });
     });
 
     // #827 — create mode does NOT include id (no saved row to resolve against)
@@ -440,6 +479,12 @@ describe('DownloadClientForm (#201)', () => {
     });
   });
 
+  // #908 family — settingsFromClient registry-overlay guard (siblings: NotifierCard.test.tsx,
+  // IndexerCard.test.tsx). Each case renders edit mode with a client of one type and fires Test
+  // without switching the type selector. As of #1342 that no-switch shape is the permanent
+  // documented contract: the edit-mode Type selector is now rendered disabled and unregistered
+  // (DownloadClientForm.tsx), so in-edit type switching is intentionally unreachable. The overlay
+  // is validated at hydration, per type, instead.
   describe('#908 — settingsFromClient registry overlay (no foreign-type leak)', () => {
     it('qBittorrent edit Test payload contains no SABnzbd/blackhole keys', async () => {
       const onFormTest = vi.fn();

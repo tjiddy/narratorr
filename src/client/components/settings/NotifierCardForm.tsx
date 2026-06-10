@@ -44,7 +44,7 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="notifierName" label="Name" registration={register('name')} error={errors.name} placeholder="My Webhook" />
 
-        <SelectWithChevron id="notifierType" label="Type" {...register('type')} error={!!errors.type}>
+        <SelectWithChevron id="notifierType" label="Type" {...(isEdit ? { value: selectedType, disabled: true } : register('type'))} error={!!errors.type}>
           {notifierTypeSchema.options.map((t) => (
             <option key={t} value={t}>
               {NOTIFIER_REGISTRY[t]?.label || t}
