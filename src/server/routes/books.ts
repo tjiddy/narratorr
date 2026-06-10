@@ -1,13 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
-import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
+import type { BookDeletionService } from '../services/book-deletion.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -21,6 +19,7 @@ export interface BookRouteDeps {
   mergeService: MergeService;
   taggingService: TaggingService;
   eventHistory: EventHistoryService;
+  bookDeletionService: BookDeletionService;
   indexerSearchService?: IndexerSearchService;
   indexerService?: IndexerService;
   bookRejectionService?: BookRejectionService;
@@ -64,7 +63,7 @@ type IdParam = z.infer<typeof idParamSchema>;
 import { refreshScanBook } from '../services/refresh-scan.service.js';
 
 
-async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory'>) {
+async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
@@ -72,66 +71,18 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     const { id } = request.params;
     const { deleteFiles } = request.query;
 
-    // Fetch book once for file deletion + event snapshot
-    const book = await deps.bookService.getById(id);
+    const result = await deps.bookDeletionService.deleteBook(id, { deleteFiles: deleteFiles === 'true' });
 
-    // If deleteFiles requested, delete from disk BEFORE cancelling downloads or removing DB record
-    if (deleteFiles === 'true') {
-      if (!book) {
+    switch (result.outcome) {
+      case 'not_found':
         return reply.status(404).send({ error: 'Book not found' });
-      }
-
-      if (book.path) {
-        try {
-          const librarySettings = await deps.settingsService.get('library');
-          await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
-        } catch (error: unknown) {
-          if (error instanceof PathOutsideLibraryError) {
-            request.log.warn({ bookId: id, error: serializeError(error) }, 'Refused book file deletion: path outside library root');
-            return reply.status(400).send({ error: error.message });
-          }
-          request.log.error({ bookId: id, error: serializeError(error) }, 'Failed to delete book files');
-          return reply.status(500).send({ error: 'Failed to delete book files from disk' });
-        }
-      }
+      case 'path_outside_library':
+        return reply.status(400).send({ error: result.error });
+      case 'file_deletion_failed':
+        return reply.status(500).send({ error: result.error });
+      case 'deleted':
+        return { success: true };
     }
-
-    // Cancel any active downloads for this book
-    const activeDownloads = await deps.downloadService.getActiveByBookId(id);
-    for (const download of activeDownloads) {
-      try {
-        await deps.downloadOrchestrator.cancel(download.id);
-      } catch (error: unknown) {
-        request.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to cancel download during book deletion');
-      }
-    }
-    if (activeDownloads.length > 0) {
-      request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
-    }
-
-    // Record deleted event before DB deletion (snapshot preserved via event fields)
-    if (book && deps.eventHistory) {
-      deps.eventHistory.create({
-        bookId: id,
-        ...snapshotBookForEvent(book),
-        eventType: 'deleted',
-        source: 'manual',
-      }).catch((err) => request.log.warn({ error: serializeError(err) }, 'Failed to record deleted event'));
-    }
-
-    const deleted = await deps.bookService.delete(id);
-
-    if (!deleted) {
-      return reply.status(404).send({ error: 'Book not found' });
-    }
-
-    // Clean up cached cover after successful DB delete (best-effort)
-    cleanCoverCache(id, config.configPath, request.log).catch((error: unknown) => {
-      request.log.warn({ bookId: id, error: serializeError(error) }, 'Failed to clean cover cache during deletion');
-    });
-
-    request.log.info({ id, deleteFiles }, 'Book deleted');
-    return { success: true };
 });
 }
 
