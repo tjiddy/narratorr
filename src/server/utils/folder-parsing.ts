@@ -9,6 +9,8 @@ import {
   tryCrossSegmentAgreement,
   trySeriesParen,
   tryBookOfSeriesDescriptor,
+  isPureReleaseTagBracket,
+  isReleaseTagInner,
 } from './folder-parsing-patterns.js';
 
 /**
@@ -182,12 +184,19 @@ function bracketTagStrip(s: string): string {
   // author-only like "Author -" (ends with a space-prefixed hyphen/en-dash and
   // nothing after). Anything with real title text keeps the normal strip.
   if (stripped !== '' && !/\s[–-]\s*$/.test(stripped)) return stripped;
-  // The bracket(s) wrapped real content, not a tag. Unwrap only MULTI-WORD inner
-  // text (a real title phrase like "Bobiverse 03 All These Worlds – 3"); keep
-  // deleting single-token tags (codec/bitrate/year/format/ASIN: [M4B], [64k],
-  // [2021], [B0D18DYG5C]) so the existing tag- and ASIN-strip behavior survives.
+  // The bracket(s) wrapped real content, not a tag. Unwrap only genuinely
+  // MULTI-WORD inner text (a real title phrase like "Bobiverse 03 All These
+  // Worlds – 3"); keep deleting single-token tags (codec/bitrate/year/format/ASIN:
+  // [M4B], [64k], [2021], [B0D18DYG5C]) AND multi-token release tags ([64k 22khz],
+  // [Graphic Audio], [Dramatized Adaptation]) so existing tag/ASIN strip survives.
+  // Trim the inner BEFORE the multi-word test: `normalize` codec-strips inside
+  // brackets ([MP3 64k] → [ 64k]), and the bare `/\s/` test on a leading-space
+  // inner would wrongly unwrap the residual bitrate into the title (#1316/#1331).
   const recovered = s
-    .replace(/\s*\[([^\]]*)\]/g, (_full, inner: string) => (/\s/.test(inner) ? ` ${inner}` : ' '))
+    .replace(/\s*\[([^\]]*)\]/g, (_full, inner: string) => {
+      const trimmed = inner.trim();
+      return /\S\s+\S/.test(trimmed) && !isReleaseTagInner(trimmed) ? ` ${trimmed}` : ' ';
+    })
     .replace(/\s{2,}/g, ' ')
     .trim();
   return recovered || stripped;
@@ -297,7 +306,13 @@ function tryAuthorTitleForms(
 ): ParsedFolder | null {
   // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
-  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim())) {
+  // Don't split when the right side is a pure bracketed release tag (`[Graphic Audio]`,
+  // `[Dramatized Adaptation]`, `[64k 22khz]`): a release tag is never a title and the
+  // left side is the title, not the author. Splitting would mis-assign the author and,
+  // because the bracket-only title segment collapses to empty and falls back to the raw
+  // bracket, leak the tag text into the title. Falling through to the title-only path
+  // yields the tag-deleted whole-string clean (`Wool Omnibus -`). (#1331)
+  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim()) && !isPureReleaseTagBracket(dashMatch[2]!)) {
     const author = applyLastFirstSwap(transform(dashMatch[1]!));
     return applyP10Postprocess(transform(dashMatch[2]!), author, asinTail, transform);
   }
