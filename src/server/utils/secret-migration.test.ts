@@ -345,6 +345,31 @@ describe('Secret Migration', () => {
       expect(db.update).not.toHaveBeenCalled();
     });
 
+    it('#1357 realistic upgrade row: pushoverToken already $ENC$, pushoverUser plaintext — only pushoverUser is rewritten, token ciphertext byte-identical', async () => {
+      // The universal post-#731 upgrade state: a row whose token was encrypted by
+      // the prior build but whose user key is still plaintext. Encrypting the
+      // sibling must NOT touch the already-encrypted token (idempotent skip via
+      // isEncrypted) — the token ciphertext must come back byte-for-byte identical.
+      const tokenCiphertext = encrypt('po-token', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { pushoverToken: tokenCiphertext, pushoverUser: 'u-plaintext' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // settings
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(1);
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
+      const updatedSettings = setCalls[0][0].settings;
+      // The plaintext user key is now encrypted...
+      expect(isEncrypted(updatedSettings.pushoverUser)).toBe(true);
+      // ...and the pre-encrypted token is untouched, byte-identical to the seed.
+      expect(updatedSettings.pushoverToken).toBe(tokenCiphertext);
+    });
+
     it('#811 encrypts plaintext apiUrl alone in indexer settings', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, settings: { apiUrl: 'http://example.com/api' } },

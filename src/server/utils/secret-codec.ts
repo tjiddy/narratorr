@@ -224,16 +224,29 @@ export function encryptFields(
 }
 
 export function decryptFields(
-  entity: SecretEntity,
+  _entity: SecretEntity,
   settings: Record<string, unknown>,
   key: Buffer,
 ): Record<string, unknown> {
-  const fields = getSecretFieldNames(entity);
-  for (const field of fields) {
-    if (!(field in settings)) continue;
-    const value = settings[field];
+  // Opportunistic decrypt: decrypt ANY `$ENC$`-prefixed string value regardless
+  // of SECRET_FIELDS membership. This rollback-proofs the read path (#1357) — a
+  // value encrypted by a build that registered a field the running build does
+  // not (e.g. after a rollback past the registration) is still decrypted rather
+  // than handed to an adapter as raw `$ENC$` ciphertext. Decrypting a value the
+  // running build doesn't consider secret is harmless; encrypt/mask stay
+  // registry-scoped so no field outside the registry is ever encrypted or masked.
+  //
+  // Decryption failures (malformed / undersized / non-base64 blobs, auth-tag
+  // mismatch) pass through unchanged via try/catch — read-path callers
+  // (notifier.service `decryptRow` et al.) invoke this without their own
+  // try/catch, so a corrupt blob must never crash a route handler.
+  for (const [field, value] of Object.entries(settings)) {
     if (typeof value === 'string' && isEncrypted(value)) {
-      settings[field] = decrypt(value, key);
+      try {
+        settings[field] = decrypt(value, key);
+      } catch {
+        // Passthrough: leave the original `$ENC$` value untouched on any failure.
+      }
     }
   }
   return settings;
