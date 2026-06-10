@@ -32,7 +32,23 @@ const SYNONYM_MAP = new Map<string, string>([
   ['thriller & suspense', 'Thriller'],
   ['fantasy & magic', 'Fantasy'],
   ["children's audiobooks", "Children's"],
-  ['historical', 'Historical Fiction'],
+  // NOTE: bare 'historical' is NOT a static synonym — it is context-gated in
+  // normalizeGenres (step 2b) so it maps to 'Historical Fiction' only when no
+  // non-fiction marker co-occurs. See NONFICTION_HISTORICAL_MARKERS (#1383).
+]);
+
+/**
+ * Non-fiction context markers (lowercase). Audible files non-fiction
+ * "Historical" categories under these parents (Biographies & Memoirs, History,
+ * Computers & Technology). When any co-occurs in the same genre array, a bare
+ * 'historical' entry is a non-fiction descriptor and must NOT be remapped to
+ * the fiction-side 'Historical Fiction' — doing so fabricates a wrong fiction
+ * label on narrative non-fiction (#1383, live-verified on Endurance B002V9ZA6C).
+ */
+const NONFICTION_HISTORICAL_MARKERS = new Set([
+  'biographies & memoirs',
+  'history',
+  'computers & technology',
 ]);
 
 /**
@@ -48,7 +64,12 @@ const DROP_GENRES = new Set([
   'difficult situations',
 ]);
 
-/** Generic parent genres that should be removed when children exist */
+/**
+ * Generic parent genres that should be removed when children exist.
+ * Dual consumer: `splitBisacPath` (BISAC leaf extraction — a generic parent
+ * collapses a path to its leaf) AND `removeGenericParents` (step-6 parent
+ * removal). Editing this set changes both behaviors; pin both when adding keys.
+ */
 const GENERIC_PARENTS = new Set([
   'fiction',
   'non-fiction',
@@ -124,6 +145,12 @@ function splitBisacPath(genre: string): string {
  * Remove compound genres when their components exist separately.
  * e.g., "Science Fiction & Fantasy" is redundant if both
  * "Science Fiction" and "Fantasy" are present.
+ *
+ * INVARIANT — remove-only: this function never rewrites, splits, or emits a
+ * genre, it only drops compounds whose every component already exists. Several
+ * compound-shaped GENERIC_PARENTS (e.g. "Science Fiction & Fantasy",
+ * "Mystery, Thriller & Suspense") rely on this: a splitter rewrite here would
+ * fragment those parents and break the parent-removal lists. Keep it a filter.
  */
 function removeCompounds(genres: string[]): string[] {
   const lowerSet = new Set(genres.map((g) => g.toLowerCase()));
@@ -160,6 +187,7 @@ function removeGenericParents(genres: string[]): string[] {
  * Rules applied in order:
  * 1. Split BISAC paths
  * 2. Apply synonym map
+ * 2b. Context-gate bare 'historical' → 'Historical Fiction'
  * 3. Drop pure-noise non-genres
  * 4. Deduplicate (case-insensitive, preserves first occurrence)
  * 5. Remove compound genres when components exist separately
@@ -176,6 +204,21 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
     const normalized = SYNONYM_MAP.get(genre.toLowerCase());
     return normalized ?? genre;
   });
+
+  // Step 2b: Context-gate bare 'historical'. Both a raw 'Historical' entry and
+  // a BISAC 'Fiction / Historical' path (collapsed to 'Historical' in step 1)
+  // become the fiction-side 'Historical Fiction' — but only when no non-fiction
+  // marker co-occurs in the same array. Audible files non-fiction "Historical"
+  // under Biographies & Memoirs / History / Computers & Technology, where the
+  // remap would fabricate a wrong fiction label (#1383).
+  const hasNonfictionMarker = result.some((g) =>
+    NONFICTION_HISTORICAL_MARKERS.has(g.toLowerCase()),
+  );
+  if (!hasNonfictionMarker) {
+    result = result.map((genre) =>
+      genre.toLowerCase() === 'historical' ? 'Historical Fiction' : genre,
+    );
+  }
 
   // Step 3: Drop pure-noise non-genres (after synonym mapping so a synonym
   // can never map into a dropped key, and before dedup so dropped entries
