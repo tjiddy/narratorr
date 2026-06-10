@@ -10,6 +10,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RetrySearchDeps } from './retry-search.js';
 import { createMockLogger, createMockSettingsService, inject } from '../__tests__/helpers.js';
+import { ContentFailureError } from '../utils/import-helpers.js';
 
 // Mock rejection-helpers for blacklist dispatch testing
 vi.mock('../utils/rejection-helpers.js', () => ({
@@ -420,6 +421,20 @@ describe('ImportOrchestrator', () => {
       expect(callArg.settingsService).toBe(settingsService);
       expect(callArg.retrySearchDeps).toBe(retrySearchDeps);
       expect(callArg).not.toHaveProperty('overrideRetry');
+    });
+
+    it('typed ContentFailureError with a reworded message still routes to bad_quality/temporary (#1304)', async () => {
+      // Proves classification rides the instanceof path, not the message text: a reworded
+      // ContentFailureError (no 'Copy verification failed' substring) still blacklists + retries.
+      const typedError = new ContentFailureError('audio bytes mismatch after copy');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(typedError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(blacklistAndRetrySearch).toHaveBeenCalledWith(expect.objectContaining({
+        reason: 'bad_quality',
+        blacklistType: 'temporary',
+      }));
     });
 
     it('guid-only usenet content failure propagates guid to blacklistAndRetrySearch', async () => {
