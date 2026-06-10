@@ -200,7 +200,7 @@ describe('DiscoverySettingsSection', () => {
     invalidateSpy.mockRestore();
   });
 
-  // --- #408: Expiry & Snooze settings fields ---
+  // --- #408: Expiry settings fields ---
 
   describe('expiryDays field', () => {
     it('renders expiry days input with default value', async () => {

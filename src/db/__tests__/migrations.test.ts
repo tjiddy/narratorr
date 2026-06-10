@@ -44,6 +44,16 @@ async function tableNames(dbPath: string): Promise<Set<string>> {
   }
 }
 
+async function columnNames(dbPath: string, table: string): Promise<Set<string>> {
+  const client = createClient({ url: `file:${dbPath}` });
+  try {
+    const result = await client.execute(`SELECT name FROM pragma_table_info('${table}')`);
+    return new Set(result.rows.map((r) => r.name as string));
+  } finally {
+    client.close();
+  }
+}
+
 describe('drizzle baseline migration', () => {
   let tmpDir: string;
 
@@ -72,6 +82,15 @@ describe('drizzle baseline migration', () => {
     }
     // The migrator records what it applied; the baseline must be present.
     expect(names.has('__drizzle_migrations')).toBe(true);
+
+    // Migration 0001 (#1303) drops the dead `suggestions.snooze_until` column.
+    // Pin the drop: assert the column is absent after running the production
+    // drizzle/ folder so a re-add (or a snapshot regression that regenerates it)
+    // fails this suite. A survivor column (`dismissed_at`) anchors the assertion
+    // so a typo'd table name can't make it pass vacuously.
+    const suggestionColumns = await columnNames(dbPath, 'suggestions');
+    expect(suggestionColumns.has('snooze_until'), 'suggestions.snooze_until must stay dropped by migration 0001').toBe(false);
+    expect(suggestionColumns.has('dismissed_at'), 'expected survivor column suggestions.dismissed_at').toBe(true);
   });
 
   it('is idempotent — re-running the migrator is a no-op', async () => {
