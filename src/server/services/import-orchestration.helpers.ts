@@ -13,6 +13,7 @@ import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
+import { prepareImportSiblings } from '../utils/import-staging.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -46,6 +47,44 @@ async function getTargetAudioSize(targetPath: string): Promise<number> {
     if ((sizeError as NodeJS.ErrnoException).code === 'ENOENT') return 0;
     throw sizeError;
   }
+}
+
+/**
+ * Run the marker-gated recovery the auto path runs unconditionally
+ * (`prepareImportSiblings`) BEFORE the populated-target gate (#1337). A commit
+ * killed after the backup-out renames but before the first move-in strands the
+ * target audio-EMPTY with an armed `.import-commit-pending` marker + populated
+ * `.import-bak`. Without this, `getTargetAudioSize` reads `0`, the direct-copy
+ * fast path runs and orphans the armed marker/backup — a *later* import then
+ * fires bogus recovery and restores the stale originals OVER the manual import
+ * (backup-authoritative is actively wrong here), and a subsequent ordinary
+ * failure can delete the backup + marker, silently regressing the library.
+ *
+ * Marker PRESENT → recovery restores the stranded originals into `targetPath`
+ * and consumes the marker + backup; the populated-target gate below then sees
+ * audio and routes the manual import through the staged swap (which re-runs
+ * `prepareImportSiblings` itself — a no-op now the marker is gone). Marker
+ * ABSENT → both siblings are disposable scratch and are strict-cleared (no
+ * recovery, no behavior change), and the direct-copy fast path runs as today.
+ *
+ * Deliberately reuses `prepareImportSiblings` rather than re-checking the marker
+ * inline: it is the single encapsulation of "marker present → recover; marker
+ * absent → strict-clear" and fails toward preservation on stat errors (#1336).
+ * The sibling paths mirror `stagedAudioReplace`'s derivation so the pre-gate
+ * recovery and the staged swap operate on the same `.import-tmp` / `.import-bak`.
+ */
+async function recoverInterruptedCommit(
+  targetPath: string,
+  libraryRoot: string,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  await prepareImportSiblings({
+    stagingPath: `${targetPath}.import-tmp`,
+    backupPath: `${targetPath}.import-bak`,
+    targetPath,
+    libraryRoot,
+    log,
+  });
 }
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
@@ -97,6 +136,12 @@ export async function copyToLibrary(
   if (memberPaths.length >= 2) {
     return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, librarySettings.path, onProgress);
   }
+
+  // Recover any interrupted commit (#1337) BEFORE the populated-target gate: an
+  // audio-empty target with an armed marker must restore its stranded originals
+  // first, so the gate below routes through the staged swap instead of the
+  // fast path orphaning the marker/backup. No-op when no commit was interrupted.
+  await recoverInterruptedCommit(targetPath, librarySettings.path, log);
 
   // Populated-target guard (#1287): a manual import whose computed target already
   // contains audio must NOT merge-copy in place (that recreates the #1252
@@ -161,6 +206,11 @@ async function copyDiscGroupToLibrary(
 ): Promise<string> {
   const { log } = deps;
   log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode }, 'Flattening multi-disc group to library');
+
+  // Recover any interrupted commit (#1337) BEFORE the populated-target gate — the
+  // disc-group flatten has the identical marker-orphaning gap as the single-source
+  // path. No-op when no commit was interrupted.
+  await recoverInterruptedCommit(targetPath, libraryRoot, log);
 
   // Populated-target guard (#1287, AC5): the disc-group flatten has the identical
   // merge-into-target gap as the single-source path. When the target already holds
