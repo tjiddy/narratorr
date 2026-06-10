@@ -102,22 +102,58 @@ function consultCache(
 }
 
 /**
- * Apply the per-call-site Phase-2 cap to the cache-miss candidate set. When the
- * cap is unset or not exceeded, returns the candidates unchanged. Otherwise
- * ranks by `comparePhase2`, keeps the top `cap`, and logs the skipped count.
+ * Apply the per-call-site Phase-2 cap to the cache-miss candidate set. Returns
+ * the kept candidates (`toFetch`) and the ranked dropped tail (`skipped`). When
+ * the cap is unset or not exceeded, `toFetch` is the candidates unchanged and
+ * `skipped` is empty. Otherwise ranks by `comparePhase2`, keeps the top `cap` as
+ * `toFetch`, exposes `ranked.slice(cap)` as `skipped`, and logs the skipped
+ * count. The split is taken from the RANKED ordering — `skipped` is the set the
+ * cap actually drops, not an insertion-order tail of `candidates`.
  */
 function selectCappedCandidates(
   candidates: SearchResult[],
   cap: number | undefined,
   logger: FastifyBaseLogger,
-): SearchResult[] {
-  if (cap === undefined || candidates.length <= cap) return candidates;
+): { toFetch: SearchResult[]; skipped: SearchResult[] } {
+  if (cap === undefined || candidates.length <= cap) return { toFetch: candidates, skipped: [] };
   const ranked = [...candidates].sort(comparePhase2);
   logger.debug(
     { candidates: candidates.length, cap, skipped: candidates.length - cap },
     'Phase-2 fetch cap applied — skipped lowest-ranked candidates',
   );
-  return ranked.slice(0, cap);
+  return { toFetch: ranked.slice(0, cap), skipped: ranked.slice(cap) };
+}
+
+/**
+ * Run the zero-network-cost title check over the ranked cap-skipped tail. The cap
+ * exists to protect fetch concurrency, but the title check costs no network — so
+ * cap-skipped candidates still get the free `detectLanguageFromText(title)` pass
+ * that pre-#1315 every fetch candidate received via the post-fetch cascade. This
+ * closes the wrong-language auto-grab gap on a cold cache (#1326): an undetected
+ * German release (e.g. `(Ungekürzt)`) at rank 11+ otherwise passes the language
+ * filter as `undetermined`. Mirrors `tryTitleFallback` — guarded on
+ * `result.language`, reuses `normalizeLanguage(detectLanguageFromText(...))`, and
+ * bumps the audit counter. Emits a distinct `title-cap-skipped` debug signal.
+ *
+ * Deliberately does NOT write to the enrichment cache: title-only is not a
+ * terminal outcome, and caching it under the success TTL would suppress the real
+ * NZB fetch (which populates `nzbName` and the newsgroup signal) on a later run.
+ * Returns the number of candidates whose language transitioned undefined→detected.
+ */
+function detectCapSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogger): number {
+  let detected = 0;
+  for (const result of skipped) {
+    if (result.language) continue;
+    const titleLang = normalizeLanguage(detectLanguageFromText(result.title));
+    if (!titleLang) continue;
+    result.language = titleLang;
+    detected++;
+    logger.debug(
+      { title: result.title, signal: 'title-cap-skipped', matched: titleLang },
+      'Language detected from title for cap-skipped candidate (no NZB fetch)',
+    );
+  }
+  return detected;
 }
 
 /**
@@ -268,7 +304,11 @@ export async function enrichUsenetLanguages(
 
   // Per-call-site Phase-2 cap (ranked) applied to the cache-miss set, before
   // any semaphore permit is acquired so capped-out candidates don't consume slots.
-  const toFetch = selectCappedCandidates(misses, options?.maxPhase2Fetches, logger);
+  const { toFetch, skipped } = selectCappedCandidates(misses, options?.maxPhase2Fetches, logger);
+
+  // Free title check over the ranked cap-skipped tail (#1326). Runs pre-permit —
+  // it is pure CPU and consumes no fetch concurrency. No cache write on this path.
+  languagesDetected += detectCapSkippedTitles(skipped, logger);
 
   // Phase 2: Fetch NZBs in parallel with concurrency limit
   const semaphore = new Semaphore(NZB_FETCH_CONCURRENCY);

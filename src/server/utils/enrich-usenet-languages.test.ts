@@ -1507,6 +1507,127 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(13);
     });
   });
+
+  describe('Phase-2 cap-skipped free title check (#1326)', () => {
+    // Fetched candidates return a plain (no-language) NZB so the only language
+    // that can surface is the title-based one on the cap-skipped tail — this
+    // isolates the #1326 behavior from the post-fetch detection cascade.
+    function plainFetch(): void {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+    }
+
+    function capMiss(i: number, overrides: Partial<SearchResult> = {}): SearchResult {
+      return makeResult({
+        protocol: 'usenet',
+        guid: `cap-${i}`,
+        downloadUrl: `http://nzb.test/cap-${i}`,
+        matchScore: i,
+        ...overrides,
+      });
+    }
+
+    it('detects a German title on a cap-skipped candidate without fetching its NZB', async () => {
+      plainFetch();
+      // 13 candidates, matchScore 1..13. Cap 10 → top-10 (matchScore 4..13)
+      // fetched; matchScore 1,2,3 skipped. The German marker sits on matchScore 1,
+      // squarely in the ranked dropped tail.
+      const german = capMiss(1, { guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' });
+      const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
+      const results = [german, ...rest];
+
+      await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
+
+      expect(german.language).toBe('german');
+      // Its NZB was never fetched — zero Phase-2 cost for the skipped candidate.
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(10);
+      const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
+      expect(fetchedUrls).not.toContain('http://nzb.test/cap-german');
+      // languagesDetected counts the one cap-skipped German transition (fetched
+      // candidates resolve to no language via the plain NZB).
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ nzbFetched: 10, languagesDetected: 1 }),
+        'Usenet language detection complete',
+      );
+    });
+
+    it('walks the ranked dropped tail, not insertion order', async () => {
+      plainFetch();
+      // German marker candidate is FIRST by insertion order but lowest by
+      // matchScore — so it lands in the ranked dropped tail. An insertion-order
+      // (`misses.slice(cap)`) implementation would fetch it and leave it
+      // undefined; the ranked split skips and title-detects it.
+      const german = capMiss(1, { guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' });
+      const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
+      const results = [german, ...rest];
+
+      await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
+
+      expect(german.language).toBe('german');
+      const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
+      expect(fetchedUrls).not.toContain('http://nzb.test/cap-german');
+    });
+
+    it('leaves a cap-skipped candidate with no language marker undefined and unfetched', async () => {
+      plainFetch();
+      const noMarker = capMiss(1, { guid: 'cap-plain', downloadUrl: 'http://nzb.test/cap-plain', title: 'A Perfectly Ordinary Audiobook' });
+      const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
+      const results = [noMarker, ...rest];
+
+      await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
+
+      expect(noMarker.language).toBeUndefined();
+      const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
+      expect(fetchedUrls).not.toContain('http://nzb.test/cap-plain');
+      // No transition → languagesDetected stays at 0 (fetched candidates are plain).
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ nzbFetched: 10, languagesDetected: 0 }),
+        'Usenet language detection complete',
+      );
+    });
+
+    it('does not cache cap-skipped title detection, so a later uncapped run still fetches the NZB', async () => {
+      plainFetch();
+      const german = capMiss(1, { guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' });
+      const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
+      const results = [german, ...rest];
+
+      await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
+
+      // No cache entry was written for the cap-skipped candidate — title-only is
+      // not a terminal outcome and must not suppress the real NZB fetch.
+      expect(enrichmentCache.get('cap-german')).toBeUndefined();
+
+      // Behavioral proof: a second, uncapped run fetches the previously-skipped
+      // NZB (its key was never cached as a hit).
+      mockFetchWithSsrfRedirect.mockClear();
+      const second = [makeResult({ protocol: 'usenet', guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' })];
+      await enrichUsenetLanguages(second, logger);
+      const refetched = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
+      expect(refetched).toContain('http://nzb.test/cap-german');
+    });
+
+    it('emits a distinct title-cap-skipped debug signal', async () => {
+      plainFetch();
+      const german = capMiss(1, { guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' });
+      const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
+      const results = [german, ...rest];
+
+      await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
+
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Der Hobbit (Ungekürzt)', signal: 'title-cap-skipped', matched: 'german' }),
+        expect.any(String),
+      );
+      // The signal string is grep-distinct from the fetch-path signals.
+      const signals = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
+        .map((c) => (c[0] as { signal?: string }).signal)
+        .filter(Boolean);
+      expect(signals).toContain('title-cap-skipped');
+      const capSkippedSignal = 'title-cap-skipped';
+      expect(capSkippedSignal).not.toBe('title-pattern');
+      expect(capSkippedSignal).not.toBe('title-after-fetch-fail');
+    });
+  });
 });
 
 function germanNzbXml(name?: string): string {
