@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { EventReasonDetails, qualityGateReasonSchema } from './eventReasonFormatters';
+import { EventReasonDetails } from './eventReasonFormatters';
+import { qualityGateReasonSchema } from './qualityGateReasonSchema';
 
 /** A fully-populated, well-formed held_for_review reason blob. */
 const fullReason = {
