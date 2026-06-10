@@ -32,13 +32,13 @@ import {
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
-import { removeImportSibling, removeMarker, BackupRecoveryError } from './import-staging.js';
+import { removeImportSibling, removeMarker, markerPresent } from './import-staging.js';
 
 // Staged-import siblings machinery (.import-tmp/.import-bak) lives in import-staging.ts;
 // re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
 export {
   prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
-  BackupRecoveryError,
+  markerPresent, BackupRecoveryError,
 } from './import-staging.js';
 export type {
   PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,
@@ -358,12 +358,17 @@ export interface HandleImportFailureArgs {
 
 /** Clean up after a failed import: remove files, revert DB statuses. Rethrows. */
 export async function handleImportFailure(args: HandleImportFailureArgs): Promise<never> {
-  const { error, targetPath, stagingPath, backupPath, libraryRoot, protectTarget, log } = args;
+  const { targetPath, stagingPath, backupPath, libraryRoot, protectTarget, log } = args;
 
-  // A BackupRecoveryError means a kill-recovery was mid-flight: the originals still
-  // in `.import-bak` and the commit-pending marker MUST survive for the next boot's
-  // recovery attempt (#1290). Skip removing both; staging is still re-derivable scratch.
-  const preserveBackup = error instanceof BackupRecoveryError;
+  // #1336: preservation rides on the durable disk signal (the commit-pending marker), NOT
+  // on the error's identity. A kill-recovery leaves the marker + stranded originals in
+  // `.import-bak`; deleting them because the failure reached us as a plain Error (a raw
+  // readdir/stat error during recovery, a pre-flight `validateSource`/`checkDiskSpace`
+  // throw before recovery even runs, or a `BackupRecoveryError` re-wrapped via
+  // `new Error(msg, { cause })`) is the exact #1290 data loss through a different door.
+  // While the marker is present, never delete `.import-bak` or the marker; staging is
+  // still re-derivable scratch. `markerPresent` fails toward preservation on a stat error.
+  const preserveBackup = targetPath ? await markerPresent(targetPath, log) : false;
 
   // Always clean up the transient staging sibling (guarded, nonfatal).
   if (stagingPath) await removeImportSibling(stagingPath, libraryRoot, log, 'staging');

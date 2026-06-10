@@ -346,6 +346,57 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     expect(await pathExists(marker)).toBe(false);
   });
 
+  it('#1336 window 1: a recovery-enumeration readdir error preserves .import-bak + the marker', async () => {
+    // Marker present, but `.import-bak` cannot be enumerated as a directory — here it is a
+    // plain FILE, so `listAudioFilesRecursive` → `readdir` rejects with ENOTDIR (a non-ENOENT
+    // error). The enumeration now sits INSIDE recoverInterruptedBackup's wrapping try (#1336),
+    // so it surfaces as a BackupRecoveryError and the cleanup preserves both — instead of the
+    // raw readdir error propagating to cleanup and deleting the stranded originals. Moving the
+    // enumeration back outside the try would let the raw ENOTDIR escape and fail this test.
+    await writeFile(backup, Buffer.from('not-a-directory')); // `.import-bak` as a file → readdir ENOTDIR
+    await writeFile(marker, '');
+
+    await expect(stagedAudioReplace({
+      targetPath: target, libraryRoot, log: makeLog(), sourceAudioSize: 1,
+      stage: async () => { /* unreached — recovery enumeration throws first */ },
+    })).rejects.toBeInstanceOf(BackupRecoveryError);
+
+    // Both survive for the next boot's recovery attempt — nothing was deleted.
+    expect(await pathExists(marker)).toBe(true);
+    expect(await pathExists(backup)).toBe(true);
+  });
+
+  it('#1336: a plain commit failure leaves the marker on disk → .import-bak + marker preserved (identity-independent)', async () => {
+    // Drive a real commit failure over a populated target: the staged file move-in fails
+    // because a non-empty directory squats at its destination path. commitStagedImport
+    // rolls back and rethrows the ORIGINAL (plain) error — NOT a BackupRecoveryError — with
+    // the commit-pending marker still on disk. The catch's cleanup must key on the marker's
+    // disk presence (#1336), not the error's identity, and preserve the backup + marker.
+    await writeFile(join(target, 'old.mp3'), Buffer.alloc(300, 1));
+    // A directory at target/new.mp3 makes the staged file→target rename fail mid-commit.
+    await mkdir(join(target, 'new.mp3'), { recursive: true });
+    await writeFile(join(target, 'new.mp3', 'blocker'), Buffer.from('x'));
+
+    const stagedBytes = Buffer.alloc(300, 2);
+    const error = await stagedAudioReplace({
+      targetPath: target,
+      libraryRoot,
+      log: makeLog(),
+      sourceAudioSize: stagedBytes.length,
+      stage: async (stagingPath) => {
+        await mkdir(stagingPath, { recursive: true });
+        await writeFile(join(stagingPath, 'new.mp3'), stagedBytes);
+      },
+    }).then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(BackupRecoveryError);
+
+    // The marker survives, and the backup is NOT deleted while the marker is present.
+    expect(await pathExists(marker)).toBe(true);
+    expect(await pathExists(backup)).toBe(true);
+  });
+
   it('false-positive guard: a stale non-empty .import-bak with NO marker is strict-cleared, target NOT regressed', async () => {
     const committedBytes = Buffer.from('NEW-COMMITTED');
     const staleBytes = Buffer.from('OLD-STALE');
