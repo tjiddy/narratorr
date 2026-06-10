@@ -27,7 +27,16 @@ export function triggerImmediateSearch(
   Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
     .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      await searchAndGrabForBook(book, deps.indexerSearchService, deps.downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, deps.blacklistService, deps.indexerService, deps.eventHistory, deps.eventBroadcaster);
+      await searchAndGrabForBook(book, {
+        indexerSearchService: deps.indexerSearchService,
+        downloadOrchestrator: deps.downloadOrchestrator,
+        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        log,
+        blacklistService: deps.blacklistService,
+        indexerService: deps.indexerService,
+        eventHistory: deps.eventHistory,
+        broadcaster: deps.eventBroadcaster,
+      });
     })
     .catch((err: unknown) => {
       log.warn({ error: serializeError(err), bookId: book.id }, 'Search-immediately trigger failed');
