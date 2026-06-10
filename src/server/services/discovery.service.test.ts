@@ -552,8 +552,8 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending: one existing pending
-        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]))
+        // currentPending: one existing pending — production selects only { id, asin }
+        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]))
         // batch SELECT for upsert (#554) — existing pending row
         .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending' }]));
       db.insert.mockReturnValue(mockDbChain());
@@ -584,8 +584,8 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending: one stale pending (won't be regenerated)
-        .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+        // currentPending: one stale pending (won't be regenerated) — production selects only { id, asin }
+        .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1' }]));
       db.delete.mockReturnValue(mockDbChain());
 
       // No candidates generated (empty results)
@@ -863,11 +863,12 @@ describe('DiscoveryService', () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       // dismissed
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+      // currentPending — production selects only { id, asin }
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]));
       // batch SELECT for upsert (#554)
       db.select.mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending' }]));
-      db.insert.mockReturnValue(mockDbChain());
+      const insertChain = mockDbChain();
+      db.insert.mockReturnValue(insertChain);
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
         books: [{ asin: 'EXISTING_PENDING', title: 'Updated', authors: [{ name: 'Author A' }], language: 'English' }],
@@ -879,6 +880,19 @@ describe('DiscoveryService', () => {
 
       // Normal pending rows get upserted via INSERT ON CONFLICT DO UPDATE (#554)
       expect(db.insert).toHaveBeenCalled();
+
+      // Pin the SET payload (#1365): the regenerated-pending upsert must overwrite
+      // reason/reasonContext UNCONDITIONALLY from excluded.* — no CASE expression.
+      // A regression that reintroduces conditional CASE logic (or drops
+      // reasonContext from the SET) must fail here, not slip past a bare call count.
+      const onConflict = insertChain.onConflictDoUpdate as ReturnType<typeof vi.fn>;
+      expect(onConflict).toHaveBeenCalled();
+      const setPayload = onConflict.mock.calls[0]![0].set;
+      expect(toSQL(setPayload.reason)).toBe('excluded.reason');
+      expect(toSQL(setPayload.reasonContext)).toBe('excluded.reason_context');
+      // No conditional overwrite — the contract is an unconditional excluded.* copy.
+      expect(toSQL(setPayload.reason).toLowerCase()).not.toContain('case');
+      expect(toSQL(setPayload.reasonContext).toLowerCase()).not.toContain('case');
     });
   });
 
@@ -1156,7 +1170,7 @@ describe('DiscoveryService', () => {
   });
 
   describe('diversity reason enum extension', () => {
-    it('getStrengthForReason handles diversity reason without error', async () => {
+    it('generateCandidates scores a diversity-reason candidate without error', async () => {
       const db = createMockDb();
       db.select
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'] })]))
@@ -2085,12 +2099,9 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
-        // currentPending
+        // currentPending — production selects only { id, asin }
         .mockReturnValueOnce(mockDbChain(existingRows.filter(r => r.status === 'pending').map(r => ({
           id: r.id, asin: r.asin,
-          reason: 'author' as const, reasonContext: 'ctx', authorName: 'Author A',
-          narratorName: null, duration: null, publishedDate: null,
-          seriesName: null, seriesPosition: null,
         }))))
         // batch SELECT for upsert
         .mockReturnValueOnce(mockDbChain(existingRows));
@@ -2125,7 +2136,7 @@ describe('DiscoveryService', () => {
         expect(db.select).toHaveBeenCalledTimes(7);
       });
 
-      it('existing non-snoozed pending → batch SELECT finds them, upsert updates via ON CONFLICT', async () => {
+      it('existing pending → batch SELECT finds them, upsert updates via ON CONFLICT', async () => {
         const db = createMockDb();
         setupRefreshMocks(db, {
           existingRows: [
@@ -2296,8 +2307,8 @@ describe('DiscoveryService', () => {
           .mockReturnValueOnce(mockDbChain([]))
           // dismissed
           .mockReturnValueOnce(mockDbChain([]))
-          // currentPending: one stale pending not in candidates
-          .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+          // currentPending: one stale pending not in candidates — production selects only { id, asin }
+          .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1' }]));
         // No candidates → empty batch SELECT not needed (short-circuit)
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
 
