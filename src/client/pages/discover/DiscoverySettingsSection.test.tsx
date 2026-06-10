@@ -25,7 +25,7 @@ const mockApi = api as unknown as {
 
 function makeSettings(overrides = {}) {
   return {
-    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30 },
+    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
     library: { rootFolder: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}' },
     search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 30 },
     import: { deleteAfterImport: false, importMode: 'copy' as const },
@@ -215,7 +215,7 @@ describe('DiscoverySettingsSection', () => {
 
     it('changing expiry days persists via settings mutation', async () => {
       mockApi.updateSettings.mockResolvedValue(makeSettings({
-        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60, snoozeDays: 30 },
+        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60 },
       }));
 
       renderWithProviders(<DiscoverySettingsSection />);
@@ -246,58 +246,6 @@ describe('DiscoverySettingsSection', () => {
       const expiryInput = screen.getByLabelText(/suggestion expiry/i);
       await userEvent.clear(expiryInput);
       await userEvent.type(expiryInput, '0');
-      await userEvent.click(screen.getByRole('button', { name: /save/i }));
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).not.toHaveBeenCalled();
-      });
-    });
-  });
-
-  describe('snoozeDays field', () => {
-    it('renders snooze days input with default value', async () => {
-      renderWithProviders(<DiscoverySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
-      });
-
-      expect(screen.getByLabelText(/default snooze duration/i)).toHaveValue(30);
-    });
-
-    it('changing snooze days persists via settings mutation', async () => {
-      mockApi.updateSettings.mockResolvedValue(makeSettings({
-        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 14 },
-      }));
-
-      renderWithProviders(<DiscoverySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
-      });
-
-      const snoozeInput = screen.getByLabelText(/default snooze duration/i);
-      await userEvent.clear(snoozeInput);
-      await userEvent.type(snoozeInput, '14');
-      await userEvent.click(screen.getByRole('button', { name: /save/i }));
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith({
-          discovery: expect.objectContaining({ snoozeDays: 14 }),
-        });
-      });
-    });
-
-    it('does not submit when snoozeDays is 0 (below min)', async () => {
-      renderWithProviders(<DiscoverySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
-      });
-
-      const snoozeInput = screen.getByLabelText(/default snooze duration/i);
-      await userEvent.clear(snoozeInput);
-      await userEvent.type(snoozeInput, '0');
       await userEvent.click(screen.getByRole('button', { name: /save/i }));
 
       await waitFor(() => {
@@ -352,7 +300,6 @@ describe('DiscoverySettingsSection', () => {
         intervalHours: 24,
         maxSuggestionsPerAuthor: 5,
         expiryDays: 90,
-        snoozeDays: 30,
         weightMultipliers: { same_author: 0.8, same_narrator: 0.5, same_series: 1 },
       },
     });
@@ -379,7 +326,6 @@ describe('DiscoverySettingsSection', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      snoozeDays: 30,
     });
     expect(payload.discovery).not.toHaveProperty('weightMultipliers');
   });
@@ -394,7 +340,6 @@ describe('DiscoverySettingsSection', () => {
     expect(screen.getByLabelText(/refresh interval/i).getAttribute('step')).toBe('1');
     expect(screen.getByLabelText(/max suggestions per author/i).getAttribute('step')).toBe('1');
     expect(screen.getByLabelText(/suggestion expiry/i).getAttribute('step')).toBe('1');
-    expect(screen.getByLabelText(/default snooze duration/i).getAttribute('step')).toBe('1');
   });
 
   it('#514 shows destructive border on each invalid numeric input', async () => {
@@ -404,7 +349,6 @@ describe('DiscoverySettingsSection', () => {
       { label: /refresh interval/i },
       { label: /max suggestions per author/i },
       { label: /suggestion expiry/i },
-      { label: /default snooze duration/i },
     ];
 
     for (const { label } of fields) {

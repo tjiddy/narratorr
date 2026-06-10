@@ -518,7 +518,7 @@ describe('DiscoveryService', () => {
         // currentPending: no pending
         .mockReturnValueOnce(mockDbChain([]))
         // batch SELECT for upsert (#554) — existing dismissed row
-        .mockReturnValueOnce(mockDbChain([{ asin: 'DISMISSED1', status: 'dismissed', snoozeUntil: null }]));
+        .mockReturnValueOnce(mockDbChain([{ asin: 'DISMISSED1', status: 'dismissed' }]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
 
@@ -547,9 +547,9 @@ describe('DiscoveryService', () => {
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: one existing pending
-        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]))
+        .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]))
         // batch SELECT for upsert (#554) — existing pending row
-        .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending', snoozeUntil: null }]));
+        .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending' }]));
       db.insert.mockReturnValue(mockDbChain());
       db.delete.mockReturnValue(mockDbChain());
 
@@ -579,7 +579,7 @@ describe('DiscoveryService', () => {
         // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: one stale pending (won't be regenerated)
-        .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+        .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
       db.delete.mockReturnValue(mockDbChain());
 
       // No candidates generated (empty results)
@@ -615,31 +615,6 @@ describe('DiscoveryService', () => {
 
       const result = await service.getSuggestions();
       expect(result).toEqual([]);
-    });
-
-    it('excludes future-snoozed rows and includes past/null snoozeUntil rows', async () => {
-      const pastDate = new Date(Date.now() - 86400000);
-      const mockData = [
-        { id: 1, asin: 'B001', score: 80, status: 'pending', snoozeUntil: null },
-        { id: 2, asin: 'B002', score: 60, status: 'pending', snoozeUntil: pastDate },
-      ];
-      const db = createMockDb();
-      // First select is the suggestions query; second select is the enrichment
-      // query (default empty chain → all libraryBookIds are null).
-      db.select.mockReturnValueOnce(mockDbChain(mockData));
-      const { service } = createService(db);
-
-      const result = await service.getSuggestions();
-      expect(result).toEqual(mockData.map((r) => ({ ...r, libraryBookId: null })));
-
-      // Verify the WHERE predicate encodes: status = 'pending' AND (snoozeUntil IS NULL OR snoozeUntil <= ?)
-      const chain = db.select.mock.results[0]!.value;
-      expect(chain.where).toHaveBeenCalled();
-      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-      const sql = toSQL(whereArg);
-      expect(sql).toContain('"status" = ?');
-      expect(sql).toContain('"snooze_until" is null');
-      expect(sql).toContain('"snooze_until" <= ?');
     });
   });
 
@@ -867,181 +842,7 @@ describe('DiscoveryService', () => {
     });
   });
 
-  // --- #408: Resurfaced snoozed suggestion preservation (AC6) ---
-
-  describe('refreshSuggestions (AC6 — snoozed preservation)', () => {
-    it('preserves reason and reasonContext for resurfaced snoozed rows, clears snoozeUntil, and uses real scoring', async () => {
-      const pastDate = new Date(Date.now() - 86400000); // yesterday
-      const updateChain = mockDbChain();
-      const db = createMockDb();
-      // Expiry delete
-      db.delete.mockReturnValue(mockDbChain());
-      // dismissal stats (#406)
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // analyzeLibrary — 3 books from Author A gives strength 3/5 = 0.6
-      db.select.mockReturnValueOnce(mockDbChain([
-        makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
-      ]));
-      // analyzeLibrary narrator rows
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending — includes a resurfaced snoozed suggestion NOT in candidates
-      db.select.mockReturnValueOnce(mockDbChain([
-        { id: 5, asin: 'SNOOZED1', snoozeUntil: pastDate, reason: 'author', reasonContext: 'Original context', authorName: 'Author A', duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
-      ]));
-      db.update.mockReturnValue(updateChain);
-
-      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
-
-      const { service } = createService(db);
-      await service.refreshSuggestions();
-
-      // The resurfaced snoozed row should be updated: score from real algorithm, snoozeUntil cleared, NO reason/reasonContext overwrite
-      expect(updateChain.set).toHaveBeenCalledWith(
-        expect.objectContaining({
-          score: expect.any(Number),
-          refreshedAt: expect.any(Date),
-          snoozeUntil: null,
-        }),
-      );
-      // Verify reason/reasonContext are NOT in the set payload (preserved by omission)
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
-      expect(setPayload).not.toHaveProperty('reason');
-      expect(setPayload).not.toHaveProperty('reasonContext');
-      // Score should use real scoring: author weight (40) * strength (0.6) = 24, clamped 0-100
-      expect(setPayload.score).toBe(24);
-    });
-
-    it('resurfaced narrator-snoozed rows use narrator affinity for scoring, not author name', async () => {
-      const pastDate = new Date(Date.now() - 86400000);
-      const updateChain = mockDbChain();
-      const db = createMockDb();
-      // Expiry delete
-      db.delete.mockReturnValue(mockDbChain());
-      // dismissal stats (#406)
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // analyzeLibrary — 4 books narrated by "Narrator N" gives narratorAffinity count=4, strength=4/5=0.8
-      // Author A has 4 books → strength 4/5=0.8
-      db.select.mockReturnValueOnce(mockDbChain([
-        makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 4, genres: ['Fantasy'], duration: 1000 }),
-      ]));
-      // analyzeLibrary narrator rows — 4 books narrated by "Narrator N"
-      db.select.mockReturnValueOnce(mockDbChain([
-        { bookId: 1, narratorName: 'Narrator N' },
-        { bookId: 2, narratorName: 'Narrator N' },
-        { bookId: 3, narratorName: 'Narrator N' },
-        { bookId: 4, narratorName: 'Narrator N' },
-      ]));
-      // existing books
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending — resurfaced narrator suggestion where authorName ≠ narratorName
-      db.select.mockReturnValueOnce(mockDbChain([
-        { id: 7, asin: 'NARRATOR_SNOOZED', snoozeUntil: pastDate, reason: 'narrator', reasonContext: 'Narrated by Narrator N', authorName: 'Some Other Author', narratorName: 'Narrator N', duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
-      ]));
-      db.update.mockReturnValue(updateChain);
-
-      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
-
-      const { service } = createService(db);
-      await service.refreshSuggestions();
-
-      // Score should use narrator weight (20) * narrator strength (4/5 = 0.8) = 16
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
-      expect(setPayload.score).toBe(16);
-      expect(setPayload.snoozeUntil).toBeNull();
-      // reason/reasonContext preserved by omission
-      expect(setPayload).not.toHaveProperty('reason');
-      expect(setPayload).not.toHaveProperty('reasonContext');
-    });
-
-    it('resurfaced diversity-snoozed rows use fixed 0.3 strength, clears snoozeUntil', async () => {
-      const pastDate = new Date(Date.now() - 86400000);
-      const updateChain = mockDbChain();
-      const db = createMockDb();
-      // Expiry delete
-      db.delete.mockReturnValue(mockDbChain());
-      // dismissal stats (#406)
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // analyzeLibrary — 2 books from Author A
-      db.select.mockReturnValueOnce(mockDbChain([
-        makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
-      ]));
-      // analyzeLibrary narrator rows
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending — expired snoozed diversity row NOT regenerated by pipeline
-      db.select.mockReturnValueOnce(mockDbChain([
-        { id: 9, asin: 'DIV_SNOOZED', snoozeUntil: pastDate, reason: 'diversity', reasonContext: 'Something different — explore Mystery', authorName: 'Some Author', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
-      ]));
-      db.update.mockReturnValue(updateChain);
-
-      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
-
-      const { service } = createService(db);
-      await service.refreshSuggestions();
-
-      // The resurfaced diversity row should be updated with fixed strength scoring
-      expect(updateChain.set).toHaveBeenCalledWith(
-        expect.objectContaining({
-          score: expect.any(Number),
-          refreshedAt: expect.any(Date),
-          snoozeUntil: null,
-        }),
-      );
-      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
-      // diversity weight = 15, strength = 0.3 → base score = 4.5
-      expect(setPayload.score).toBe(4.5);
-      expect(setPayload.snoozeUntil).toBeNull();
-      // reason/reasonContext preserved by omission
-      expect(setPayload).not.toHaveProperty('reason');
-      expect(setPayload).not.toHaveProperty('reasonContext');
-    });
-
-    it('still-snoozed rows survive refresh without being deleted or resurfaced', async () => {
-      const futureDate = new Date(Date.now() + 7 * 86400000); // 7 days from now
-      const db = createMockDb();
-      // Expiry delete
-      db.delete.mockReturnValue(mockDbChain());
-      // dismissal stats (#406)
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // analyzeLibrary
-      db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
-      // analyzeLibrary narrator rows
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // existing books
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // dismissed
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // currentPending — future-snoozed row NOT regenerated by pipeline
-      db.select.mockReturnValueOnce(mockDbChain([
-        { id: 5, asin: 'SNOOZED_FUTURE', snoozeUntil: futureDate, reason: 'author', reasonContext: 'Original', authorName: 'Author A', duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
-      ]));
-
-      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
-
-      const { service } = createService(db);
-      const result = await service.refreshSuggestions();
-
-      // Should NOT be deleted (removed count should be 0)
-      expect(result.removed).toBe(0);
-      // Should NOT be updated (no resurfacing update issued)
-      expect(db.update).not.toHaveBeenCalled();
-    });
-
+  describe('refreshSuggestions (regenerated pending preservation)', () => {
     it('overwrites reason and reasonContext for normal regenerated pending suggestions', async () => {
       const db = createMockDb();
       // Expiry delete
@@ -1057,9 +858,9 @@ describe('DiscoveryService', () => {
       // dismissed
       db.select.mockReturnValueOnce(mockDbChain([]));
       // currentPending
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
       // batch SELECT for upsert (#554)
-      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending', snoozeUntil: null }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING_PENDING', status: 'pending' }]));
       db.insert.mockReturnValue(mockDbChain());
 
       mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
@@ -1810,54 +1611,6 @@ describe('DiscoveryService', () => {
       expect(log.warn).toHaveBeenCalled();
     });
 
-    it('resurfaced snoozed rows are rescored with computed non-default multipliers', async () => {
-      const pastSnooze = new Date(Date.now() - 86400000); // 1 day ago
-      const snoozedRow = {
-        id: 42, asin: 'SNOOZED1', snoozeUntil: pastSnooze,
-        reason: 'author', reasonContext: 'Same author',
-        authorName: 'Unknown Author', narratorName: null,
-        duration: null, publishedDate: null,
-        seriesName: null, seriesPosition: null,
-      };
-
-      const db = createMockDb();
-      // expireSuggestions
-      db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
-      db.select
-        // computeDismissalStats: 90% author dismissal → multiplier 0.80
-        .mockReturnValueOnce(mockDbChain([
-          { reason: 'author', status: 'dismissed', count: 9 },
-          { reason: 'author', status: 'added', count: 1 },
-        ]))
-        // analyzeLibrary: imported books (empty)
-        .mockReturnValueOnce(mockDbChain([]))
-        // analyzeLibrary: narrator rows (empty)
-        .mockReturnValueOnce(mockDbChain([]))
-        // existing books for exclusion
-        .mockReturnValueOnce(mockDbChain([]))
-        // dismissed suggestions
-        .mockReturnValueOnce(mockDbChain([]))
-        // currentPending: includes the snoozed row
-        .mockReturnValueOnce(mockDbChain([snoozedRow]));
-      // resurfaceSnoozedRows will call db.update
-      db.update.mockReturnValue(mockDbChain({ rowsAffected: 1 }));
-
-      const { service } = createService(db);
-      await service.refreshSuggestions();
-
-      // Verify db.update was called for the resurfaced row with a reduced score
-      expect(db.update).toHaveBeenCalled();
-      const updateChain = db.update.mock.results[0]!.value;
-      expect(updateChain.set).toHaveBeenCalled();
-      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-
-      // With author multiplier 0.80 and default strength 0.5:
-      // score = SIGNAL_WEIGHTS.author * 0.80 * 0.5 = 40 * 0.80 * 0.5 = 16
-      // Without multiplier it would be 40 * 1.0 * 0.5 = 20
-      expect(setArg.score).toBe(16);
-      expect(setArg.score).not.toBe(20); // Would be 20 with default multiplier
-      expect(setArg.snoozeUntil).toBeNull(); // Snooze cleared on resurface
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -2310,7 +2063,7 @@ describe('DiscoveryService', () => {
 
   describe('batch upsert (#554)', () => {
     function setupRefreshMocks(db: ReturnType<typeof createMockDb>, opts: {
-      existingRows?: Array<{ id: number; asin: string; status: string; snoozeUntil?: Date | null }>;
+      existingRows?: Array<{ id: number; asin: string; status: string }>;
       candidateCount?: number;
     } = {}) {
       const { existingRows = [], candidateCount = 1 } = opts;
@@ -2328,7 +2081,7 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending
         .mockReturnValueOnce(mockDbChain(existingRows.filter(r => r.status === 'pending').map(r => ({
-          id: r.id, asin: r.asin, snoozeUntil: r.snoozeUntil ?? null,
+          id: r.id, asin: r.asin,
           reason: 'author' as const, reasonContext: 'ctx', authorName: 'Author A',
           narratorName: null, duration: null, publishedDate: null,
           seriesName: null, seriesPosition: null,
@@ -2370,8 +2123,8 @@ describe('DiscoveryService', () => {
         const db = createMockDb();
         setupRefreshMocks(db, {
           existingRows: [
-            { id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: null },
-            { id: 11, asin: 'NEW1', status: 'pending', snoozeUntil: null },
+            { id: 10, asin: 'NEW0', status: 'pending' },
+            { id: 11, asin: 'NEW1', status: 'pending' },
           ],
           candidateCount: 2,
         });
@@ -2403,7 +2156,7 @@ describe('DiscoveryService', () => {
       it('mix of new + existing → single batch upsert call', async () => {
         const db = createMockDb();
         setupRefreshMocks(db, {
-          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: null }],
+          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending' }],
           candidateCount: 3,
         });
 
@@ -2414,37 +2167,6 @@ describe('DiscoveryService', () => {
         expect(db.insert).toHaveBeenCalled();
         expect(db.select).toHaveBeenCalledTimes(7);
         expect(result.added).toBe(2);
-      });
-    });
-
-    describe('snooze logic', () => {
-      it('existing row with future snoozeUntil — included in upsert batch', async () => {
-        const db = createMockDb();
-        const future = new Date(Date.now() + 86400000);
-        setupRefreshMocks(db, {
-          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: future }],
-          candidateCount: 1,
-        });
-
-        const { service } = createService(db);
-        await service.refreshSuggestions();
-
-        // Snoozed row included in batch upsert (ON CONFLICT handles snooze via CASE)
-        expect(db.insert).toHaveBeenCalled();
-      });
-
-      it('existing row with past snoozeUntil — included in upsert batch', async () => {
-        const db = createMockDb();
-        const past = new Date(Date.now() - 86400000);
-        setupRefreshMocks(db, {
-          existingRows: [{ id: 10, asin: 'NEW0', status: 'pending', snoozeUntil: past }],
-          candidateCount: 1,
-        });
-
-        const { service } = createService(db);
-        await service.refreshSuggestions();
-
-        expect(db.insert).toHaveBeenCalled();
       });
     });
 
@@ -2569,7 +2291,7 @@ describe('DiscoveryService', () => {
           // dismissed
           .mockReturnValueOnce(mockDbChain([]))
           // currentPending: one stale pending not in candidates
-          .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', snoozeUntil: null, reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
+          .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1', reason: 'author', reasonContext: 'ctx', authorName: 'Author A', narratorName: null, duration: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
         // No candidates → empty batch SELECT not needed (short-circuit)
         mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
 
@@ -2678,38 +2400,6 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     const afterSecond = await db.select().from(suggestions).where(eq(suggestions.asin, 'NEWBOOK1'));
     expect(afterSecond).toHaveLength(1);
     expect(afterSecond[0]!.refreshedAt.getTime()).toBeGreaterThan(refreshedAtFirst.getTime());
-  });
-
-  it('preserves snoozed suggestions across refresh — snooze_until short-circuits the SET clause', async () => {
-    // Pre-seed a snoozed pending row, then refresh with the same ASIN.
-    // The SET clause's `CASE WHEN snooze_until IS NOT NULL` branch must
-    // preserve existing reason/reasonContext rather than overwrite them.
-    const snoozeUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await db.insert(suggestions).values({
-      asin: 'SNOOZED1',
-      title: 'Snoozed Book',
-      authorName: 'Author A',
-      reason: 'author',
-      reasonContext: 'original-context',
-      score: 50,
-      status: 'pending',
-      refreshedAt: new Date(Date.now() - 60_000),
-      snoozeUntil,
-    });
-
-    mockMetadata.searchBooksForDiscovery.mockResolvedValue({
-      books: [{ asin: 'SNOOZED1', title: 'Snoozed Book', authors: [{ name: 'Author A' }], language: 'english' }],
-      warnings: [],
-    });
-
-    await expect(service.refreshSuggestions()).resolves.not.toThrow();
-
-    const after = await db.select().from(suggestions).where(eq(suggestions.asin, 'SNOOZED1'));
-    expect(after).toHaveLength(1);
-    expect(after[0]!.reasonContext).toBe('original-context'); // snooze branch held
-    // SQLite integer timestamps are second-precision; allow round-trip truncation
-    expect(after[0]!.snoozeUntil).not.toBeNull();
-    expect(Math.abs((after[0]!.snoozeUntil!.getTime() - snoozeUntil.getTime()))).toBeLessThan(1100);
   });
 });
 

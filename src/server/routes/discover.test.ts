@@ -19,7 +19,7 @@ function mockSuggestionRow(overrides: Record<string, unknown> = {}) {
     language: null, genres: null, seriesName: null, seriesPosition: null,
     reason: 'author', reasonContext: 'test', score: 80,
     status: 'pending', refreshedAt: NOW, dismissedAt: null,
-    snoozeUntil: null, createdAt: NOW,
+    createdAt: NOW,
     libraryBookId: null,
     ...overrides,
   };

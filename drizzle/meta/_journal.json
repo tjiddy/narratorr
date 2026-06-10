@@ -8,6 +8,13 @@
       "when": 1780072995413,
       "tag": "0000_perpetual_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1781070935418,
+      "tag": "0001_magical_ronan",
+      "breakpoints": true
     }
   ]
 }

@@ -686,7 +686,6 @@ describe('settingsRegistry', () => {
         intervalHours: 24,
         maxSuggestionsPerAuthor: 5,
         expiryDays: 90,
-        snoozeDays: 30,
         weightMultipliers: { some: 0.5 },
       });
       expect(result.success).toBe(true);
@@ -701,7 +700,6 @@ describe('settingsRegistry', () => {
         intervalHours: 48,
         maxSuggestionsPerAuthor: 10,
         expiryDays: 60,
-        snoozeDays: 14,
       });
       expect(result.success).toBe(true);
     });

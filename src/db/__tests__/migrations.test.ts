@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,12 +91,17 @@ describe('drizzle baseline migration', () => {
     // Second invocation must not throw or re-apply.
     await expect(run()).resolves.not.toThrow();
 
-    // Exactly one migration recorded — proves the baseline stays flat and the
-    // second run was a genuine no-op (not a duplicate application).
+    // The migrator must record exactly one row per migration in the journal —
+    // no more (a duplicate application) and no fewer (a skipped migration).
+    // Deriving the expectation from the journal keeps this test correct as new
+    // migrations are added rather than hardcoding the count.
+    const journal = JSON.parse(readFileSync(join(PROD_DRIZZLE, 'meta', '_journal.json'), 'utf-8')) as {
+      entries: unknown[];
+    };
     const client = createClient({ url: `file:${dbPath}` });
     try {
       const applied = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
-      expect(Number(applied.rows[0]!.count)).toBe(1);
+      expect(Number(applied.rows[0]!.count)).toBe(journal.entries.length);
     } finally {
       client.close();
     }

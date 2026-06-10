@@ -96,7 +96,7 @@ export const settingsRegistry = {
   }),
   discovery: defineCategory({
     schema: discoverySettingsSchema,
-    defaults: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: Object.fromEntries(SUGGESTION_REASONS.map((r) => [r, 1])) as Record<string, number> },
+    defaults: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, weightMultipliers: Object.fromEntries(SUGGESTION_REASONS.map((r) => [r, 1])) as Record<string, number> },
   }),
 };
 

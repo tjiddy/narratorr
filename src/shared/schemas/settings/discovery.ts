@@ -13,7 +13,6 @@ export const discoverySettingsSchema = z.object({
   intervalHours: z.number().int().min(1).max(168).default(24),
   maxSuggestionsPerAuthor: z.number().int().min(1).max(50).default(5),
   expiryDays: z.number().int().min(1).default(90),
-  snoozeDays: z.number().int().min(1).default(30),
   weightMultipliers: weightMultipliersSchema.default(
     Object.fromEntries(SUGGESTION_REASONS.map((r) => [r, 1])) as Record<string, number>,
   ),
@@ -29,11 +28,9 @@ export const discoveryFormSchema = stripDefaults(discoverySettingsSchema).pick({
   intervalHours: true,
   maxSuggestionsPerAuthor: true,
   expiryDays: true,
-  snoozeDays: true,
 }) as z.ZodObject<{
   enabled: z.ZodBoolean;
   intervalHours: z.ZodNumber;
   maxSuggestionsPerAuthor: z.ZodNumber;
   expiryDays: z.ZodNumber;
-  snoozeDays: z.ZodNumber;
 }>;
