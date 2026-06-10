@@ -196,17 +196,16 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       const metadataSettings = await deps.settingsService.get('metadata');
       const searchSettings = await deps.settingsService.get('search');
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(
-        book,
-        deps.indexerSearchService!,
-        deps.downloadOrchestrator,
-        { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
-        request.log,
-        deps.blacklistService!,
-        deps.indexerService!,
-        deps.eventHistory,
-        deps.eventBroadcaster,
-      );
+      const result = await searchAndGrabForBook(book, {
+        indexerSearchService: deps.indexerSearchService!,
+        downloadOrchestrator: deps.downloadOrchestrator,
+        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        log: request.log,
+        blacklistService: deps.blacklistService!,
+        indexerService: deps.indexerService!,
+        eventHistory: deps.eventHistory,
+        broadcaster: deps.eventBroadcaster,
+      });
       if (result.result === 'grab_error') {
         throw result.error;
       }
