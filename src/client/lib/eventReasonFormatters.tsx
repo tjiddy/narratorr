@@ -1,6 +1,6 @@
 import { formatBytes } from '@/lib/api';
 import { capitalize } from '@/lib/eventReasonHelpers';
-import { qualityGateReasonSchema } from '@/lib/qualityGateReasonSchema';
+import { qualityGateReasonSchema } from '../../shared/schemas.js';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
 
@@ -68,7 +68,17 @@ function ErrorDetails({ reason }: { reason: Record<string, unknown> }) {
 
 function HeldForReviewDetails({ reason }: { reason: Record<string, unknown> }) {
   const parsed = qualityGateReasonSchema.safeParse(reason);
-  if (!parsed.success) return <GenericDetails reason={reason} />;
+  if (!parsed.success) {
+    // Runs in the render body, so use console.debug (not warn) to avoid per-re-render
+    // log spam. Type drift or a legacy/malformed blob lands here — without a signal the
+    // whole panel silently degrades to the generic dump with no trace of why.
+    console.debug('quality-gate reason failed schema validation', parsed.error);
+    return (
+      <div className="mt-2 p-3 bg-muted/50 rounded-xl border border-border/50 animate-fade-in">
+        <GenericDetails reason={reason} />
+      </div>
+    );
+  }
   return <QualityComparisonPanel data={parsed.data} />;
 }
 
