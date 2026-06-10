@@ -49,10 +49,20 @@ export const slackSettingsSchema = z.object({
 
 export const pushoverSettingsSchema = z.object({
   pushoverToken: z.string().trim().min(1),
+  // Sentinel passthrough: this field is a registered secret (#1307), so the
+  // masked sentinel '********' must survive validation on create/update. It does
+  // so today only because the validator is a bare `.trim().min(1)` (the sentinel
+  // is 8 non-space chars). If you tighten this to a format constraint (e.g.
+  // Pushover's 30-char alnum user key), add an explicit `z.union([z.literal('********'), ...])`
+  // — otherwise unrelated saves that round-trip the sentinel silently 400.
   pushoverUser: z.string().trim().min(1),
 }).strict();
 
 export const ntfySettingsSchema = z.object({
+  // Sentinel passthrough: registered secret (#1307) — the masked '********' must
+  // pass validation. Safe today only because this is a bare `.trim().min(1)`. Any
+  // future format constraint must explicitly admit the sentinel literal, or
+  // sentinel round-trips on save will silently 400. See pushoverUser above.
   ntfyTopic: z.string().trim().min(1),
   ntfyServer: z.string().trim().optional(),
 }).strict();

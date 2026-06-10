@@ -25,17 +25,23 @@ import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 // registered notifier secrets all match: `url`, `webhookUrl`, `headers`,
 // `*Token` (botToken / pushoverToken / gotifyToken), `*Pass` (smtpPass),
 // `*User` (pushoverUser), `*Topic` (ntfyTopic). The `*User` / `*Topic` suffixes
-// were added in #1307 so the next unregistered credential of either shape is
-// caught by the drift guard rather than silently stored plaintext.
+// were added in #1307; the `*Key` / `*Secret` / `*Password` suffixes were added
+// in #1357 (anticipatory widening — every other SECRET_FIELDS entity already
+// uses `apiKey`-shaped names, so the next unregistered credential of any of
+// these shapes is caught by the drift guard rather than silently stored
+// plaintext, at zero denylist cost since no current field matches them).
 // Non-secret notifier fields (gotifyUrl, ntfyServer, smtpHost, chatId,
 // fromAddress, toAddress, path, method, bodyTemplate, etc.) do NOT match — the
 // `^url$` and `^webhookUrl$` alternatives are anchored, so `gotifyUrl` /
 // `ntfyServer` slip past, and the suffix rules only catch the suffix shape.
-// `smtpUser` is the one genuine false positive (an SMTP username, not a
-// credential — unlike smtpPass), so it lives in the explicit denylist below;
-// add to that list only when a non-secret field genuinely matches this heuristic.
-const NOTIFIER_SECRET_NAME_HEURISTIC = /^(url|webhookUrl|headers|.*Token|.*Pass|.*User|.*Topic)$/;
-const NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES = new Set(['smtpUser']);
+// `email.smtpUser` is the one genuine false positive (an SMTP username, not a
+// credential — unlike smtpPass), so it lives in the explicit denylist below.
+// The denylist is keyed by `${type}.${field}` (#1357), not the bare field name:
+// exempting `smtpUser` globally would also silently skip a future non-email type
+// that reused `smtpUser`-shaped naming for a real secret. Add to the denylist
+// only when a non-secret `${type}.${field}` genuinely matches this heuristic.
+const NOTIFIER_SECRET_NAME_HEURISTIC = /^(url|webhookUrl|headers|.*Token|.*Pass|.*User|.*Topic|.*Key|.*Secret|.*Password)$/;
+const NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES = new Set(['email.smtpUser']);
 
 function findSecretShapedNotifierFields(
   schemas: Record<string, z.ZodTypeAny>,
@@ -45,7 +51,7 @@ function findSecretShapedNotifierFields(
     if (!(schema instanceof z.ZodObject)) continue;
     const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
     for (const field of Object.keys(shape)) {
-      if (NOTIFIER_SECRET_NAME_HEURISTIC.test(field) && !NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES.has(field)) {
+      if (NOTIFIER_SECRET_NAME_HEURISTIC.test(field) && !NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES.has(`${type}.${field}`)) {
         found.push({ type, field });
       }
     }
@@ -213,6 +219,66 @@ describe('SecretCodec', () => {
       const encrypted = encryptFields('indexer', settings, TEST_KEY);
       expect(encrypted.hostname).toBe('example.com');
       expect(encrypted.apiKey).toBeUndefined();
+    });
+  });
+
+  describe('#1357 opportunistic decrypt (rollback-proofing)', () => {
+    // `futureSecret` is deliberately absent from SECRET_FIELDS for every entity.
+    // Using a key the real registry doesn't know about proves the opportunistic
+    // path against the production registry — no vi.mock of the private
+    // SECRET_FIELDS is needed (and could not work: decryptFields resolves the
+    // registry through the same-module getSecretFieldNames binding that vi.mock
+    // cannot intercept — see CLAUDE.md "ESM same-module calls bypass vi.mock").
+
+    it('decryptFields decrypts an $ENC$ value under a key NOT in SECRET_FIELDS', () => {
+      const row = { futureSecret: encrypt('rolled-forward', TEST_KEY), ntfyServer: 'https://ntfy.sh' };
+      const decrypted = decryptFields('notifier', row, TEST_KEY);
+      expect(decrypted.futureSecret).toBe('rolled-forward');
+      // Non-encrypted sibling untouched.
+      expect(decrypted.ntfyServer).toBe('https://ntfy.sh');
+    });
+
+    it('encryptFields and maskFields leave an unregistered key untouched (encrypt/mask stay registry-scoped)', () => {
+      const plaintext = 'a-real-future-secret';
+      const encrypted = encryptFields('notifier', { futureSecret: plaintext }, TEST_KEY);
+      expect(encrypted.futureSecret).toBe(plaintext); // not encrypted — outside the registry
+      const masked = maskFields('notifier', { futureSecret: plaintext });
+      expect(masked.futureSecret).toBe(plaintext); // not masked — outside the registry
+    });
+
+    it('passes a malformed non-base64 $ENC$ blob through unchanged without throwing', () => {
+      const row = { futureSecret: '$ENC$not-valid-base64!!' };
+      expect(() => decryptFields('notifier', row, TEST_KEY)).not.toThrow();
+      expect(row.futureSecret).toBe('$ENC$not-valid-base64!!');
+    });
+
+    it('passes an undersized $ENC$ payload (shorter than IV+auth-tag) through unchanged', () => {
+      const undersized = '$ENC$' + Buffer.from('shorttag').toString('base64'); // 8 bytes < 12+16
+      const row = { futureSecret: undersized };
+      expect(() => decryptFields('notifier', row, TEST_KEY)).not.toThrow();
+      expect(row.futureSecret).toBe(undersized);
+    });
+
+    it('passes a corrupted-auth-tag $ENC$ value through unchanged (decipher.final failure)', () => {
+      const valid = encrypt('secret', TEST_KEY);
+      const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
+      payload[13] = payload[13]! ^ 0xff; // flip a byte inside the 16-byte auth tag (offset 12..27)
+      const corrupted = '$ENC$' + payload.toString('base64');
+      const row = { pushoverUser: corrupted }; // a registered field — still must passthrough on failure
+      expect(() => decryptFields('notifier', row, TEST_KEY)).not.toThrow();
+      expect(row.pushoverUser).toBe(corrupted);
+    });
+
+    it('leaves a plaintext (non-$ENC$) value untouched', () => {
+      const row = { futureSecret: 'just-plaintext' };
+      expect(decryptFields('notifier', row, TEST_KEY).futureSecret).toBe('just-plaintext');
+    });
+
+    it('mixed-row read: decrypts the $ENC$ field, returns the plaintext sibling verbatim', () => {
+      const row = { encryptedField: encrypt('decrypted-value', TEST_KEY), plaintextSibling: 'x' };
+      const decrypted = decryptFields('notifier', row, TEST_KEY);
+      expect(decrypted.encryptedField).toBe('decrypted-value');
+      expect(decrypted.plaintextSibling).toBe('x');
     });
   });
 
@@ -471,11 +537,37 @@ describe('SecretCodec', () => {
       const fakeSchemas = {
         email: z.object({ smtpUser: z.string(), smtpHost: z.string() }).strict(),
       };
-      // smtpUser matches the `*User` suffix but is on the explicit false-positive
-      // denylist, so it is neither flagged as secret-shaped nor reported as a
-      // registry miss even when the registered set is empty.
+      // email.smtpUser matches the `*User` suffix but is on the explicit
+      // false-positive denylist, so it is neither flagged as secret-shaped nor
+      // reported as a registry miss even when the registered set is empty.
       expect(findSecretShapedNotifierFields(fakeSchemas)).toEqual([]);
       expect(findUnregisteredNotifierSecrets(fakeSchemas, new Set())).toEqual([]);
+    });
+
+    it('#1357 heuristic matches the *Key, *Secret, *Password suffixes', () => {
+      const fakeSchemas = {
+        widget: z.object({ fooKey: z.string(), fooSecret: z.string(), fooPassword: z.string(), name: z.string() }).strict(),
+      };
+      const flagged = findSecretShapedNotifierFields(fakeSchemas);
+      expect(flagged).toEqual(expect.arrayContaining([
+        { type: 'widget', field: 'fooKey' },
+        { type: 'widget', field: 'fooSecret' },
+        { type: 'widget', field: 'fooPassword' },
+      ]));
+      // `name` is not secret-shaped and is not flagged.
+      expect(flagged).toHaveLength(3);
+    });
+
+    it('#1357 denylist is keyed by (type, field): email.smtpUser exempt, webhook.smtpUser flagged', () => {
+      const fakeSchemas = {
+        email: z.object({ smtpUser: z.string() }).strict(),
+        webhook: z.object({ smtpUser: z.string() }).strict(),
+      };
+      // The bare `smtpUser` name is not globally exempt — only `email.smtpUser`
+      // is. A future non-email type reusing the same name for a real secret is
+      // still flagged.
+      const flagged = findSecretShapedNotifierFields(fakeSchemas);
+      expect(flagged).toEqual([{ type: 'webhook', field: 'smtpUser' }]);
     });
   });
 
