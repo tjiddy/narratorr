@@ -9,7 +9,6 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
-import { PathOutsideLibraryError } from '../utils/paths.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -42,7 +41,7 @@ vi.mock('../config.js', () => ({
   config: { configPath: '/test-config' },
 }));
 
-import { serveCoverFromCache, cleanCoverCache } from '../utils/cover-cache.js';
+import { serveCoverFromCache } from '../utils/cover-cache.js';
 
 const mockBook = {
   ...createMockDbBook(),
@@ -1225,188 +1224,60 @@ describe('books routes', () => {
     });
   });
 
+  // The route is a thin result-to-status mapper over BookDeletionService; the
+  // destructive workflow itself (ordering, per-step error policy, best-effort
+  // failures) is covered in book-deletion.service.test.ts.
   describe('DELETE /api/books/:id', () => {
-    beforeEach(() => {
-      // The DELETE route always calls bookService.getById before any branching.
-      // Tests that don't exercise the deleteFiles=true path can leave the book undefined.
-      (services.book.getById as Mock).mockResolvedValue(undefined);
-    });
-
-    it('deletes book and returns success', async () => {
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
+    it('maps deleted → 200 with success body', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).success).toBe(true);
-      expect(services.download.getActiveByBookId).toHaveBeenCalledWith(1);
+      expect(services.bookDeletion.deleteBook).toHaveBeenCalledWith(1, { deleteFiles: false });
     });
 
-    it('returns 404 when not found', async () => {
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(false);
+    it('passes deleteFiles=true through to the service', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.bookDeletion.deleteBook).toHaveBeenCalledWith(1, { deleteFiles: true });
+    });
+
+    it('maps not_found → 404', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'not_found' });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
 
       expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Book not found');
     });
 
-    it('cancels active downloads before deleting', async () => {
-      const activeDownloads = [
-        { id: 10, bookId: 1, status: 'downloading' },
-        { id: 11, bookId: 1, status: 'queued' },
-      ];
-      (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
-      (services.downloadOrchestrator.cancel as Mock).mockResolvedValue(true);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledWith(10);
-      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledWith(11);
-      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledTimes(2);
-      expect(services.book.delete).toHaveBeenCalledWith(1);
-    });
-
-    it('deletes files from disk when deleteFiles=true and book has path', async () => {
-      const bookWithPath = { ...mockBook, path: '/audiobooks/Author/Book' };
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
-      (services.book.deleteBookFiles as Mock).mockResolvedValue(undefined);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Author/Book', '/audiobooks');
-      expect(services.book.delete).toHaveBeenCalledWith(1);
-    });
-
-    it('skips file deletion when deleteFiles=true but book has no path', async () => {
-      const bookNoPath = { ...mockBook, path: null };
-      (services.book.getById as Mock).mockResolvedValue(bookNoPath);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
-      expect(services.book.delete).toHaveBeenCalledWith(1);
-    });
-
-    it('returns 500 and preserves DB record when file deletion fails', async () => {
-      const bookWithPath = { ...mockBook, path: '/audiobooks/Author/Book' };
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
-      (services.book.deleteBookFiles as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
-
-      expect(res.statusCode).toBe(500);
-      expect(JSON.parse(res.payload).error).toBe('Failed to delete book files from disk');
-      expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
-      expect(services.book.delete).not.toHaveBeenCalled();
-    });
-
-    it('returns 400 and preserves DB record when book path is outside library root', async () => {
-      const bookWithPath = { ...mockBook, path: '/tmp/external' };
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
-      (services.book.deleteBookFiles as Mock).mockRejectedValue(
-        new PathOutsideLibraryError('/tmp/external', '/audiobooks'),
-      );
+    it('maps path_outside_library → 400 with the service-provided message', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
+        outcome: 'path_outside_library',
+        error: 'Refusing to operate on path outside library root',
+      });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload).error).toMatch(/library root/i);
-      expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
-      expect(services.book.delete).not.toHaveBeenCalled();
     });
 
-    it('does not delete files when deleteFiles param is absent', async () => {
-      (services.book.getById as Mock).mockResolvedValue(mockBook);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
+    it('maps file_deletion_failed → 500 with the service-provided message', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
+        outcome: 'file_deletion_failed',
+        error: 'Failed to delete book files from disk',
+      });
 
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
-      expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
-    });
-
-    it('returns 404 when deleteFiles=true and book not found', async () => {
-      (services.book.getById as Mock).mockResolvedValue(null);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/999?deleteFiles=true' });
-
-      expect(res.statusCode).toBe(404);
-    });
-
-    // #396 — cover cache cleanup on full book deletion
-    it('DELETE /api/books/:id cleans up cover cache entry', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/library/book1' });
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
-    });
-
-    it('DELETE /api/books/:id continues when cover cache cleanup fails (best-effort)', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/library/book1' });
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-      (cleanCoverCache as Mock).mockRejectedValue(new Error('EACCES'));
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      // Should still succeed — cache cleanup is best-effort
-      expect(res.statusCode).toBe(200);
-    });
-
-    it('DELETE /api/books/:id does not clean cover cache when book not found', async () => {
-      (cleanCoverCache as Mock).mockClear();
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 999 });
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(false);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
-
-      expect(res.statusCode).toBe(404);
-      expect(cleanCoverCache).not.toHaveBeenCalled();
-    });
-
-    it('delete event snapshot includes comma-joined authors and narratorName (#71)', async () => {
-      const multiAuthorBook = {
-        ...mockBook,
-        authors: [
-          createMockDbAuthor({ id: 1, name: 'Brandon Sanderson' }),
-          createMockDbAuthor({ id: 2, name: 'Robert Jordan' }),
-        ],
-        narrators: [
-          { id: 1, name: 'Michael Kramer', slug: 'michael-kramer', createdAt: new Date(), updatedAt: new Date() },
-          { id: 2, name: 'Kate Reading', slug: 'kate-reading', createdAt: new Date(), updatedAt: new Date() },
-        ],
-      };
-      (services.book.getById as Mock).mockResolvedValue(multiAuthorBook);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(services.eventHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          authorName: 'Brandon Sanderson, Robert Jordan',
-          narratorName: 'Michael Kramer, Kate Reading',
-          eventType: 'deleted',
-        }),
-      );
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Failed to delete book files from disk');
     });
   });
 
@@ -2039,24 +1910,6 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
-    });
-
-    it('DELETE still succeeds when cancel() throws for one download', async () => {
-      const activeDownloads = [
-        { id: 10, bookId: 1, status: 'downloading' },
-        { id: 11, bookId: 1, status: 'queued' },
-      ];
-      (services.book.getById as Mock).mockResolvedValue(undefined);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
-      (services.downloadOrchestrator.cancel as Mock)
-        .mockRejectedValueOnce(new Error('cancel failed'))
-        .mockResolvedValueOnce(true);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.delete).toHaveBeenCalledWith(1);
     });
 
     it('GET /api/books/:id/cover returns 400 for NaN id', async () => {

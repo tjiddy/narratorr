@@ -65,6 +65,7 @@ import { discoverRoutes } from './discover.js';
 import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { BookRejectionService } from '../services/book-rejection.service.js';
+import { BookDeletionService } from '../services/book-deletion.service.js';
 import { createRetrySearchDeps, type RetrySearchDeps } from '../services/retry-search.js';
 import { ImportQueueWorker } from '../services/import-queue-worker.js';
 import { registerImportAdapter } from '../services/import-adapters/registry.js';
@@ -107,6 +108,7 @@ export interface Services {
   discovery: DiscoveryService;
   bulkOperation: BulkOperationService;
   bookRejection: BookRejectionService;
+  bookDeletion: BookDeletionService;
   importQueueWorker: ImportQueueWorker;
   retrySearchDeps: RetrySearchDeps;
   seriesCard: SeriesCardService;
@@ -151,6 +153,7 @@ export const SERVICE_KEYS = Object.keys({
   discovery: true,
   bulkOperation: true,
   bookRejection: true,
+  bookDeletion: true,
   importQueueWorker: true,
   retrySearchDeps: true,
   seriesCard: true,
@@ -245,6 +248,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     settingsService: settings,
   });
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
+  const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory);
 
   // Phase 2: wire required cyclic deps now that every instance exists.
   // Each service throws ServiceWireError if methods using these deps are
@@ -259,7 +263,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps, seriesCard };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -276,6 +280,7 @@ const routeRegistry: RouteFactory[] = [
     mergeService: s.merge,
     taggingService: s.tagging,
     eventHistory: s.eventHistory,
+    bookDeletionService: s.bookDeletion,
     indexerSearchService: s.indexerSearch,
     indexerService: s.indexer,
     bookRejectionService: s.bookRejection,
