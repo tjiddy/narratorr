@@ -59,7 +59,7 @@ export const settingsRegistry = {
       keepOriginalBitrate: true,
       bitrate: 128,
       mergeBehavior: 'multi-file-only' as const,
-      maxConcurrentProcessing: 2,
+      maxConcurrentProcessing: 1,
       postProcessingScript: '',
       postProcessingScriptTimeout: 300,
     },

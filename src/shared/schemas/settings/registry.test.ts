@@ -130,7 +130,7 @@ describe('settingsRegistry', () => {
         keepOriginalBitrate: true,
         bitrate: 128,
         mergeBehavior: 'multi-file-only',
-        maxConcurrentProcessing: 2,
+        maxConcurrentProcessing: 1,
         postProcessingScript: '',
         postProcessingScriptTimeout: 300,
       });
@@ -211,9 +211,9 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
-    it('defaults to 2 when absent', () => {
+    it('defaults to 1 when absent', () => {
       const result = settingsRegistry.processing.schema.parse({});
-      expect(result.maxConcurrentProcessing).toBe(2);
+      expect(result.maxConcurrentProcessing).toBe(1);
     });
   });
 

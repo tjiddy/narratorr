@@ -6,6 +6,7 @@ import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
+import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { Db } from '../../db/index.js';
@@ -61,7 +62,7 @@ const processingOverrides = {
     bitrate: 128,
     keepOriginalBitrate: false,
     mergeBehavior: 'multi-file-only' as const,
-    maxConcurrentProcessing: 2,
+    maxConcurrentProcessing: 1,
     postProcessingScript: '',
     postProcessingScriptTimeout: 300,
   },
@@ -80,7 +81,7 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean }> }) {
+function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
@@ -1664,6 +1665,154 @@ describe('#257 merge observability — merge service', () => {
 
       resolveSecond();
       await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+  });
+
+  describe('#1302 maxConcurrentProcessing — semaphore sizing + FIFO under resize', () => {
+    // Gated processAudioFiles: each invocation blocks until released, tracking peak concurrency.
+    function gatedProcessing() {
+      let active = 0;
+      let peak = 0;
+      const releasers: Array<() => void> = [];
+      (processAudioFiles as Mock).mockImplementation(async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise<void>((resolve) => releasers.push(() => { active--; resolve(); }));
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      });
+      return { peak: () => peak, releaseAll: () => { for (const r of releasers.splice(0)) r(); } };
+    }
+
+    function setupMultiBook(ids: number[]) {
+      const books = ids.map((id) => ({
+        ...createMockDbBook({ id, title: `Book ${id}`, path: `/lib/${id}`, status: 'imported' }),
+        authors: [mockAuthor], narrators: [],
+      }));
+      const bookService = { getById: vi.fn(), update: vi.fn().mockResolvedValue(undefined) };
+      bookService.getById.mockImplementation(async (id: number) => books.find((b) => b.id === id) ?? null);
+
+      (readdir as Mock).mockImplementation(async (dir: string) =>
+        dir.endsWith('.merge-tmp') ? ['out.m4b'] : ['01.mp3', '02.mp3'],
+      );
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      return { bookService };
+    }
+
+    function buildService(bookService: ReturnType<typeof setupMultiBook>['bookService'], settingsService: SettingsService) {
+      const emitted: Array<{ event: string; payload: unknown }> = [];
+      const broadcaster = { emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }) };
+      const service = new MergeService(
+        inject<Db>(createMockDb()), inject<BookService>(bookService), settingsService,
+        inject<FastifyBaseLogger>(createMockLogger()), undefined, inject<EventBroadcasterService>(broadcaster),
+      );
+      const startedIds = () => emitted.filter((e) => e.event === 'merge_started').map((e) => (e.payload as { book_id: number }).book_id);
+      return { service, startedIds };
+    }
+
+    it('with maxConcurrentProcessing = 2, two enqueued merges run concurrently (peak concurrency 2)', async () => {
+      const { bookService } = setupMultiBook([42, 43]);
+      const gate = gatedProcessing();
+      const settingsService = createMockSettingsService({ processing: { ...processingOverrides.processing, maxConcurrentProcessing: 2 } });
+      const { service } = buildService(bookService, settingsService);
+
+      const r1 = await service.enqueueMerge(42);
+      const r2 = await service.enqueueMerge(43);
+      await settle();
+
+      expect(r1.status).toBe('started');
+      expect(r2.status).toBe('started');
+      expect(gate.peak()).toBe(2);
+
+      gate.releaseAll();
+      await settle();
+    });
+
+    it('with maxConcurrentProcessing = 1, the second merge stays queued until the first releases (strictly serial)', async () => {
+      const { bookService } = setupMultiBook([42, 43]);
+      const gate = gatedProcessing();
+      const settingsService = createMockSettingsService({ processing: { ...processingOverrides.processing, maxConcurrentProcessing: 1 } });
+      const { service, startedIds } = buildService(bookService, settingsService);
+
+      const r1 = await service.enqueueMerge(42);
+      const r2 = await service.enqueueMerge(43);
+      await settle();
+
+      expect(r1.status).toBe('started');
+      expect(r2.status).toBe('queued');
+      expect(gate.peak()).toBe(1);
+      expect(startedIds()).toEqual([42]); // only the first has started
+
+      // Releasing the first promotes the queued second
+      gate.releaseAll();
+      await settle();
+      gate.releaseAll();
+      await settle();
+      expect(startedIds()).toContain(43);
+    });
+
+    it('AC4: after a 1→2 capacity raise, enqueuing a newer book promotes the older queued book first (FIFO, no jump-ahead)', async () => {
+      const { bookService } = setupMultiBook([42, 43, 44]);
+      const gate = gatedProcessing();
+
+      // Mutable concurrency so the test can raise capacity between enqueues.
+      const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 1 };
+      const settingsService = inject<SettingsService>({
+        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : undefined)),
+        getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn(),
+      });
+      const { service, startedIds } = buildService(bookService, settingsService);
+
+      // Capacity 1: A (42) active, B (43) queued.
+      await service.enqueueMerge(42);
+      const bAck = await service.enqueueMerge(43);
+      await settle();
+      expect(bAck.status).toBe('queued');
+      expect(startedIds()).toEqual([42]);
+
+      // Raise capacity, then enqueue a NEWER book C (44).
+      processing.maxConcurrentProcessing = 2;
+      const cAck = await service.enqueueMerge(44);
+      await settle();
+
+      // The older queued B is promoted into the freed slot; the newer C stays queued.
+      expect(cAck.status).toBe('queued');
+      expect(startedIds()).toContain(43); // B started
+      expect(startedIds()).not.toContain(44); // C did NOT jump ahead
+
+      gate.releaseAll();
+      await settle();
+      gate.releaseAll();
+      await settle();
+    });
+
+    it('defensive clamp: a runtime maxConcurrentProcessing of 0 resolves to an effective size of 1 (no deadlock)', async () => {
+      const { bookService } = setupMultiBook([42, 43]);
+      const gate = gatedProcessing();
+      const settingsService = createMockSettingsService({ processing: { ...processingOverrides.processing, maxConcurrentProcessing: 0 } });
+      const { service, startedIds } = buildService(bookService, settingsService);
+
+      const r1 = await service.enqueueMerge(42);
+      const r2 = await service.enqueueMerge(43);
+      await settle();
+
+      // Clamped to 1 — first runs, second queues (not a deadlock where neither runs).
+      expect(r1.status).toBe('started');
+      expect(r2.status).toBe('queued');
+      expect(gate.peak()).toBe(1);
+      expect(startedIds()).toEqual([42]);
+
+      gate.releaseAll();
+      await settle();
+      gate.releaseAll();
+      await settle();
     });
   });
 

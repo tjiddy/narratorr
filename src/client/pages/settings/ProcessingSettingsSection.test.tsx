@@ -31,7 +31,7 @@ const mockToast = toast as unknown as {
 
 const defaultMockSettings = createMockSettings();
 const configuredProcessingSettings = createMockSettings({
-  processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+  processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
 });
 
 describe('ProcessingSettingsSection', () => {
@@ -132,7 +132,7 @@ describe('ProcessingSettingsSection', () => {
   it('shows error toast on ffmpeg probe failure', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      processing: { ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      processing: { ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     }));
     mockApi.probeFfmpeg.mockRejectedValue(new Error('spawn ENOENT'));
     renderWithProviders(<ProcessingSettingsSection />);
@@ -151,7 +151,7 @@ describe('ProcessingSettingsSection', () => {
   it('shows stringified feedback and toast when ffmpeg probe rejects a non-Error value', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      processing: { ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      processing: { ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     }));
     mockApi.probeFfmpeg.mockRejectedValue('string-rejection');
     renderWithProviders(<ProcessingSettingsSection />);
@@ -201,7 +201,7 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
-      expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(2);
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(1);
     });
   });
 
@@ -257,7 +257,7 @@ describe('ProcessingSettingsSection', () => {
           keepOriginalBitrate: false,
           bitrate: 128,
           mergeBehavior: 'multi-file-only',
-          maxConcurrentProcessing: 2,
+          maxConcurrentProcessing: 1,
           postProcessingScript: '',
           postProcessingScriptTimeout: 300,
         },
@@ -313,7 +313,7 @@ describe('ProcessingSettingsSection', () => {
     it('shows validation error when timeout is cleared with script path present', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -391,7 +391,7 @@ describe('ProcessingSettingsSection', () => {
   it('re-enables bitrate input when "Keep original" is unchecked', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(
-      createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 } })
+      createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 } })
     );
     renderWithProviders(<ProcessingSettingsSection />);
 
@@ -410,7 +410,7 @@ describe('ProcessingSettingsSection', () => {
     it('accepts postProcessingScriptTimeout of exactly 1 (min boundary)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       mockApi.updateSettings.mockResolvedValue(settingsWithScript);
@@ -443,7 +443,7 @@ describe('ProcessingSettingsSection', () => {
     it('rejects postProcessingScriptTimeout of 0 (below min)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -468,7 +468,7 @@ describe('ProcessingSettingsSection', () => {
     it('rejects decimal postProcessingScriptTimeout (non-integer)', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -493,7 +493,7 @@ describe('ProcessingSettingsSection', () => {
     it('handles NaN postProcessingScriptTimeout when script is empty — no validation error', async () => {
       const user = userEvent.setup();
       const settingsWithTimeout = createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithTimeout);
       mockApi.updateSettings.mockResolvedValue(settingsWithTimeout);
@@ -526,7 +526,7 @@ describe('ProcessingSettingsSection', () => {
     it('handles NaN postProcessingScriptTimeout when script is set — validation error fires', async () => {
       const user = userEvent.setup();
       const settingsWithScript = createMockSettings({
-        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
       });
       mockApi.getSettings.mockResolvedValue(settingsWithScript);
       renderWithProviders(<ProcessingSettingsSection />);
@@ -551,7 +551,7 @@ describe('ProcessingSettingsSection', () => {
     it('save payload includes both processing and tagging categories', async () => {
       const user = userEvent.setup();
       const settings = createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
         tagging: { enabled: false, mode: 'populate_missing', embedCover: true },
       });
       mockApi.getSettings.mockResolvedValue(settings);

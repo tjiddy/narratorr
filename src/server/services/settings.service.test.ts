@@ -375,7 +375,7 @@ describe('SettingsService', () => {
     it('no-migration: stored keepOriginalBitrate: false survives a patch of an unrelated field', async () => {
       // Existing user opted out of keep-original before the 1.0 default flip to true.
       // Patching an unrelated field must NOT overwrite their stored false with the new default.
-      const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 };
+      const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'processing', value: existingProcessing }]))  // get('processing')
         .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
@@ -569,7 +569,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
       outputFormat: 'm4b',
       bitrate: 128,
       mergeBehavior: 'multi-file-only',
-      maxConcurrentProcessing: 2,
+      maxConcurrentProcessing: 1,
     });
     expect(call![0].value).not.toHaveProperty('enabled');
   });
