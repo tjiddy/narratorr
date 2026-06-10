@@ -955,6 +955,38 @@ describe('ImportService', () => {
       expect(rm).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, { force: true });
     });
 
+    it('#1336 window 4: a pre-flight checkDiskSpace throw with a marker on disk preserves .import-bak + the marker', async () => {
+      // Same recovery-boot hazard as the validateSource case, but the throw originates in
+      // checkDiskSpace (here: statfs fails; in production also when the crash's stale
+      // .import-tmp inflates usage). It still lands in handleImportFailure as a plain Error
+      // BEFORE prepareImportSiblings/recovery runs — the marker-protected backup must survive.
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 5 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Marker present; source is a single FILE so checkDiskSpace uses sourceStats.size and
+      // never walks the (self-referential) readdir mock via getPathSize.
+      vi.mocked(stat).mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending')
+          ? ({ isFile: () => false, isDirectory: () => true } as never)
+          : ({ isFile: () => true, isDirectory: () => false, size: 500_000_000 } as never));
+      // statfs failure → checkDiskSpace throws "Disk space check failed: ...".
+      vi.mocked(statfs).mockRejectedValueOnce(new Error('statfs EIO'));
+
+      await expect(service.importDownload(1)).rejects.toThrow(/Disk space check failed/);
+
+      // The backup and the marker both survive for the next boot's recovery attempt.
+      expect(rm).not.toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+      expect(rm).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, { force: true });
+    });
+
     it('F1: aborts before staging when a stale staging sibling cannot be cleared (never commits leftovers)', async () => {
       useSamePathSettings();
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
