@@ -21,16 +21,21 @@ import {
 } from './secret-codec.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 
-// Heuristic for detecting secret-shaped notifier field names. Today's 7
+// Heuristic for detecting secret-shaped notifier field names. Today's 9
 // registered notifier secrets all match: `url`, `webhookUrl`, `headers`,
-// `*Token` (botToken / pushoverToken / gotifyToken), `*Pass` (smtpPass).
-// Non-secret notifier fields (gotifyUrl, ntfyServer, smtpHost, pushoverUser,
-// chatId, fromAddress, toAddress, ntfyTopic, path, method, bodyTemplate, etc.)
-// do NOT match — the `^url$` and `^webhookUrl$` alternatives are anchored, so
-// `gotifyUrl` / `ntfyServer` slip past, and `*Pass` / `*Token` only catch the
-// suffix shape. There is no false-positive denylist today; add one only when
-// a non-secret field genuinely matches this heuristic.
-const NOTIFIER_SECRET_NAME_HEURISTIC = /^(url|webhookUrl|headers|.*Token|.*Pass)$/;
+// `*Token` (botToken / pushoverToken / gotifyToken), `*Pass` (smtpPass),
+// `*User` (pushoverUser), `*Topic` (ntfyTopic). The `*User` / `*Topic` suffixes
+// were added in #1307 so the next unregistered credential of either shape is
+// caught by the drift guard rather than silently stored plaintext.
+// Non-secret notifier fields (gotifyUrl, ntfyServer, smtpHost, chatId,
+// fromAddress, toAddress, path, method, bodyTemplate, etc.) do NOT match — the
+// `^url$` and `^webhookUrl$` alternatives are anchored, so `gotifyUrl` /
+// `ntfyServer` slip past, and the suffix rules only catch the suffix shape.
+// `smtpUser` is the one genuine false positive (an SMTP username, not a
+// credential — unlike smtpPass), so it lives in the explicit denylist below;
+// add to that list only when a non-secret field genuinely matches this heuristic.
+const NOTIFIER_SECRET_NAME_HEURISTIC = /^(url|webhookUrl|headers|.*Token|.*Pass|.*User|.*Topic)$/;
+const NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES = new Set(['smtpUser']);
 
 function findSecretShapedNotifierFields(
   schemas: Record<string, z.ZodTypeAny>,
@@ -40,7 +45,7 @@ function findSecretShapedNotifierFields(
     if (!(schema instanceof z.ZodObject)) continue;
     const shape = (schema as z.ZodObject<z.ZodRawShape>).shape;
     for (const field of Object.keys(shape)) {
-      if (NOTIFIER_SECRET_NAME_HEURISTIC.test(field)) {
+      if (NOTIFIER_SECRET_NAME_HEURISTIC.test(field) && !NOTIFIER_SECRET_HEURISTIC_FALSE_POSITIVES.has(field)) {
         found.push({ type, field });
       }
     }
@@ -285,7 +290,7 @@ describe('SecretCodec', () => {
   describe('#731 notifier secret fields', () => {
     it('getSecretFieldNames("notifier") returns the union of per-type secret fields', () => {
       const fields = getSecretFieldNames('notifier');
-      const expected = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'];
+      const expected = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'];
       expect([...fields].sort()).toEqual([...expected].sort());
     });
 
@@ -321,13 +326,63 @@ describe('SecretCodec', () => {
       expect(masked.bodyTemplate).toBe('{}');
     });
 
-    it('encryptFields skips notifier types without secret fields (script/ntfy)', () => {
-      const ntfy = encryptFields('notifier', { ntfyTopic: 'topic', ntfyServer: 'https://ntfy.sh' }, TEST_KEY);
-      expect(ntfy.ntfyTopic).toBe('topic');
-      expect(ntfy.ntfyServer).toBe('https://ntfy.sh');
+    it('encryptFields skips the script notifier type (no secret fields)', () => {
       const script = encryptFields('notifier', { path: '/tmp/x.sh', timeout: 30 }, TEST_KEY);
       expect(script.path).toBe('/tmp/x.sh');
       expect(script.timeout).toBe(30);
+    });
+
+    it('#1307 encrypts pushoverUser and ntfyTopic, leaves non-secret siblings plaintext', () => {
+      const pushover = encryptFields('notifier', { pushoverToken: 'tok', pushoverUser: 'u-abc' }, TEST_KEY);
+      expect(isEncrypted(pushover.pushoverToken as string)).toBe(true);
+      expect(isEncrypted(pushover.pushoverUser as string)).toBe(true);
+      expect(decryptFields('notifier', { ...pushover }, TEST_KEY).pushoverUser).toBe('u-abc');
+
+      const ntfy = encryptFields('notifier', { ntfyTopic: 't-xyz', ntfyServer: 'https://ntfy.sh' }, TEST_KEY);
+      expect(isEncrypted(ntfy.ntfyTopic as string)).toBe(true);
+      expect(ntfy.ntfyServer).toBe('https://ntfy.sh');
+      expect(decryptFields('notifier', { ...ntfy }, TEST_KEY).ntfyTopic).toBe('t-xyz');
+
+      const gotify = encryptFields('notifier', { gotifyToken: 'gt', gotifyUrl: 'https://gotify.test' }, TEST_KEY);
+      expect(gotify.gotifyUrl).toBe('https://gotify.test');
+    });
+
+    it('#1307 maskFields masks pushoverUser and ntfyTopic; empty/null pass through', () => {
+      const masked = maskFields('notifier', { pushoverUser: 'u-abc', ntfyTopic: 't-xyz', ntfyServer: 'https://ntfy.sh' });
+      expect(masked.pushoverUser).toBe('********');
+      expect(masked.ntfyTopic).toBe('********');
+      expect(masked.ntfyServer).toBe('https://ntfy.sh');
+
+      const empty = maskFields('notifier', { pushoverUser: '', ntfyTopic: null } as Record<string, unknown>);
+      expect(empty.pushoverUser).toBe('');
+      expect(empty.ntfyTopic).toBeNull();
+    });
+
+    it('#1307 sentinel-passthrough retains existing ciphertext for pushoverUser/ntfyTopic and re-encrypts new values', () => {
+      const allow = getSecretFieldNames('notifier');
+      const existing = {
+        pushoverUser: encrypt('real-user', TEST_KEY),
+        ntfyTopic: encrypt('real-topic', TEST_KEY),
+      };
+      // Sentinel resolves to the stored ciphertext byte-for-byte...
+      const resolved = resolveSentinelFields(
+        { pushoverUser: '********', ntfyTopic: '********' },
+        existing,
+        allow,
+      );
+      expect(resolved.pushoverUser).toBe(existing.pushoverUser);
+      expect(resolved.ntfyTopic).toBe(existing.ntfyTopic);
+      // ...and encryptFields does not re-encrypt an already-encrypted value (isEncrypted skip path).
+      const reEncrypted = encryptFields('notifier', { ...resolved } as Record<string, unknown>, TEST_KEY);
+      expect(reEncrypted.pushoverUser).toBe(existing.pushoverUser);
+      expect(reEncrypted.ntfyTopic).toBe(existing.ntfyTopic);
+
+      // A non-sentinel new value passes resolution untouched and IS encrypted on write.
+      const newValue = resolveSentinelFields({ pushoverUser: 'brand-new-user' }, existing, allow);
+      expect(newValue.pushoverUser).toBe('brand-new-user');
+      const encrypted = encryptFields('notifier', { ...newValue } as Record<string, unknown>, TEST_KEY);
+      expect(isEncrypted(encrypted.pushoverUser as string)).toBe(true);
+      expect(decryptFields('notifier', { ...encrypted }, TEST_KEY).pushoverUser).toBe('brand-new-user');
     });
 
     it('every per-type schema secret field is registered (drift guard)', () => {
@@ -340,7 +395,7 @@ describe('SecretCodec', () => {
       ).toEqual([]);
     });
 
-    it('heuristic against real notifier schemas flags exactly today\'s 7 secret fields with subtype mappings', () => {
+    it('heuristic against real notifier schemas flags exactly today\'s 9 secret fields with subtype mappings', () => {
       // Locks in the heuristic's positive output — without this, removing one of
       // the exact-name regex alternatives (`url`, `webhookUrl`, `headers`) would
       // not surface in any other test on this file, because those fields are
@@ -353,15 +408,19 @@ describe('SecretCodec', () => {
         { type: 'discord', field: 'webhookUrl' },
         { type: 'email', field: 'smtpPass' },
         { type: 'gotify', field: 'gotifyToken' },
+        { type: 'ntfy', field: 'ntfyTopic' },
         { type: 'pushover', field: 'pushoverToken' },
+        { type: 'pushover', field: 'pushoverUser' },
         { type: 'slack', field: 'webhookUrl' },
         { type: 'telegram', field: 'botToken' },
         { type: 'webhook', field: 'headers' },
         { type: 'webhook', field: 'url' },
       ]);
-      // And confirm the heuristic doesn't pull in any of the documented non-secret fields.
+      // And confirm the heuristic doesn't pull in any of the documented non-secret
+      // fields. smtpUser matches the `*User` suffix but is an SMTP username, not a
+      // credential — it is excluded via the explicit false-positive denylist.
       const flaggedFields = new Set(flagged.map(({ field }) => field));
-      for (const nonSecret of ['gotifyUrl', 'ntfyServer', 'pushoverUser', 'chatId', 'smtpHost', 'smtpUser', 'fromAddress', 'toAddress', 'ntfyTopic', 'path', 'method', 'bodyTemplate']) {
+      for (const nonSecret of ['gotifyUrl', 'ntfyServer', 'chatId', 'smtpHost', 'smtpUser', 'fromAddress', 'toAddress', 'path', 'method', 'bodyTemplate']) {
         expect(flaggedFields.has(nonSecret), `${nonSecret} should not be flagged as secret-shaped`).toBe(false);
       }
     });
@@ -393,6 +452,30 @@ describe('SecretCodec', () => {
       };
       const unregistered = findUnregisteredNotifierSecrets(fakeSchemas, new Set());
       expect(unregistered).toEqual([]);
+    });
+
+    it('#1307 drift guard flags an unregistered field ending in User or Topic', () => {
+      const fakeSchemas = {
+        typeA: z.object({ accountUser: z.string(), name: z.string() }).strict(),
+        typeB: z.object({ channelTopic: z.string() }).strict(),
+      };
+      const unregistered = findUnregisteredNotifierSecrets(fakeSchemas, new Set());
+      expect(unregistered).toEqual(expect.arrayContaining([
+        { type: 'typeA', field: 'accountUser' },
+        { type: 'typeB', field: 'channelTopic' },
+      ]));
+      expect(unregistered).toHaveLength(2);
+    });
+
+    it('#1307 heuristic does not regress smtpUser into a false positive', () => {
+      const fakeSchemas = {
+        email: z.object({ smtpUser: z.string(), smtpHost: z.string() }).strict(),
+      };
+      // smtpUser matches the `*User` suffix but is on the explicit false-positive
+      // denylist, so it is neither flagged as secret-shaped nor reported as a
+      // registry miss even when the registered set is empty.
+      expect(findSecretShapedNotifierFields(fakeSchemas)).toEqual([]);
+      expect(findUnregisteredNotifierSecrets(fakeSchemas, new Set())).toEqual([]);
     });
   });
 
