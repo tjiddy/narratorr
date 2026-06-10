@@ -1,6 +1,46 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { EventReasonDetails } from './eventReasonFormatters';
+import { EventReasonDetails, qualityGateReasonSchema } from './eventReasonFormatters';
+
+/** A fully-populated, well-formed held_for_review reason blob. */
+const fullReason = {
+  action: 'held',
+  mbPerHour: 60,
+  existingMbPerHour: 40,
+  narratorMatch: true,
+  existingNarrator: 'John Smith',
+  downloadNarrator: 'John Smith',
+  durationDelta: 0.05,
+  existingDuration: 7200,
+  downloadedDuration: 7500,
+  codec: 'AAC',
+  channels: 2,
+  existingCodec: 'MP3',
+  existingChannels: 1,
+  probeFailure: false,
+  probeError: null,
+  holdReasons: ['narrator_mismatch'],
+};
+
+/** A NULL_REASON-shaped blob: all keys present, T|null fields null. */
+const nullReason = {
+  action: 'held',
+  mbPerHour: null,
+  existingMbPerHour: null,
+  narratorMatch: null,
+  existingNarrator: null,
+  downloadNarrator: null,
+  durationDelta: null,
+  existingDuration: null,
+  downloadedDuration: null,
+  codec: null,
+  channels: null,
+  existingCodec: null,
+  existingChannels: null,
+  probeFailure: false,
+  probeError: null,
+  holdReasons: [],
+};
 
 describe('EventReasonDetails', () => {
   const emptyMap = new Map<number, string>();
@@ -123,5 +163,129 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('Release:')).toBeInTheDocument();
     expect(screen.getByText('My.Book.MP3')).toBeInTheDocument();
     expect(screen.getByText('Connection refused')).toBeInTheDocument();
+  });
+});
+
+// #1305 — held_for_review reason blob is schema-validated before the QualityComparisonPanel cast.
+// Malformed/legacy blobs fall back to GenericDetails instead of rendering "NaN MB/hr" or throwing.
+describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
+  const emptyMap = new Map<number, string>();
+
+  function renderHeld(reason: Record<string, unknown>) {
+    return render(<EventReasonDetails eventType="held_for_review" reason={reason} indexerMap={emptyMap} />);
+  }
+
+  it('AC1: missing numeric keys → generic fallback, no panel, no NaN', () => {
+    const { mbPerHour: _m, existingMbPerHour: _e, ...rest } = fullReason;
+    const { container } = renderHeld(rest);
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain('NaN');
+    // Generic fallback renders the remaining keys as key-value rows
+    expect(screen.getByText('Action:')).toBeInTheDocument();
+  });
+
+  it('AC1/test2: missing holdReasons key → generic fallback, does not throw', () => {
+    const { holdReasons: _h, ...rest } = fullReason;
+    expect(() => renderHeld(rest)).not.toThrow();
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+    expect(screen.getByText('Action:')).toBeInTheDocument();
+  });
+
+  it('AC2: empty object → generic fallback (renders nothing), does not throw', () => {
+    expect(() => renderHeld({})).not.toThrow();
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+  });
+
+  it('AC1/test3: wrong-typed field → generic fallback, no panel, no NaN', () => {
+    const { container } = renderHeld({ ...fullReason, mbPerHour: 'fast' });
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain('NaN');
+  });
+
+  it('AC6: holdReasons: null → generic fallback, does not throw, no panel crash', () => {
+    expect(() => renderHeld({ ...nullReason, holdReasons: null })).not.toThrow();
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+  });
+
+  it('AC6: probeFailure: null → generic fallback (non-null field rejects null)', () => {
+    renderHeld({ ...nullReason, probeFailure: null });
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+  });
+
+  it('AC6: action: null → generic fallback (non-null field rejects null)', () => {
+    renderHeld({ ...nullReason, action: null });
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+  });
+
+  it('AC3/AC5: present-but-null T|null fields → panel renders with dashes, not NaN', () => {
+    const { container } = renderHeld(nullReason);
+    expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+    expect(container.textContent).not.toContain('NaN');
+    const dashes = Array.from(container.querySelectorAll('*')).filter((el) => el.textContent === '—');
+    expect(dashes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('AC4: fully-populated well-formed blob renders the panel unchanged', () => {
+    renderHeld(fullReason);
+    expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+    expect(screen.getByText('60 MB/hr')).toBeInTheDocument();
+    expect(screen.getByText('40 MB/hr')).toBeInTheDocument();
+    expect(screen.getByText('narrator mismatch')).toBeInTheDocument();
+  });
+
+  it('AC1: legacy blob missing several keys (the QualityComparisonPanel legacy case) falls back', () => {
+    // Mirrors the legacy-shaped blob from QualityComparisonPanel.test.tsx that
+    // is missing existingDuration/downloadedDuration/existingCodec/existingChannels.
+    const legacy = {
+      action: 'held',
+      mbPerHour: 60,
+      existingMbPerHour: 40,
+      narratorMatch: null,
+      existingNarrator: null,
+      downloadNarrator: null,
+      durationDelta: null,
+      codec: 'AAC',
+      channels: 2,
+      probeFailure: false,
+      probeError: null,
+      holdReasons: [],
+    };
+    renderHeld(legacy);
+    expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+    expect(screen.getByText('Action:')).toBeInTheDocument();
+  });
+});
+
+// #1305 — direct schema-gate assertions (fast, render-independent)
+describe('qualityGateReasonSchema (#1305)', () => {
+  it('accepts a NULL_REASON-shaped blob', () => {
+    expect(qualityGateReasonSchema.safeParse(nullReason).success).toBe(true);
+  });
+
+  it('accepts a fully-populated blob', () => {
+    expect(qualityGateReasonSchema.safeParse(fullReason).success).toBe(true);
+  });
+
+  it('rejects a blob missing a key', () => {
+    const { mbPerHour: _m, ...missing } = fullReason;
+    expect(qualityGateReasonSchema.safeParse(missing).success).toBe(false);
+  });
+
+  it('rejects null for the non-null holdReasons field', () => {
+    expect(qualityGateReasonSchema.safeParse({ ...nullReason, holdReasons: null }).success).toBe(false);
+  });
+
+  it('rejects null for the non-null probeFailure field', () => {
+    expect(qualityGateReasonSchema.safeParse({ ...nullReason, probeFailure: null }).success).toBe(false);
+  });
+
+  it('rejects null for the non-null action field', () => {
+    expect(qualityGateReasonSchema.safeParse({ ...nullReason, action: null }).success).toBe(false);
+  });
+
+  it('tolerates extra keys (strip), keeping known fields', () => {
+    const result = qualityGateReasonSchema.safeParse({ ...nullReason, futureField: 'x' });
+    expect(result.success).toBe(true);
+    if (result.success) expect('futureField' in result.data).toBe(false);
   });
 });
