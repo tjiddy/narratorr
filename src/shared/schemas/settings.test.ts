@@ -128,6 +128,15 @@ describe('updateSettingsSchema', () => {
     const result = updateSettingsSchema.safeParse({});
     expect(result.success).toBe(true);
   });
+
+  // #1345: a stale browser tab can PUT the removed `seriesCacheRetentionDays` key (dropped in
+  // #1301). updateSettingsSchema inherits Zod's default strip mode, so the stale-tab payload
+  // must succeed (200-with-strip, not 400) and silently drop the fossil key from the output.
+  it('strips removed seriesCacheRetentionDays key from a stale-tab general PUT', () => {
+    const r = updateSettingsSchema.safeParse({ general: { logLevel: 'info', seriesCacheRetentionDays: 30 } });
+    expect(r.success).toBe(true);
+    expect(r.data!.general).not.toHaveProperty('seriesCacheRetentionDays');
+  });
 });
 
 describe('librarySettingsSchema — trim behavior', () => {
