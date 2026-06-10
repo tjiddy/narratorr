@@ -13,7 +13,7 @@ import type { BookService } from './book.service.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
-import { triggerImmediateSearch, type ImmediateSearchDeps } from '../routes/trigger-immediate-search.js';
+import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { AppSettings } from '../../shared/schemas.js';
 
 type QualitySettings = AppSettings['quality'];

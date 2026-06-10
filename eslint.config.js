@@ -120,6 +120,18 @@ export default tseslint.config(
       }],
     },
   },
+  {
+    // Services are a lower layer than routes — they must not import from routes/.
+    // Production-only: test files legitimately reach into routes/ (e.g.
+    // indexer.service.test.ts dynamically imports routes/prowlarr-compat.js).
+    files: ['**/src/server/services/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/routes/**', '**/routes/*'],
+      }],
+    },
+  },
 
   // Custom rules for all files
   {

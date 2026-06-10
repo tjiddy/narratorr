@@ -7,7 +7,7 @@ import type { MetadataService } from './metadata.service.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
-import type { ImmediateSearchDeps } from '../routes/trigger-immediate-search.js';
+import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 
 // Mock the adapter factories
 vi.mock('../../core/import-lists/index.js', () => ({
@@ -19,13 +19,13 @@ vi.mock('../../core/import-lists/index.js', () => ({
 }));
 
 // Stub the trigger so search-pipeline isn't actually invoked from these unit tests
-vi.mock('../routes/trigger-immediate-search.js', () => ({
+vi.mock('./trigger-immediate-search.js', () => ({
   triggerImmediateSearch: vi.fn(),
 }));
 
 const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('../../core/import-lists/index.js');
 const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as Record<string, ReturnType<typeof vi.fn>>;
-const { triggerImmediateSearch } = await import('../routes/trigger-immediate-search.js');
+const { triggerImmediateSearch } = await import('./trigger-immediate-search.js');
 const mockTriggerImmediateSearch = triggerImmediateSearch as unknown as ReturnType<typeof vi.fn>;
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;

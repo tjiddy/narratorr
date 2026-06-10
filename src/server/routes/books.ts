@@ -31,7 +31,7 @@ export interface BookRouteDeps {
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { z } from 'zod';
-import { triggerImmediateSearch } from './trigger-immediate-search.js';
+import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
 import {
   idParamSchema,
   bookListQuerySchema,
