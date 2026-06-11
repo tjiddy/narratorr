@@ -5,7 +5,10 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { ImportListsSettings } from './ImportListsSettings';
 import type { Mock } from 'vitest';
 
-vi.mock('@/lib/api', () => ({
+vi.mock('@/lib/api', async (importOriginal) => ({
+  // Preserve the real ApiError export — useCrudSettings references it at runtime
+  // (#1404) when surfacing server error messages on mutation rejection.
+  ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     getImportLists: vi.fn(),
     createImportList: vi.fn(),

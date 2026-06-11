@@ -366,6 +366,28 @@ describe('ImportListService', () => {
       expect(db.select).toHaveBeenCalled();
     });
 
+    // #1404 — decryptRow threads the injected service logger into decryptFields so a
+    // corrupt/wrong-key secret surfaces a diagnostic. Uses a freshly-captured logger
+    // (not the shared module-scope mockLog) and asserts the warn reaches THIS caller's
+    // injected logger (would fail if `this.log` were dropped from the call).
+    it('getById threads this.log: corrupt apiKey warns with entity/failedFields, passthrough preserved', async () => {
+      const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { id: 1, name: 'Test', type: 'abs', enabled: true, settings: { serverUrl: 'http://abs.local', apiKey: CORRUPT, libraryId: 'lib-1' } },
+      ]));
+      const log = createMockLogger();
+      const loggedService = new ImportListService(inject<Db>(db), inject<FastifyBaseLogger>(log), makeBookService());
+
+      const row = await loggedService.getById(1);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        { entity: 'importList', failedFields: ['apiKey'] },
+        expect.stringContaining('secret.key'),
+      );
+      expect((row!.settings as Record<string, unknown>).apiKey).toBe(CORRUPT);
+    });
+
     it('create encrypts API key and sets nextRunAt', async () => {
       const db = createMockDb();
       const insertChain = mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key' }, createdAt: new Date() }]);

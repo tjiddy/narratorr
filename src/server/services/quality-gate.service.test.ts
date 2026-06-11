@@ -912,6 +912,54 @@ describe('QualityGateService', () => {
       const result = await service.getQualityGateData(1);
       expect(result).toBeNull();
     });
+
+    // #1404 — a malformed reason row degraded to null with zero diagnostic signal,
+    // so a missing quality card had no greppable cause. Surface one warn with the
+    // downloadId and Zod issue paths (paths exclude input values).
+    it('#1404: malformed reason logs one warn with downloadId + issue paths, still returns null', async () => {
+      const { service, db, log } = createService();
+      const reason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: null,
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      const result = await service.getQualityGateData(7);
+
+      expect(result).toBeNull();
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        { downloadId: 7, issuePaths: ['holdReasons'] },
+        expect.stringContaining('Malformed quality-gate reason'),
+      );
+      // Negative-leak: issue paths are dotted strings only, no reason VALUES.
+      const [arg] = (log.warn as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect((arg as { issuePaths: string[] }).issuePaths.every((p) => typeof p === 'string')).toBe(true);
+    });
+
+    it('#1404: a valid reason does not warn', async () => {
+      const { service, db, log } = createService();
+      const reason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      await service.getQualityGateData(1);
+      expect(log.warn).not.toHaveBeenCalled();
+    });
   });
 
   describe('getQualityGateDataBatch', () => {
@@ -1091,6 +1139,42 @@ describe('QualityGateService', () => {
 
       const result = await service.getQualityGateDataBatch([1]);
       expect(result.get(1)).toBeNull();
+    });
+
+    // #1404 — the batch read site logs per malformed event with the correct
+    // per-event downloadId and Zod issue paths, and still maps the entry to null.
+    it('#1404: malformed batch row logs one warn with the per-event downloadId + issue paths', async () => {
+      const { service, db, log } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
+          { downloadId: 2, reason: batchReason },
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1, 2]);
+
+      expect(result.get(1)).toBeNull();
+      expect(result.get(2)).toEqual(batchReason);
+      // Exactly one warn — only the malformed row 1, not the valid row 2.
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        { downloadId: 1, issuePaths: ['holdReasons'] },
+        expect.stringContaining('Malformed quality-gate reason'),
+      );
+    });
+
+    it('#1404: an all-valid batch does not warn', async () => {
+      const { service, db, log } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: batchReason }]));
+
+      await service.getQualityGateDataBatch([1]);
+      expect(log.warn).not.toHaveBeenCalled();
     });
   });
 });

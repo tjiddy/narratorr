@@ -50,6 +50,29 @@ describe('DownloadClientService', () => {
     });
   });
 
+  // #1404 — decryptRow threads the injected service logger into decryptFields so a
+  // corrupt/wrong-key secret surfaces a diagnostic. Asserts the warn reaches THIS
+  // caller's injected logger (would fail if `this.log` were dropped from the call).
+  describe('#1404 decrypt-failure diagnostic threading', () => {
+    const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+
+    it('getById threads this.log: corrupt password warns with entity/failedFields, passthrough preserved', async () => {
+      const log = createMockLogger();
+      const loggedService = new DownloadClientService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      db.select.mockReturnValue(mockDbChain([
+        createMockDbDownloadClient({ settings: { host: 'localhost', port: 8080, password: CORRUPT } }),
+      ]));
+
+      const result = await loggedService.getById(1);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        { entity: 'downloadClient', failedFields: ['password'] },
+        expect.stringContaining('secret.key'),
+      );
+      expect((result!.settings as Record<string, unknown>).password).toBe(CORRUPT);
+    });
+  });
+
   describe('getFirstEnabled', () => {
     it('returns first enabled client', async () => {
       db.select.mockReturnValue(mockDbChain([mockClient]));

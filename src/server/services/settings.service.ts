@@ -80,7 +80,7 @@ export class SettingsService {
     let raw = result[0]!.value;
     const entity = SECRET_CATEGORIES[key];
     if (entity && raw && typeof raw === 'object') {
-      raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
+      raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey(), this.log);
     }
 
     const parsed = parseCategory(key, raw, this.log);
@@ -102,7 +102,7 @@ export class SettingsService {
         let raw = settingsMap.get(key);
         const entity = SECRET_CATEGORIES[key];
         if (entity && raw && typeof raw === 'object') {
-          raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
+          raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey(), this.log);
         }
         return [key, parseCategory(key, raw, this.log)];
       }),

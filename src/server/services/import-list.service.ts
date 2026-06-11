@@ -49,7 +49,7 @@ export class ImportListService {
   private decryptRow(row: ImportListRow): ImportListRow {
     if (!row.settings) return row;
     const s = { ...(row.settings as Record<string, unknown>) };
-    return { ...row, settings: decryptFields('importList', s, getKey()) };
+    return { ...row, settings: decryptFields('importList', s, getKey(), this.log) };
   }
 
   async getAll(): Promise<ImportListRow[]> {

@@ -36,7 +36,7 @@ export class IndexerService {
   private decryptRow(row: IndexerRow): IndexerRow {
     if (!row.settings) return row;
     const s = { ...(row.settings as Record<string, unknown>) };
-    return { ...row, settings: decryptFields('indexer', s, getKey()) };
+    return { ...row, settings: decryptFields('indexer', s, getKey(), this.log) };
   }
 
   async getAll(): Promise<IndexerRow[]> {

@@ -27,7 +27,7 @@ export class DownloadClientService {
   private decryptRow(row: DownloadClientRow): DownloadClientRow {
     if (!row.settings) return row;
     const s = { ...(row.settings as Record<string, unknown>) };
-    return { ...row, settings: decryptFields('downloadClient', s, getKey()) };
+    return { ...row, settings: decryptFields('downloadClient', s, getKey(), this.log) };
   }
 
   clearAdapterCache(): void {

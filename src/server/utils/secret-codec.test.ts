@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -279,6 +280,81 @@ describe('SecretCodec', () => {
       const decrypted = decryptFields('notifier', row, TEST_KEY);
       expect(decrypted.encryptedField).toBe('decrypted-value');
       expect(decrypted.plaintextSibling).toBe('x');
+    });
+  });
+
+  describe('#1404 decrypt-failure diagnostic logging', () => {
+    // A logger stub exposing just the `warn` spy decryptFields touches.
+    function mockLogger(): { warn: ReturnType<typeof vi.fn>; logger: FastifyBaseLogger } {
+      const warn = vi.fn();
+      return { warn, logger: { warn } as unknown as FastifyBaseLogger };
+    }
+
+    // A registered secret field holding a $ENC$ blob that fails to decrypt
+    // (corrupted auth tag under the right key — the lost/regenerated-key symptom).
+    function corruptBlob(): string {
+      const valid = encrypt('secret', TEST_KEY);
+      const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
+      payload[13] = payload[13]! ^ 0xff; // flip a byte inside the 16-byte auth tag
+      return '$ENC$' + payload.toString('base64');
+    }
+
+    it('emits exactly one warn naming the entity and failed field, passthrough preserved', () => {
+      const { warn, logger } = mockLogger();
+      const blob = corruptBlob();
+      const row = { apiKey: blob, hostname: 'example.com' };
+      const result = decryptFields('indexer', row, TEST_KEY, logger);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        { entity: 'indexer', failedFields: ['apiKey'] },
+        expect.stringContaining('secret.key'),
+      );
+      // #1357 passthrough unchanged — the corrupt blob is returned verbatim.
+      expect(result.apiKey).toBe(blob);
+      expect(result.hostname).toBe('example.com');
+    });
+
+    it('collects multiple failed fields into a single warn (not one per field)', () => {
+      const { warn, logger } = mockLogger();
+      decryptFields('downloadClient', { password: corruptBlob(), apiKey: corruptBlob() }, TEST_KEY, logger);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [arg] = warn.mock.calls[0]!;
+      expect(arg).toEqual({ entity: 'downloadClient', failedFields: ['password', 'apiKey'] });
+    });
+
+    it('does not warn when all fields decrypt successfully', () => {
+      const { warn, logger } = mockLogger();
+      const encrypted = encryptFields('indexer', { apiKey: 'k', hostname: 'h' }, TEST_KEY);
+      decryptFields('indexer', encrypted, TEST_KEY, logger);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when there is nothing encrypted to fail', () => {
+      const { warn, logger } = mockLogger();
+      decryptFields('indexer', { hostname: 'example.com', apiKey: 'plaintext' }, TEST_KEY, logger);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op (no throw) when no logger is passed — passthrough still preserved', () => {
+      const blob = corruptBlob();
+      const row = { apiKey: blob };
+      expect(() => decryptFields('indexer', row, TEST_KEY)).not.toThrow();
+      expect(row.apiKey).toBe(blob);
+    });
+
+    it('never logs a decrypted value or the raw $ENC$ blob (negative-leak)', () => {
+      const { warn, logger } = mockLogger();
+      const blob = corruptBlob();
+      // A sibling that DOES decrypt — its plaintext must not leak into the warn either.
+      const decryptable = encrypt('super-secret-plaintext', TEST_KEY);
+      decryptFields('indexer', { apiKey: blob, apiUrl: decryptable }, TEST_KEY, logger);
+
+      const serialized = JSON.stringify(warn.mock.calls);
+      expect(serialized).not.toContain('super-secret-plaintext');
+      expect(serialized).not.toContain('$ENC$');
+      expect(serialized).not.toContain(blob);
     });
   });
 

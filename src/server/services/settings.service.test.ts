@@ -1669,3 +1669,93 @@ describe('SettingsService — cache (#554)', () => {
     });
   });
 });
+
+// #1404 — SettingsService threads `this.log` into decryptFields so the
+// network/metadata secret read paths surface a lost/regenerated `secret.key`.
+describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let service: SettingsService;
+
+  // A registered secret value whose auth tag is corrupted under the right key —
+  // the lost/regenerated-key symptom (#1404).
+  async function corruptBlob(plaintext: string): Promise<string> {
+    const { encrypt } = await import('../utils/secret-codec.js');
+    const valid = encrypt(plaintext, TEST_KEY);
+    const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
+    payload[13] = payload[13]! ^ 0xff;
+    return '$ENC$' + payload.toString('base64');
+  }
+
+  /** The decrypt diagnostic warn (vs. the unrelated parse-fallback warn). */
+  function decryptWarn(): Array<[unknown, unknown]> {
+    return (log.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => typeof call[1] === 'string' && call[1].includes('secret.key'),
+    ) as Array<[unknown, unknown]>;
+  }
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    log = createMockLogger();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('get("network") warns naming the network entity and proxyUrl when it fails to decrypt', async () => {
+    const blob = await corruptBlob('http://user:pass@proxy:8080');
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: blob } }]));
+
+    await service.get('network');
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'network', failedFields: ['proxyUrl'] });
+    // Negative-leak: neither the plaintext nor the raw blob may appear in the warn args.
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain('proxy:8080');
+    expect(serialized).not.toContain('$ENC$');
+  });
+
+  it('get("metadata") warns naming the metadata entity and hardcoverApiKey on decrypt failure', async () => {
+    const blob = await corruptBlob('sk-secret-7777');
+    db.select.mockReturnValue(mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: blob } }]));
+
+    await service.get('metadata');
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'metadata', failedFields: ['hardcoverApiKey'] });
+    expect(JSON.stringify(warns)).not.toContain('sk-secret-7777');
+  });
+
+  it('get("network") does not emit the decrypt warn when proxyUrl decrypts cleanly', async () => {
+    const { encrypt } = await import('../utils/secret-codec.js');
+    const encrypted = encrypt('http://proxy:8080', TEST_KEY);
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: encrypted } }]));
+
+    await service.get('network');
+
+    expect(decryptWarn()).toHaveLength(0);
+  });
+
+  // getAll() decrypts every secret category through its own decryptFields call; the
+  // logger must thread there too (the `:105` caller, distinct from get()'s `:83`).
+  it('getAll() warns for the network category when its stored proxyUrl fails to decrypt', async () => {
+    const blob = await corruptBlob('http://user:pass@proxy:8080');
+    // getAll() does an unfiltered select over all settings rows.
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: blob } }]));
+
+    await service.getAll();
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'network', failedFields: ['proxyUrl'] });
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain('proxy:8080');
+    expect(serialized).not.toContain('$ENC$');
+  });
+});

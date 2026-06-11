@@ -30,7 +30,7 @@ export class NotifierService {
   private decryptRow(row: NotifierRow): NotifierRow {
     if (!row.settings) return row;
     const s = { ...(row.settings as Record<string, unknown>) };
-    return { ...row, settings: decryptFields('notifier', s, getKey()) };
+    return { ...row, settings: decryptFields('notifier', s, getKey(), this.log) };
   }
 
   async getAll(): Promise<NotifierRow[]> {
