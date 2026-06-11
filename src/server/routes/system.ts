@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
@@ -147,6 +147,11 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
     }
   });
 
+  // DELETE /api/system/backups/:filename — delete a server-side backup file
+  app.delete<{ Params: { filename: string } }>('/api/system/backups/:filename', (request, reply) =>
+    handleDeleteBackup(services, request, reply),
+  );
+
   // POST /api/system/restore — upload and validate a restore file
   app.post('/api/system/restore', async (request, reply) => {
     const data = await request.file();
@@ -188,4 +193,37 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return reply.status(400).send({ error: message });
     }
   });
+}
+
+/**
+ * DELETE /api/system/backups/:filename handler. Validates the raw filename via getBackupPath
+ * (400 on traversal/invalid names) and fsp.access (404 on a missing file), then deletes it.
+ * Passes the raw filename to deleteBackup, matching the restore route's filename-passing
+ * contract. Returns 200 + JSON `{ success: true }` (not 204): the client fetchApi wrapper
+ * always parses response.json() and rejects on an empty body. A staged restore is unaffected —
+ * it lives in a separate temp path (PendingRestore.tempPath), not the backups dir.
+ */
+async function handleDeleteBackup(
+  services: Services,
+  request: FastifyRequest<{ Params: { filename: string } }>,
+  reply: FastifyReply,
+) {
+  const filePath = services.backup.getBackupPath(request.params.filename);
+  if (!filePath) {
+    return reply.status(400).send({ error: 'Invalid backup filename' });
+  }
+
+  try {
+    await fsp.access(filePath);
+  } catch {
+    return reply.status(404).send({ error: 'Backup not found' });
+  }
+
+  try {
+    await services.backup.deleteBackup(request.params.filename);
+    return await reply.send({ success: true });
+  } catch (error: unknown) {
+    request.log.error({ error: serializeError(error) }, 'Delete backup failed');
+    return reply.status(500).send({ error: 'Failed to delete backup' });
+  }
 }

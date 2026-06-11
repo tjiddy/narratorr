@@ -202,6 +202,32 @@ export class BackupService {
     return path.join(this.backupsDir, filename);
   }
 
+  /**
+   * Delete a single server-side backup file. Takes the raw filename (same contract as
+   * restoreServerBackup) and resolves it via getBackupPath for path-traversal safety.
+   *
+   * Tolerates ENOENT like the retention pruner: a concurrent prune/delete may have already
+   * removed the file between the route's existence check and this unlink, which is a no-op
+   * success, not a failure. This deletes only the backups-dir zip — it never touches a
+   * staged restore, which lives in a separate temp path (PendingRestore.tempPath).
+   */
+  async deleteBackup(filename: string): Promise<void> {
+    const filePath = this.getBackupPath(filename);
+    if (!filePath) {
+      throw new Error('Invalid backup filename');
+    }
+
+    try {
+      await fs.unlink(filePath);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    this.log.info({ filename }, 'Backup deleted');
+  }
+
   /** Extract narratorr.db from a zip stream into a temp directory. Returns the temp DB path. */
   private async extractDbFromZip(source: Readable): Promise<{ tempDir: string; tempDbPath: string }> {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-restore-'));

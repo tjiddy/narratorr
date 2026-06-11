@@ -35,5 +35,8 @@ export const backupsApi = {
   restoreBackupDirect: (filename: string) =>
     fetchApi<RestoreValidation>(`/system/backups/${encodeURIComponent(filename)}/restore`, { method: 'POST' }),
 
+  deleteBackup: (filename: string) =>
+    fetchApi<{ success: boolean }>(`/system/backups/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
+
   confirmRestore: () => fetchApi<{ message: string }>('/system/restore/confirm', { method: 'POST' }),
 };

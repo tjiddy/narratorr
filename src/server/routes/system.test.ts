@@ -617,6 +617,101 @@ describe('system routes', () => {
     });
   });
 
+  describe('DELETE /api/system/backups/:filename', () => {
+    it('returns 200 with { success: true } and passes the raw filename to deleteBackup', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.deleteBackup as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/narratorr-backup-test.zip',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
+      expect(services.backup.deleteBackup as Mock).toHaveBeenCalledWith('narratorr-backup-test.zip');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+
+    it('rejects path-traversal attempts with 400 and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/..%2F..%2Fetc%2Fpasswd',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an absolute-path filename with 400 and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/%2Fetc%2Fpasswd',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-narratorr-backup filename with 400 and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/backup.tar.gz',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the backup file does not exist and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue('/nonexistent/path/backup.zip');
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/narratorr-backup-test.zip',
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Backup not found');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 and logs canonical serialized error for unexpected deleteBackup failures', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.deleteBackup as Mock).mockRejectedValue(new Error('disk failure'));
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/narratorr-backup-test.zip',
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Failed to delete backup');
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'disk failure', type: 'Error' }) }),
+        'Delete backup failed',
+      );
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+  });
+
   describe('POST /api/system/restore/confirm', () => {
     it('returns 400 if no validated restore pending', async () => {
       (services.backup.confirmRestore as Mock).mockRejectedValue(new Error('No pending restore'));
