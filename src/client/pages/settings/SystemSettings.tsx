@@ -124,6 +124,19 @@ export function SystemSettings() {
     },
   });
 
+  const [deleteTarget, setDeleteTarget] = useState<BackupMetadata | null>(null);
+  const deleteMutation = useMutation({
+    // Pass the raw filename — backupsApi.deleteBackup owns the encoding boundary.
+    mutationFn: (filename: string) => api.deleteBackup(filename),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.backups() });
+      toast.success('Backup deleted');
+    },
+    onError: (err) => {
+      toast.error(getErrorMessage(err));
+    },
+  });
+
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) {
@@ -136,6 +149,10 @@ export function SystemSettings() {
   function handleRestore(backup: BackupMetadata) {
     setPendingBackupName(backup.filename);
     restoreMutation.mutate(backup.filename);
+  }
+
+  function handleDelete(backup: BackupMetadata) {
+    setDeleteTarget(backup);
   }
 
   function handleDownload(backup: BackupMetadata) {
@@ -180,7 +197,7 @@ export function SystemSettings() {
           <input ref={fileInputRef} type="file" accept=".zip" onChange={handleFileSelect} className="hidden" />
         </div>
 
-        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} />
+        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} onDelete={handleDelete} />
       </SettingsSection>
 
       <SystemInfo />
@@ -194,6 +211,16 @@ export function SystemSettings() {
         restoreInfo={restoreInfo}
         onConfirm={() => confirmMutation.mutate()}
         onClose={() => { setRestoreConfirmOpen(false); setRestoreInfo(null); }}
+      />
+
+      <ConfirmModal
+        isOpen={deleteTarget !== null}
+        title="Delete Backup"
+        message={`Delete "${deleteTarget?.filename}"? This permanently removes the backup file and cannot be undone.`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.filename); setDeleteTarget(null); } }}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   );

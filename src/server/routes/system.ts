@@ -147,6 +147,31 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
     }
   });
 
+  // DELETE /api/system/backups/:filename — delete a server-side backup file
+  app.delete<{ Params: { filename: string } }>('/api/system/backups/:filename', async (request, reply) => {
+    const filePath = services.backup.getBackupPath(request.params.filename);
+    if (!filePath) {
+      return reply.status(400).send({ error: 'Invalid backup filename' });
+    }
+
+    try {
+      await fsp.access(filePath);
+    } catch {
+      return reply.status(404).send({ error: 'Backup not found' });
+    }
+
+    try {
+      // Pass the raw filename — deleteBackup re-resolves it via getBackupPath, matching the
+      // restore route's filename-passing contract. 200 + JSON body (not 204): the client
+      // fetchApi wrapper always parses response.json() and rejects on an empty body.
+      await services.backup.deleteBackup(request.params.filename);
+      return reply.send({ success: true });
+    } catch (error: unknown) {
+      request.log.error({ error: serializeError(error) }, 'Delete backup failed');
+      return reply.status(500).send({ error: 'Failed to delete backup' });
+    }
+  });
+
   // POST /api/system/restore — upload and validate a restore file
   app.post('/api/system/restore', async (request, reply) => {
     const data = await request.file();
