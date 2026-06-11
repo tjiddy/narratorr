@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { mkdir, rm, writeFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -2313,6 +2317,81 @@ describe('ImportQueueWorker', () => {
 
       // No additional selects after stop
       expect(selectCallCount).toBe(countAfterStop);
+    });
+  });
+
+  describe('startup marker sweep (#1338)', () => {
+    /** Mock select so call #1 is boot-recovery (orphans []), the rest are drain selects ([]). */
+    function trackingSelect(): () => number {
+      let selectCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCount++;
+        if (selectCount === 1) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        }
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+      });
+      return () => selectCount;
+    }
+
+    it('awaits the marker sweep before the drain loop issues its first job select (single recovery actor)', async () => {
+      const selectCount = trackingSelect();
+      const root = mkdtempSync(join(tmpdir(), 'narratorr-1338-order-'));
+      // Block the sweep on library-root resolution so we can observe that the drain loop has
+      // NOT issued any select while the sweep is still in flight.
+      let releaseRoot!: (value: string) => void;
+      const rootReady = new Promise<string>((res) => { releaseRoot = res; });
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, undefined, () => rootReady);
+
+      const startPromise = w.start();
+      // Drain boot-recovery's microtasks.
+      await new Promise((r) => setImmediate(r));
+      // Boot recovery selected once; the sweep is parked on the resolver, so the drain loop
+      // has NOT started — no second (drain) select has happened.
+      expect(selectCount()).toBe(1);
+
+      releaseRoot(root);
+      await startPromise;
+
+      // Sweep resolved → drain loop started and issued its first job select.
+      expect(selectCount()).toBeGreaterThan(1);
+
+      await w.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('converges a real stranded marker during start(), before draining (exactly one recovery actor)', async () => {
+      trackingSelect();
+      const root = mkdtempSync(join(tmpdir(), 'narratorr-1338-converge-'));
+      const target = join(root, 'Author', 'Title');
+      const backup = `${target}.import-bak`;
+      const marker = `${target}.import-commit-pending`;
+      await mkdir(backup, { recursive: true });
+      await writeFile(join(backup, 'old.m4b'), Buffer.alloc(64, 7));
+      await writeFile(marker, '');
+
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, undefined, async () => root);
+      await w.start();
+
+      // The sweep converged the marker as part of boot — backup + marker cleared, original restored.
+      const exists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+      expect(await exists(marker)).toBe(false);
+      expect(await exists(backup)).toBe(false);
+      expect(await exists(join(target, 'old.m4b'))).toBe(true);
+
+      await w.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('is a no-op when no library-root resolver is injected', async () => {
+      trackingSelect();
+      // The default unit-test worker has no resolver — start() must not throw and must still drain.
+      await expect(worker.start()).resolves.toBeUndefined();
     });
   });
 });
