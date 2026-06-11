@@ -44,6 +44,15 @@ const SYNONYM_MAP = new Map<string, string>([
  * 'historical' entry is a non-fiction descriptor and must NOT be remapped to
  * the fiction-side 'Historical Fiction' — doing so fabricates a wrong fiction
  * label on narrative non-fiction (#1383, live-verified on Endurance B002V9ZA6C).
+ *
+ * These three strings are load-bearing GATE INPUTS — they must NEVER be added to
+ * SYNONYM_MAP or otherwise "handled" by a harvest. Doing so would silently break
+ * the gate's marker matching at the `.has(...)` check below. Note that two of
+ * them ('biographies & memoirs', 'computers & technology') legitimately appear in
+ * unmatched_genres and remain TRACKED by design — they are real Audible category
+ * names carrying useful signal; 'history' is already an untracked known child
+ * (GENRE_CHILDREN). A harvest operator seeing any of these in the tracking table
+ * must leave them as gate inputs, not synonym-map them away (#1383, #1405).
  */
 const NONFICTION_HISTORICAL_MARKERS = new Set([
   'biographies & memoirs',
@@ -268,6 +277,11 @@ export function findUnmatchedGenres(
     // If it's a dropped non-genre, it's "known" (removed by normalizeGenres
     // before it ever reaches tracking; checked here for defense in depth).
     if (DROP_GENRES.has(lower)) return false;
+    // 'historical' is context-gated (#1383, #1405), not unhandled — when the
+    // gate declines to remap it (a non-fiction marker co-occurs), that IS the
+    // rule outcome. Tracking it would bait the next harvest into re-adding the
+    // exact 'historical' → 'Historical Fiction' synonym #1383 removed.
+    if (lower === 'historical') return false;
     // Otherwise it passed through unmatched
     return true;
   });
