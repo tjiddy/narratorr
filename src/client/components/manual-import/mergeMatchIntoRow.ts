@@ -27,8 +27,13 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
     : (match.confidence === 'high' ? row.selected : false);
 
   // Auto-populate edited fields from the best match only when the user hasn't
-  // already manually edited this row.
-  const wasEdited = row.edited.metadata !== undefined;
+  // already edited this row. A row counts as edited if the user committed a fix
+  // through the modal (`userEdited`) — true even when they corrected fields
+  // manually WITHOUT picking a provider result, in which case `edited.metadata`
+  // is undefined (#1374 F1) — OR a prior merge already populated it
+  // (`edited.metadata` set). Keying on `edited.metadata` alone would let a later
+  // bestMatch overwrite a no-metadata manual correction.
+  const wasEdited = row.userEdited || row.edited.metadata !== undefined;
   if (!wasEdited && match.bestMatch) {
     return {
       ...row,

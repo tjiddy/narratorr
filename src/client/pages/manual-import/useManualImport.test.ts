@@ -1419,6 +1419,45 @@ describe('match merge — boundary values (#185)', () => {
     }
   });
 
+  it('edit-during-matching preserves manually-corrected fields when a later bestMatch merges (no metadata picked, #1374 F1)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // User corrects fields manually WITHOUT picking a provider result, so the
+      // edit modal saves metadata: undefined (BookEditModal.handleSave).
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'My Correction', author: 'My Author', series: '',
+        });
+      });
+      expect(result.current.state.rows[0]!.userEdited).toBe(true);
+      expect(result.current.state.rows[0]!.edited.metadata).toBeUndefined();
+
+      // A later best-match result merges in.
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Provider Title', authors: [{ name: 'Provider Author' }] }, alternatives: [] }],
+      });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // The user's manual correction survives — userEdited gates auto-populate,
+      // not edited.metadata alone.
+      expect(result.current.state.rows[0]!.edited.title).toBe('My Correction');
+      expect(result.current.state.rows[0]!.edited.author).toBe('My Author');
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('#1318 guard: a merely-toggled (not edited) row is still unchecked by a medium merge', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {

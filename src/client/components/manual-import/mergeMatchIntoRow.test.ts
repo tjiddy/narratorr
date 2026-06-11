@@ -57,6 +57,27 @@ describe('mergeMatchIntoRow', () => {
     expect(merged.edited.title).toBe('Mine');
   });
 
+  it('does NOT overwrite a userEdited row that has no metadata (manual fix without picking a result, #1374 F1)', () => {
+    // BookEditModal saves metadata: undefined when the user corrects fields
+    // manually without selecting a provider result. The auto-populate guard must
+    // honor userEdited, not just edited.metadata, or a later bestMatch clobbers
+    // the user's corrections.
+    const manualFix = makeRow({
+      userEdited: true,
+      selected: true,
+      edited: { title: 'My Correction', author: 'My Author', series: 'My Series' },
+    });
+    const merged = mergeMatchIntoRow(manualFix, makeMatch({ confidence: 'high', bestMatch: { title: 'Provider Title', authors: [{ name: 'Provider Author' }] } }));
+
+    expect(merged.edited.title).toBe('My Correction');
+    expect(merged.edited.author).toBe('My Author');
+    expect(merged.edited.series).toBe('My Series');
+    expect(merged.edited.metadata).toBeUndefined();
+    // The match result is still attached and selection is preserved.
+    expect(merged.matchResult?.confidence).toBe('high');
+    expect(merged.selected).toBe(true);
+  });
+
   it('produces identical output for the same (row, match) inputs — no per-caller drift', () => {
     const row = makeRow({ userEdited: true, selected: true });
     const match = makeMatch({ confidence: 'medium' });
