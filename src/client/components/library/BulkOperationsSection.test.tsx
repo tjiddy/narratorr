@@ -25,15 +25,21 @@ vi.mock('react-router-dom', async () => {
   return { ...actual };
 });
 
-vi.mock('@/lib/api', () => ({
-  api: {
-    getBulkRenameCount: vi.fn(),
-    getBulkRetagCount: vi.fn(),
-    getBookStats: vi.fn(),
-    rescanLibrary: vi.fn(),
-    deleteMissingBooks: vi.fn(),
-  },
-}));
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    api: {
+      getBulkRenameCount: vi.fn(),
+      getBulkRenamePreview: vi.fn(),
+      getBookRenamePreview: vi.fn(),
+      getBulkRetagCount: vi.fn(),
+      getBookStats: vi.fn(),
+      rescanLibrary: vi.fn(),
+      deleteMissingBooks: vi.fn(),
+    },
+  };
+});
 
 interface SetupOpts {
   isRunning?: boolean;
@@ -66,6 +72,23 @@ function setup(overrides?: SetupOpts) {
     startJob: mockStartJob,
   });
   (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockResolvedValue({ mismatched: 5, alreadyMatching: 10 });
+  (api.getBulkRenamePreview as ReturnType<typeof vi.fn>).mockResolvedValue({
+    libraryRoot: '/library',
+    folderFormat: '{author}/{title}',
+    fileFormat: '{author} - {title}',
+    items: [
+      { bookId: 1, title: 'Book One', from: 'Author/Old One', to: 'Author/Book One' },
+    ],
+    mismatchedTotal: 5,
+    alreadyMatching: 10,
+  });
+  (api.getBookRenamePreview as ReturnType<typeof vi.fn>).mockResolvedValue({
+    libraryRoot: '/library',
+    folderFormat: '{author}/{title}',
+    fileFormat: '{author} - {title}',
+    folderMove: { from: 'Author/Old One', to: 'Author/Book One' },
+    fileRenames: [],
+  });
   (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 15 });
   (api.getBookStats as ReturnType<typeof vi.fn>).mockResolvedValue(makeStats(overrides?.missingCount ?? 0));
   (api.rescanLibrary as ReturnType<typeof vi.fn>).mockResolvedValue({ scanned: 0, missing: 0, restored: 0 });
@@ -92,8 +115,8 @@ describe('BulkOperationsSection', () => {
     expect(screen.queryByRole('button', { name: /convert all to m4b/i })).not.toBeInTheDocument();
   });
 
-  // Confirmation modal — counts
-  it('clicking Rename All Books fetches count then opens confirmation modal with both mismatched and alreadyMatching counts', async () => {
+  // Confirmation modal — rename preview
+  it('clicking Rename All Books opens the preview modal showing the folder-format summary with counts', async () => {
     const user = userEvent.setup({});
     setup();
     const btn = screen.getByRole('button', { name: /rename all books/i });
@@ -101,8 +124,10 @@ describe('BulkOperationsSection', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
-    expect(screen.getByText(/Rename 5 books to match the current folder format\? 10 books already match and will be skipped\./i)).toBeInTheDocument();
-    expect(api.getBulkRenameCount).toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Rename 5 books to match the current folder format\./i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/10 books already match and will be skipped\./i)).toBeInTheDocument();
+    expect(api.getBulkRenamePreview).toHaveBeenCalled();
   });
 
   it('clicking Re-tag All Books fetches count then opens confirmation modal with count text', async () => {
@@ -132,7 +157,8 @@ describe('BulkOperationsSection', () => {
     setup();
     await user.click(screen.getByRole('button', { name: /rename all books/i }));
     const dialog = await screen.findByRole('dialog');
-    await user.click(within(dialog).getByRole('button', { name: /rename all/i }));
+    await within(dialog).findByText(/Rename 5 books to match the current folder format\./i);
+    await user.click(within(dialog).getByRole('button', { name: /^rename all$/i }));
     expect(mockStartJob).toHaveBeenCalledWith('rename');
   });
 
@@ -208,16 +234,15 @@ describe('BulkOperationsSection', () => {
     expect(screen.getByText(/2 failure/i)).toBeInTheDocument();
   });
 
-  // AC1: count fetch error handling (#141)
-  it('shows toast.error and re-enables button when rename count API rejects', async () => {
+  // Rename preview error handling — surfaced inline in the modal, not as a toast (#1406)
+  it('renders the rename preview error inline in the modal when the preview API rejects', async () => {
     const user = userEvent.setup({});
     setup();
-    (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+    (api.getBulkRenamePreview as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
     await user.click(screen.getByRole('button', { name: /rename all books/i }));
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Network error');
-    });
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Network error');
+    expect(toast.error).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 
@@ -232,15 +257,14 @@ describe('BulkOperationsSection', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('shows stringified error toast when rename count API rejects a non-Error value', async () => {
+  it('renders a stringified non-Error rename preview rejection inline in the modal', async () => {
     const user = userEvent.setup({});
     setup();
-    (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockRejectedValue('string-rejection');
+    (api.getBulkRenamePreview as ReturnType<typeof vi.fn>).mockRejectedValue('string-rejection');
     await user.click(screen.getByRole('button', { name: /rename all books/i }));
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('string-rejection');
-    });
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('string-rejection');
+    expect(toast.error).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 

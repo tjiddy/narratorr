@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, RenameConflictError, type RenamePreviewResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -6,6 +5,12 @@ import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/icons';
 import { getErrorMessage } from '@/lib/error-message.js';
+import {
+  PreviewBanner,
+  FolderMoveSection,
+  FileRenamesSection,
+  ConflictBanner,
+} from '@/components/rename-preview/parts';
 
 interface RenamePreviewModalProps {
   bookId: number;
@@ -98,7 +103,11 @@ export function RenamePreviewModal({ bookId, isOpen, onClose, onConfirm }: Renam
 function PreviewBody({ plan, isEmpty }: { plan: RenamePreviewResult; isEmpty: boolean }) {
   return (
     <div className="space-y-5">
-      <PreviewBanner plan={plan} />
+      <PreviewBanner
+        libraryRoot={plan.libraryRoot}
+        folderFormat={plan.folderFormat}
+        fileFormat={plan.fileFormat}
+      />
       {plan.folderMove && <FolderMoveSection from={plan.folderMove.from} to={plan.folderMove.to} />}
       {plan.fileRenames.length > 0 && <FileRenamesSection renames={plan.fileRenames} />}
       {isEmpty && (
@@ -106,88 +115,6 @@ function PreviewBody({ plan, isEmpty }: { plan: RenamePreviewResult; isEmpty: bo
           Files already match your template — nothing to rename.
         </p>
       )}
-    </div>
-  );
-}
-
-function PreviewBanner({ plan }: { plan: RenamePreviewResult }) {
-  return (
-    <div className="text-xs space-y-1 text-muted-foreground bg-muted/40 rounded-lg px-4 py-3">
-      <p>
-        <span className="font-medium text-foreground">All paths are relative to:</span>{' '}
-        <code className="font-mono">{plan.libraryRoot}</code>
-      </p>
-      <p>
-        <span className="font-medium text-foreground">Folder pattern:</span>{' '}
-        <code className="font-mono">{plan.folderFormat}</code>
-      </p>
-      <p>
-        <span className="font-medium text-foreground">File pattern:</span>{' '}
-        <code className="font-mono">{plan.fileFormat}</code>
-      </p>
-    </div>
-  );
-}
-
-function FolderMoveSection({ from, to }: { from: string; to: string }) {
-  return (
-    <section aria-labelledby="rename-preview-folder-heading">
-      <h4 id="rename-preview-folder-heading" className="text-sm font-semibold mb-2">
-        Folder
-      </h4>
-      <DiffRow sign="−" text={from} tone="destructive" />
-      <DiffRow sign="+" text={to} tone="success" />
-    </section>
-  );
-}
-
-function FileRenamesSection({ renames }: { renames: Array<{ from: string; to: string }> }) {
-  return (
-    <section aria-labelledby="rename-preview-files-heading">
-      <h4 id="rename-preview-files-heading" className="text-sm font-semibold mb-2">
-        Files
-      </h4>
-      <ul className="space-y-3">
-        {renames.map((r, i) => (
-          <li key={`${r.from}-${i}`}>
-            <DiffRow sign="−" text={r.from} tone="destructive" />
-            <DiffRow sign="+" text={r.to} tone="success" />
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function DiffRow({ sign, text, tone }: { sign: string; text: string; tone: 'destructive' | 'success' }) {
-  const toneClass = tone === 'destructive'
-    ? 'text-destructive bg-destructive/5'
-    : 'text-success bg-success/5';
-  return (
-    <div className={`flex gap-2 items-start font-mono text-sm rounded px-2 py-1 ${toneClass}`}>
-      <span aria-hidden="true" className="font-semibold select-none">{sign}</span>
-      <span className="break-all">{text}</span>
-    </div>
-  );
-}
-
-function ConflictBanner({ conflict }: { conflict: RenameConflictError }) {
-  return (
-    <div
-      role="alert"
-      className="text-sm bg-destructive/10 text-destructive rounded-lg px-4 py-3 space-y-1"
-    >
-      <p className="font-semibold">Target folder is already in use.</p>
-      <p>
-        The target folder belongs to{' '}
-        <Link
-          to={`/books/${conflict.conflictingBook.id}`}
-          className="underline hover:no-underline"
-        >
-          {conflict.conflictingBook.title}
-        </Link>
-        . Fix the conflict before renaming.
-      </p>
     </div>
   );
 }

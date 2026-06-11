@@ -1,5 +1,5 @@
 import { mkdir, rename, cp, rm, stat } from 'node:fs/promises';
-import { dirname, normalize, resolve, relative } from 'node:path';
+import { dirname, normalize, resolve } from 'node:path';
 import { and, eq, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -7,10 +7,10 @@ import { books } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { buildTargetPath } from '../utils/import-helpers.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
+import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -67,16 +67,14 @@ export class RenameService {
     const namingOptions = toNamingOptions(librarySettings);
 
     const authorName = book.authors?.[0]?.name ?? null;
-    const targetPath = buildTargetPath(
-      librarySettings.path,
-      librarySettings.folderFormat,
-      book,
+    const { targetPath, changed: pathChanged } = computeFolderTarget(
+      { ...book, path: book.path },
       authorName,
+      librarySettings,
       namingOptions,
     );
 
     const oldPath = book.path;
-    const pathChanged = normalize(resolve(oldPath)) !== normalize(resolve(targetPath));
 
     if (pathChanged) {
       await this.checkConflict(targetPath, bookId);
@@ -130,16 +128,14 @@ export class RenameService {
 
     // Build the target path from current metadata
     const authorName = book.authors?.[0]?.name ?? null;
-    const targetPath = buildTargetPath(
-      librarySettings.path,
-      librarySettings.folderFormat,
-      book,
+    const { targetPath, changed: pathChanged } = computeFolderTarget(
+      { ...book, path: book.path },
       authorName,
+      librarySettings,
       namingOptions,
     );
 
     const oldPath = book.path;
-    const pathChanged = normalize(resolve(oldPath)) !== normalize(resolve(targetPath));
 
     // Check for conflicts: another book at the target path
     if (pathChanged) {
@@ -262,15 +258,4 @@ export class RenameError extends Error {
     super(message);
     this.name = 'RenameError';
   }
-}
-
-/**
- * Convert an absolute folder path to its library-root-relative form, using
- * POSIX separators for parity with how paths are stored and rendered elsewhere.
- * Falls back to the original path if it's not actually inside the library root.
- */
-function toLibraryRelative(absPath: string, libraryRoot: string): string {
-  const rel = relative(normalize(resolve(libraryRoot)), normalize(resolve(absPath)));
-  if (!rel || rel.startsWith('..')) return absPath;
-  return rel.split('\\').join('/');
 }

@@ -5,6 +5,14 @@ import { BulkOpError } from '../services/bulk-operation.service.js';
 function makeBulkService(overrides?: Record<string, unknown>) {
   return {
     countRenameEligible: vi.fn().mockResolvedValue({ mismatched: 3, alreadyMatching: 2 }),
+    previewRenameEligible: vi.fn().mockResolvedValue({
+      libraryRoot: '/library',
+      folderFormat: '{author}/{title}',
+      fileFormat: '',
+      items: [{ bookId: 2, title: 'Book2', from: 'Author/OldName', to: 'Author/Book2' }],
+      mismatchedTotal: 3,
+      alreadyMatching: 2,
+    }),
     countRetagEligible: vi.fn().mockResolvedValue({ total: 5 }),
     getActiveJob: vi.fn().mockReturnValue(null),
     startRenameJob: vi.fn().mockResolvedValue('job-uuid-1'),
@@ -37,6 +45,41 @@ describe('GET /api/books/bulk/rename/count', () => {
     const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/count' });
     expect(resp.statusCode).toBe(200);
     expect(resp.json()).toEqual({ mismatched: 0, alreadyMatching: 0 });
+  });
+});
+
+describe('GET /api/books/bulk/rename/preview', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('returns 200 with the capped mismatch list and totals', async () => {
+    const services = createMockServices({ bulkOperation: makeBulkService() });
+    const app = await createTestApp(services);
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/preview' });
+    expect(resp.statusCode).toBe(200);
+    expect(resp.json()).toEqual({
+      libraryRoot: '/library',
+      folderFormat: '{author}/{title}',
+      fileFormat: '',
+      items: [{ bookId: 2, title: 'Book2', from: 'Author/OldName', to: 'Author/Book2' }],
+      mismatchedTotal: 3,
+      alreadyMatching: 2,
+    });
+  });
+
+  it('returns an empty list and zero totals when nothing is mismatched', async () => {
+    const bulkOperation = makeBulkService({
+      previewRenameEligible: vi.fn().mockResolvedValue({
+        libraryRoot: '/library', folderFormat: '{author}/{title}', fileFormat: '',
+        items: [], mismatchedTotal: 0, alreadyMatching: 12,
+      }),
+    });
+    const services = createMockServices({ bulkOperation });
+    const app = await createTestApp(services);
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/preview' });
+    expect(resp.statusCode).toBe(200);
+    expect(resp.json()).toMatchObject({ items: [], mismatchedTotal: 0, alreadyMatching: 12 });
   });
 });
 

@@ -16,9 +16,28 @@ export interface RenameCount {
   alreadyMatching: number;
 }
 
+export interface BulkRenamePreviewItem {
+  bookId: number;
+  title: string;
+  from: string;
+  to: string;
+}
+
+export interface BulkRenamePreview {
+  libraryRoot: string;
+  folderFormat: string;
+  fileFormat: string;
+  items: BulkRenamePreviewItem[];
+  mismatchedTotal: number;
+  alreadyMatching: number;
+}
+
 export const bulkOperationsApi = {
   getBulkRenameCount: () =>
     fetchApi<RenameCount>('/books/bulk/rename/count'),
+
+  getBulkRenamePreview: () =>
+    fetchApi<BulkRenamePreview>('/books/bulk/rename/preview'),
 
   getBulkRetagCount: () =>
     fetchApi<{ total: number }>('/books/bulk/retag/count'),
