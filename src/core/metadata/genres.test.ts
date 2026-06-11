@@ -334,6 +334,34 @@ describe('findUnmatchedGenres', () => {
     expect(findUnmatchedGenres([dropped])).toEqual([]);
   });
 
+  describe("context-gated 'historical' tracking defense (#1383, #1405)", () => {
+    it('does not track gated historical alongside History (AC1)', () => {
+      // 'historical' is dropped by the new guard; 'history' is dropped as a
+      // known GENRE_CHILDREN member — so the gated pair tracks nothing.
+      expect(findUnmatchedGenres(normalizeGenres(['Historical', 'History']))).toEqual([]);
+    });
+
+    it('excludes the bare historical token, case-insensitively', () => {
+      expect(findUnmatchedGenres(['Historical'])).toEqual([]);
+      expect(findUnmatchedGenres(['HISTORICAL'])).toEqual([]);
+    });
+
+    it('keeps the two non-child markers tracked by design (AC3)', () => {
+      // Biographies & Memoirs and Computers & Technology are load-bearing gate
+      // inputs but remain tracked — real Audible categories carrying signal.
+      expect(findUnmatchedGenres(['Biographies & Memoirs'])).toEqual(['Biographies & Memoirs']);
+      expect(findUnmatchedGenres(['Computers & Technology'])).toEqual(['Computers & Technology']);
+      // History is already an untracked known child, NOT a result of this change.
+      expect(findUnmatchedGenres(['History'])).toEqual([]);
+    });
+
+    it('leaves the remap path unchanged — tracking-only defense (AC2)', () => {
+      // Bare-fiction case still maps (no non-fiction marker present).
+      expect(normalizeGenres(['Historical'])).toEqual(['Historical Fiction']);
+      expect(normalizeGenres(['Historical', 'Fantasy'])).toContain('Historical Fiction');
+    });
+  });
+
   it('reports no unmatched genres across the full harvested AC corpus (#1322)', () => {
     const raw = [
       'Science Fiction & Fantasy', 'Space Opera',
