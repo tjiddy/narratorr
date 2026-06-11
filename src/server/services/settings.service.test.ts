@@ -1741,4 +1741,21 @@ describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
 
     expect(decryptWarn()).toHaveLength(0);
   });
+
+  // getAll() decrypts every secret category through its own decryptFields call; the
+  // logger must thread there too (the `:105` caller, distinct from get()'s `:83`).
+  it('getAll() warns for the network category when its stored proxyUrl fails to decrypt', async () => {
+    const blob = await corruptBlob('http://user:pass@proxy:8080');
+    // getAll() does an unfiltered select over all settings rows.
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: blob } }]));
+
+    await service.getAll();
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'network', failedFields: ['proxyUrl'] });
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain('proxy:8080');
+    expect(serialized).not.toContain('$ENC$');
+  });
 });

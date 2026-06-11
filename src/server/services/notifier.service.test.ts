@@ -581,6 +581,22 @@ describe('NotifierService', () => {
       const row = await service.getById(1);
       expect(row?.settings).toMatchObject({ botToken: '123:abc', chatId: '1' });
     });
+
+    // #1404 — decryptRow threads the injected service logger into decryptFields so a
+    // corrupt/wrong-key secret surfaces a diagnostic. Asserts the warn reaches THIS
+    // caller's injected logger (would fail if `this.log` were dropped from the call).
+    it('getById threads this.log: corrupt url warns with entity/failedFields, passthrough preserved', async () => {
+      const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+      db.select.mockReturnValue(mockDbChain([createMockDbNotifier({ type: 'webhook', settings: { url: CORRUPT, method: 'POST' } })]));
+
+      const row = await service.getById(1);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        { entity: 'notifier', failedFields: ['url'] },
+        expect.stringContaining('secret.key'),
+      );
+      expect((row!.settings as Record<string, unknown>).url).toBe(CORRUPT);
+    });
   });
 
   describe('#731 encryption — update sentinel preservation (AC9)', () => {
