@@ -2,13 +2,25 @@ import { useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { type TestResult } from '@/lib/api';
+import { ApiError, type TestResult } from '@/lib/api';
 import { useConnectionTest } from '@/hooks/useConnectionTest';
 
 function parseEditParam(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Append the server's error message to a generic toast prefix when the rejection
+ * is an `ApiError` (#1404). `ApiError.message` is always populated (server
+ * `body.error`/`body.message`, falling back to `HTTP <status>`) and carries the
+ * same validation strings the form shows inline — e.g. the strict-schema
+ * "Unrecognized key(s)" text — so surfacing it turns a mystery into a fix. Any
+ * non-`ApiError` rejection (network failure / plain Error) keeps the generic toast.
+ */
+function withApiMessage(prefix: string, error: unknown): string {
+  return error instanceof ApiError ? `${prefix}: ${error.message}` : prefix;
 }
 
 export interface CrudSettingsConfig<TItem extends { id: number; name: string }, TFormData> {
@@ -71,8 +83,8 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
       setShowForm(false);
       toast.success(`${entityName} added successfully`);
     },
-    onError: () => {
-      toast.error(`Failed to add ${entityName.toLowerCase()}`);
+    onError: (error) => {
+      toast.error(withApiMessage(`Failed to add ${entityName.toLowerCase()}`, error));
     },
   });
 
@@ -84,7 +96,7 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
       stripEditParam();
       toast.success(`${entityName} updated`);
     },
-    onError: (_error, variables) => {
+    onError: (error, variables) => {
       // If the URL was stripped while the save was pending (e.g. browser Back),
       // restore ?edit=<id> so the URL→state effect doesn't close the modal once
       // isSavePending flips to false. The user is supposed to recover and retry.
@@ -93,7 +105,7 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
         next.set('edit', String(variables.id));
         return next;
       }, { replace: true });
-      toast.error(`Failed to update ${entityName.toLowerCase()}`);
+      toast.error(withApiMessage(`Failed to update ${entityName.toLowerCase()}`, error));
     },
   });
 
@@ -132,8 +144,8 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
       queryClient.invalidateQueries({ queryKey });
       toast.success(`${entityName} removed successfully`);
     },
-    onError: () => {
-      toast.error(`Failed to delete ${entityName.toLowerCase()}`);
+    onError: (error) => {
+      toast.error(withApiMessage(`Failed to delete ${entityName.toLowerCase()}`, error));
     },
   });
 

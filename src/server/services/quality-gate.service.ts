@@ -249,7 +249,16 @@ export class QualityGateService {
     // — the activity route omits the qualityGate field and the card takes its no-data
     // branch, rather than leaking a partial object that crashes downstream readers.
     const parsed = qualityGateReasonSchema.safeParse(eventResults[0]!.reason);
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) {
+      // Zod issue paths exclude input values (#1404) — log paths only, never the
+      // reason field values, so a malformed/legacy row is diagnosable.
+      this.log.warn(
+        { downloadId, issuePaths: parsed.error.issues.map((i) => i.path.join('.')) },
+        'Malformed quality-gate reason — degrading to no-data',
+      );
+      return null;
+    }
+    return parsed.data;
   }
 
   /**
@@ -315,6 +324,14 @@ export class QualityGateService {
       if (downloadId === null || !result.has(downloadId) || processed.has(downloadId)) continue;
       processed.add(downloadId);
       const parsed = qualityGateReasonSchema.safeParse(event.reason);
+      if (!parsed.success) {
+        // Zod issue paths exclude input values (#1404) — log paths only, never
+        // the reason field values.
+        this.log.warn(
+          { downloadId, issuePaths: parsed.error.issues.map((i) => i.path.join('.')) },
+          'Malformed quality-gate reason — degrading to no-data',
+        );
+      }
       result.set(downloadId, parsed.success ? parsed.data : null);
     }
 

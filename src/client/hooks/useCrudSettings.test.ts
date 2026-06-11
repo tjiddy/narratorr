@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import React from 'react';
 import { useCrudSettings } from './useCrudSettings';
-import type { TestResult } from '@/lib/api';
+import { ApiError, type TestResult } from '@/lib/api';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -218,6 +218,69 @@ describe('useCrudSettings', () => {
       });
 
       expect(toast.error).toHaveBeenCalledWith('Failed to delete indexer');
+    });
+  });
+
+  // #1404 — surface the server's error message on ApiError rejections so a
+  // strict-schema 400 ("Unrecognized key(s)…") is actionable instead of a generic
+  // "Failed to …" toast. Non-ApiError rejections (network/plain Error) keep generic.
+  describe('#1404 ApiError message surfacing', () => {
+    const unrecognizedKey = "Unrecognized key(s) in object: 'foo'";
+
+    it('create: appends the ApiError server message to the toast', async () => {
+      createFn.mockRejectedValue(new ApiError(400, { error: unrecognizedKey }));
+      const { result } = renderCrudHook();
+
+      await act(async () => {
+        result.current.mutations.createMutation.mutate({ name: 'Bad', url: 'https://example.com' });
+      });
+
+      expect(toast.error).toHaveBeenCalledWith(`Failed to add indexer: ${unrecognizedKey}`);
+    });
+
+    it('update: appends the ApiError server message to the toast', async () => {
+      updateFn.mockRejectedValue(new ApiError(400, { error: unrecognizedKey }));
+      const { result } = renderCrudHook();
+
+      await act(async () => {
+        result.current.mutations.updateMutation.mutate({ id: 1, data: { name: 'Bad', url: 'https://example.com' } });
+      });
+
+      expect(toast.error).toHaveBeenCalledWith(`Failed to update indexer: ${unrecognizedKey}`);
+    });
+
+    it('delete: appends the ApiError server message to the toast', async () => {
+      deleteFn.mockRejectedValue(new ApiError(409, { error: 'In use by an import list' }));
+      const { result } = renderCrudHook();
+
+      await act(async () => {
+        result.current.mutations.deleteMutation.mutate(1);
+      });
+
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete indexer: In use by an import list');
+    });
+
+    it('appends the HTTP <status> fallback when the ApiError body carried no message', async () => {
+      createFn.mockRejectedValue(new ApiError(500, {}));
+      const { result } = renderCrudHook();
+
+      await act(async () => {
+        result.current.mutations.createMutation.mutate({ name: 'Bad', url: 'https://example.com' });
+      });
+
+      expect(toast.error).toHaveBeenCalledWith('Failed to add indexer: HTTP 500');
+    });
+
+    it('keeps the generic toast (no trailing ": ") for a non-ApiError rejection', async () => {
+      createFn.mockRejectedValue(new Error('boom'));
+      const { result } = renderCrudHook();
+
+      await act(async () => {
+        result.current.mutations.createMutation.mutate({ name: 'Bad', url: 'https://example.com' });
+      });
+
+      expect(toast.error).toHaveBeenCalledWith('Failed to add indexer');
+      expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('boom'));
     });
   });
 

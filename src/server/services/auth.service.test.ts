@@ -650,3 +650,68 @@ describe('AuthService', () => {
     });
   });
 });
+
+// #1404 — AuthService threads `this.log` into decryptFields so a corrupt/wrong-key
+// auth secret (sessionSecret / apiKey) surfaces a diagnostic instead of silently
+// breaking downstream auth.
+describe('AuthService decrypt-failure diagnostic (#1404)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let service: AuthService;
+
+  async function corruptBlob(plaintext: string): Promise<string> {
+    const { encrypt } = await import('../utils/secret-codec.js');
+    const valid = encrypt(plaintext, TEST_KEY);
+    const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
+    payload[13] = payload[13]! ^ 0xff;
+    return '$ENC$' + payload.toString('base64');
+  }
+
+  function decryptWarn(): Array<[unknown, unknown]> {
+    return (log.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => typeof call[1] === 'string' && call[1].includes('secret.key'),
+    ) as Array<[unknown, unknown]>;
+  }
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    log = createMockLogger();
+    service = new AuthService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('warns naming the auth entity and the field(s) that fail to decrypt on read', async () => {
+    const apiKey = await corruptBlob('plaintext-api-key');
+    const sessionSecret = await corruptBlob('plaintext-session-secret');
+    db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: { mode: 'none', apiKey, sessionSecret, localBypass: false } }]));
+
+    await service.validateApiKey('anything');
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'auth', failedFields: ['apiKey', 'sessionSecret'] });
+    // Negative-leak: no plaintext or raw blob in the warn args.
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain('plaintext-api-key');
+    expect(serialized).not.toContain('plaintext-session-secret');
+    expect(serialized).not.toContain('$ENC$');
+  });
+
+  it('does not emit the decrypt warn when auth secrets decrypt cleanly', async () => {
+    const { encrypt } = await import('../utils/secret-codec.js');
+    const authConfig = {
+      mode: 'none',
+      apiKey: encrypt('clean-key', TEST_KEY),
+      sessionSecret: encrypt('clean-secret', TEST_KEY),
+      localBypass: false,
+    };
+    db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+
+    expect(await service.validateApiKey('clean-key')).toBe(true);
+    expect(decryptWarn()).toHaveLength(0);
+  });
+});

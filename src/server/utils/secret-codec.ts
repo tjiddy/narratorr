@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { indexerSettingsSchemas } from '../../shared/schemas/indexer.js';
 import { downloadClientSettingsSchemas } from '../../shared/schemas/download-client.js';
@@ -224,9 +225,10 @@ export function encryptFields(
 }
 
 export function decryptFields(
-  _entity: SecretEntity,
+  entity: SecretEntity,
   settings: Record<string, unknown>,
   key: Buffer,
+  logger?: FastifyBaseLogger,
 ): Record<string, unknown> {
   // Opportunistic decrypt: decrypt ANY `$ENC$`-prefixed string value regardless
   // of SECRET_FIELDS membership. This rollback-proofs the read path (#1357) — a
@@ -240,14 +242,27 @@ export function decryptFields(
   // mismatch) pass through unchanged via try/catch — read-path callers
   // (notifier.service `decryptRow` et al.) invoke this without their own
   // try/catch, so a corrupt blob must never crash a route handler.
+  //
+  // Diagnostic (#1404): a silent passthrough is correct but undiagnosable — if
+  // `secret.key` is lost/regenerated (volume wipe, manual deletion), every
+  // stored secret stops decrypting and the only symptom is mysterious downstream
+  // auth failures with nothing in the logs. Collect the failed field NAMES (never
+  // values) and emit one `warn` per call so the root cause is greppable. Logging
+  // is owned here — the single point that touches plaintext — so the
+  // "never log values" guarantee holds uniformly across all callers.
+  const failedFields: string[] = [];
   for (const [field, value] of Object.entries(settings)) {
     if (typeof value === 'string' && isEncrypted(value)) {
       try {
         settings[field] = decrypt(value, key);
       } catch {
         // Passthrough: leave the original `$ENC$` value untouched on any failure.
+        failedFields.push(field);
       }
     }
+  }
+  if (failedFields.length > 0) {
+    logger?.warn({ entity, failedFields }, 'Failed to decrypt stored secret fields — check secret.key');
   }
   return settings;
 }

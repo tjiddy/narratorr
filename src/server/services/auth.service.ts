@@ -114,7 +114,7 @@ export class AuthService {
       throw new Error('Auth settings not initialized — call initialize() first');
     }
     const raw = result[0]!.value as Record<string, unknown>;
-    return authConfigSchema.parse(decryptFields('auth', { ...raw }, getKey()));
+    return authConfigSchema.parse(decryptFields('auth', { ...raw }, getKey(), this.log));
   }
 
   private async setAuthConfig(config: AuthConfig): Promise<void> {
