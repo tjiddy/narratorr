@@ -60,6 +60,30 @@ describe('backupsApi', () => {
     });
   });
 
+  describe('deleteBackup', () => {
+    it('calls fetchApi with encoded filename and DELETE method (single-encode)', async () => {
+      vi.mocked(fetchApi).mockResolvedValue({ success: true });
+
+      await backupsApi.deleteBackup('file with spaces.zip');
+
+      expect(fetchApi).toHaveBeenCalledWith(
+        '/system/backups/file%20with%20spaces.zip',
+        { method: 'DELETE' },
+      );
+    });
+
+    it('encodes special characters in filename', async () => {
+      vi.mocked(fetchApi).mockResolvedValue({ success: true });
+
+      await backupsApi.deleteBackup('backup#1?v=2.zip');
+
+      expect(fetchApi).toHaveBeenCalledWith(
+        '/system/backups/backup%231%3Fv%3D2.zip',
+        { method: 'DELETE' },
+      );
+    });
+  });
+
   describe('uploadRestore', () => {
     it('calls fetchMultipart with /system/restore and FormData payload', async () => {
       const validationResult = { valid: true, details: {} };

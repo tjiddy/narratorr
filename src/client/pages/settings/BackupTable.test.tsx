@@ -22,28 +22,28 @@ const mockBackups: BackupMetadata[] = [
 describe('BackupTable', () => {
   it('renders loading spinner when isLoading is true', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} onRestore={vi.fn()} />,
+      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('renders empty state when backups array is empty', () => {
     renderWithProviders(
-      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
+      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders empty state when backups is undefined', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
+      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders backup rows with filename and size', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByText('narratorr-backup-20260101T000000000Z.zip')).toBeInTheDocument();
     expect(screen.getByText('narratorr-backup-20260102T000000000Z.zip')).toBeInTheDocument();
@@ -56,7 +56,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
 
     const downloadButton = screen.getByTitle('Download backup');
@@ -67,7 +67,7 @@ describe('BackupTable', () => {
 
   it('renders restore icon button per backup row alongside download', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
 
     const restoreButtons = screen.getAllByTitle('Restore backup');
@@ -81,7 +81,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} onDelete={vi.fn()} />,
     );
 
     const restoreButton = screen.getByTitle('Restore backup');
@@ -90,12 +90,37 @@ describe('BackupTable', () => {
     expect(onRestore).toHaveBeenCalledWith(mockBackups[0]);
   });
 
+  it('renders a Delete button per backup row with destructive hover styling', () => {
+    renderWithProviders(
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+    );
+
+    const deleteButtons = screen.getAllByTitle('Delete backup');
+    expect(deleteButtons).toHaveLength(2);
+    expect(deleteButtons[0]!.className).toContain('hover:text-destructive');
+    expect(deleteButtons[0]!.className).toContain('hover:bg-destructive/10');
+  });
+
+  it('calls onDelete with backup metadata when delete button is clicked', async () => {
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={onDelete} />,
+    );
+
+    const deleteButton = screen.getByTitle('Delete backup');
+    await user.click(deleteButton);
+
+    expect(onDelete).toHaveBeenCalledWith(mockBackups[0]);
+  });
+
   it('restore buttons remain enabled so user can click a different backup while one is validating', async () => {
     const onRestore = vi.fn();
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} />,
+      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} onDelete={vi.fn()} />,
     );
 
     const restoreButtons = screen.getAllByTitle('Restore backup');

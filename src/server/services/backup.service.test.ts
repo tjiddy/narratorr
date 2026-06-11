@@ -347,6 +347,61 @@ describe('BackupService', () => {
     });
   });
 
+  describe('deleteBackup', () => {
+    it('unlinks the joined backups-dir path and info-logs the deletion', async () => {
+      const filename = 'narratorr-backup-20260101T000000000Z.zip';
+      const backupsDir = path.join(configPath, 'backups');
+      await fs.mkdir(backupsDir, { recursive: true });
+      await fs.writeFile(path.join(backupsDir, filename), 'data');
+
+      const unlinkSpy = vi.spyOn(fs, 'unlink');
+      const mockLog = createMockLog() as unknown as { info: ReturnType<typeof vi.fn>; [k: string]: unknown };
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never);
+
+      await service.deleteBackup(filename);
+
+      expect(unlinkSpy).toHaveBeenCalledWith(path.join(backupsDir, filename));
+      expect(mockLog.info).toHaveBeenCalledWith({ filename }, 'Backup deleted');
+      const remaining = await fs.readdir(backupsDir);
+      expect(remaining).not.toContain(filename);
+
+      unlinkSpy.mockRestore();
+    });
+
+    it('throws without calling fs.unlink for a path-traversal / invalid filename', async () => {
+      const unlinkSpy = vi.spyOn(fs, 'unlink');
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+
+      await expect(service.deleteBackup('../etc/passwd')).rejects.toThrow('Invalid backup filename');
+      await expect(service.deleteBackup('path\\narratorr-backup-test.zip')).rejects.toThrow('Invalid backup filename');
+      await expect(service.deleteBackup('other-file.zip')).rejects.toThrow('Invalid backup filename');
+      expect(unlinkSpy).not.toHaveBeenCalled();
+
+      unlinkSpy.mockRestore();
+    });
+
+    it('tolerates an already-missing file (ENOENT) without surfacing a failure', async () => {
+      const backupsDir = path.join(configPath, 'backups');
+      await fs.mkdir(backupsDir, { recursive: true });
+
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+
+      // Valid-format filename that was never written — unlink rejects with ENOENT, tolerated like the pruner.
+      await expect(service.deleteBackup('narratorr-backup-20260101T000000000Z.zip')).resolves.toBeUndefined();
+    });
+
+    it('re-throws non-ENOENT unlink errors', async () => {
+      const unlinkSpy = vi.spyOn(fs, 'unlink').mockRejectedValue(
+        Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+      );
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+
+      await expect(service.deleteBackup('narratorr-backup-20260101T000000000Z.zip')).rejects.toThrow('EACCES');
+
+      unlinkSpy.mockRestore();
+    });
+  });
+
   describe('validateRestore', () => {
     it('falls back to appMigrationCount=0 and logs warning when app DB query fails', async () => {
       // First call: getAppMigrationCount — app DB query fails
