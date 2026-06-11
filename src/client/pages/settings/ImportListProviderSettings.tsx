@@ -33,8 +33,8 @@ function AbsSettings({ settings, onChange, editingId }: SettingsProps) {
       });
       setLibraries(result.libraries);
       if (result.libraries.length === 0) setFetchError('No libraries found');
-    } catch (e) {
-      setFetchError(e instanceof ApiError ? e.message : 'Failed to fetch libraries');
+    } catch (error: unknown) {
+      setFetchError(error instanceof ApiError ? error.message : 'Failed to fetch libraries');
     } finally {
       setFetching(false);
     }
