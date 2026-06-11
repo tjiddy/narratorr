@@ -44,6 +44,24 @@ function RestoreModal({ isOpen, restoreInfo, onConfirm, onClose }: {
   );
 }
 
+function DeleteBackupModal({ target, onConfirm, onCancel }: {
+  target: BackupMetadata | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <ConfirmModal
+      isOpen={target !== null}
+      title="Delete Backup"
+      message={`Delete "${target?.filename}"? This permanently removes the backup file and cannot be undone.`}
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
+  );
+}
+
 export function SystemSettings() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,22 +137,17 @@ export function SystemSettings() {
       setRestoreConfirmOpen(false);
       setRestoreInfo(null);
     },
-    onError: (err) => {
-      toast.error(getErrorMessage(err));
-    },
+    onError: (err) => toast.error(getErrorMessage(err)),
   });
 
   const [deleteTarget, setDeleteTarget] = useState<BackupMetadata | null>(null);
   const deleteMutation = useMutation({
-    // Pass the raw filename — backupsApi.deleteBackup owns the encoding boundary.
-    mutationFn: (filename: string) => api.deleteBackup(filename),
+    mutationFn: (filename: string) => api.deleteBackup(filename), // raw filename; wrapper encodes
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.backups() });
       toast.success('Backup deleted');
     },
-    onError: (err) => {
-      toast.error(getErrorMessage(err));
-    },
+    onError: (err) => toast.error(getErrorMessage(err)),
   });
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -149,10 +162,6 @@ export function SystemSettings() {
   function handleRestore(backup: BackupMetadata) {
     setPendingBackupName(backup.filename);
     restoreMutation.mutate(backup.filename);
-  }
-
-  function handleDelete(backup: BackupMetadata) {
-    setDeleteTarget(backup);
   }
 
   function handleDownload(backup: BackupMetadata) {
@@ -197,7 +206,7 @@ export function SystemSettings() {
           <input ref={fileInputRef} type="file" accept=".zip" onChange={handleFileSelect} className="hidden" />
         </div>
 
-        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} onDelete={handleDelete} />
+        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} onDelete={setDeleteTarget} />
       </SettingsSection>
 
       <SystemInfo />
@@ -213,12 +222,8 @@ export function SystemSettings() {
         onClose={() => { setRestoreConfirmOpen(false); setRestoreInfo(null); }}
       />
 
-      <ConfirmModal
-        isOpen={deleteTarget !== null}
-        title="Delete Backup"
-        message={`Delete "${deleteTarget?.filename}"? This permanently removes the backup file and cannot be undone.`}
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
+      <DeleteBackupModal
+        target={deleteTarget}
         onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.filename); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
