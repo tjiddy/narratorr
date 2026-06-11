@@ -180,6 +180,141 @@ describe('BulkOperationService — countRenameEligible', () => {
   });
 });
 
+describe('BulkOperationService — previewRenameEligible', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/OldName', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('returns library-relative from→to rows (from !== to) plus totals for inside-root books', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // mismatched
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(1);
+    expect(result.alreadyMatching).toBe(1);
+    expect(result.items).toEqual([
+      { bookId: 2, title: 'Book2', from: 'Author Name/OldName', to: 'Author Name/Book2' },
+    ]);
+    expect(result.items.every(i => i.from !== i.to)).toBe(true);
+    expect(result).toMatchObject({ libraryRoot: '/library', folderFormat: '{author}/{title}' });
+  });
+
+  it('uses the toLibraryRelative outside-root fallback: from is the original absolute path', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 5, path: '/elsewhere/Author Name/Book5', title: 'Book5' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.items[0]).toEqual({
+      bookId: 5, title: 'Book5', from: '/elsewhere/Author Name/Book5', to: 'Author Name/Book5',
+    });
+  });
+
+  it('caps items at the row cap while mismatchedTotal reflects the true total', async () => {
+    const { service, db } = createService();
+    const rows = Array.from({ length: 150 }, (_, i) =>
+      bookRow({ id: i + 1, path: `/library/Author Name/Old${i}`, title: `Book${i}` }));
+    db.select.mockReturnValueOnce(mockDbChain(rows));
+    const result = await service.previewRenameEligible();
+    expect(result.items).toHaveLength(100);
+    expect(result.mismatchedTotal).toBe(150);
+  });
+
+  it('skips rows with no path (mirrors count/job NO_PATH skip) rather than emitting a broken row', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: null, title: 'NoPath' }),
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(1);
+    expect(result.items.map(i => i.bookId)).toEqual([2]);
+  });
+
+  it('counts a backslash-stored path that resolves to the same target as alreadyMatching', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1'.split('/').join('\\'), title: 'Book1' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.alreadyMatching).toBe(1);
+    expect(result.mismatchedTotal).toBe(0);
+  });
+
+  it('deduplicates a multi-author book into exactly one preview row', async () => {
+    const { service, db } = createService();
+    // Same bookId joined to two authors yields two rows; preview must collapse to one.
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 7, path: '/library/Author Name/OldName', title: 'Book7', authorName: 'Author Name' }),
+      bookRow({ id: 7, path: '/library/Author Name/OldName', title: 'Book7', authorName: 'Second Author' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.bookId).toBe(7);
+  });
+
+  it('does not touch the filesystem (no readdir) for the bulk preview', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
+    ]));
+    await service.previewRenameEligible();
+    expect(readdir).not.toHaveBeenCalled();
+  });
+
+  // Narrator-token parity (AC #3/#7): preview, job, and the shared helper all render
+  // {narrator} from the ordered narrators supplied by the extended projection.
+  it('renders {narrator} folder formats from the ordered narrator projection', async () => {
+    const { service, db } = createService({
+      settingsOverrides: { library: { path: '/library', folderFormat: '{narrator}/{title}', fileFormat: '' } },
+    });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Michael Kramer/The Way of Kings', title: 'The Way of Kings' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([
+        { bookId: 1, name: 'Michael Kramer', position: 0 },
+        { bookId: 1, name: 'Kate Reading', position: 1 },
+      ]));
+    const result = await service.previewRenameEligible();
+    // Path already matches the narrator-based target → no rename needed. Without the
+    // narrator projection the target would render with an empty {narrator} and mismatch.
+    expect(result.alreadyMatching).toBe(1);
+    expect(result.mismatchedTotal).toBe(0);
+  });
+
+  it('preview mismatch decision agrees with the bulk job (shared-helper parity)', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ renameService });
+    const rows = [
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // mismatched
+    ];
+    // previewRenameEligible (2 selects: books, narrators) then the job (2 more).
+    db.select
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]))
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]));
+    const preview = await service.previewRenameEligible();
+    expect(preview.items.map(i => i.bookId)).toEqual([2]);
+
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    expect(renameService.renameBook).toHaveBeenCalledTimes(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(2);
+  });
+});
+
 // ===== Job lifecycle tests =====
 
 describe('BulkOperationService — job lifecycle', () => {

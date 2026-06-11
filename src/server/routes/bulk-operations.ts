@@ -17,6 +17,11 @@ export async function bulkOperationsRoutes(
     return bulkOperationService.countRenameEligible();
   });
 
+  // Folder-only rename preview — capped from→to mismatch list + true totals
+  app.get('/api/books/bulk/rename/preview', async () => {
+    return bulkOperationService.previewRenameEligible();
+  });
+
   app.get('/api/books/bulk/retag/count', async () => {
     return bulkOperationService.countRetagEligible();
   });

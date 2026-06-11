@@ -1,17 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { cp, mkdir, readdir, rename as fsRename, rm, unlink } from 'node:fs/promises';
-import { basename, join, normalize, resolve } from 'node:path';
+import { basename, join } from 'node:path';
 import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { books, bookAuthors, authors } from '../../db/schema.js';
+import { books, bookAuthors, authors, narrators, bookNarrators } from '../../db/schema.js';
 import type { RenameService } from './rename.service.js';
 import { RenameError } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import { RetagError } from './tagging.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
-import { buildTargetPath } from '../utils/import-helpers.js';
+import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
+import { BulkJob } from './bulk-job.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -33,6 +34,39 @@ export interface BulkJobStatus {
   completed: number;
   total: number;
   failures: number;
+}
+
+/** A single mismatched-folder row in the bulk rename preview (library-relative from→to). */
+export interface BulkRenamePreviewItem {
+  bookId: number;
+  title: string;
+  from: string;
+  to: string;
+}
+
+/** Capped mismatch list + global patterns + true totals for the Rename All preview. */
+export interface BulkRenamePreview {
+  libraryRoot: string;
+  folderFormat: string;
+  fileFormat: string;
+  items: BulkRenamePreviewItem[];
+  mismatchedTotal: number;
+  alreadyMatching: number;
+}
+
+/** Max preview rows returned by `previewRenameEligible` — totals still reflect the full count. */
+export const BULK_RENAME_PREVIEW_CAP = 100;
+
+/** Deduped, narrator-enriched book row used for folder-target computation across count/preview/job. */
+interface RenameEligibleRow {
+  id: number;
+  path: string | null;
+  title: string;
+  seriesName: string | null;
+  seriesPosition: number | null;
+  publishedDate: string | null;
+  authorName: string | null;
+  narrators: Array<{ name: string }>;
 }
 
 export class BulkOpError extends Error {
@@ -63,9 +97,63 @@ export class BulkOperationService {
   ) {}
 
   async countRenameEligible(): Promise<{ mismatched: number; alreadyMatching: number }> {
+    const { mismatchedTotal, alreadyMatching } = await this.previewRenameEligible();
+    return { mismatched: mismatchedTotal, alreadyMatching };
+  }
+
+  /**
+   * Folder-only rename preview: the capped from→to mismatch list plus true totals.
+   * Pure DB + string work — never touches the filesystem (per-book file diffs and
+   * conflict checks stay on the lazy `GET /api/books/:id/rename/preview` path).
+   */
+  async previewRenameEligible(cap = BULK_RENAME_PREVIEW_CAP): Promise<BulkRenamePreview> {
     const librarySettings = await this.settingsService.get('library');
     const namingOptions = toNamingOptions(librarySettings);
+    const rows = await this.loadRenameRows();
 
+    const items: BulkRenamePreviewItem[] = [];
+    let mismatchedTotal = 0;
+    let alreadyMatching = 0;
+    for (const row of rows) {
+      if (!row.path) continue; // mirror count/job NO_PATH skip — never a broken row
+      const { targetPath, changed } = computeFolderTarget(
+        { ...row, path: row.path },
+        row.authorName ?? null,
+        librarySettings,
+        namingOptions,
+      );
+      if (!changed) {
+        alreadyMatching++;
+        continue;
+      }
+      mismatchedTotal++;
+      if (items.length < cap) {
+        items.push({
+          bookId: row.id,
+          title: row.title,
+          from: toLibraryRelative(row.path, librarySettings.path),
+          to: toLibraryRelative(targetPath, librarySettings.path),
+        });
+      }
+    }
+
+    return {
+      libraryRoot: librarySettings.path,
+      folderFormat: librarySettings.folderFormat,
+      fileFormat: librarySettings.fileFormat,
+      items,
+      mismatchedTotal,
+      alreadyMatching,
+    };
+  }
+
+  /**
+   * Load imported books (deduped by bookId, first author) enriched with ordered
+   * narrators — the exact metadata `buildTargetPath` needs to render every allowed
+   * folder token. Shared by the rename count, preview, and job so all three compute
+   * targets from the same inputs as `planRename`.
+   */
+  private async loadRenameRows(): Promise<RenameEligibleRow[]> {
     const rows = await this.db
       .select({
         id: books.id,
@@ -91,26 +179,31 @@ export class BulkOperationService {
       }
     }
 
-    let mismatched = 0;
-    let alreadyMatching = 0;
-    for (const row of deduped) {
-      const targetPath = buildTargetPath(
-        librarySettings.path,
-        librarySettings.folderFormat,
-        row,
-        row.authorName ?? null,
-        namingOptions,
-      );
-      // Normalize both paths before comparing (handles backslash separators on Windows imports)
-      const normalizedCurrent = normalize(resolve(row.path!.split('\\').join('/')));
-      const normalizedTarget = normalize(resolve(targetPath));
-      if (normalizedCurrent !== normalizedTarget) {
-        mismatched++;
-      } else {
-        alreadyMatching++;
-      }
+    const narratorsByBook = await this.loadNarratorsByBook();
+    return deduped.map(row => ({ ...row, narrators: narratorsByBook.get(row.id) ?? [] }));
+  }
+
+  /** Ordered narrators (primary first) per imported book, keyed by bookId. */
+  private async loadNarratorsByBook(): Promise<Map<number, Array<{ name: string }>>> {
+    const rows = await this.db
+      .select({
+        bookId: bookNarrators.bookId,
+        name: narrators.name,
+        position: bookNarrators.position,
+      })
+      .from(bookNarrators)
+      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+      .innerJoin(books, eq(bookNarrators.bookId, books.id))
+      .where(and(eq(books.status, 'imported'), isNotNull(books.path)))
+      .orderBy(bookNarrators.bookId, bookNarrators.position);
+
+    const map = new Map<number, Array<{ name: string }>>();
+    for (const row of rows) {
+      const list = map.get(row.bookId) ?? [];
+      list.push({ name: row.name });
+      map.set(row.bookId, list);
     }
-    return { mismatched, alreadyMatching };
+    return map;
   }
 
   async countRetagEligible(): Promise<{ total: number }> {
@@ -130,34 +223,19 @@ export class BulkOperationService {
     }
     const id = randomUUID();
     const job = new BulkJob(id, 'rename', this.log, async (setTotal, tick) => {
-      // Fetch all imported books with paths + first author for path comparison
-      const rows = await this.db
-        .select({
-          id: books.id,
-          path: books.path,
-          title: books.title,
-          seriesName: books.seriesName,
-          seriesPosition: books.seriesPosition,
-          publishedDate: books.publishedDate,
-          authorName: authors.name,
-        })
-        .from(books)
-        .leftJoin(bookAuthors, eq(books.id, bookAuthors.bookId))
-        .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
-        .where(and(eq(books.status, 'imported'), isNotNull(books.path)));
-
-      // Deduplicate and find only mismatched books
-      const seen = new Set<number>();
+      // Same rows/dedup/target math as the count + preview — the shared helper keeps
+      // the job's eligibility decision in lockstep with what the modal previewed.
+      const rows = await this.loadRenameRows();
       const mismatchedIds: number[] = [];
       for (const row of rows) {
-        if (seen.has(row.id)) continue;
-        seen.add(row.id);
-        const targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, row, row.authorName ?? null, renameNamingOptions);
-        const normalizedCurrent = normalize(resolve(row.path!.split('\\').join('/')));
-        const normalizedTarget = normalize(resolve(targetPath));
-        if (normalizedCurrent !== normalizedTarget) {
-          mismatchedIds.push(row.id);
-        }
+        if (!row.path) continue;
+        const { changed } = computeFolderTarget(
+          { ...row, path: row.path },
+          row.authorName ?? null,
+          librarySettings,
+          renameNamingOptions,
+        );
+        if (changed) mismatchedIds.push(row.id);
       }
 
       setTotal(mismatchedIds.length);
@@ -374,63 +452,5 @@ export class BulkOperationService {
       this.jobs.delete(jobId);
       this.log.debug({ jobId }, 'Bulk job expired and removed');
     }, TTL_MS);
-  }
-}
-
-// ============ BulkJob ============
-
-type WorkFn = (setTotal: (n: number) => void, tick: (isFailure: boolean) => void) => Promise<void>;
-
-class BulkJob {
-  private _completed = 0;
-  private _failures = 0;
-  private _total = 0;
-  private _status: 'running' | 'completed' = 'running';
-  private startMs = Date.now();
-
-  constructor(
-    private id: string,
-    private type: BulkOpType,
-    private log: FastifyBaseLogger,
-    private work: WorkFn,
-    private onComplete: () => void,
-  ) {}
-
-  getStatus(): BulkJobStatus {
-    return {
-      jobId: this.id,
-      type: this.type,
-      status: this._status,
-      completed: this._completed,
-      total: this._total,
-      failures: this._failures,
-    };
-  }
-
-  start(): void {
-    this.run().catch(err => {
-      this.log.error({ error: serializeError(err), jobId: this.id }, 'Bulk job failed unexpectedly');
-      this._status = 'completed';
-      this.onComplete();
-    });
-  }
-
-  private async run(): Promise<void> {
-    try {
-      await this.work(
-        (n) => { this._total = n; },
-        (isFailure) => {
-          this._completed++;
-          if (isFailure) this._failures++;
-        },
-      );
-    } finally {
-      this._status = 'completed';
-      this.log.info(
-        { jobId: this.id, type: this.type, total: this._total, failures: this._failures, elapsedMs: Date.now() - this.startMs },
-        'Bulk job completed',
-      );
-      this.onComplete();
-    }
   }
 }

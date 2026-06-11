@@ -13,6 +13,7 @@ export const queryKeys = {
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
+  bulkRenamePreview: () => ['books', 'bulk', 'rename-preview'] as const,
   bookRetagPreview: (id: number, overrides?: RetagOverrides) =>
     overrides && (overrides.mode !== undefined || overrides.embedCover !== undefined)
       ? ['books', id, 'retag-preview', overrides] as const
