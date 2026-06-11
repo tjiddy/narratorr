@@ -2393,5 +2393,27 @@ describe('ImportQueueWorker', () => {
       // The default unit-test worker has no resolver — start() must not throw and must still drain.
       await expect(worker.start()).resolves.toBeUndefined();
     });
+
+    it('F2: a rejecting library-root resolver warns and still lets the worker start + drain', async () => {
+      const selectCount = trackingSelect();
+      const resolverError = new Error('settings read failed');
+      const w = new ImportQueueWorker(
+        inject<Db>(mockDb.db), log, undefined,
+        () => Promise.reject(resolverError),
+      );
+
+      // start() must not reject even though the resolver throws inside the sweep.
+      await expect(w.start()).resolves.toBeUndefined();
+
+      // The failure is surfaced as a warn (not swallowed silently)...
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        expect.stringContaining('failed to resolve library root'),
+      );
+      // ...and startup continued: the drain loop issued its first job select.
+      expect(selectCount()).toBeGreaterThan(1);
+
+      await w.stop();
+    });
   });
 });

@@ -277,10 +277,25 @@ export async function prepareImportSiblings(args: PrepareImportSiblingsArgs): Pr
 
 // ── startup marker sweep (#1338) ─────────────────────────────────────────
 
-/** Directory-name suffixes of the transient import scratch siblings. The marker walk
- * does not descend into them — markers live beside the book folder, never inside a
- * scratch dir, so descending only wastes IO and risks a false-positive match. */
+/** Directory-name suffixes of the transient import scratch siblings (`.import-tmp` /
+ * `.import-bak`). The marker walk skips descending into a true scratch sibling — but ONLY
+ * one that sits beside its live commit-pending marker (see `isScratchSibling`); a real
+ * library folder that merely ends in the same suffix is still walked (#1338 F1). */
 const SCRATCH_SUFFIXES = ['.import-tmp', '.import-bak'];
+
+/**
+ * True only for an ACTUAL transient scratch sibling: a directory `<base>.import-tmp` /
+ * `<base>.import-bak` that sits next to a live `<base>.import-commit-pending` marker at the
+ * same level. The marker sibling is what distinguishes real scratch (created by an
+ * interrupted commit, which always writes the marker first) from a legitimately-named
+ * library folder that coincidentally ends in `.import-bak`/`.import-tmp` (#1338 F1) — the
+ * latter has no sibling marker, so it is walked normally and any marker beneath it is found.
+ */
+function isScratchSibling(dirName: string, siblingMarkerNames: Set<string>): boolean {
+  return SCRATCH_SUFFIXES.some(
+    (suffix) => dirName.endsWith(suffix) && siblingMarkerNames.has(`${dirName.slice(0, -suffix.length)}${MARKER_SUFFIX}`),
+  );
+}
 
 /**
  * Recursively collect every `*.import-commit-pending` marker path under `root`.
@@ -288,6 +303,10 @@ const SCRATCH_SUFFIXES = ['.import-tmp', '.import-bak'];
  * and so live at arbitrary depth — the walk must descend, not just `readdir` the root.
  * ENOENT-tolerant at every level (mirrors `listAudioFilesRecursive`): a directory that
  * vanishes mid-walk contributes nothing rather than aborting the sweep.
+ *
+ * The only directories skipped are true scratch siblings (a `.import-tmp`/`.import-bak`
+ * beside its live marker — see `isScratchSibling`); every other directory, including one
+ * whose name merely ends in a scratch suffix, is descended so no AC-owned marker is missed.
  */
 export async function findCommitPendingMarkers(root: string): Promise<string[]> {
   let entries: Dirent[];
@@ -297,12 +316,15 @@ export async function findCommitPendingMarkers(root: string): Promise<string[]> 
     if ((readError as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw readError;
   }
+  const siblingMarkerNames = new Set(
+    entries.filter((e) => e.isFile() && e.name.endsWith(MARKER_SUFFIX)).map((e) => e.name),
+  );
   const markers: string[] = [];
   for (const entry of entries) {
     const full = join(root, entry.name);
     if (entry.isFile() && entry.name.endsWith(MARKER_SUFFIX)) {
       markers.push(full);
-    } else if (entry.isDirectory() && !SCRATCH_SUFFIXES.some((s) => entry.name.endsWith(s))) {
+    } else if (entry.isDirectory() && !isScratchSibling(entry.name, siblingMarkerNames)) {
       markers.push(...await findCommitPendingMarkers(full));
     }
   }

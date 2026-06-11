@@ -8,6 +8,8 @@ import {
   sweepCommitPendingMarkers,
   findCommitPendingMarkers,
   convergeStrandedMarker,
+  prepareImportSiblings,
+  BackupRecoveryError,
 } from './import-steps.js';
 
 /**
@@ -226,18 +228,71 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
   }));
 
-  it('findCommitPendingMarkers: ENOENT root yields no markers, and scratch siblings are not descended', withTmp(async (root) => {
+  it('findCommitPendingMarkers: ENOENT root yields no markers, and a TRUE scratch sibling (beside its live marker) is not descended', withTmp(async (root) => {
     // ENOENT-tolerant: a non-existent root is "no markers", not a throw.
     expect(await findCommitPendingMarkers(join(root, 'does-not-exist'))).toEqual([]);
 
-    // A `.import-commit-pending` file buried inside a `.import-bak` scratch dir is NOT collected.
+    // `Title.import-bak` is a real scratch sibling: a `Title.import-commit-pending` marker sits
+    // beside it at the same level, so it is pruned and the decoy inside it is NOT collected.
     const bak = join(root, 'Author', 'Title.import-bak');
     await mkdir(bak, { recursive: true });
     await writeFile(join(bak, 'decoy.import-commit-pending'), '');
-    // A real sibling marker beside the book folder IS collected.
     const realMarker = join(root, 'Author', 'Title.import-commit-pending');
     await writeFile(realMarker, '');
 
     expect(await findCommitPendingMarkers(root)).toEqual([realMarker]);
+  }));
+
+  it('F1: walks a legitimate library directory whose name ends in a scratch suffix but has NO sibling marker', withTmp(async (root) => {
+    // A real library folder coincidentally named `<...>.import-bak` (e.g. a folder-format or
+    // author segment) with NO sibling `<...>.import-commit-pending` marker. The prior
+    // suffix-only prune would skip it; the sibling-aware prune walks it and finds the marker.
+    const buriedMarker = join(root, 'Series.import-bak', 'Title.import-commit-pending');
+    await mkdir(dirname(buriedMarker), { recursive: true });
+    await writeFile(buriedMarker, '');
+    // A second legitimate folder ending in `.import-tmp`, also marker-less at its own level.
+    const buriedMarker2 = join(root, 'Collection.import-tmp', 'Inner', 'Book.import-commit-pending');
+    await mkdir(dirname(buriedMarker2), { recursive: true });
+    await writeFile(buriedMarker2, '');
+
+    const found = await findCommitPendingMarkers(root);
+    expect(found.sort()).toEqual([buriedMarker2, buriedMarker].sort());
+  }));
+
+  it('F1: the sweep converges a marker buried under a legitimate suffix-named library folder', withTmp(async (root) => {
+    const target = join(root, 'Series.import-bak', 'Title');
+    const backup = `${target}.import-bak`;
+    const marker = `${target}.import-commit-pending`;
+    const bytes = Buffer.alloc(120, 3);
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old.m4b'), bytes);
+    await writeFile(marker, '');
+
+    const result = await sweepCommitPendingMarkers(root, makeLog());
+
+    expect(result).toEqual({ converged: 1, skipped: [] });
+    expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
+    expect(await pathExists(marker)).toBe(false);
+  }));
+
+  it('F3: BackupRecoveryError message carries operator remedy guidance (.import-bak + retry/boot-sweep)', withTmp(async (root) => {
+    // Trigger a real recovery failure: `.import-bak` is a FILE → readdir ENOTDIR → the recovery
+    // wraps it as a BackupRecoveryError. Assert the user-reachable message is actionable.
+    const { target, backup, staging, marker } = siblings(join(root, 'Author', 'Title'));
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(backup, Buffer.from('not-a-directory'));
+    await writeFile(marker, '');
+
+    const error = await prepareImportSiblings({
+      stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: root, log: makeLog(),
+    }).then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BackupRecoveryError);
+    const message = (error as BackupRecoveryError).message;
+    expect(message).toContain(target);
+    expect(message).toContain('.import-bak');
+    // Names both remedy levers: per-target retry AND the boot sweep.
+    expect(message).toMatch(/retr/i);
+    expect(message).toMatch(/sweep/i);
   }));
 });
