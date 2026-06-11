@@ -7,7 +7,10 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { makeTestSchema } from '../utils/secret-codec.js';
 import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';
-import { absLibrariesResponseSchema } from '../../core/import-lists/abs-provider.js';
+import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
+import { absLibrariesResponseSchema, formatAbsZodError } from '../../core/import-lists/abs-provider.js';
+import { fetchWithTimeout } from '../../core/utils/network-service.js';
+import { IMPORT_LIST_TIMEOUT_MS } from '../../core/utils/constants.js';
 
 const SENTINEL = '********';
 
@@ -54,23 +57,47 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
       }
       const resolvedApiKey = resolution.settings.apiKey as string;
       const resolvedServerUrl = resolution.settings.serverUrl as string;
+      const logUrl = sanitizeLogUrl(resolvedServerUrl);
       try {
         const url = `${resolvedServerUrl.replace(/\/+$/, '')}/api/libraries`;
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
           headers: { Authorization: `Bearer ${resolvedApiKey}` },
-        });
+        }, IMPORT_LIST_TIMEOUT_MS);
         if (!res.ok) {
+          request.log.warn(
+            { url: logUrl, status: res.status, error: serializeError(new Error(`ABS API returned ${res.status}`)) },
+            'ABS library fetch failed (non-OK status)',
+          );
           return await reply.status(502).send({ error: `ABS API returned ${res.status}` });
         }
-        const raw: unknown = await res.json();
+        let raw: unknown;
+        try {
+          raw = await res.json();
+        } catch (error: unknown) {
+          request.log.warn(
+            { url: logUrl, error: serializeError(error) },
+            'ABS library fetch returned non-JSON body',
+          );
+          return await reply.status(502).send({
+            error: 'ABS returned a non-JSON response (check reverse-proxy/auth configuration)',
+          });
+        }
         const parsed = absLibrariesResponseSchema.safeParse(raw);
         if (!parsed.success) {
+          request.log.warn(
+            { url: logUrl, error: serializeError(parsed.error) },
+            'ABS library fetch failed schema validation',
+          );
           return await reply.status(502).send({
-            error: `ABS API returned an unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+            error: `ABS API returned an unexpected response: ${formatAbsZodError(parsed.error)}`,
           });
         }
         return { libraries: parsed.data.libraries };
       } catch (error: unknown) {
+        request.log.warn(
+          { url: logUrl, error: serializeError(error) },
+          'ABS library fetch failed (transport)',
+        );
         return reply.status(502).send({
           error: `Connection failed: ${getErrorMessage(error)}`,
         });

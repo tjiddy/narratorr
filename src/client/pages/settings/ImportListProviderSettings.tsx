@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { compactInputClass as inputClass, btnSecondary } from '@/components/settings/formStyles';
 
@@ -33,8 +33,8 @@ function AbsSettings({ settings, onChange, editingId }: SettingsProps) {
       });
       setLibraries(result.libraries);
       if (result.libraries.length === 0) setFetchError('No libraries found');
-    } catch {
-      setFetchError('Failed to fetch libraries');
+    } catch (error: unknown) {
+      setFetchError(error instanceof ApiError ? error.message : 'Failed to fetch libraries');
     } finally {
       setFetching(false);
     }

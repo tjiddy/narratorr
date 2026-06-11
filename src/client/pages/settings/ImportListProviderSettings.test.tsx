@@ -5,13 +5,17 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ProviderSettings } from './ImportListProviderSettings';
 
-vi.mock('@/lib/api', () => ({
+// Preserve the real `ApiError` so the component's `instanceof ApiError` check
+// resolves to the same class the test throws — a bare `{ api }` mock would make
+// the import `undefined` and `instanceof` throw at runtime.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     fetchAbsLibraries: vi.fn(),
   },
 }));
 
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 
 function StatefulProvider({
   type,
@@ -192,7 +196,7 @@ describe('ProviderSettings', () => {
       expect(screen.getByLabelText('Library').tagName).toBe('INPUT');
     });
 
-    it('shows "Failed to fetch libraries" when the API rejects', async () => {
+    it('shows "Failed to fetch libraries" when the API rejects with a plain Error', async () => {
       (api.fetchAbsLibraries as Mock).mockRejectedValue(new Error('network'));
       const user = userEvent.setup();
       render(
@@ -208,6 +212,27 @@ describe('ProviderSettings', () => {
       await waitFor(() => {
         expect(screen.getByText('Failed to fetch libraries')).toBeInTheDocument();
       });
+    });
+
+    it('surfaces the verbatim server message when the API rejects with an ApiError', async () => {
+      const serverMessage = 'ABS API returned an unexpected response: libraries: Expected array, received string';
+      (api.fetchAbsLibraries as Mock).mockRejectedValue(new ApiError(502, { error: serverMessage }));
+      const user = userEvent.setup();
+      render(
+        <ProviderSettings
+          type="abs"
+          settings={{ serverUrl: 'http://abs.local', apiKey: 'k' }}
+          onChange={vi.fn()}
+        />,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
+
+      await waitFor(() => {
+        expect(screen.getByText(serverMessage)).toBeInTheDocument();
+      });
+      // The generic fallback must NOT show when an actionable message is available.
+      expect(screen.queryByText('Failed to fetch libraries')).not.toBeInTheDocument();
     });
 
     it('flips the fetch button to "Fetching..." disabled during the in-flight call and restores after resolution', async () => {

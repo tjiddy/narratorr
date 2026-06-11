@@ -210,6 +210,19 @@ describe('AbsProvider', () => {
       expect(err).toBeInstanceOf(ImportListError);
       const zod = await import('zod');
       expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+      // Message carries the dotted Zod path so operators see WHERE it broke.
+      expect((err as ImportListError).message).toMatch(/unexpected response: results:/);
+    });
+
+    it('fetchItems message has no leading ": " artifact for a top-level (empty-path) failure', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries/lib-1/items`, () => HttpResponse.json('not-an-object')),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      expect((err as ImportListError).message).not.toContain('response: :');
     });
 
     it('throws ImportListError with ZodError cause when item.media is null (boundary failure)', async () => {
@@ -260,6 +273,19 @@ describe('AbsProvider', () => {
       const result = await provider.test();
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/validation failed/i);
+      // Dotted path is prepended for the nested `libraries` failure.
+      expect(result.message).toMatch(/validation failed: libraries:/i);
+    });
+
+    it('test() message has no leading ": " artifact for a top-level (empty-path) failure', async () => {
+      server.use(
+        http.get(`${ABS_BASE}/api/libraries`, () => HttpResponse.json('not-an-object')),
+      );
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).not.toContain('failed: :');
     });
 
     it('passes through unknown extra fields and still maps successfully', async () => {
