@@ -54,12 +54,24 @@ describe('INDEXER_REGISTRY', () => {
       expect(INDEXER_REGISTRY.abb.viewSubtitle({ hostname: 'example.com' })).toBe('example.com');
     });
 
-    it('returns apiUrl for torznab type', () => {
-      expect(INDEXER_REGISTRY.torznab.viewSubtitle({ apiUrl: 'https://tracker.test/api' })).toBe('https://tracker.test/api');
+    it('#1403 returns apiUrl hostname for torznab type', () => {
+      expect(INDEXER_REGISTRY.torznab.viewSubtitle({ apiUrl: 'https://tracker.test/api' })).toBe('tracker.test');
     });
 
-    it('returns apiUrl for newznab type', () => {
-      expect(INDEXER_REGISTRY.newznab.viewSubtitle({ apiUrl: 'https://nzb.test/api' })).toBe('https://nzb.test/api');
+    it('#1403 returns apiUrl hostname for newznab type', () => {
+      expect(INDEXER_REGISTRY.newznab.viewSubtitle({ apiUrl: 'https://api.nzbgeek.info' })).toBe('api.nzbgeek.info');
+    });
+
+    it('#1403 newznab/torznab fall back to the type label for empty apiUrl', () => {
+      expect(INDEXER_REGISTRY.newznab.viewSubtitle({})).toBe('newznab');
+      expect(INDEXER_REGISTRY.newznab.viewSubtitle({ apiUrl: '' })).toBe('newznab');
+      expect(INDEXER_REGISTRY.torznab.viewSubtitle({})).toBe('torznab');
+      expect(INDEXER_REGISTRY.torznab.viewSubtitle({ apiUrl: '' })).toBe('torznab');
+    });
+
+    it('#1403 newznab/torznab never render the masked apiUrl sentinel', () => {
+      expect(INDEXER_REGISTRY.newznab.viewSubtitle({ apiUrl: '********' })).toBe('newznab');
+      expect(INDEXER_REGISTRY.torznab.viewSubtitle({ apiUrl: '********' })).toBe('torznab');
     });
 
     it('returns type label as fallback when settings fields are missing', () => {
