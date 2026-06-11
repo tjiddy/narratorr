@@ -39,6 +39,20 @@ export const absLibrariesResponseSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
+/**
+ * Format the first issue of a ZodError into a `<path>: <message>` string so
+ * nested ABS-response failures read e.g. `libraries.0.name: Invalid input…`.
+ * Shared by the route and both provider sites (fetchItems/test) to keep the
+ * three ABS validation messages grep-consistent. Top-level failures have an
+ * empty `path` array — guard so we never emit a leading `": "` artifact.
+ */
+export function formatAbsZodError(error: z.ZodError): string {
+  const issue = error.issues[0];
+  const path = issue?.path.join('.') ?? '';
+  const message = issue?.message ?? 'unknown';
+  return path ? `${path}: ${message}` : message;
+}
+
 export class AbsProvider implements ImportListProvider {
   readonly type = 'abs';
   readonly name = 'Audiobookshelf';
@@ -68,7 +82,7 @@ export class AbsProvider implements ImportListProvider {
     if (!parsed.success) {
       throw new ImportListError(
         this.name,
-        `Audiobookshelf returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        `Audiobookshelf returned unexpected response: ${formatAbsZodError(parsed.error)}`,
         { cause: parsed.error },
       );
     }
@@ -104,7 +118,7 @@ export class AbsProvider implements ImportListProvider {
       if (!parsed.success) {
         return {
           success: false,
-          message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          message: `Validation failed: ${formatAbsZodError(parsed.error)}`,
         };
       }
       const libraries = parsed.data.libraries;

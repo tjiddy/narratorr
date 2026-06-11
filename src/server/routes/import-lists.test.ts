@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
+import { IMPORT_LIST_TIMEOUT_MS } from '../../core/utils/constants.js';
 import type { Services } from './index.js';
 
 const validImportList = {
@@ -313,7 +314,7 @@ describe('import-lists routes', () => {
       vi.restoreAllMocks();
     });
 
-    it('returns 502 for a malformed array element (null name)', async () => {
+    it('returns 502 for a malformed array element (null name), with dotted path prefix + warn log', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
         ok: true,
         json: async () => ({ libraries: [{ id: 'lib', name: null }] }),
@@ -326,6 +327,81 @@ describe('import-lists routes', () => {
       });
 
       expect(res.statusCode).toBe(502);
+      // Nested failure surfaces the dotted Zod path so operators see WHERE it broke.
+      expect(res.json().error).toMatch(/^ABS API returned an unexpected response: libraries\.0\.name:/);
+      expect(logSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'http://abs.local/', error: expect.anything() }),
+        'ABS library fetch failed schema validation',
+      );
+      vi.restoreAllMocks();
+    });
+
+    it('returns 502 with no leading ": " artifact for a top-level (empty-path) shape failure', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      } as unknown as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      const { error } = res.json();
+      expect(error).toContain('ABS API returned an unexpected response: ');
+      // Empty Zod path must not produce `...response: : <msg>`.
+      expect(error).not.toContain('response: :');
+      vi.restoreAllMocks();
+    });
+
+    it('returns the static non-JSON 502 message + warn log when res.json() throws (proxy interstitial)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+      } as unknown as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      const { error } = res.json();
+      expect(error).toBe('ABS returned a non-JSON response (check reverse-proxy/auth configuration)');
+      // The SyntaxError must NOT leak through as the old generic transport diagnosis.
+      expect(error).not.toContain('Connection failed');
+      expect(error).not.toContain('Unexpected token');
+      expect(logSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'http://abs.local/', error: expect.anything() }),
+        'ABS library fetch returned non-JSON body',
+      );
+      vi.restoreAllMocks();
+    });
+
+    it('returns 502 (no hang) when the fetch times out, bounded by IMPORT_LIST_TIMEOUT_MS', async () => {
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new DOMException('The operation timed out', 'TimeoutError'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toContain('Connection failed');
+      // Pins the shared const, not just the catch-branch behavior.
+      expect(timeoutSpy).toHaveBeenCalledWith(IMPORT_LIST_TIMEOUT_MS);
+      expect(logSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'http://abs.local/', error: expect.anything() }),
+        'ABS library fetch failed (transport)',
+      );
       vi.restoreAllMocks();
     });
 
@@ -373,6 +449,35 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(502);
       expect(res.json().error).toContain('ABS API returned 401');
+      // Non-OK branch synthesizes a serialized cause + carries the numeric status.
+      expect(logSpies.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ url: 'http://abs.local/', status: 401, error: expect.anything() }),
+        'ABS library fetch failed (non-OK status)',
+      );
+      vi.restoreAllMocks();
+    });
+
+    it('sanitizes the logged URL and never logs the apiKey across log branches', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'https://user:pass@abs.example/?token=abc', apiKey: 'super-secret-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      const warnArg = (logSpies.warn.mock.calls.at(-1)?.[0] ?? {}) as { url?: string };
+      // Userinfo + query token stripped to origin + pathname.
+      expect(warnArg.url).toBe('https://abs.example/');
+      expect(warnArg.url).not.toContain('user:pass');
+      expect(warnArg.url).not.toContain('token=abc');
+      // The apiKey lives only in the Authorization header — never in any log line.
+      const allLogged = JSON.stringify(logSpies.warn.mock.calls);
+      expect(allLogged).not.toContain('super-secret-key');
       vi.restoreAllMocks();
     });
 
