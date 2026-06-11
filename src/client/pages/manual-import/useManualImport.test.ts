@@ -1338,6 +1338,114 @@ describe('match merge — boundary values (#185)', () => {
       // After match merge with confidence=medium, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
+
+      // Count parity with the library twin: the medium row lands in reviewCount
+      // and is excluded from selectedCount (the second, un-matched row stays
+      // selected, so selectedCount is 1, not 0).
+      expect(result.current.counts.reviewCount).toBe(1);
+      expect(result.current.counts.selectedCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('high confidence does NOT re-select a row the user had deselected (#1318 parity)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      // Job still matching while the user toggles the row off.
+      vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // Deselect row 0 via the bare checkbox before results arrive.
+      act(() => { result.current.actions.handleToggle(0); });
+      expect(result.current.state.rows[0]!.selected).toBe(false);
+
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+      });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // High preserves the prior selection — a deselected row stays deselected.
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
+      expect(result.current.state.rows[0]!.selected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('edit-during-matching preserves selection: a user-FIXED row stays checked when a later medium match merges (#1374)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      // Job still matching when the user fixes the row.
+      vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // User commits a fix via the edit modal — sets userEdited + auto-checks.
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Corrected', author: 'Author A', series: '',
+          metadata: MATCH_METADATA,
+        });
+      });
+      expect(result.current.state.rows[0]!.userEdited).toBe(true);
+      expect(result.current.state.rows[0]!.selected).toBe(true);
+
+      // The in-flight job (searched on the scan-time title) returns a medium result.
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+      });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // userEdited row keeps its selection despite the medium merge.
+      expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
+      expect(result.current.state.rows[0]!.selected).toBe(true);
+      expect(result.current.state.rows[0]!.userEdited).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('#1318 guard: a merely-toggled (not edited) row is still unchecked by a medium merge', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // Bare toggle off then on — must NOT set userEdited.
+      act(() => { result.current.actions.handleToggle(0); });
+      act(() => { result.current.actions.handleToggle(0); });
+      expect(result.current.state.rows[0]!.selected).toBe(true);
+      expect(result.current.state.rows[0]!.userEdited).toBe(false);
+
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+      });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      expect(result.current.state.rows[0]!.selected).toBe(false);
+      expect(result.current.state.rows[0]!.userEdited).toBe(false);
+      expect(result.current.counts.reviewCount).toBe(1);
     } finally {
       vi.useRealTimers();
     }

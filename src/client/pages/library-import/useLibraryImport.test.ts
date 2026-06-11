@@ -600,6 +600,114 @@ describe('match merge — selection behavior (#185)', () => {
     expect(nonDupRow?.selected).toBe(true);
     expect(result.current.readyCount).toBe(1);
   });
+
+  it('edit-during-matching preserves selection: a user-FIXED row stays checked when a later medium match merges (#1374)', async () => {
+    // Job is still matching when the user fixes the row via the edit modal.
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+
+    // User commits a fix — sets userEdited + auto-checks the row.
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Corrected Title', author: 'Author A', series: '',
+        metadata: { title: 'Corrected Title', authors: [{ name: 'Author A' }] },
+      });
+    });
+    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+
+    // The in-flight job (searched on the scan-time title) returns a medium result.
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
+    }, { timeout: 5000 });
+
+    // userEdited row keeps its selection despite the medium merge.
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
+    expect(result.current.selectedCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Retry Match preserves a user-FIXED row: a re-result at medium does not uncheck it (#1374)', async () => {
+    // Job first settles on a high match.
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+
+    // User fixes the row.
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Corrected', author: 'Author A', series: '',
+        metadata: { title: 'Corrected', authors: [{ name: 'Author A' }] },
+      });
+    });
+    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+
+    // Retry Match re-matches all non-dup rows; the re-result comes back medium.
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Other', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+    act(() => result.current.handleRetryMatch());
+
+    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+  });
+
+  it('#1318 guard: a merely-toggled (not edited) row is still unchecked by a medium merge', async () => {
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    // Bare checkbox interaction (toggle off then on) must NOT set userEdited.
+    act(() => result.current.handleToggle(nonDupIdx));
+    act(() => result.current.handleToggle(nonDupIdx));
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
+    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(false);
+
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+    expect(result.current.rows[nonDupIdx]!.userEdited).toBe(false);
+    expect(result.current.reviewCount).toBe(1);
+    expect(result.current.selectedCount).toBe(0);
+  });
+
+  it('garbage confidence fails closed (unchecked) for a non-userEdited row', async () => {
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'garbage', bestMatch: { title: 'X', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult).toBeDefined(), { timeout: 5000 });
+    expect(result.current.rows[nonDupIdx]!.selected).toBe(false);
+  });
 });
 
 describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck (#185)', () => {

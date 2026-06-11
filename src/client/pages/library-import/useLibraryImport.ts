@@ -6,7 +6,7 @@ import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { slugify } from '../../../shared/utils.js';
-import { buildEditedFromBestMatch, type ImportRow, type BookEditState } from '@/components/manual-import';
+import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -61,21 +61,7 @@ export function useLibraryImport() {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
       if (isDbDuplicate(row.book)) return row;
-
-      // Auto-uncheck no-match and Review (medium-confidence) rows — only
-      // 'high' confidence preserves the prior selection so the unsafe path
-      // (importing an unreviewed match) is never the default (#1318).
-      const selected = match.confidence === 'high' ? row.selected : false;
-      const wasEdited = row.edited.metadata !== undefined;
-      if (!wasEdited && match.bestMatch) {
-        return {
-          ...row,
-          matchResult: match,
-          selected,
-          edited: buildEditedFromBestMatch(match.bestMatch, row.edited),
-        };
-      }
-      return { ...row, matchResult: match, selected };
+      return mergeMatchIntoRow(row, match);
     }));
   }, []);
 
@@ -98,6 +84,7 @@ export function useLibraryImport() {
       const newRows: ImportRow[] = result.discoveries.map((book) => ({
         book,
         selected: !book.isDuplicate,
+        userEdited: false,
         edited: {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
@@ -187,7 +174,7 @@ export function useLibraryImport() {
         }
       }
 
-      const updated: ImportRow = { ...r, book: updatedBook, edited: state, selected: autoCheck, ...(matchResult !== undefined && { matchResult }) };
+      const updated: ImportRow = { ...r, book: updatedBook, edited: state, selected: autoCheck, userEdited: true, ...(matchResult !== undefined && { matchResult }) };
       return updated;
     }));
   }, [bookIdentifiers]);

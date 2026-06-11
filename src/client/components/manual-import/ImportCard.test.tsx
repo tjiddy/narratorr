@@ -21,6 +21,7 @@ function makeRow(overrides?: Partial<ImportRow>): ImportRow {
   return {
     book: makeBook(),
     selected: true,
+    userEdited: false,
     edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name' },
     ...overrides,
   };
