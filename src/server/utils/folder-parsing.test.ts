@@ -11,7 +11,7 @@ import {
   normalizeFolderName,
   CODEC_TEST_REGEX,
 } from './folder-parsing.js';
-import { isReleaseTagInner } from './folder-parsing-patterns.js';
+import { isReleaseTagInner, isPureReleaseTagBracket } from './folder-parsing-patterns.js';
 
 describe('folder-parsing (extracted from library-scan.service)', () => {
   describe('parseFolderStructure', () => {
@@ -1309,10 +1309,12 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     // End-to-end cleanName preservation for codec/bitrate/year tag forms. NOTE:
-    // these do NOT all exercise bracketTagStrip — `[M4B]` is codec-stripped to
-    // `[]` by `normalize` (consumed by emptyBracketStrip), and `[2021]` is
-    // consumed by the earlier `yearBracketStrip` step. Only `[64k]` actually
-    // reaches bracketTagStrip with a populated inner. The dedicated step-output
+    // these do NOT all exercise bracketTagStrip with a populated inner — `[M4B]`
+    // is codec-stripped to `[]` by `normalize`, and that empty `[]` is then removed
+    // by `bracketTagStrip`'s own leading global `\[[^\]]*\]` strip (NOT the later
+    // `emptyBracketStrip` step, which never sees it); `[2021]` is consumed by the
+    // earlier `yearBracketStrip` step. Only `[64k]` reaches the bracketTagStrip
+    // unwrap/delete logic with a populated inner. The dedicated step-output
     // assertion for bracketTagStrip lives in the #1331 trace test below.
     it('strips [M4B] codec tag, leaving the bare title', () => {
       expect(cleanName('Title [M4B]')).toBe('Title');
@@ -1364,44 +1366,48 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     // `[64k 22khz]`) leaked their text into titles. The fix restores the
     // pre-#1316, fuzzy-matchable, tag-free titles while preserving the #1316
     // Bobiverse unwrap win.
-    describe('release-tag false-fire on "Title - [Multi Word Tag]" (issue #1331)', () => {
-      it('deletes codec-stripped [MP3 64k] without leaking 64k or fabricating series', () => {
+    describe('release-tag false-fire on "Title - [Multi Word Tag]" (issue #1331, refined by #1332)', () => {
+      // #1332 supersedes two #1331 scope decisions while preserving its core win
+      // (no release-tag text leaks into the title): (1) the dangling trailing ` -`
+      // is now stripped, and (2) when the tag is the ENTIRE subtitle of a
+      // `<series> NN - [tag]` shape, the real series + position are extracted with
+      // an empty title — the structure that #1331 left as `Series NN -`/series=null
+      // is now resolved cleanly instead of being treated as fabrication risk.
+      it('deletes codec-stripped [MP3 64k], extracting the real series + position with empty title', () => {
         const parsed = parseFolderStructure(['J.K. Rowling - Harry Potter 1 - [MP3 64k]']);
         expect(parsed.title).not.toContain('64k');
-        // Pre-#1316 output — trailing ` -` preserved by design (scope decision).
-        expect(parsed.title).toBe('Harry Potter 1 -');
-        // The headline P10-fabrication guard: re-injected `… 1 - 64k` must NOT
-        // produce a series/position.
-        expect(parsed.series).toBeNull();
-        expect(parsed.seriesPosition).toBeUndefined();
+        // #1332: the tag is the whole subtitle → series/position survive, title empty.
+        expect(parsed.title).toBe('');
+        expect(parsed.series).toBe('Harry Potter');
+        expect(parsed.seriesPosition).toBe(1);
       });
 
-      it('deletes codec-stripped [M4B 64k] without leaking 64k or fabricating series', () => {
+      it('deletes codec-stripped [M4B 64k] without leaking 64k (no number → no series, dangling dash stripped)', () => {
         const parsed = parseFolderStructure(['Brandon Sanderson - The Way of Kings - [M4B 64k]']);
         expect(parsed.title).not.toContain('64k');
-        // Same codec-stripped shape — trailing ` -` preserved, NOT removed.
-        expect(parsed.title).toBe('The Way of Kings -');
+        // No `<series> NN -` structure here, so no series; #1332 strips the dangling dash.
+        expect(parsed.title).toBe('The Way of Kings');
         expect(parsed.series).toBeNull();
       });
 
-      it('denylists the multi-token [Dramatized Adaptation] tag (no tag text in title)', () => {
+      it('denylists the multi-token [Dramatized Adaptation] tag (no tag text in title, dangling dash stripped)', () => {
         const parsed = parseFolderStructure(['Wool Omnibus - [Dramatized Adaptation]']);
         expect(parsed.title).not.toContain('Dramatized Adaptation');
-        expect(parsed.title).toBe('Wool Omnibus -');
+        expect(parsed.title).toBe('Wool Omnibus');
       });
 
-      it('denylists the [64k 22khz] bitrate+sample-rate tag without fabricating series', () => {
+      it('denylists the [64k 22khz] tag, extracting the real series + position with empty title', () => {
         const parsed = parseFolderStructure(['Author - Series 03 - [64k 22khz]']);
         expect(parsed.title).not.toMatch(/64k|22khz/);
-        // The re-injected tokens must not be parsed into a fabricated series.
-        expect(parsed.series).toBeNull();
-        expect(parsed.seriesPosition).toBeUndefined();
+        // #1332: tag is the whole subtitle of `Series 03 - [tag]` → series/position survive.
+        expect(parsed.series).toBe('Series');
+        expect(parsed.seriesPosition).toBe(3);
       });
 
-      it('denylists the [Graphic Audio] tag (no tag text in title)', () => {
+      it('denylists the [Graphic Audio] tag (no tag text in title, dangling dash stripped)', () => {
         const parsed = parseFolderStructure(['Wool - [Graphic Audio]']);
         expect(parsed.title).not.toContain('Graphic Audio');
-        expect(parsed.title).toBe('Wool -');
+        expect(parsed.title).toBe('Wool');
       });
 
       it('still unwraps a genuine multi-word title inner — #1316 Bobiverse win preserved', () => {
@@ -1411,11 +1417,11 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(parsed.title).toMatch(/^[^[\]]*$/);
       });
 
-      it('deletes a leading/trailing-space inner [ 64k ] (trim before multi-word test)', () => {
-        // `/\S\s+\S/` on the trimmed inner sees the single token `64k`, so it is
-        // deleted — the permissive `/\s/.test()` would have unwrapped the space.
+      it('deletes a leading/trailing-space inner [ 64k ] (trim before tag test, dangling dash stripped)', () => {
+        // The inner trims to the single token `64k`, classified as a release tag and
+        // deleted; #1332 then strips the dangling trailing dash.
         expect(cleanName('Title - [ 64k ]')).not.toContain('64k');
-        expect(cleanName('Title - [ 64k ]')).toBe('Title -');
+        expect(cleanName('Title - [ 64k ]')).toBe('Title');
       });
 
       it('still unwraps a genuine multi-word inner via cleanName (not denylisted)', () => {
@@ -1453,6 +1459,184 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
+    // Issue #1332 — close the remaining #1316 collapse class. The #1316/#1331
+    // fixes left single-word whole-title brackets (`[Dune]`) collapsing, the
+    // tag-first `cleanTagTitle` path round-tripping bracket-wrapped titles, and the
+    // series-position routes leaking raw tag junk as the title (no shared guard).
+    // This block pins the closed cases on BOTH the folder-parse and tag-first paths.
+    describe('close the remaining #1316 collapse class (issue #1332)', () => {
+      describe('single-word whole-title brackets unwrap (no word-count gate)', () => {
+        it.each([
+          ['Frank Herbert - [Dune]', 'Dune', 'Frank Herbert'],
+          ['Stephen King - [It]', 'It', 'Stephen King'],
+        ])('%s → bracket-free title + author', (input, title, author) => {
+          const parsed = parseFolderStructure([input]);
+          expect(parsed.title).toBe(title);
+          expect(parsed.author).toBe(author);
+          expect(parsed.title).toMatch(/^[^[\]]*$/);
+        });
+
+        it.each([
+          ['[Holes]', 'Holes'],
+          ['[1984]', '1984'], // a whole-title year bracket is the book title, NOT a year tag
+        ])('%s (no author) → unwrapped title %s', (input, title) => {
+          const parsed = parseFolderStructure([input]);
+          expect(parsed.title).toBe(title);
+          expect(parsed.author).toBeNull();
+        });
+      });
+
+      describe('single-token tags still deleted (word-count gate carve-out replaced by denylist)', () => {
+        it.each([
+          ['Title [M4B]', 'Title'],
+          ['Title [64k]', 'Title'],
+          ['Title [GA]', 'Title'],
+          ['Title [2021]', 'Title'], // trailing year tag (NOT a whole-title bracket)
+          ['Title []', 'Title'],
+        ])('%s → bare title %s', (input, title) => {
+          expect(parseFolderStructure([input]).title).toBe(title);
+        });
+      });
+
+      describe('decimal sample rates / spaced units recognized as release tags (instance 3)', () => {
+        it('Author - Series 03 - [MP3 64k 44.1kHz] → series + position, empty (no tag-fragment) title', () => {
+          const parsed = parseFolderStructure(['Author - Series 03 - [MP3 64k 44.1kHz]']);
+          expect(parsed).toEqual({ title: '', author: 'Author', series: 'Series', seriesPosition: 3 });
+        });
+
+        it('J.K. Rowling - Harry Potter 1 - [MP3 64 kbps] → series + position, no kbps junk title', () => {
+          const parsed = parseFolderStructure(['J.K. Rowling - Harry Potter 1 - [MP3 64 kbps]']);
+          expect(parsed.series).toBe('Harry Potter');
+          expect(parsed.seriesPosition).toBe(1);
+          expect(parsed.title).not.toMatch(/kbps|64/);
+          expect(parsed.title).toBe('');
+        });
+
+        it.each([
+          'Author - Series 03 - [64k, 22khz]',
+          'Author - Series 03 - [MP3 - 64k]',
+        ])('punctuation-variant tag %s → series Series, position 3, no tag-fragment title', (input) => {
+          const parsed = parseFolderStructure([input]);
+          expect(parsed.series).toBe('Series');
+          expect(parsed.seriesPosition).toBe(3);
+          expect(parsed.title).not.toMatch(/64k|22khz|kbps/);
+        });
+      });
+
+      it('multi-tag tail [Graphic Audio] [64k 22khz] is pure release tags — Wool not demoted to author (instance 4)', () => {
+        const parsed = parseFolderStructure(['Wool - [Graphic Audio] [64k 22khz]']);
+        expect(parsed.author).not.toBe('Wool');
+        expect(parsed.title).toBe('Wool');
+        expect(parsed.title).toMatch(/^[^[\]]*$/);
+      });
+
+      describe('series-position route inherits the shared collapse guard (instance 5)', () => {
+        it('single-folder Foundation 3 - [Graphic Audio] → series + position, non-bracketed empty title', () => {
+          const parsed = parseFolderStructure(['Foundation 3 - [Graphic Audio]']);
+          expect(parsed).toEqual({ title: '', author: null, series: 'Foundation', seriesPosition: 3 });
+        });
+
+        it('2-part Author / Foundation 3 - [Graphic Audio] → parseTwoPartTitleSegment inherits the guard', () => {
+          const parsed = parseFolderStructure(['Author', 'Foundation 3 - [Graphic Audio]']);
+          expect(parsed).toEqual({ title: '', author: 'Author', series: 'Foundation', seriesPosition: 3 });
+        });
+      });
+
+      it('left-side pure tag is not promoted to author (instance 6a)', () => {
+        const parsed = parseFolderStructure(['[Graphic Audio] - Wool']);
+        expect(parsed.title).toBe('Wool');
+        expect(parsed.author).toBeNull();
+      });
+
+      it('no resolved title or author ever ends in a dangling dash (instance 6b)', () => {
+        const inputs = [
+          'Wool - [Graphic Audio]',
+          'Brandon Sanderson - The Way of Kings - [M4B 64k]',
+          'Wool Omnibus - [Dramatized Adaptation]',
+        ];
+        for (const input of inputs) {
+          const parsed = parseFolderStructure([input]);
+          expect(parsed.title).not.toMatch(/[–—-]\s*$/);
+          if (parsed.author) expect(parsed.author).not.toMatch(/[–—-]\s*$/);
+        }
+      });
+
+      it('resolved title contains no [ or ] for whole-title-bracket inputs (folder-parse search query)', () => {
+        const inputs = ['Frank Herbert - [Dune]', '[Holes]', 'Foundation 3 - [Graphic Audio]', 'Wool - [Graphic Audio] [64k 22khz]'];
+        for (const input of inputs) {
+          expect(parseFolderStructure([input]).title).toMatch(/^[^[\]]*$/);
+        }
+      });
+
+      describe('cleanTagTitle unwraps whole-title brackets on the tag-first path', () => {
+        it('unwraps a whole-title bracket inner instead of round-tripping bracket-wrapped', () => {
+          expect(cleanTagTitle('[Bobiverse 03 All These Worlds]')).toBe('Bobiverse 03 All These Worlds');
+        });
+
+        it('does not collapse "Author - [Title]" to "Author -" and leaves no surviving brackets', () => {
+          const out = cleanTagTitle('Author - [The Real Title]');
+          expect(out).not.toBe('Author -');
+          expect(out).toMatch(/^[^[\]]*$/);
+        });
+
+        it.each([
+          ['Real Title [GA]', 'Real Title'],
+          ['The Atlantis Gene [Dramatized Adaptation]', 'The Atlantis Gene'],
+          ['World War Z (2006 Edition)', 'World War Z (2006 Edition)'],
+        ])('genuine tag / edition behavior unchanged: %s → %s', (input, expected) => {
+          expect(cleanTagTitle(input)).toBe(expected);
+        });
+
+        it('derived tag-first title contains no [ or ] for a whole-title bracket', () => {
+          expect(cleanTagTitle('[Bobiverse 03 All These Worlds]')).toMatch(/^[^[\]]*$/);
+        });
+      });
+
+      describe('exported predicates', () => {
+        it.each([
+          ['44', false], // lone bare numeric is a title fragment, not a tag
+          ['22', false],
+          ['1984', false],
+          ['64k', true],
+          ['64 kbps', true], // spaced unit
+          ['44.1khz', true], // joined decimal sample rate
+          ['64k 44 1khz', true], // dot-split sample rate halves
+          ['64k, 22khz', true], // comma punctuation between tokens
+          ['MP3 - 64k', true], // dash separator token
+          ['Dune', false], // real one-word title
+        ])('isReleaseTagInner(%j) === %s', (inner, expected) => {
+          expect(isReleaseTagInner(inner)).toBe(expected);
+        });
+
+        it.each([
+          ['[Graphic Audio]', true], // single group
+          ['[Graphic Audio] [64k 22khz]', true], // multi-group, all tags
+          ['[Dune]', false], // real title inner
+          ['[64k] [Real Title]', false], // mixed real + tag
+          ['Wool - [Graphic Audio]', false], // non-bracket text present
+        ])('isPureReleaseTagBracket(%j) === %s', (segment, expected) => {
+          expect(isPureReleaseTagBracket(segment)).toBe(expected);
+        });
+      });
+
+      // Characterization (#1273 convention): pin CURRENT output for degenerate
+      // bracket forms — known-wrong is allowed, the lock just detects drift.
+      describe('degenerate bracket forms — characterization (known-wrong allowed)', () => {
+        it('nested [[Title]] — FIXME: known-wrong, inner-bracket residue survives', () => {
+          // The greedy `[^\]]*` strip consumes `[[Title]` and leaves a stray `]`.
+          expect(cleanName('[[Title]]')).toBe(']');
+        });
+
+        it('unbalanced [Title — FIXME: known-wrong, no closing bracket so nothing strips', () => {
+          expect(cleanName('[Title')).toBe('[Title');
+        });
+
+        it('whitespace-only inner [   ] — FIXME: known-wrong, falls back to the raw input', () => {
+          expect(cleanName('[   ]')).toBe('[   ]');
+        });
+      });
+    });
+
     describe('all-numeric date-like inputs (issue #701)', () => {
       it('preserves dash-separated date-like input like 11-22-63', () => {
         expect(cleanName('11-22-63')).toBe('11-22-63');
@@ -1481,15 +1665,15 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
   });
 
   describe('cleanNameWithTrace', () => {
-    it('returns all 13 steps with before/after values', () => {
+    it('returns all 14 steps with before/after values', () => {
       const trace = cleanNameWithTrace('Title');
-      expect(trace.steps).toHaveLength(13);
+      expect(trace.steps).toHaveLength(14);
       expect(trace.steps.map(s => s.name)).toEqual([
         'leadingNumeric', 'seriesMarker', 'normalize',
         'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
         'emptyParenStrip', 'emptyBracketStrip',
         'narratorPrefixStrip', 'editionParenStrip',
-        'narratorParen', 'dedup',
+        'narratorParen', 'dedup', 'trailingDash',
       ]);
     });
 
@@ -1535,7 +1719,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     describe('all-numeric date-like inputs (issue #701)', () => {
       it('every step is a no-op for 11-22-63', () => {
         const trace = cleanNameWithTrace('11-22-63');
-        expect(trace.steps).toHaveLength(13);
+        expect(trace.steps).toHaveLength(14);
         for (const step of trace.steps) {
           expect(step.output).toBe('11-22-63');
         }
@@ -1544,7 +1728,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       it('every step is a no-op for 11.22.63 (normalize would otherwise turn dots to spaces)', () => {
         const trace = cleanNameWithTrace('11.22.63');
-        expect(trace.steps).toHaveLength(13);
+        expect(trace.steps).toHaveLength(14);
         for (const step of trace.steps) {
           expect(step.output).toBe('11.22.63');
         }
@@ -2039,11 +2223,13 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     describe('boundary values and edge cases', () => {
-      it('folder name is ONLY the ASIN bracket — title falls back to original input', () => {
+      it('folder name is ONLY the ASIN bracket — title collapses to empty (ASIN extracted, no bracket leak)', () => {
         const result = parseFolderStructure(['[B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        // When stripped result is empty, should fall back
-        expect(result.title).toBe('[B0D18DYG5C]');
+        // #1332: the ASIN is captured in `asin`; the whole-input ASIN bracket is a
+        // pure release tag, so the shared collapse guard yields an empty title
+        // rather than leaking the raw `[B0D18DYG5C]` into the metadata search.
+        expect(result.title).toBe('');
       });
 
       it('ASIN in middle position — extracts ASIN, parses remainder', () => {
@@ -2064,17 +2250,19 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.asin).toBe('B0AAAAAAAA');
       });
 
-      it('ASIN-only segment in 2-part path — title falls back to original segment', () => {
+      it('ASIN-only segment in 2-part path — title collapses to empty (no bracket leak)', () => {
         const result = parseFolderStructure(['Author', '[B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        expect(result.title).toBe('[B0D18DYG5C]');
+        // #1332: ASIN bracket is a pure release tag → empty title, not raw leak.
+        expect(result.title).toBe('');
         expect(result.author).toBe('Author');
       });
 
-      it('ASIN-only segment in 3+-part path — title falls back to original segment', () => {
+      it('ASIN-only segment in 3+-part path — title collapses to empty (no bracket leak)', () => {
         const result = parseFolderStructure(['Author', 'Series', '[B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        expect(result.title).toBe('[B0D18DYG5C]');
+        // #1332: ASIN bracket is a pure release tag → empty title, not raw leak.
+        expect(result.title).toBe('');
         expect(result.author).toBe('Author');
         expect(result.series).toBe('Series');
       });

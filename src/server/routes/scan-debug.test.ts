@@ -252,13 +252,13 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      expect(body.cleaning.title.steps).toHaveLength(13);
+      expect(body.cleaning.title.steps).toHaveLength(14);
       expect(body.cleaning.title.steps.map((s: { name: string }) => s.name)).toEqual([
         'leadingNumeric', 'seriesMarker', 'normalize',
         'yearParenStrip', 'yearBracketStrip', 'bracketTagStrip', 'yearBareStrip',
         'emptyParenStrip', 'emptyBracketStrip',
         'narratorPrefixStrip', 'editionParenStrip',
-        'narratorParen', 'dedup',
+        'narratorParen', 'dedup', 'trailingDash',
       ]);
     });
 
