@@ -161,7 +161,7 @@ export function cleanName(name: string): string {
  *      optional series-keyword (saga/trilogy/series/cycle/chronicles).
  */
 export function cleanTagTitle(s: string): string {
-  let result = s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  let result = stripBracketTags(s);
   const m = result.match(NARRATOR_PAREN_REGEX);
   if (m && !isEditionParen(m[1]!)) result = result.replace(NARRATOR_PAREN_REGEX, '').trim() || result;
   return result.replace(TAG_TITLE_SERIES_MARKER_REGEX, '').trim() || s;
@@ -170,32 +170,30 @@ export function cleanTagTitle(s: string): string {
 /**
  * Strip bracketed release tags (`[M4B]`, `[64k]`, `[2021]`, `[GA]`) — but NOT when
  * doing so would leave a title-less remainder. When the whole title is wrapped in
- * brackets (`Author - [The Real Title]`), a global strip collapses the name to an
- * empty or author-only string (`Author -`), poisoning the metadata search (#1316).
- * In that case the brackets wrapped real content, not a tag, so we UNWRAP them —
- * keep the inner text, drop the brackets — and let downstream steps parse it as
- * plain text. The guard evaluates the remainder after the FULL strip (not per
- * bracket) so a legitimate trailing tag alongside real title text still strips.
- * Mirrors the `... || s` fallback-on-empty idiom in `cleanTagTitle`.
+ * brackets (`Author - [The Real Title]`, `[Dune]`), a global strip collapses the
+ * name to an empty or author-only string (`Author -`), poisoning the metadata
+ * search (#1316). In that case the brackets wrapped real content, not a tag, so we
+ * UNWRAP them — keep the inner text, drop the brackets — and let downstream steps
+ * parse it as plain text. The guard evaluates the remainder after the FULL strip
+ * (not per bracket) so a legitimate trailing tag alongside real title text still
+ * strips. Unwrap fires for any inner that is NOT a release tag (single-word titles
+ * like `[Dune]`/`[It]` included, #1332); genuine release tags (codec/bitrate/sample
+ * rate/format/ASIN/`[Graphic Audio]`/`[Dramatized Adaptation]`) keep being deleted.
+ * Trim the inner BEFORE the tag test: `normalize` codec-strips inside brackets
+ * (`[MP3 64k]` → `[ 64k]`), so the residual must classify on its trimmed text.
+ * Shared by `bracketTagStrip` (folder pipeline) and `cleanTagTitle` (tag-first path)
+ * so a whole-title bracket unwraps identically on both.
  */
-function bracketTagStrip(s: string): string {
+function stripBracketTags(s: string): string {
   const stripped = s.replace(/\s*\[[^\]]*\]/g, ' ').replace(/\s{2,}/g, ' ').trim();
   // Only intervene when the strip left a title-less remainder: empty, or
   // author-only like "Author -" (ends with a space-prefixed hyphen/en-dash and
   // nothing after). Anything with real title text keeps the normal strip.
   if (stripped !== '' && !/\s[–-]\s*$/.test(stripped)) return stripped;
-  // The bracket(s) wrapped real content, not a tag. Unwrap only genuinely
-  // MULTI-WORD inner text (a real title phrase like "Bobiverse 03 All These
-  // Worlds – 3"); keep deleting single-token tags (codec/bitrate/year/format/ASIN:
-  // [M4B], [64k], [2021], [B0D18DYG5C]) AND multi-token release tags ([64k 22khz],
-  // [Graphic Audio], [Dramatized Adaptation]) so existing tag/ASIN strip survives.
-  // Trim the inner BEFORE the multi-word test: `normalize` codec-strips inside
-  // brackets ([MP3 64k] → [ 64k]), and the bare `/\s/` test on a leading-space
-  // inner would wrongly unwrap the residual bitrate into the title (#1316/#1331).
   const recovered = s
     .replace(/\s*\[([^\]]*)\]/g, (_full, inner: string) => {
       const trimmed = inner.trim();
-      return /\S\s+\S/.test(trimmed) && !isReleaseTagInner(trimmed) ? ` ${trimmed}` : ' ';
+      return trimmed !== '' && !isReleaseTagInner(trimmed) ? ` ${trimmed}` : ' ';
     })
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -211,9 +209,16 @@ const CLEAN_NAME_PIPELINE: ReadonlyArray<readonly [string, (s: string) => string
   ['seriesMarker', s => s.replace(SERIES_MARKER_REGEX, '')],
   ['normalize', s => normalizeFolderName(s)],
   ['yearParenStrip', s => s.replace(/\s*\(\d{4}\)$/, '')],
-  ['yearBracketStrip', s => s.replace(/\s*\[\d{4}\]$/, '')],
-  ['bracketTagStrip', bracketTagStrip],
-  ['yearBareStrip', s => s.replace(BARE_YEAR_REGEX, '')],
+  // Strip a TRAILING bracketed year tag (`Title [2021]` → `Title`), but never
+  // empty out a whole-title year bracket (`[1984]`) — that is the book title, and
+  // must survive for `bracketTagStrip` to unwrap it to `1984` rather than leak the
+  // raw bracket via the cleanNameWithTrace fallback (#1332).
+  ['yearBracketStrip', s => { const out = s.replace(/\s*\[\d{4}\]$/, ''); return out.trim() ? out : s; }],
+  ['bracketTagStrip', stripBracketTags],
+  // Strip a trailing bare year (`Title 2014` → `Title`), but never empty out a
+  // whole-title year (`[1984]` unwrapped to `1984` by bracketTagStrip) — that is
+  // the book title and must survive (#1332).
+  ['yearBareStrip', s => { const out = s.replace(BARE_YEAR_REGEX, ''); return out.trim() ? out : s; }],
   ['emptyParenStrip', s => s.replace(/\s*\(\s*\)/g, '')],
   ['emptyBracketStrip', s => s.replace(/\s*\[\s*\]/g, '').trim()],
   ['narratorPrefixStrip', s => {
@@ -239,6 +244,11 @@ const CLEAN_NAME_PIPELINE: ReadonlyArray<readonly [string, (s: string) => string
     const right = parts[1]!.trim();
     return (left.toLowerCase() === right.toLowerCase() && right) ? right : s;
   }],
+  // Strip a dangling trailing dash left when a tag/segment collapse empties one
+  // side (`Wool -`, `The Way of Kings -` → `Wool`, `The Way of Kings`). Runs last
+  // so the dangling-dash signal survives every earlier step; never empties the
+  // string (a lone `-` keeps its input). (#1332)
+  ['trailingDash', s => s.replace(/\s*[–—-]\s*$/, '').trim() || s],
 ];
 
 /**
@@ -261,7 +271,12 @@ export function cleanNameWithTrace(name: string): CleanNameTraceResult {
     current = fn(current);
     steps.push({ name: stepName, output: current });
   }
-  return { input: name, steps, result: current || name.trim() };
+  // Shared collapse guard: when the pipeline emptied the title, only fall back to
+  // the raw input if it was real text. A whole input that is purely release-tag
+  // brackets (`[Graphic Audio]`, `[MP3 64k]`) must stay empty rather than leak the
+  // raw `[...]` — every series-position route funnels titles through this transform,
+  // so guarding here fixes `Foundation 3 - [Graphic Audio]` and friends at once (#1332).
+  return { input: name, steps, result: current || (isPureReleaseTagBracket(name) ? '' : name.trim()) };
 }
 
 // ─── ASIN Extraction ────────────────────────────────────────────────
@@ -306,15 +321,18 @@ function tryAuthorTitleForms(
 ): ParsedFolder | null {
   // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
   const dashMatch = input.match(/^(.+?)\s*-\s*(.+)$/);
-  // Don't split when the right side is a pure bracketed release tag (`[Graphic Audio]`,
-  // `[Dramatized Adaptation]`, `[64k 22khz]`): a release tag is never a title and the
-  // left side is the title, not the author. Splitting would mis-assign the author and,
-  // because the bracket-only title segment collapses to empty and falls back to the raw
-  // bracket, leak the tag text into the title. Falling through to the title-only path
-  // yields the tag-deleted whole-string clean (`Wool Omnibus -`). (#1331)
-  if (dashMatch && !/^\d+$/.test(dashMatch[1]!.trim()) && !isPureReleaseTagBracket(dashMatch[2]!)) {
-    const author = applyLastFirstSwap(transform(dashMatch[1]!));
-    return applyP10Postprocess(transform(dashMatch[2]!), author, asinTail, transform);
+  if (dashMatch) {
+    const left = dashMatch[1]!.trim();
+    const right = dashMatch[2]!.trim();
+    // A pure bracketed release tag (`[Graphic Audio]`, `[Graphic Audio] [64k 22khz]`)
+    // is never a title or an author. Mirror the guard on BOTH dash sides (#1332):
+    // tag on the RIGHT → the left side is the title, fall through to the title-only
+    // path so the whole-string clean deletes the tag. Tag on the LEFT → the right
+    // side is the title and there is NO author, so emit title-only with `author: null`.
+    if (!isPureReleaseTagBracket(right)) {
+      if (isPureReleaseTagBracket(left)) return applyP10Postprocess(right, null, asinTail, transform);
+      if (!/^\d+$/.test(left)) return applyP10Postprocess(right, applyLastFirstSwap(transform(left)), asinTail, transform);
+    }
   }
   // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
   const byMatch = input.match(/^(.+?)\bby\b(.+)$/i);
@@ -323,7 +341,7 @@ function tryAuthorTitleForms(
     const right = byMatch[2]!.trim();
     // Guard: left side must not be just numbers, right side must be non-empty
     if (right && !/^\d+$/.test(left)) {
-      return applyP10Postprocess(transform(left), applyLastFirstSwap(transform(right)), asinTail, transform);
+      return applyP10Postprocess(left, applyLastFirstSwap(transform(right)), asinTail, transform);
     }
   }
   return null;
@@ -478,18 +496,23 @@ function seriesPosResult(
 }
 
 /**
- * P10-postprocess (author-dash path): if a resolved title still looks like
- * `<series> NN - <subtitle>`, decompose it. Preserves the already-resolved author.
- * `transform` is `cleanName` for the cleaned parser, `identity` for raw.
+ * P10-postprocess (author-dash path): if the RAW title still looks like
+ * `<series> NN - <subtitle>`, decompose it, applying `transform` to the captured
+ * series and subtitle. Matching on the raw (pre-`transform`) title means a subtitle
+ * that is itself a release tag (`Series 03 - [MP3 64k 44.1kHz]`) is captured then
+ * cleaned to an EMPTY title via the shared collapse guard — series + position
+ * survive while the tag junk drops, instead of the tag being deleted first and the
+ * series-extraction structure lost with it (#1332). For raw the title was never
+ * pre-transformed, so the shift is a no-op. Preserves the already-resolved author.
  */
 function applyP10Postprocess(
-  title: string,
-  author: string,
+  rawTitle: string,
+  author: string | null,
   asinTail: { asin?: string },
   transform: (s: string) => string,
 ): { title: string; author: string | null; series: string | null; seriesPosition?: number; asin?: string } {
-  const m = title.match(WORDS_NUM_DASH_TITLE_REGEX);
-  if (!m) return { title, author, series: null, ...asinTail };
+  const m = rawTitle.match(WORDS_NUM_DASH_TITLE_REGEX);
+  if (!m) return { title: transform(rawTitle), author, series: null, ...asinTail };
   return seriesPosResult(m, author, asinTail, transform);
 }
 
