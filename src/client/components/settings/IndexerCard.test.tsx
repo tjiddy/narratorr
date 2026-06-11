@@ -47,7 +47,7 @@ describe('IndexerCard — view mode', () => {
     expect(screen.getByText('audiobookbay.lu')).toBeInTheDocument();
   });
 
-  it('shows API URL as subtitle for torznab indexers', () => {
+  it('#1403 shows API URL hostname as subtitle for torznab indexers (never the masked sentinel)', () => {
     renderWithProviders(
       <IndexerCard
         indexer={mockTorznabIndexer}
@@ -57,7 +57,7 @@ describe('IndexerCard — view mode', () => {
       />,
     );
 
-    expect(screen.getByText('https://indexer.example.com/api')).toBeInTheDocument();
+    expect(screen.getByText('indexer.example.com')).toBeInTheDocument();
   });
 
   it('calls onEdit when edit button is clicked', async () => {
