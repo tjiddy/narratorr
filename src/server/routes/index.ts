@@ -164,7 +164,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   );
 
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
-  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster);
+  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, {
     eventHistory,
