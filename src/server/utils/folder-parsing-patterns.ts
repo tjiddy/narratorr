@@ -21,31 +21,66 @@ const TAG_PHRASE_DENYLIST = new Set(
   ['Graphic Audio', 'GraphicAudio', 'GA', 'Dramatized Adaptation', 'Dramatized', 'Full Cast', 'Full-Cast']
     .map((p) => p.toLowerCase()),
 );
-const BITRATE_TOKEN_REGEX = /^\d+\s*k(bps)?$/i; // `64k`, `128kbps`
-const SAMPLE_RATE_TOKEN_REGEX = /^\d+\s*khz$/i; // `22khz`, `44khz`
-const PURE_BRACKET_REGEX = /^\[([^\]]*)\]$/; // whole string is one bracketed group
+// `isReleaseTagInner` splits the inner on whitespace before testing each token,
+// so a token never contains an internal space — the dead `\s*` matcher these
+// regexes carried pre-#1332 could never fire and is dropped.
+const BITRATE_TOKEN_REGEX = /^\d+(?:\.\d+)?k(bps)?$/i; // `64k`, `128kbps`
+const SAMPLE_RATE_TOKEN_REGEX = /^\d+(?:\.\d+)?khz$/i; // `22khz`, `44khz`, joined `44.1khz`
+/** Bare numeric / decimal token — a filler digit inside a multi-token tag, e.g.
+ * the `44` left over when `normalize` dot-splits `44.1kHz` → `44 1kHz`, or the
+ * `64` in a spaced `64 kbps`. A LONE numeric inner is NOT a tag (it is a title
+ * like `[1984]` / `[22]`), so the classifier requires ≥1 strong tag token too. */
+const BARE_NUMERIC_TOKEN_REGEX = /^\d+(?:\.\d+)?$/;
+/** Bare unit token left when a sample-rate / bitrate is spaced from its number
+ * (`64 kbps` → `64` `kbps`, `44.1 kHz` → `44.1` `khz`). */
+const UNIT_TOKEN_REGEX = /^(?:k|kb|kbps|kbit|khz|hz|mhz|mb|mbps|vbr|cbr)$/i;
+/** Audible ASIN shape — defensive: `extractASIN` removes ASIN brackets before the
+ * clean pipeline, but a second ASIN bracket would survive to here. */
+const ASIN_TOKEN_REGEX = /^B0[A-Z0-9]{8}$/i;
+/** Strip leading/trailing token punctuation so `64k,` / `-` (from `[64k, 22khz]`,
+ * `[MP3 - 64k]`) reduce to bare tag tokens / empty separators. */
+const TOKEN_PUNCT_STRIP_REGEX = /^[-–—,]+|[-–—,]+$/g;
+
+/** A `strong` tag token carries release-metadata meaning on its own (codec, bitrate,
+ * sample rate, spaced unit, ASIN) — distinct from a bare numeric filler token. */
+function isStrongReleaseTagToken(t: string): boolean {
+  return CODEC_TEST_REGEX.test(t) || BITRATE_TOKEN_REGEX.test(t) || SAMPLE_RATE_TOKEN_REGEX.test(t)
+    || UNIT_TOKEN_REGEX.test(t) || ASIN_TOKEN_REGEX.test(t);
+}
 
 /**
  * True when `trimmedInner` is entirely release-tag tokens (codec/format label,
- * bitrate `64k`, sample rate `22khz`) or a known release-tag phrase (`Graphic
- * Audio`). Such inners are release metadata, so `bracketTagStrip` keeps deleting
- * them rather than unwrapping. Any non-tag token ⇒ `false`. Exported for tests. (#1331)
+ * bitrate `64k`, sample rate `22khz`, spaced unit `64 kbps`, dot-split `44 1khz`)
+ * or a known release-tag phrase (`Graphic Audio`). Such inners are release
+ * metadata, so the bracket-tag strip keeps deleting them rather than unwrapping.
+ * A LONE bare numeric (`1984`, `22`) is a TITLE, not a tag — the classifier only
+ * fires when every token is a strong tag or numeric filler AND at least one strong
+ * tag is present. Any other non-tag token ⇒ `false`. Exported for tests. (#1331/#1332)
  */
 export function isReleaseTagInner(trimmedInner: string): boolean {
   const normalized = trimmedInner.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
   if (TAG_PHRASE_DENYLIST.has(normalized)) return true;
-  const tokens = normalized.split(' ').filter(Boolean);
-  return tokens.length > 0 && tokens.every(
-    (t) => CODEC_TEST_REGEX.test(t) || BITRATE_TOKEN_REGEX.test(t) || SAMPLE_RATE_TOKEN_REGEX.test(t),
-  );
+  const tokens = normalized.split(' ')
+    .map((t) => t.replace(TOKEN_PUNCT_STRIP_REGEX, ''))
+    .filter(Boolean);
+  if (tokens.length === 0) return false;
+  if (!tokens.every((t) => isStrongReleaseTagToken(t) || BARE_NUMERIC_TOKEN_REGEX.test(t))) return false;
+  return tokens.some(isStrongReleaseTagToken);
 }
 
-/** True when `segment` is wholly a single bracketed release tag (`[Graphic Audio]`,
- * `[64k 22khz]`, `[MP3 64k]`) — used by the author/title dash split so a pure tag
- * segment is not treated as a title. (#1331) */
+/** True when `segment` is wholly a SEQUENCE of bracketed release tags — one or more
+ * `[...]` groups with no other text, every inner passing `isReleaseTagInner`
+ * (`[Graphic Audio]`, `[64k 22khz]`, `[Graphic Audio] [64k 22khz]`). Used by the
+ * author/title dash split so a pure-tag segment (on either side) is never treated
+ * as a title or author, and by the shared cleanName collapse guard. (#1331/#1332) */
 export function isPureReleaseTagBracket(segment: string): boolean {
-  const m = segment.trim().match(PURE_BRACKET_REGEX);
-  return m !== null && isReleaseTagInner(m[1]!.trim());
+  const trimmed = segment.trim();
+  if (!trimmed.startsWith('[')) return false;
+  // Reject if any non-bracket text remains once every `[...]` group is removed.
+  if (trimmed.replace(/\s*\[[^\]]*\]\s*/g, '').trim() !== '') return false;
+  const inners = [...trimmed.matchAll(/\[([^\]]*)\]/g)].map((m) => m[1]!.trim());
+  return inners.length > 0 && inners.every((inner) => isReleaseTagInner(inner));
 }
 
 function isNarratorDisambiguatorParen(content: string): boolean {
