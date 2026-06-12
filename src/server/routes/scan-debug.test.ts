@@ -86,6 +86,50 @@ describe('POST /api/library/scan-debug', () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    it('returns 400 when folderName exceeds the 1024-char cap, before any parse work runs (#1333)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'a'.repeat(1025) },
+      });
+
+      expect(res.statusCode).toBe(400);
+      // The cap is enforced by Fastify pre-handler, so no downstream work is reached.
+      const body = JSON.parse(res.payload);
+      expect(body.partialTrace).toBeUndefined();
+      expect(services.metadata.searchBooks).not.toHaveBeenCalled();
+      expect(services.book.findDuplicate).not.toHaveBeenCalled();
+    });
+
+    it('accepts folderName exactly at the 1024-char cap (inclusive boundary) (#1333)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'a'.repeat(1024) },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.metadata.searchBooks).toHaveBeenCalled();
+    });
+
+    it('processes a pathological unclosed-bracket payload at the cap without stalling (#1333)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      // 1024 unclosed brackets is the worst case for the quadratic bracket-strip
+      // regex; the cap keeps the input small enough that it completes negligibly.
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: '['.repeat(1024) },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
   });
 
   describe('pre-parse segmentation', () => {

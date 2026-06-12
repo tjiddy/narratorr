@@ -81,7 +81,11 @@ export const jobIdParamSchema = z.object({
 // ============================================================================
 
 export const scanDebugBodySchema = z.object({
-  folderName: z.string().trim().min(1, 'folderName is required and must be a non-empty string'),
+  folderName: z
+    .string()
+    .trim()
+    .min(1, 'folderName is required and must be a non-empty string')
+    .max(1024, 'folderName must be at most 1024 characters'),
 });
 export type ScanDebugBody = z.infer<typeof scanDebugBodySchema>;
 
