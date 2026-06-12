@@ -71,9 +71,15 @@ export class EnrichmentCache {
   /** Store an outcome under `key`, applying the per-outcome TTL and size cap. */
   set(key: string, value: EnrichmentCacheValue): void {
     const ttl = value.outcome === 'fetch-failed' ? FAILURE_TTL_MS : SUCCESS_TTL_MS;
-    // Evict the oldest insertion before growing past the cap (Map preserves
-    // insertion order). Skip eviction when overwriting an existing key.
-    if (this.map.size >= MAX_ENTRIES && !this.map.has(key)) {
+    // Delete-before-set so overwriting an existing key re-appends it at the
+    // insertion-order tail. `Map.set` on an existing key PRESERVES the original
+    // position (#1328) — without the delete, a fetch-failed entry refreshed to
+    // resolved 23h later keeps its day-old slot and becomes the first eviction
+    // candidate at cap, inverted from intent. With the delete an overwrite never
+    // reuses a stale slot, so the size check alone governs eviction — the old
+    // `!has(key)` guard is no longer needed.
+    this.map.delete(key);
+    if (this.map.size >= MAX_ENTRIES) {
       const oldest = this.map.keys().next().value;
       if (oldest !== undefined) this.map.delete(oldest);
     }

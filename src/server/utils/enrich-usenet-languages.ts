@@ -32,9 +32,27 @@ export interface EnrichUsenetOptions {
   maxPhase2Fetches?: number;
 }
 
-/** Cache key for a release: prefer the stable `guid`, fall back to `downloadUrl`. */
+/**
+ * Cache key for a release, namespaced by indexer identity (#1328).
+ *
+ * `guid` is free-form indexer-supplied text, so two configured indexers emitting
+ * bare numeric/hash guids could collide and cross-apply one release's cached
+ * `language`/`nzbName` to a different release for up to 24h. Prefixing with the
+ * indexer keeps each indexer's keyspace separate; cross-indexer dedup of the
+ * same release is no real loss (URL-style guids embed the host, so identical
+ * guids across indexers are rare).
+ *
+ * The release portion is computed with `||` (not `??`) so an empty-string guid
+ * falls through to `downloadUrl` — `??` only falls through on `null`/`undefined`.
+ * When both are empty the release is uncacheable and we return `undefined`,
+ * NEVER a poison `indexer:` / `indexer:undefined` key that every keyless result
+ * would share. `indexer: string` is always present on `SearchResult`; the
+ * optional numeric `indexerId` is the preferred (collision-free) namespace when
+ * the indexer search has stamped it.
+ */
 function cacheKeyFor(result: SearchResult): string | undefined {
-  return result.guid ?? result.downloadUrl;
+  const releaseKey = result.guid || result.downloadUrl;
+  return releaseKey ? `${result.indexerId ?? result.indexer}:${releaseKey}` : undefined;
 }
 
 /**
@@ -86,19 +104,24 @@ function applyCacheHit(result: SearchResult, entry: EnrichmentCacheValue, logger
 function consultCache(
   needsFetch: SearchResult[],
   logger: FastifyBaseLogger,
-): { misses: SearchResult[]; hitsDetected: number } {
+): { misses: SearchResult[]; hitsDetected: number; cacheHits: number } {
   const misses: SearchResult[] = [];
   let hitsDetected = 0;
+  let cacheHits = 0;
   for (const result of needsFetch) {
     const key = cacheKeyFor(result);
     const entry = key ? enrichmentCache.get(key) : undefined;
     if (entry) {
+      // Every live entry is a hit (#1328 counter), distinct from `hitsDetected`
+      // which only counts hits that actually SET a language (an `unresolved`
+      // entry is a hit that detects nothing).
+      cacheHits++;
       if (applyCacheHit(result, entry, logger)) hitsDetected++;
     } else {
       misses.push(result);
     }
   }
-  return { misses, hitsDetected };
+  return { misses, hitsDetected, cacheHits };
 }
 
 /**
@@ -122,6 +145,84 @@ function selectCappedCandidates(
     'Phase-2 fetch cap applied — skipped lowest-ranked candidates',
   );
   return { toFetch: ranked.slice(0, cap), skipped: ranked.slice(cap) };
+}
+
+/**
+ * Group cache-miss candidates by cache key and pick one representative per group
+ * so a release appearing more than once in a single run (duplicate feed items,
+ * overlapping indexer categories) is fetched exactly ONCE (#1328). Every miss
+ * came through `needsFetch`, which only admits results with a `downloadUrl`, so
+ * `cacheKeyFor` always returns a defined key here.
+ *
+ * The representative is the highest-ranked member by `comparePhase2` — the same
+ * ranking the Phase-2 cap uses — so grouping BEFORE the cap means a key occupies
+ * at most one cap slot and a duplicate is never stranded in the cap-skipped tail
+ * just because its twin took the slot. After the representative's outcome is
+ * known, `propagateDuplicates` copies its observable enrichment to every member.
+ */
+function groupMissesByKey(
+  misses: SearchResult[],
+): { groups: Map<string, SearchResult[]>; representatives: SearchResult[] } {
+  const groups = new Map<string, SearchResult[]>();
+  for (const result of misses) {
+    const key = cacheKeyFor(result)!;
+    const existing = groups.get(key);
+    if (existing) existing.push(result);
+    else groups.set(key, [result]);
+  }
+  const representatives: SearchResult[] = [];
+  for (const group of groups.values()) {
+    representatives.push(group.length === 1 ? group[0]! : [...group].sort(comparePhase2)[0]!);
+  }
+  return { groups, representatives };
+}
+
+/**
+ * Copy a representative's observable enrichment (`language`, `nzbName`) to every
+ * other member of its group once its fetch (or cap-skipped title check) has
+ * settled (#1328). Guarded the same way as `applyCacheHit` so an earlier
+ * Phase-1 signal on a duplicate is never overwritten. Returns the count of
+ * members that transitioned undefined→detected, so the caller folds it into the
+ * `languagesDetected` audit counter exactly as a cache hit would.
+ *
+ * Only `language`/`nzbName` are propagated: the resolved/unresolved/fetch-failed
+ * discriminant is internal cache metadata, not a `SearchResult` field — the
+ * single cache write under the representative's key carries it.
+ */
+function propagateToGroup(rep: SearchResult, group: SearchResult[], logger: FastifyBaseLogger): number {
+  let detected = 0;
+  for (const member of group) {
+    if (member === rep) continue;
+    if (rep.language && !member.language) {
+      member.language = rep.language;
+      detected++;
+    }
+    if (rep.nzbName && !member.nzbName) member.nzbName = rep.nzbName;
+    logger.debug(
+      { title: member.title, signal: 'within-run-dup', language: rep.language ?? null },
+      'Phase-2: duplicate result enriched from representative (no separate fetch)',
+    );
+  }
+  return detected;
+}
+
+/**
+ * Propagate every representative's settled enrichment to its duplicates. Runs
+ * after both the Phase-2 fetch and the cap-skipped title check, so each
+ * representative's `language`/`nzbName` is final. Single-member groups are a
+ * no-op. Returns the number of duplicate members that gained a language.
+ */
+function propagateDuplicates(
+  representatives: SearchResult[],
+  groups: Map<string, SearchResult[]>,
+  logger: FastifyBaseLogger,
+): number {
+  let detected = 0;
+  for (const rep of representatives) {
+    const group = groups.get(cacheKeyFor(rep)!)!;
+    if (group.length > 1) detected += propagateToGroup(rep, group, logger);
+  }
+  return detected;
 }
 
 /**
@@ -299,12 +400,19 @@ export async function enrichUsenetLanguages(
   // Cache consult: serve releases enriched by any prior run (this is the #1315
   // fix — a release seen by ANY call site is never re-fetched within its TTL).
   // Hits are applied in-place and dropped; misses proceed to the (capped) fetch.
-  const { misses, hitsDetected } = consultCache(needsFetch, logger);
+  const { misses, hitsDetected, cacheHits } = consultCache(needsFetch, logger);
   languagesDetected += hitsDetected;
 
-  // Per-call-site Phase-2 cap (ranked) applied to the cache-miss set, before
+  // Within-run dedup (#1328): group the cache-miss candidates by key and fetch
+  // one representative per key. Grouping happens BEFORE the cap so a key occupies
+  // at most one cap slot; each representative's enrichment is propagated to its
+  // duplicates after it settles.
+  const { groups, representatives } = groupMissesByKey(misses);
+
+  // Per-call-site Phase-2 cap (ranked) applied to the representatives, before
   // any semaphore permit is acquired so capped-out candidates don't consume slots.
-  const { toFetch, skipped } = selectCappedCandidates(misses, options?.maxPhase2Fetches, logger);
+  const { toFetch, skipped } = selectCappedCandidates(representatives, options?.maxPhase2Fetches, logger);
+  const capSkipped = skipped.length;
 
   // Free title check over the ranked cap-skipped tail (#1326). Runs pre-permit —
   // it is pure CPU and consumes no fetch concurrency. No cache write on this path.
@@ -397,9 +505,13 @@ export async function enrichUsenetLanguages(
 
   await Promise.all(toFetch.map((r) => fetchAndEnrich(r)));
 
+  // Every representative (fetched or cap-skipped) now has its final observable
+  // enrichment — fan it out to the within-run duplicates that share its key.
+  languagesDetected += propagateDuplicates(representatives, groups, logger);
+
   const totalFetchMs = Date.now() - startMs;
   logger.info(
-    { usenetResults: usenetResults.length, nzbFetched, languagesDetected, totalFetchMs },
+    { usenetResults: usenetResults.length, nzbFetched, languagesDetected, cacheHits, capSkipped, totalFetchMs },
     'Usenet language detection complete',
   );
 }
