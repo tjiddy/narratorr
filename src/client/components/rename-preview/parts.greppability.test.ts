@@ -19,7 +19,7 @@ const CONSUMERS = [
   join(HERE, '..', 'RenamePreviewModal.tsx'),
   join(HERE, '..', 'library', 'BulkRenameModal.tsx'),
 ];
-const SHARED_PARTS = ['DiffRow', 'FolderMoveSection', 'FileRenamesSection', 'PreviewBanner', 'ConflictBanner'];
+const SHARED_PARTS = ['DiffRow', 'PathDiffRow', 'FolderMoveSection', 'FileRenamesSection', 'PreviewBanner', 'ConflictBanner'];
 
 function countDefs(file: string, name: string): number {
   const src = readFileSync(file, 'utf8');

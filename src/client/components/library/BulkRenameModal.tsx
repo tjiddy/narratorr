@@ -8,10 +8,9 @@ import { LoadingSpinner } from '@/components/icons';
 import { getErrorMessage } from '@/lib/error-message.js';
 import {
   PreviewBanner,
-  FolderMoveSection,
   FileRenamesSection,
   ConflictBanner,
-  DiffRow,
+  PathDiffRow,
 } from '@/components/rename-preview/parts';
 
 interface BulkRenameModalProps {
@@ -73,13 +72,12 @@ function BulkRenameRow({ item }: { item: BulkRenamePreviewItem }) {
         <Caret expanded={expanded} />
         <div className="flex-1 min-w-0 space-y-1">
           <p className="text-sm font-medium truncate">{item.title}</p>
-          <DiffRow sign="−" text={item.from} tone="destructive" />
-          <DiffRow sign="+" text={item.to} tone="success" />
+          <PathDiffRow from={item.from} to={item.to} />
         </div>
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 pt-1 border-t border-border/30 space-y-3">
+        <div className="ml-6 mr-3 pl-4 pb-3 pt-1 border-l-2 border-border/40 space-y-3">
           {isLoading && (
             <div className="flex items-center py-3 text-muted-foreground">
               <LoadingSpinner className="w-4 h-4" />
@@ -96,14 +94,11 @@ function BulkRenameRow({ item }: { item: BulkRenamePreviewItem }) {
           )}
 
           {data && (
-            <>
-              {data.folderMove && <FolderMoveSection from={data.folderMove.from} to={data.folderMove.to} />}
-              {data.fileRenames.length > 0 ? (
-                <FileRenamesSection renames={data.fileRenames} />
-              ) : (
-                <p className="text-sm text-muted-foreground">No file changes</p>
-              )}
-            </>
+            data.fileRenames.length > 0 ? (
+              <FileRenamesSection renames={data.fileRenames} />
+            ) : (
+              <p className="text-sm text-muted-foreground">No file changes</p>
+            )
           )}
         </div>
       )}
@@ -135,7 +130,7 @@ export function BulkRenameModal({ isOpen, onClose, onConfirm }: BulkRenameModalP
   const remaining = data ? data.mismatchedTotal - data.items.length : 0;
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-2xl p-6" scrollable>
+    <Modal onClose={onClose} className="w-full max-w-4xl p-6" scrollable>
       <div
         role="dialog"
         aria-modal="true"

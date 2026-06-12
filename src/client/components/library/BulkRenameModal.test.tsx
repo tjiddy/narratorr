@@ -80,13 +80,34 @@ describe('BulkRenameModal', () => {
     expect(api.getBookRenamePreview).toHaveBeenCalledWith(1);
   });
 
-  it('renders the folder + file diff via the shared sections when a row is expanded', async () => {
+  it('renders only the Files section in the expanded panel — no duplicate folder diff (F2)', async () => {
     const user = userEvent.setup();
     renderModal();
     await user.click(await screen.findByRole('button', { name: 'Book One' }));
-    expect(await screen.findByRole('heading', { name: 'Folder' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Files' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Files' })).toBeInTheDocument();
     expect(screen.getByText('a.m4b')).toBeInTheDocument();
+    // bookPlan has a non-null folderMove, but the collapsed header already shows
+    // the folder diff — the expanded panel must NOT repeat it as a "Folder" section.
+    expect(screen.queryByRole('heading', { name: 'Folder' })).not.toBeInTheDocument();
+  });
+
+  it('renders the dialog at max-w-4xl, not max-w-2xl (F1)', async () => {
+    renderModal();
+    await screen.findByRole('button', { name: 'Book One' });
+    expect(document.querySelector('.max-w-4xl')).toBeInTheDocument();
+    expect(document.querySelector('.max-w-2xl')).not.toBeInTheDocument();
+  });
+
+  it('indents the expanded panel with a left rail and drops the full-width top border (F3)', async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(await screen.findByRole('button', { name: 'Book One' }));
+    await screen.findByRole('heading', { name: 'Files' });
+    const panel = document.querySelector('.border-l-2');
+    expect(panel).toBeInTheDocument();
+    expect(panel?.className).toContain('ml-6');
+    expect(panel?.className).toContain('pl-4');
+    expect(panel?.className).not.toContain('border-t');
   });
 
   it('shows "No file changes" when the expanded book has no file renames', async () => {
@@ -107,7 +128,7 @@ describe('BulkRenameModal', () => {
     await user.click(await screen.findByRole('button', { name: 'Book One' }));
     expect(await screen.findByText(/loading preview/i)).toBeInTheDocument();
     resolvePlan(bookPlan);
-    await screen.findByRole('heading', { name: 'Folder' });
+    await screen.findByRole('heading', { name: 'Files' });
   });
 
   it('renders the shared ConflictBanner inline when the per-book preview rejects with a conflict', async () => {
