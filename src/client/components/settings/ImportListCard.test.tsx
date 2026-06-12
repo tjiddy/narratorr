@@ -2,25 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { ImportListCard } from './ImportListCard';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '../../../shared/import-list-registry.js';
 import type { ImportList } from '@/lib/api';
 import type { Mock } from 'vitest';
 
 // Every settings key declared by an import-list type OTHER than `ownType`, minus any key
-// `ownType` also declares (e.g. all three share `apiKey`). Registry-derived so the #908
-// guard covers new provider types — and the full foreign set, not just the prior type's
-// keys — without test edits.
-function foreignImportListKeys(ownType: ImportListType): string[] {
-  const ownKeys = new Set(Object.keys(IMPORT_LIST_REGISTRY[ownType].defaultSettings));
-  return [
-    ...new Set(
-      IMPORT_LIST_TYPES.filter((t) => t !== ownType)
-        .flatMap((t) => Object.keys(IMPORT_LIST_REGISTRY[t].defaultSettings))
-        .filter((k) => !ownKeys.has(k)),
-    ),
-  ];
-}
+// `ownType` also declares (e.g. all three share `apiKey`). Delegates to the shared #908-family
+// helper so all four leak-guard suites derive foreign keys identically. NOTE: this is
+// `defaultSettings`-derived, so it does NOT see hardcover's dynamically-minted `shelfId`
+// (ImportListProviderSettings.tsx, absent from the registry defaults) — that key is asserted
+// explicitly in the hardcover case below.
+const foreignImportListKeys = (ownType: ImportListType): string[] =>
+  foreignRegistryKeys(ownType, IMPORT_LIST_TYPES, IMPORT_LIST_REGISTRY);
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -476,12 +471,18 @@ describe('ImportListCard', () => {
       );
 
       // Populate abs-only settings before switching, so the reset is proven to drop
-      // real stored values — not merely empty registry defaults.
+      // real stored values — not merely empty registry defaults. The apiKey sentinel makes the
+      // `apiKey: ''` assertion below non-vacuous: it reds the `{ ...defaults, apiKey:
+      // settings.apiKey }` same-named-key carryover mutation (apiKey exists on all three types,
+      // so the strict per-type schema cannot 400 it — the test is the only guard).
       await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
+      await user.type(screen.getByLabelText('API Key'), 'abs-secret-key');
       await user.type(screen.getByLabelText('Library'), 'lib-42');
 
       // Switch provider type — handleTypeChange resets settings to nyt defaults.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+      // Await the nyt-specific field render so the reset has flushed before we click Test.
+      await screen.findByLabelText('Bestseller List');
 
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
@@ -495,8 +496,13 @@ describe('ImportListCard', () => {
       for (const key of foreignKeys) {
         expect(payloadSettings).not.toHaveProperty(key);
       }
+      // `shelfId` is hardcover's dynamically-minted key — absent from registry defaults, so the
+      // foreignImportListKeys helper can't list it. Assert it explicitly so a switch that leaked
+      // a stale shelfId would still red.
+      expect(payloadSettings).not.toHaveProperty('shelfId');
 
-      // nyt defaults MUST be present (value-checked so the reset is confirmed).
+      // nyt defaults MUST be present (value-checked so the reset is confirmed). apiKey reset to
+      // '' proves the typed `abs-secret-key` did not carry across the switch.
       expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
       expect(payloadSettings).toHaveProperty('apiKey', '');
     });
@@ -514,6 +520,8 @@ describe('ImportListCard', () => {
 
       // Switch back to abs — handleTypeChange resets settings to abs defaults.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'abs');
+      // Await the abs-specific field render so the reset has flushed before we click Test.
+      await screen.findByLabelText('Server URL');
 
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
@@ -531,6 +539,37 @@ describe('ImportListCard', () => {
       // abs defaults MUST be present.
       expect(payloadSettings).toHaveProperty('serverUrl', '');
       expect(payloadSettings).toHaveProperty('libraryId', '');
+    });
+
+    // Hardcover's `shelfId` is minted dynamically by ImportListProviderSettings.tsx (only when
+    // List Type === 'shelf') and is absent from the registry defaults, so foreignImportListKeys
+    // can never see it. This third case mints a real shelfId, switches away to abs, and proves
+    // handleTypeChange's reset drops it from the Test payload — the leak the registry-derived
+    // helper alone would miss.
+    it('hardcover shelfId minted then switched away is dropped from the Test payload', async () => {
+      const user = userEvent.setup();
+      const onFormTest = vi.fn();
+      renderWithProviders(
+        <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
+      );
+
+      // Switch to hardcover and mint shelfId (List Type = shelf reveals the Shelf ID field).
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
+      await user.type(await screen.findByLabelText('Shelf ID'), '42');
+
+      // Switch away to abs — handleTypeChange resets settings to abs defaults, dropping shelfId.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'abs');
+      await screen.findByLabelText('Server URL');
+
+      await user.click(screen.getByRole('button', { name: 'Test Connection' }));
+
+      expect(onFormTest).toHaveBeenCalled();
+      const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+      expect(payloadSettings).not.toHaveProperty('shelfId');
+      expect(payloadSettings).not.toHaveProperty('listType');
+      expect(payloadSettings).toHaveProperty('serverUrl', '');
     });
   });
 });

@@ -3,6 +3,8 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownloadClient } from '@/__tests__/factories';
+import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
+import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '../../../shared/download-client-registry.js';
 import { DownloadClientForm } from './DownloadClientForm';
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -513,10 +515,14 @@ describe('DownloadClientForm (#201)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // Foreign keys for qBittorrent MUST NOT leak (useSsl is allowed by qBittorrent schema)
-      expect(payloadSettings).not.toHaveProperty('apiKey');
-      expect(payloadSettings).not.toHaveProperty('watchDir');
-      expect(payloadSettings).not.toHaveProperty('protocol');
+      // Foreign keys for qBittorrent MUST NOT leak (useSsl is allowed by qBittorrent schema).
+      // Registry-derived via the shared #908-family helper: covers apiKey (sabnzbd) and
+      // watchDir/protocol (blackhole).
+      const foreignKeys = foreignRegistryKeys('qbittorrent', DOWNLOAD_CLIENT_TYPES, DOWNLOAD_CLIENT_REGISTRY);
+      expect(foreignKeys).toEqual(expect.arrayContaining(['apiKey', 'watchDir', 'protocol']));
+      for (const key of foreignKeys) {
+        expect(payloadSettings).not.toHaveProperty(key);
+      }
 
       // Stored qBittorrent keys MUST round-trip
       expect(payloadSettings).toHaveProperty('host', 'qb.local');
