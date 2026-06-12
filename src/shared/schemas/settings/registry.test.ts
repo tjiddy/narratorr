@@ -978,6 +978,20 @@ describe('settingsRegistry', () => {
       return ids.filter((id) => !mapped.has(id)).sort();
     }
 
+    // Load-bearing renamed-key check: true iff every mapping target 'category.field'
+    // resolves to a real field on the named category schema. The positive guard and
+    // the renamed-key negative backstop BOTH route through this, so the backstop
+    // exercises the exact validation it protects — inject a typoed target and this
+    // returns false. If this predicate were weakened to always return true, the
+    // negative backstop (which asserts false) would fail rather than pass vacuously.
+    function everyMappedTargetExists(mapping: Record<string, string>, categories: Record<string, Shape>): boolean {
+      return Object.values(mapping).every((target) => {
+        const [cat, field] = target.split('.') as [string?, string?];
+        const categorySchema = cat === undefined ? undefined : categories[cat];
+        return categorySchema !== undefined && field !== undefined && Object.keys(categorySchema.shape).includes(field);
+      });
+    }
+
     // ---- Cross-category pages: Search and Filtering ----
     // Mappings are typed `Record<keyof <FormData>, string>` so renaming a form
     // field (without updating the mapping) is a COMPILE error, not just a runtime
@@ -1066,6 +1080,9 @@ describe('settingsRegistry', () => {
               `mapping '${formKey}' → '${target}' references a non-existent category field (renamed-key drift)`,
             ).toContain(field);
           }
+          // Same predicate the renamed-key negative backstop exercises — keeps the
+          // guard and its non-vacuity proof anchored to one validation.
+          expect(everyMappedTargetExists(mapping, categories)).toBe(true);
         });
 
         it('category fields not surfaced equal the documented omission allowlist', () => {
@@ -1086,12 +1103,21 @@ describe('settingsRegistry', () => {
           expect(omitted).not.toEqual([...omissionAllowlist].sort());
         });
 
-        it('renamed-key typo: a form key mapped to a non-existent category field is detectable', () => {
+        it('renamed-key typo backstop: a mapping target pointing at a non-existent category field fails the guard', () => {
           const [firstKey] = Object.keys(mapping) as [string];
           const [cat] = mapping[firstKey]!.split('.') as [string];
-          // Simulate a typo'd target (e.g. 'search.enabledd'). The "targets a real
-          // field" guard above would reject it.
+          // Inject a renamed-key typo: keep a valid category but point at a field
+          // that does not exist on it (e.g. 'search.enabled' → 'search.enabledd').
+          const brokenMapping = { ...mapping, [firstKey]: `${cat}.__renamed_typo` };
+          // Sanity: the typoed field really is absent from the category schema.
           expect(Object.keys(categories[cat]!.shape)).not.toContain('__renamed_typo');
+          // The real validation the positive guard runs MUST reject the broken
+          // mapping. This is the non-vacuity proof: deleting/weakening
+          // everyMappedTargetExists flips this to true and fails the test.
+          expect(everyMappedTargetExists(brokenMapping, categories)).toBe(false);
+          // Control: the un-typoed mapping still passes, so the failure above is
+          // attributable to the injected typo, not an unrelated defect.
+          expect(everyMappedTargetExists(mapping, categories)).toBe(true);
         });
       });
     }
