@@ -86,7 +86,7 @@ describe('Health routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/system/health/run' });
       expect(res.statusCode).toBe(200);
 
-      const loggerArg = (services.healthCheck.runManualChecks as Mock).mock.calls[0][0];
+      const loggerArg = (services.healthCheck.runManualChecks as Mock).mock.calls[0]![0];
       expect(typeof loggerArg?.error).toBe('function');
       expect(typeof loggerArg?.info).toBe('function');
     });
