@@ -302,6 +302,63 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     expect(await readFile(join(target, 'book.m4b'))).toEqual(original);
   });
 
+  it('AC (gap 3): recovery overwrites the colliding half-moved-in file but does NOT delete a non-colliding moved-in new-edition file', async () => {
+    // The interrupted-conflict AC has TWO halves. The colliding half (backup overwrites a
+    // same-name half-moved-in file) is pinned above; this pins the OTHER half: a new-edition
+    // file that was moved into the target with NO backup counterpart must SURVIVE recovery —
+    // recovery only restores backed-up relative paths, it never sweeps the target clean.
+    const original = Buffer.from('ORIGINAL-EDITION');
+    const halfMovedColliding = Buffer.from('STAGED-NEW-SAME-NAME');
+    const nonCollidingNew = Buffer.from('STAGED-NEW-NO-BACKUP-COUNTERPART');
+    // Half-moved-in new edition: book.mp3 collides with the backup; bonus.mp3 does not.
+    await writeFile(join(target, 'book.mp3'), halfMovedColliding);
+    await writeFile(join(target, 'bonus.mp3'), nonCollidingNew);
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'book.mp3'), original);
+    await writeFile(marker, '');
+
+    await recover();
+
+    // Colliding half: the backup is authoritative, overwriting the half-moved-in same-name file.
+    expect(await readFile(join(target, 'book.mp3'))).toEqual(original);
+    // Non-colliding half: the moved-in new-edition file with no backup counterpart SURVIVES —
+    // a regression that swept the target during recovery would delete it and fail here.
+    expect(await readFile(join(target, 'bonus.mp3'))).toEqual(nonCollidingNew);
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it('AC (gap 2): marker-present recovery runs as a PRE-STEP of a completing import — real stage() copies the new edition, whose bytes win end-to-end', async () => {
+    // Existing coverage drives recovery via `prepareImportSiblings` in isolation. This pins the
+    // full chain: an interrupted on-disk state (marker + stranded original) feeds a real
+    // `stagedAudioReplace` whose `stage()` copies a NEW edition — recovery restores the original
+    // first, then the swap replaces it. The new edition's bytes must win at the end.
+    const oldBytes = Buffer.from('OLD-EDITION-STRANDED');
+    const newBytes = Buffer.alloc(600, 7);
+    // Interrupted-commit shape: original stranded in the backup, marker present, target empty of audio.
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old.m4b'), oldBytes);
+    await writeFile(marker, '');
+    // The new edition to import.
+    const source = join(libraryRoot, '_downloads', 'release');
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, 'new.mp3'), newBytes);
+
+    const sourceAudioSize = await getAudioPathSize(source);
+    await stagedAudioReplace({
+      targetPath: target, libraryRoot, log: makeLog(), sourceAudioSize,
+      stage: (stagingPath) => copyAudioFiles(source, stagingPath),
+    });
+
+    // Recovery ran as a pre-step, THEN the new edition replaced the recovered original end-to-end.
+    expect(await listAllFiles(target)).toEqual(['new.mp3']);
+    expect(await readFile(join(target, 'new.mp3'))).toEqual(newBytes);
+    // No stale old edition survives, and no leftover siblings/marker remain.
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+    expect(await pathExists(staging)).toBe(false);
+  });
+
   it('AC: leaves non-audio in the target untouched while restoring backed-up audio', async () => {
     await writeFile(join(target, 'cover.jpg'), Buffer.from('JPEGDATA'));
     await mkdir(backup, { recursive: true });
