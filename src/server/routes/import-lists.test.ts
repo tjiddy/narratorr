@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../../core/utils/constants.js';
 import type { Services } from './index.js';
@@ -242,11 +242,31 @@ describe('import-lists routes', () => {
   });
 
   describe('POST /api/import-lists/abs/libraries', () => {
-    it('returns libraries from ABS API', async () => {
-      const mockLibraries = [{ id: 'lib-1', name: 'Audiobooks' }, { id: 'lib-2', name: 'Podcasts' }];
+    // A single afterEach restores the fetch spy — a tail-of-body `vi.restoreAllMocks()`
+    // never runs when an assertion throws mid-test, leaking the `*Once`-queued spy onto
+    // the next test (cascade against real `http://abs.local`). #1335.
+    afterEach(() => vi.restoreAllMocks());
+
+    it('returns libraries from ABS API (preserves passthrough extras at both levels)', async () => {
+      // Realistic ABS envelope: element-level extras (folders/mediaType/settings) AND a
+      // top-level unknown key. The shared schema is `.passthrough()` at BOTH the inner
+      // library object (abs-provider.ts:39) and the top-level response (abs-provider.ts:40);
+      // tightening either to `.strict()` would 502 every real ABS server (#1198 bug class).
+      // This pins acceptance of that envelope. The route returns the parsed libraries
+      // verbatim, so we assert the expected id/name are present — NOT that extras are dropped.
+      const mockLibraries = [
+        {
+          id: 'lib-1',
+          name: 'Audiobooks',
+          folders: [{ id: 'f1', fullPath: '/data/audiobooks' }],
+          mediaType: 'book',
+          settings: { coverAspectRatio: 1 },
+        },
+        { id: 'lib-2', name: 'Podcasts', mediaType: 'podcast' },
+      ];
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ libraries: mockLibraries }),
+        json: async () => ({ libraries: mockLibraries, someTopLevelExtra: true }),
       } as Response);
 
       const res = await app.inject({
@@ -256,12 +276,13 @@ describe('import-lists routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ libraries: mockLibraries });
+      const returned = res.json().libraries as Array<Record<string, unknown>>;
+      expect(returned).toContainEqual(expect.objectContaining({ id: 'lib-1', name: 'Audiobooks' }));
+      expect(returned).toContainEqual(expect.objectContaining({ id: 'lib-2', name: 'Podcasts' }));
       expect(globalThis.fetch).toHaveBeenCalledWith(
         'http://abs.local/api/libraries',
         expect.objectContaining({ headers: { Authorization: 'Bearer test-key' } }),
       );
-      vi.restoreAllMocks();
     });
 
     // #1299 — validate ABS response with the shared schema, not a bare cast
@@ -279,7 +300,6 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(502);
       expect(res.json().error).toContain('unexpected response');
-      vi.restoreAllMocks();
     });
 
     it('returns 502 when libraries is not an array', async () => {
@@ -295,7 +315,10 @@ describe('import-lists routes', () => {
       });
 
       expect(res.statusCode).toBe(502);
-      vi.restoreAllMocks();
+      // Distinguishes the schema-validation 502 from the transport catch-all 502 —
+      // a status-only assertion can't tell them apart, so rerouting validation
+      // through the catch-all (`Connection failed:`) would still pass. #1335.
+      expect(res.json().error).toContain('unexpected response');
     });
 
     it('returns 502 when the libraries key is missing (not a silent empty list)', async () => {
@@ -311,7 +334,46 @@ describe('import-lists routes', () => {
       });
 
       expect(res.statusCode).toBe(502);
-      vi.restoreAllMocks();
+      // Same message-routing pin as the not-an-array case: schema 502, not catch-all. #1335.
+      expect(res.json().error).toContain('unexpected response');
+    });
+
+    // #1335 — boundary pins for the malformed/edge `libraries` shapes.
+    it('returns 200 with an empty list when libraries is an empty array', async () => {
+      // Intent-named pin: `{ libraries: [] }` is a valid (if empty) ABS response, not an
+      // error. A future `.min(1)` on the libraries array would 502 here and fail loudly
+      // rather than relying on the incidental #844 sentinel-resolution coverage.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ libraries: [] }),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().libraries).toEqual([]);
+    });
+
+    it('returns 502 when libraries is null (distinct from missing key)', async () => {
+      // The schema field is a plain `z.array(...)` with no `.optional()`/`.nullish()`, so
+      // `null` is a distinct schema-validation 502 path per the documented Zod gotcha.
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ libraries: null }),
+      } as Response);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/import-lists/abs/libraries',
+        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
+      });
+
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error).toContain('unexpected response');
     });
 
     it('returns 502 for a malformed array element (null name), with dotted path prefix + warn log', async () => {
@@ -333,7 +395,6 @@ describe('import-lists routes', () => {
         expect.objectContaining({ url: 'http://abs.local/', error: expect.anything() }),
         'ABS library fetch failed schema validation',
       );
-      vi.restoreAllMocks();
     });
 
     it('returns 502 with no leading ": " artifact for a top-level (empty-path) shape failure', async () => {
@@ -353,7 +414,6 @@ describe('import-lists routes', () => {
       expect(error).toContain('ABS API returned an unexpected response: ');
       // Empty Zod path must not produce `...response: : <msg>`.
       expect(error).not.toContain('response: :');
-      vi.restoreAllMocks();
     });
 
     it('returns the static non-JSON 502 message + warn log when res.json() throws (proxy interstitial)', async () => {
@@ -379,7 +439,6 @@ describe('import-lists routes', () => {
         expect.objectContaining({ url: 'http://abs.local/', error: expect.anything() }),
         'ABS library fetch returned non-JSON body',
       );
-      vi.restoreAllMocks();
     });
 
     it('returns 502 (no hang) when the fetch times out, bounded by IMPORT_LIST_TIMEOUT_MS', async () => {
@@ -402,7 +461,6 @@ describe('import-lists routes', () => {
         expect.objectContaining({ url: 'http://abs.local/', error: expect.anything() }),
         'ABS library fetch failed (transport)',
       );
-      vi.restoreAllMocks();
     });
 
     it('returns 400 when apiKey is missing', async () => {
@@ -454,7 +512,6 @@ describe('import-lists routes', () => {
         expect.objectContaining({ url: 'http://abs.local/', status: 401, error: expect.anything() }),
         'ABS library fetch failed (non-OK status)',
       );
-      vi.restoreAllMocks();
     });
 
     it('sanitizes the logged URL and never logs the apiKey across log branches', async () => {
@@ -478,7 +535,6 @@ describe('import-lists routes', () => {
       // The apiKey lives only in the Authorization header — never in any log line.
       const allLogged = JSON.stringify(logSpies.warn.mock.calls);
       expect(allLogged).not.toContain('super-secret-key');
-      vi.restoreAllMocks();
     });
 
     it('returns 502 when connection fails', async () => {
@@ -492,7 +548,6 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(502);
       expect(res.json().error).toContain('Connection failed: ECONNREFUSED');
-      vi.restoreAllMocks();
     });
 
     // ===== #844 — sentinel resolution =====
@@ -522,7 +577,6 @@ describe('import-lists routes', () => {
       const fetchCall = (globalThis.fetch as unknown as Mock).mock.calls[0];
       const headers = (fetchCall?.[1] as RequestInit).headers as Record<string, string>;
       expect(headers.Authorization).not.toContain('********');
-      vi.restoreAllMocks();
     });
 
     it('returns 400 when sentinel apiKey is sent without id', async () => {
