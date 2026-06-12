@@ -180,6 +180,20 @@ describe('NytProvider', () => {
       expect(err).toBeInstanceOf(ImportListError);
       const zod = await import('zod');
       expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+      // Message carries the dotted Zod path so operators see WHERE it broke.
+      expect((err as ImportListError).message).toMatch(/NYT returned unexpected response: results/);
+    });
+
+    it('fetchItems message has no leading ": " artifact for a top-level (empty-path) failure', async () => {
+      server.use(
+        http.get(`${NYT_BASE}/svc/books/v3/lists/current/audio-fiction.json`, () =>
+          HttpResponse.json('not-an-object')),
+      );
+
+      const provider = new NytProvider({ apiKey: 'test-key', list: 'audio-fiction' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      expect((err as ImportListError).message).not.toContain('response: :');
     });
 
     it('throws ImportListError when book.title is a number', async () => {
@@ -203,6 +217,30 @@ describe('NytProvider', () => {
       const result = await provider.test();
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/validation failed/i);
+    });
+
+    it('test() prepends the dotted path for a nested (results) failure', async () => {
+      server.use(
+        http.get(`${NYT_BASE}/svc/books/v3/lists/current/audio-fiction.json`, () =>
+          HttpResponse.json({ results: { books: null } })),
+      );
+
+      const provider = new NytProvider({ apiKey: 'test-key', list: 'audio-fiction' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed: results/i);
+    });
+
+    it('test() message has no leading ": " artifact for a top-level (empty-path) failure', async () => {
+      server.use(
+        http.get(`${NYT_BASE}/svc/books/v3/lists/current/audio-fiction.json`, () =>
+          HttpResponse.json(42)),
+      );
+
+      const provider = new NytProvider({ apiKey: 'test-key', list: 'audio-fiction' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).not.toContain('failed: :');
     });
 
     it('passes through unknown extra fields and still maps successfully', async () => {

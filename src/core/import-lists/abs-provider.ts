@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
+import { formatZodError } from './format-zod-error.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
@@ -39,20 +40,6 @@ export const absLibrariesResponseSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
-/**
- * Format the first issue of a ZodError into a `<path>: <message>` string so
- * nested ABS-response failures read e.g. `libraries.0.name: Invalid input…`.
- * Shared by the route and both provider sites (fetchItems/test) to keep the
- * three ABS validation messages grep-consistent. Top-level failures have an
- * empty `path` array — guard so we never emit a leading `": "` artifact.
- */
-export function formatAbsZodError(error: z.ZodError): string {
-  const issue = error.issues[0];
-  const path = issue?.path.join('.') ?? '';
-  const message = issue?.message ?? 'unknown';
-  return path ? `${path}: ${message}` : message;
-}
-
 export class AbsProvider implements ImportListProvider {
   readonly type = 'abs';
   readonly name = 'Audiobookshelf';
@@ -82,7 +69,7 @@ export class AbsProvider implements ImportListProvider {
     if (!parsed.success) {
       throw new ImportListError(
         this.name,
-        `Audiobookshelf returned unexpected response: ${formatAbsZodError(parsed.error)}`,
+        `Audiobookshelf returned unexpected response: ${formatZodError(parsed.error)}`,
         { cause: parsed.error },
       );
     }
@@ -118,7 +105,7 @@ export class AbsProvider implements ImportListProvider {
       if (!parsed.success) {
         return {
           success: false,
-          message: `Validation failed: ${formatAbsZodError(parsed.error)}`,
+          message: `Validation failed: ${formatZodError(parsed.error)}`,
         };
       }
       const libraries = parsed.data.libraries;
