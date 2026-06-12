@@ -14,6 +14,7 @@ import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { MAM_LANGUAGES } from '../../shared/indexer-registry.js';
+import { getUserAgent } from '../../shared/user-agent.js';
 import type { WedgeMode } from '../../shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
@@ -416,6 +417,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const fetchOptions: DispatcherFetchInit = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
+          'User-Agent': getUserAgent(),
         },
         signal,
         dispatcher,

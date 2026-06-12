@@ -27,4 +27,31 @@ describe('getUserAgent', () => {
     vi.stubEnv('GIT_TAG', '');
     expect(getUserAgent()).toBe('Narratorr/dev');
   });
+
+  it('falls back to Narratorr/dev when GIT_TAG is whitespace-only', () => {
+    vi.stubEnv('GIT_TAG', ' ');
+    expect(getUserAgent()).toBe('Narratorr/dev');
+  });
+
+  it('strips CR/LF from GIT_TAG so the header value cannot be split', () => {
+    vi.stubEnv('GIT_TAG', 'v1.0\r\n');
+    expect(getUserAgent()).toBe('Narratorr/v1.0');
+  });
+
+  it('strips non-token unicode characters from GIT_TAG', () => {
+    vi.stubEnv('GIT_TAG', 'v1.0—ñ');
+    expect(getUserAgent()).toBe('Narratorr/v1.0');
+  });
+
+  it('falls back to Narratorr/dev when every GIT_TAG character is stripped', () => {
+    vi.stubEnv('GIT_TAG', '———');
+    expect(getUserAgent()).toBe('Narratorr/dev');
+  });
+
+  it('produces a value accepted by the Headers constructor (no throw)', () => {
+    vi.stubEnv('GIT_TAG', 'v1.0\r\n');
+    expect(() => new Headers({ 'User-Agent': getUserAgent() })).not.toThrow();
+    const headers = new Headers({ 'User-Agent': getUserAgent() });
+    expect(headers.get('User-Agent')).toBe('Narratorr/v1.0');
+  });
 });
