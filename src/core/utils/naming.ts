@@ -158,13 +158,16 @@ export function sanitizePath(segment: string): string {
     .replace(/\.+$/, '') // trailing dots (Windows)
     .trim();
 
-  // Reserve the import-sibling suffixes (#1341): never emit a segment ending in one.
-  result = stripReservedSuffixes(result);
-
-  // Truncate to filesystem limit
+  // Truncate to filesystem limit FIRST — truncation can itself slice a longer title down to
+  // a segment that ends in a reserved suffix (#1341 F1: `'A'.repeat(244) + '.import-bak' + 'x'`
+  // truncates to a 255-char `…A.import-bak`), so the suffix reservation must be the FINAL pass.
   if (result.length > MAX_SEGMENT_LENGTH) {
     result = result.slice(0, MAX_SEGMENT_LENGTH).trim();
   }
+
+  // Reserve the import-sibling suffixes (#1341): never emit a segment ending in one — whether
+  // the suffix came from the raw title or was produced by the truncation above.
+  result = stripReservedSuffixes(result);
 
   return result || 'Unknown';
 }

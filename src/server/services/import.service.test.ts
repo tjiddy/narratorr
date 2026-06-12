@@ -79,7 +79,7 @@ import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
-import { copyToLibrary } from '../utils/import-steps.js';
+import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -945,6 +945,37 @@ describe('ImportService', () => {
       // ...and both transient siblings are cleaned up.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
+    });
+
+    it('#1341: a non-file marker-path collision aborts the auto import before any destructive work', async () => {
+      // A metadata-derived folder collides with the marker path: a DIRECTORY squats at
+      // `${SAME_PATH}.import-commit-pending`. The #1341 preflight (assertMarkerPathWritable)
+      // must throw MarkerPathConflictError at the START of importDownload — before
+      // stagingPath/backupPath are derived — so handleImportFailure can neither strict-clear
+      // an adjacent `.import-bak` nor blanket-delete the protected same-path target.
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Marker path is a DIRECTORY (non-file); source/target read as directories.
+      vi.mocked(stat).mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending')
+          ? ({ isFile: () => false, isDirectory: () => true } as never)
+          : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
+
+      await expect(service.importDownload(1)).rejects.toBeInstanceOf(MarkerPathConflictError);
+
+      // Aborted before staging/commit — no copy, no backup-out rename, no commit marker write.
+      expect(cp).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, expect.anything(), expect.anything());
+      // No sibling cleanup (stagingPath/backupPath were never derived) and the protected
+      // same-path target is never blanket-removed, leaving an adjacent `.import-bak` intact.
+      expect(rm).not.toHaveBeenCalledWith(STAGING, expect.objectContaining({ recursive: true }));
+      expect(rm).not.toHaveBeenCalledWith(BACKUP, expect.objectContaining({ recursive: true }));
+      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
     });
 
     it('#1336 window 4: a pre-flight validateSource throw with a marker on disk preserves .import-bak + the marker', async () => {

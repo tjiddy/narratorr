@@ -10,7 +10,8 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { ContentFailureError } from '../utils/import-helpers.js';
-import { mkdir, writeFile, readdir, rm, stat } from 'node:fs/promises';
+import { MarkerPathConflictError } from '../utils/import-staging.js';
+import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -708,6 +709,31 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     const files = (await readdir(target)).sort();
     expect(files).toEqual(['final.mp3']);
     expect(files).not.toContain('old.m4b');
+  });
+
+  it('#1341: a DIRECTORY at the marker path aborts before recovery strict-clears an adjacent .import-bak', async () => {
+    // A metadata-derived folder collides with the marker path: a DIRECTORY squats at
+    // `${target}.import-commit-pending`. recoverInterruptedCommit's preflight must abort
+    // (MarkerPathConflictError) BEFORE prepareImportSiblings reads the directory as
+    // marker-absent and strict-clears the adjacent real `.import-bak`.
+    const bakBytes = Buffer.from('REAL-BOOK-IN-BAK');
+    const targetBytes = Buffer.from('TARGET-AUDIO');
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'existing.mp3'), targetBytes); // populated target
+    await mkdir(markerPath(), { recursive: true });             // directory at the marker path
+    await mkdir(bakPath(), { recursive: true });
+    await writeFile(join(bakPath(), 'realbook.mp3'), bakBytes); // adjacent real book's audio
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(300, 2));
+
+    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(MarkerPathConflictError);
+
+    // The adjacent pre-existing `.import-bak` audio survives intact — not strict-cleared.
+    expect(await readFile(join(bakPath(), 'realbook.mp3'))).toEqual(bakBytes);
+    // Existing target audio is byte-unchanged, no `.import-tmp` was staged, and (copy mode)
+    // the source is untouched — the abort happened before any destructive work.
+    expect(await readFile(join(target, 'existing.mp3'))).toEqual(targetBytes);
+    expect(await pathExists(tmpPath())).toBe(false);
+    expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
   });
 });
 

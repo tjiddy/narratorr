@@ -51,6 +51,19 @@ describe('sanitizePath', () => {
     it('leaves a title that only contains the substring mid-string untouched', () => {
       expect(sanitizePath('My .import-bak Notes')).toBe('My .import-bak Notes');
     });
+
+    it('does not emit a reserved suffix created by the 255-char truncation (#1341 F1)', () => {
+      // The raw title ends in `x` (no reserved suffix), but its first 255 sanitized chars end
+      // exactly in `.import-bak` — truncation would re-create the suffix unless reservation
+      // runs as the final pass. 244 + '.import-bak'(11) = 255, then a trailing 'x' overflows.
+      const truncatesToSuffix = `${'A'.repeat(244)}.import-bak` + 'x';
+      const result = sanitizePath(truncatesToSuffix);
+      expect(result.endsWith('.import-bak')).toBe(false);
+      expect(result).toBe('A'.repeat(244));
+      // And the marker suffix (longest, 22 chars) at the truncation boundary.
+      const markerBoundary = `${'B'.repeat(233)}.import-commit-pending` + 'y';
+      expect(sanitizePath(markerBoundary).endsWith('.import-commit-pending')).toBe(false);
+    });
   });
 
   it('collapses spaces left by stripped characters', () => {
