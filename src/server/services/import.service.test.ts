@@ -79,11 +79,26 @@ import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
-import { copyToLibrary } from '../utils/import-steps.js';
+import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
 const now = new Date();
+
+/** ENOENT, the shape Node's fs raises for a missing path. */
+const markerEnoent = (): Promise<never> => Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+/**
+ * Default `stat` impl: non-marker paths read as directories (size verification); the
+ * #1290/#1341 commit-pending marker reads as ABSENT (ENOENT). These mocked flows never
+ * write a marker, and the #1341 `assertMarkerPathWritable` preflight aborts on a NON-FILE
+ * marker stat — a blanket "everything is a directory" mock would make every happy-path
+ * import abort with `MarkerPathConflictError`.
+ */
+const statDirMarkerAbsent = async (p: unknown): Promise<never> =>
+  (String(p).endsWith('.import-commit-pending')
+    ? markerEnoent()
+    : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
 
 const mockBook = createMockDbBook({
   narrator: null,
@@ -337,7 +352,8 @@ describe('ImportService', () => {
 
       // Make stat throw to simulate file not found
       const statMock = vi.mocked(stat);
-      statMock.mockRejectedValueOnce(new Error('ENOENT'));
+      statMock.mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(new Error('ENOENT')));
 
       // The second update (setting importing) succeeds, then stat fails
       await expect(service.importDownload(1)).rejects.toThrow();
@@ -931,6 +947,37 @@ describe('ImportService', () => {
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
     });
 
+    it('#1341: a non-file marker-path collision aborts the auto import before any destructive work', async () => {
+      // A metadata-derived folder collides with the marker path: a DIRECTORY squats at
+      // `${SAME_PATH}.import-commit-pending`. The #1341 preflight (assertMarkerPathWritable)
+      // must throw MarkerPathConflictError at the START of importDownload — before
+      // stagingPath/backupPath are derived — so handleImportFailure can neither strict-clear
+      // an adjacent `.import-bak` nor blanket-delete the protected same-path target.
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Marker path is a DIRECTORY (non-file); source/target read as directories.
+      vi.mocked(stat).mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending')
+          ? ({ isFile: () => false, isDirectory: () => true } as never)
+          : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
+
+      await expect(service.importDownload(1)).rejects.toBeInstanceOf(MarkerPathConflictError);
+
+      // Aborted before staging/commit — no copy, no backup-out rename, no commit marker write.
+      expect(cp).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(writeFile).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, expect.anything(), expect.anything());
+      // No sibling cleanup (stagingPath/backupPath were never derived) and the protected
+      // same-path target is never blanket-removed, leaving an adjacent `.import-bak` intact.
+      expect(rm).not.toHaveBeenCalledWith(STAGING, expect.objectContaining({ recursive: true }));
+      expect(rm).not.toHaveBeenCalledWith(BACKUP, expect.objectContaining({ recursive: true }));
+      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+    });
+
     it('#1336 window 4: a pre-flight validateSource throw with a marker on disk preserves .import-bak + the marker', async () => {
       // A prior commit was killed (marker + populated .import-bak live), then on the
       // recovery boot the downloads mount isn't up yet → validateSource throws BEFORE
@@ -942,10 +989,12 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Marker present on disk; the source save path is missing → validateSource throws.
+      // Marker present on disk AS A FILE (#1341: a real marker is a regular file, so the
+      // preflight passes and markerPresent reads it as present); the source save path is
+      // missing → validateSource throws.
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
-          ? (undefined as never)
+          ? ({ isFile: () => true, isDirectory: () => false } as never)
           : Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })));
 
       await expect(service.importDownload(1)).rejects.toThrow(/Path not found/);
@@ -971,11 +1020,12 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Marker present; source is a single FILE so checkDiskSpace uses sourceStats.size and
-      // never walks the (self-referential) readdir mock via getPathSize.
+      // Marker present AS A FILE (#1341: a real marker is a regular file → preflight passes,
+      // markerPresent reads present); source is a single FILE so checkDiskSpace uses
+      // sourceStats.size and never walks the (self-referential) readdir mock via getPathSize.
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
-          ? ({ isFile: () => false, isDirectory: () => true } as never)
+          ? ({ isFile: () => true, isDirectory: () => false } as never)
           : ({ isFile: () => true, isDirectory: () => false, size: 500_000_000 } as never));
       // statfs failure → checkDiskSpace throws "Disk space check failed: ...".
       vi.mocked(statfs).mockRejectedValueOnce(new Error('statfs EIO'));
@@ -1154,7 +1204,8 @@ describe('ImportService', () => {
 
       // Make stat throw to trigger failure
       const statMock = vi.mocked(stat);
-      statMock.mockRejectedValueOnce(new Error('ENOENT'));
+      statMock.mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(new Error('ENOENT')));
 
       await expect(service.importDownload(1)).rejects.toThrow();
 
@@ -1172,7 +1223,8 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
-      statMock.mockRejectedValueOnce(new Error('ENOENT'));
+      statMock.mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(new Error('ENOENT')));
 
       await expect(service.importDownload(1)).rejects.toThrow();
 
@@ -1524,12 +1576,14 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
-      statMock.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      statMock.mockImplementation(statDirMarkerAbsent);
 
       const result = await serviceWithMappings.importDownload(1);
 
-      // stat should receive the mapped path, not the original /downloads/ path
-      const statPath = statMock.mock.calls[0]![0] as string;
+      // stat should receive the mapped path, not the original /downloads/ path. The first
+      // stat is now the #1341 marker-path preflight (target-derived) — assert against the
+      // first SOURCE stat (the validateSource call on a non-marker path).
+      const statPath = statMock.mock.calls.find((c) => !String(c[0]).endsWith('.import-commit-pending'))![0] as string;
       expect(statPath).toMatch(/^C:[/\\]library[/\\]/);
       expect(statPath).not.toMatch(/^\/downloads\//);
 
@@ -1562,7 +1616,8 @@ describe('ImportService', () => {
       const statMock = vi.mocked(stat);
       const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
       enoent.code = 'ENOENT';
-      statMock.mockRejectedValueOnce(enoent);
+      statMock.mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(enoent));
 
       await expect(serviceWithMappings.importDownload(1)).rejects.toThrow(
         /add a Remote Path Mapping/,
@@ -1580,7 +1635,8 @@ describe('ImportService', () => {
       const statMock = vi.mocked(stat);
       const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
       enoent.code = 'ENOENT';
-      statMock.mockRejectedValueOnce(enoent);
+      statMock.mockImplementation(async (p: unknown) =>
+        String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(enoent));
 
       await expect(serviceWithMappings.importDownload(1)).rejects.toThrow(
         /Check your remote path mapping configuration/,
@@ -2074,7 +2130,7 @@ describe('ImportService consolidation (issue #79)', () => {
       mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)), update: vi.fn().mockResolvedValue(undefined) };
       service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
-      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(stat).mockImplementation(statDirMarkerAbsent);
       vi.mocked(readdir).mockResolvedValue([
         { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
       ] as never);
@@ -2212,7 +2268,7 @@ describe('ImportService consolidation (issue #79)', () => {
       mockBookService = { getById: vi.fn().mockResolvedValue({ ...createMockDbBook({ status: 'downloading' as const }), authors: [createMockDbAuthor()], narrators: [] }), update: vi.fn().mockResolvedValue(undefined) };
       service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       // Default: stat returns directory, readdir returns audio file
-      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(stat).mockImplementation(statDirMarkerAbsent);
       vi.mocked(readdir).mockResolvedValue([
         { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
       ] as never);
@@ -2516,7 +2572,7 @@ describe('ImportService consolidation (issue #79)', () => {
       settingsService = createMockSettingsService();
       mockBookSvc = { getById: vi.fn().mockResolvedValue(withAuthor554(createMockDbBook({ status: 'downloading' as const }))), update: vi.fn().mockResolvedValue(undefined) };
       service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookSvc as never);
-      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(stat).mockImplementation(statDirMarkerAbsent);
       vi.mocked(readdir).mockResolvedValue([{ name: 'ch1.mp3', isFile: () => true, isDirectory: () => false }] as never);
     });
 

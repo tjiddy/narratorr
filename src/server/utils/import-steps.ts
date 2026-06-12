@@ -39,7 +39,7 @@ import { removeImportSibling, removeMarker, markerPresent } from './import-stagi
 export {
   prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
   markerPresent, BackupRecoveryError, findCommitPendingMarkers, sweepCommitPendingMarkers,
-  convergeStrandedMarker,
+  convergeStrandedMarker, assertMarkerPathWritable, MarkerPathConflictError,
 } from './import-staging.js';
 export type {
   PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,

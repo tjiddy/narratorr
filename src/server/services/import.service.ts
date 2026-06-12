@@ -18,6 +18,7 @@ import { toNamingOptions } from '../../core/utils/naming.js';
 import {
   validateSource, checkDiskSpace, prepareImportSiblings, copyToLibrary,
   verifyCopy, commitStagedImport, cleanupOldBookPath, handleImportFailure,
+  assertMarkerPathWritable,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
@@ -140,12 +141,20 @@ export class ImportService {
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
-      stagingPath = `${targetPath}.import-tmp`;
-      backupPath = `${targetPath}.import-bak`;
       // Same-path re-import: targetPath IS the user's existing book folder, so the
       // commit must back-up-and-rollback rather than destroy, and failure cleanup
       // must never blanket-rm it. First import / move-path: targetPath is disposable.
+      // Computed BEFORE the #1341 preflight so a marker-collision abort can't reach
+      // handleImportFailure with protectTarget still false (which would blanket-rm a
+      // re-import's existing audio).
       protectTarget = book.path != null && normalize(targetPath) === normalize(book.path);
+      // #1341 marker-path collision preflight — before the sibling paths are even derived, so a
+      // throw reaches handleImportFailure with stagingPath/backupPath still undefined (no
+      // sibling cleanup runs, an adjacent pre-existing `.import-bak` survives) and protectTarget
+      // already set. Aborts before prepareImportSiblings can strict-clear any sibling.
+      await assertMarkerPathWritable(targetPath);
+      stagingPath = `${targetPath}.import-tmp`;
+      backupPath = `${targetPath}.import-bak`;
       this.log.debug({ downloadId, bookTitle: book.title, targetPath, protectTarget }, 'Built target path');
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);

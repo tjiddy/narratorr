@@ -11,6 +11,8 @@ import type { FileHandle } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { MARKER_SUFFIX, SCRATCH_SUFFIXES } from '../../core/utils/import-sibling-suffixes.js';
+import { assertMarkerPathWritable } from './marker-path-conflict.js';
 import { serializeError } from './serialize-error.js';
 import { getAudioPathSize, assertCopyVerified } from './import-helpers.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
@@ -40,8 +42,12 @@ export class BackupRecoveryError extends Error {
   }
 }
 
-/** Suffix of the sibling commit-pending marker file (see `markerPathFor`). */
-const MARKER_SUFFIX = '.import-commit-pending';
+// MarkerPathConflictError + assertMarkerPathWritable (the #1341 marker-collision preflight)
+// live in marker-path-conflict.ts to keep this file under the line cap; re-exported so
+// existing importers (import-steps.ts, import.service.ts) keep their entry point.
+// `assertMarkerPathWritable` is also imported above for stagedAudioReplace's own preflight.
+export { MarkerPathConflictError } from './marker-path-conflict.js';
+export { assertMarkerPathWritable } from './marker-path-conflict.js';
 
 /**
  * Sibling marker file recording that a destructive commit is mid-flight. Its
@@ -57,14 +63,17 @@ function targetPathFromMarker(markerPath: string): string {
   return markerPath.slice(0, -MARKER_SUFFIX.length);
 }
 
-/** True when the commit-pending marker exists; false on ENOENT. A non-ENOENT stat
- * error propagates raw — callers decide how to treat it (recovery wraps it as a
- * `BackupRecoveryError`; the failure-cleanup gate `markerPresent` fails toward
- * preservation). */
+/** True when the commit-pending marker exists AS A FILE; false on ENOENT or when a non-file
+ * (e.g. a metadata-collision directory, #1341) occupies the path — a directory is NOT a
+ * marker, so reads treat it as marker-absent. A non-ENOENT stat error propagates raw —
+ * callers decide (recovery wraps it as `BackupRecoveryError`; `markerPresent` fails toward
+ * preservation). The destructive-flow hazard the `isFile` change introduces (a directory
+ * read as absent → strict-clear of an adjacent `.import-bak`) is closed by the
+ * `assertMarkerPathWritable` preflight below. */
 async function markerExists(markerPath: string): Promise<boolean> {
   try {
-    await stat(markerPath);
-    return true;
+    const stats = await stat(markerPath);
+    return stats.isFile();
   } catch (statError: unknown) {
     if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw statError;
@@ -278,13 +287,13 @@ export async function prepareImportSiblings(args: PrepareImportSiblingsArgs): Pr
 
 // ── startup marker sweep (#1338) ─────────────────────────────────────────
 
-/** Directory-name suffixes of the transient import scratch siblings (`.import-tmp` /
- * `.import-bak`). The marker walk skips descending into a true scratch sibling — but ONLY
- * one that sits beside its live commit-pending marker (see `isScratchSibling`); a real
- * library folder that merely ends in the same suffix is still walked (#1338 F1). */
-const SCRATCH_SUFFIXES = ['.import-tmp', '.import-bak'];
-
 /**
+ * `SCRATCH_SUFFIXES` (`.import-tmp` / `.import-bak`) is the shared reserved list from
+ * `src/core/utils/import-sibling-suffixes.ts` (#1341). The marker walk skips descending
+ * into a true scratch sibling — but ONLY one that sits beside its live commit-pending
+ * marker (see `isScratchSibling`); a real library folder that merely ends in the same
+ * suffix is still walked (#1338 F1).
+ *
  * True only for an ACTUAL transient scratch sibling: a directory `<base>.import-tmp` /
  * `<base>.import-bak` that sits next to a live `<base>.import-commit-pending` marker at the
  * same level. The marker sibling is what distinguishes real scratch (created by an
@@ -733,6 +742,13 @@ export async function stagedAudioReplace(args: StagedAudioReplaceArgs): Promise<
   const { targetPath, libraryRoot, log, sourceAudioSize, stage } = args;
   const stagingPath = `${targetPath}.import-tmp`;
   const backupPath = `${targetPath}.import-bak`;
+  // #1341 marker-path collision preflight — BEFORE the destructive try/catch, NOT inside it.
+  // A directory at the marker path reads as marker-absent (#1341 `isFile`), which would send
+  // `prepareImportSiblings` down its strict-clear branch destroying an adjacent `.import-bak`;
+  // worse, the catch's `cleanupImportSiblings({ …, preserveBackup: markerPresent === false })`
+  // would itself soft-remove that backup. Running the preflight here means the abort never
+  // enters the try, so neither destructive path runs and the adjacent backup survives.
+  await assertMarkerPathWritable(targetPath);
   try {
     await prepareImportSiblings({ stagingPath, targetPath, backupPath, libraryRoot, log });
     await stage(stagingPath);
