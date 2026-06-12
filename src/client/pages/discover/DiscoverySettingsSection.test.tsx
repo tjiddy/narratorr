@@ -17,7 +17,12 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
@@ -161,11 +166,6 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('save success invalidates settings cache, resets dirty state, and shows success toast', async () => {
-    vi.mock('sonner', () => ({
-      toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-    }));
-    const { toast } = await import('sonner');
-
     const invalidateSpy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
 
     mockApi.updateSettings.mockResolvedValue(makeSettings({
@@ -272,11 +272,6 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('save failure shows error toast', async () => {
-    vi.mock('sonner', () => ({
-      toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-    }));
-    const { toast } = await import('sonner');
-
     mockApi.updateSettings.mockRejectedValue(new Error('Server error'));
 
     renderWithProviders(<DiscoverySettingsSection />);
