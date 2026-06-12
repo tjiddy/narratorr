@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq, or, gt, and, lte, inArray } from 'drizzle-orm';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -7,6 +8,19 @@ import { BlacklistService } from './blacklist.service.js';
 import { blacklist, books } from '../../db/schema.js';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+
+// Serialize a Drizzle SQL expression to a raw SQL string + bound params for
+// predicate assertions (mirrors discovery.service.test.ts — assert real SQL,
+// not mocks-asserting-mocks).
+const dialect = new SQLiteSyncDialect();
+function toSQL(expr: unknown): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).sql;
+}
+function toParams(expr: unknown): unknown[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).params;
+}
 
 vi.mock('drizzle-orm', async (importOriginal) => {
   const actual = await importOriginal<typeof import('drizzle-orm')>();
@@ -710,6 +724,7 @@ describe('BlacklistService', () => {
     it('chunks the hash list and unions matches across chunks (> 1 chunk)', async () => {
       // 1000 hashes spanning 3 chunks (480 + 480 + 40)
       const hashes = Array.from({ length: 1000 }, (_, i) => `hash${i}`);
+      vi.mocked(inArray).mockClear();
       db.select
         .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: 'hash0', guid: null }]))
         .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: 'hash500', guid: null }]))
@@ -719,12 +734,20 @@ describe('BlacklistService', () => {
 
       // One select() per chunk
       expect(db.select).toHaveBeenCalledTimes(3);
+      // Each chunk's inArray receives the exact contiguous slice — no dropped
+      // tail, no overlap, no reordering across the 480/480/40 boundaries.
+      const calls = vi.mocked(inArray).mock.calls;
+      expect(calls).toHaveLength(3);
+      expect(calls[0]).toEqual([blacklist.infoHash, hashes.slice(0, CHUNK)]);
+      expect(calls[1]).toEqual([blacklist.infoHash, hashes.slice(CHUNK, 2 * CHUNK)]);
+      expect(calls[2]).toEqual([blacklist.infoHash, hashes.slice(2 * CHUNK, 1000)]);
       // Union of every chunk's matches
       expect(result.blacklistedHashes).toEqual(new Set(['hash0', 'hash500', 'hash999']));
     });
 
     it('chunks the guid list independently of the hash list', async () => {
       const guids = Array.from({ length: 600 }, (_, i) => `guid${i}`); // 2 chunks (480 + 120)
+      vi.mocked(inArray).mockClear();
       db.select
         .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: null, guid: 'guid0' }]))
         .mockReturnValueOnce(mockDbChain([{ ...mockEntry, infoHash: null, guid: 'guid599' }]));
@@ -732,6 +755,11 @@ describe('BlacklistService', () => {
       const result = await service.getBlacklistedIdentifiers([], guids);
 
       expect(db.select).toHaveBeenCalledTimes(2);
+      // Each guid chunk's inArray receives the exact contiguous slice (480 / 120).
+      const calls = vi.mocked(inArray).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toEqual([blacklist.guid, guids.slice(0, CHUNK)]);
+      expect(calls[1]).toEqual([blacklist.guid, guids.slice(CHUNK, 600)]);
       expect(result.blacklistedGuids).toEqual(new Set(['guid0', 'guid599']));
     });
 
@@ -754,7 +782,7 @@ describe('BlacklistService', () => {
       expect(result.blacklistedGuids.has('guidA')).toBe(true);
     });
 
-    it('applies the expiry predicate on every chunk query', async () => {
+    it('applies the expiry predicate (serialized SQL + bound params) on every chunk query', async () => {
       vi.mocked(and).mockClear();
       const hashes = Array.from({ length: 1000 }, (_, i) => `h${i}`); // 3 chunks
       db.select.mockReturnValue(mockDbChain([]));
@@ -763,6 +791,27 @@ describe('BlacklistService', () => {
 
       // and(inArray(chunk), expiryFilter) built once per chunk
       expect(and).toHaveBeenCalledTimes(3);
+
+      // Mutation-killer: assert the *serialized* WHERE of each chunk query, not just
+      // that and() was called. Dropping expiryFilter from the and() (review's mutation:
+      // `where(and(inArray(column, chunk)))`) leaves and() called 3× but strips the
+      // expiry predicate from the SQL — these assertions then fail.
+      const composed = vi.mocked(and).mock.results.map((r) => r.value);
+      expect(composed).toHaveLength(3);
+      for (const whereArg of composed) {
+        const sql = toSQL(whereArg);
+        // inArray segment present (the chunk filter)…
+        expect(sql).toContain('"info_hash" in (');
+        // …AND the expiry predicate: blacklist_type = 'permanent' OR expires_at > ?
+        expect(sql).toContain('"blacklist_type" = ?');
+        expect(sql).toContain('"expires_at" > ?');
+        // Bound params carry the expiry comparison values (the 'permanent' literal
+        // and the now() cutoff — mapped to a Unix-epoch number by the timestamp
+        // column), not merely the chunk identifiers (which are strings).
+        const params = toParams(whereArg);
+        expect(params).toContain('permanent');
+        expect(params.some((p) => typeof p === 'number')).toBe(true);
+      }
     });
 
     it('issues a single query for exactly one chunk', async () => {

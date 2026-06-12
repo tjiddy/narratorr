@@ -139,10 +139,13 @@ export class BlacklistService {
     guids?: string[],
   ): Promise<{ blacklistedHashes: Set<string>; blacklistedGuids: Set<string> }> {
     const now = new Date();
+    // Invariant: both operands are always defined, so or() never returns undefined.
+    // accumulateBlacklisted narrows its param to NonNullable — keep this non-undefined
+    // (a dropped operand would let Drizzle's and(inArray, undefined) silently skip expiry filtering).
     const expiryFilter = or(
       eq(blacklist.blacklistType, 'permanent'),
       gt(blacklist.expiresAt, now),
-    );
+    )!;
 
     const blacklistedHashes = new Set<string>();
     const blacklistedGuids = new Set<string>();
@@ -185,7 +188,7 @@ export class BlacklistService {
   private async accumulateBlacklisted(
     column: Parameters<typeof inArray>[0],
     values: string[],
-    expiryFilter: ReturnType<typeof or>,
+    expiryFilter: NonNullable<ReturnType<typeof or>>,
     blacklistedHashes: Set<string>,
     blacklistedGuids: Set<string>,
   ): Promise<void> {
