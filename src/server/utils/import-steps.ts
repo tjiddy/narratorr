@@ -38,10 +38,12 @@ import { removeImportSibling, removeMarker, markerPresent } from './import-stagi
 // re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
 export {
   prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
-  markerPresent, BackupRecoveryError,
+  markerPresent, BackupRecoveryError, findCommitPendingMarkers, sweepCommitPendingMarkers,
+  convergeStrandedMarker,
 } from './import-staging.js';
 export type {
   PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,
+  MarkerSweepResult,
 } from './import-staging.js';
 
 // ── isContentFailure ────────────────────────────────────────────────────

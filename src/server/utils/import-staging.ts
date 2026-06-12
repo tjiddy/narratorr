@@ -29,10 +29,18 @@ export class BackupRecoveryError extends Error {
     public readonly targetPath: string,
     options?: { cause?: unknown },
   ) {
-    super(`Failed to recover interrupted import backup for "${targetPath}"`, options);
+    // Remedy guidance: now user-reachable from the manual-import gate (#1337), so the
+    // message must tell the operator where to look and that the failure self-heals on retry.
+    super(
+      `Failed to recover interrupted import backup for "${targetPath}" — check permissions on "${targetPath}.import-bak"; retrying (or the next boot's marker sweep) re-attempts recovery`,
+      options,
+    );
     this.name = 'BackupRecoveryError';
   }
 }
+
+/** Suffix of the sibling commit-pending marker file (see `markerPathFor`). */
+const MARKER_SUFFIX = '.import-commit-pending';
 
 /**
  * Sibling marker file recording that a destructive commit is mid-flight. Its
@@ -40,7 +48,12 @@ export class BackupRecoveryError extends Error {
  * is the out-of-band signal that drives recovery (#1290).
  */
 function markerPathFor(targetPath: string): string {
-  return `${targetPath}.import-commit-pending`;
+  return `${targetPath}${MARKER_SUFFIX}`;
+}
+
+/** Inverse of `markerPathFor`: derive the target folder from a marker path. */
+function targetPathFromMarker(markerPath: string): string {
+  return markerPath.slice(0, -MARKER_SUFFIX.length);
 }
 
 /** True when the commit-pending marker exists; false on ENOENT. A non-ENOENT stat
@@ -262,6 +275,164 @@ export async function prepareImportSiblings(args: PrepareImportSiblingsArgs): Pr
   await recoverInterruptedBackup({ targetPath, backupPath, libraryRoot, log });
 }
 
+// ── startup marker sweep (#1338) ─────────────────────────────────────────
+
+/** Directory-name suffixes of the transient import scratch siblings (`.import-tmp` /
+ * `.import-bak`). The marker walk skips descending into a true scratch sibling — but ONLY
+ * one that sits beside its live commit-pending marker (see `isScratchSibling`); a real
+ * library folder that merely ends in the same suffix is still walked (#1338 F1). */
+const SCRATCH_SUFFIXES = ['.import-tmp', '.import-bak'];
+
+/**
+ * True only for an ACTUAL transient scratch sibling: a directory `<base>.import-tmp` /
+ * `<base>.import-bak` that sits next to a live `<base>.import-commit-pending` marker at the
+ * same level. The marker sibling is what distinguishes real scratch (created by an
+ * interrupted commit, which always writes the marker first) from a legitimately-named
+ * library folder that coincidentally ends in `.import-bak`/`.import-tmp` (#1338 F1) — the
+ * latter has no sibling marker, so it is walked normally and any marker beneath it is found.
+ */
+function isScratchSibling(dirName: string, siblingMarkerNames: Set<string>): boolean {
+  return SCRATCH_SUFFIXES.some(
+    (suffix) => dirName.endsWith(suffix) && siblingMarkerNames.has(`${dirName.slice(0, -suffix.length)}${MARKER_SUFFIX}`),
+  );
+}
+
+/**
+ * Recursively collect every `*.import-commit-pending` marker path under `root`.
+ * Markers are siblings of the book folder (`<root>/<Author>/<Title>.import-commit-pending`)
+ * and so live at arbitrary depth — the walk must descend, not just `readdir` the root.
+ * ENOENT-tolerant at every level (mirrors `listAudioFilesRecursive`): a directory that
+ * vanishes mid-walk contributes nothing rather than aborting the sweep.
+ *
+ * The only directories skipped are true scratch siblings (a `.import-tmp`/`.import-bak`
+ * beside its live marker — see `isScratchSibling`); every other directory, including one
+ * whose name merely ends in a scratch suffix, is descended so no AC-owned marker is missed.
+ */
+export async function findCommitPendingMarkers(root: string): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (readError: unknown) {
+    if ((readError as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw readError;
+  }
+  const siblingMarkerNames = new Set(
+    entries.filter((e) => e.isFile() && e.name.endsWith(MARKER_SUFFIX)).map((e) => e.name),
+  );
+  const markers: string[] = [];
+  for (const entry of entries) {
+    const full = join(root, entry.name);
+    if (entry.isFile() && entry.name.endsWith(MARKER_SUFFIX)) {
+      markers.push(full);
+    } else if (entry.isDirectory() && !isScratchSibling(entry.name, siblingMarkerNames)) {
+      markers.push(...await findCommitPendingMarkers(full));
+    }
+  }
+  return markers;
+}
+
+export interface MarkerSweepResult {
+  /** Markers converged (recovered + cleared, or already-converged no-op-cleared). */
+  converged: number;
+  /** Marker paths the sweep could NOT converge — state preserved for the next attempt. */
+  skipped: string[];
+}
+
+/**
+ * Boot-time convergence sweep for stranded `.import-commit-pending` markers (#1338).
+ *
+ * #1290 recovery only fires when an import to the SAME recomputed targetPath runs again;
+ * a failed download, a manual job, or a folderFormat/metadata change between crash and
+ * retry orphans the marker + backup forever. This sweep decouples recovery from the retry
+ * trigger: it walks the library root, derives each marker's target/staging/backup siblings,
+ * and converges each through `prepareImportSiblings` — which clears the disposable
+ * `.import-tmp` scratch *before* restoring from `.import-bak`, so marker + backup + scratch
+ * all clear in one step (idempotent: a second pass over a converged path is a no-op).
+ *
+ * Best-effort + preservation-preserving: a per-marker failure (`BackupRecoveryError` on a
+ * standing ENOTDIR/EACCES `.import-bak`) leaves that path's state intact, logs a WARN naming
+ * it, and the loop continues to the next marker rather than wedging an invisible eternal
+ * retry loop. Every destructive op is gated by `assertPathInsideLibrary` inside
+ * `prepareImportSiblings`; the sweep additionally skips any marker whose target escapes the
+ * root, never acting on a foreign path.
+ *
+ * MUST run inside the awaited boot-recovery phase, BEFORE the import-queue drain loop, so the
+ * sweep and a draining import never `rename()` from the same `.import-bak` concurrently
+ * (single recovery actor per marker — see `ImportQueueWorker.start()`).
+ */
+export async function sweepCommitPendingMarkers(
+  libraryRoot: string,
+  log: FastifyBaseLogger,
+): Promise<MarkerSweepResult> {
+  let markerPaths: string[];
+  try {
+    markerPaths = await findCommitPendingMarkers(libraryRoot);
+  } catch (walkError: unknown) {
+    // Root traversal failed before any marker was enumerated (e.g. EACCES on the library
+    // root). Warn and let boot proceed without draining marker recovery this pass (#1338 F3) —
+    // ENOENT is already absorbed as "no markers" inside `findCommitPendingMarkers`.
+    log.warn({ error: serializeError(walkError), libraryRoot }, 'Marker sweep: failed to walk library root — skipping marker recovery this boot');
+    return { converged: 0, skipped: [] };
+  }
+
+  if (markerPaths.length === 0) {
+    log.debug({ libraryRoot }, 'Marker sweep: no stranded commit-pending markers');
+    return { converged: 0, skipped: [] };
+  }
+
+  log.info({ libraryRoot, count: markerPaths.length }, 'Marker sweep: converging stranded commit-pending markers');
+  let converged = 0;
+  const skipped: string[] = [];
+  for (const markerPath of markerPaths) {
+    if (await convergeStrandedMarker(markerPath, libraryRoot, log)) converged++;
+    else skipped.push(markerPath);
+  }
+  log.info({ libraryRoot, converged, skipped: skipped.length, skippedPaths: skipped }, 'Marker sweep complete');
+  return { converged, skipped };
+}
+
+/**
+ * Converge a single stranded marker through `prepareImportSiblings`. Returns `true` when the
+ * marker (and its `.import-bak` / `.import-tmp` siblings) cleared, `false` when the path was
+ * left intact — either because the derived target escapes `libraryRoot` (the
+ * `assertPathInsideLibrary` gate, so no destructive op runs on a foreign path) or because
+ * recovery failed and preserved state for the next attempt. Never throws on a recovery
+ * failure: it is logged and reported as not-converged so the sweep loop continues to the
+ * next marker rather than wedging on one bad path.
+ */
+export async function convergeStrandedMarker(
+  markerPath: string,
+  libraryRoot: string,
+  log: FastifyBaseLogger,
+): Promise<boolean> {
+  const targetPath = targetPathFromMarker(markerPath);
+  try {
+    assertPathInsideLibrary(targetPath, libraryRoot);
+  } catch (gateError: unknown) {
+    if (gateError instanceof PathOutsideLibraryError) {
+      log.warn({ markerPath, libraryRoot }, 'Marker sweep: marker target escapes library root — skipping, not acting on foreign path');
+      return false;
+    }
+    throw gateError;
+  }
+  try {
+    await prepareImportSiblings({
+      stagingPath: `${targetPath}.import-tmp`,
+      targetPath,
+      backupPath: `${targetPath}.import-bak`,
+      libraryRoot,
+      log,
+    });
+    return true;
+  } catch (recoveryError: unknown) {
+    // Preservation-preserving: `prepareImportSiblings`/`recoverInterruptedBackup` never clear
+    // on a failed recovery, so backup + marker survive intact. Surface the non-convergent path
+    // (otherwise it is an invisible eternal retry loop) and report it as not-converged.
+    log.warn({ error: serializeError(recoveryError), markerPath, targetPath }, 'Marker sweep: could not converge stranded marker — state preserved, retry on next boot');
+    return false;
+  }
+}
+
 // ── commitStagedImport ──────────────────────────────────────────────────
 
 export interface CommitStagedImportArgs {
@@ -348,9 +519,14 @@ export interface RecoverInterruptedBackupArgs {
  * relative path (the backup is authoritative — mirrors `rollbackStagedCommit`). On
  * success, strict-clears `.import-bak` and removes the marker so the fresh import
  * proceeds. A failure partway throws `BackupRecoveryError` BEFORE clearing either, so
- * the caller's cleanup preserves the still-unrestored originals and the marker for the
- * next boot (which re-triggers recovery and converges, since already-restored files
- * were `rename()`d out of the backup).
+ * the caller's cleanup preserves the still-unrestored originals and the marker.
+ *
+ * Convergence on the NEXT attempt is what clears a preserved marker — but that attempt
+ * is not always a re-import of the same target. Re-import only re-triggers recovery when
+ * the recomputed targetPath still matches; a failed/manual/path-recomputed job never
+ * revisits the old target, so without the boot-time marker sweep (#1338) such markers
+ * would strand forever. Either way recovery is idempotent: already-restored files were
+ * `rename()`d out of the backup, so a re-run reads it empty and clears marker + backup.
  */
 async function recoverInterruptedBackup(args: RecoverInterruptedBackupArgs): Promise<void> {
   const { targetPath, backupPath, libraryRoot, log } = args;
@@ -363,6 +539,12 @@ async function recoverInterruptedBackup(args: RecoverInterruptedBackupArgs): Pro
       log.info({ targetPath, files: backedUp.length }, 'Recovering interrupted import commit — restoring backed-up audio from .import-bak');
       assertPathInsideLibrary(targetPath, libraryRoot);
       assertPathInsideLibrary(backupPath, libraryRoot);
+      // Recreate the target folder before restoring (#1338): if the user deleted the
+      // half-replaced book folder while state was stranded, every flat-file restore rename
+      // would ENOENT into a perpetual preserved-but-never-converging loop. Mirrors
+      // `commitStagedImport`'s top-of-body `mkdir(targetPath)`; nested subdirs are still
+      // created per-file in `restoreBackedUpFiles`.
+      await mkdir(targetPath, { recursive: true });
       await restoreBackedUpFiles(targetPath, backupPath, backedUp, log, { strict: true });
     }
   } catch (recoveryError: unknown) {

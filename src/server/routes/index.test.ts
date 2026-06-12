@@ -405,4 +405,45 @@ describe('createServices', () => {
     const broadcasterArg = libraryScanCalls[0]![7];
     expect(broadcasterArg).toBeInstanceOf(EventBroadcasterService);
   });
+
+  // #1338 — ImportQueueWorker receives a library-root resolver so the boot-time stranded-marker
+  // sweep is actually enabled in the running app. Without this 4th constructor argument the sweep
+  // is a no-op in production even though the direct worker tests still pass.
+  it('injects a library-root resolver into ImportQueueWorker that reads settings.get("library").path', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    const { ImportQueueWorker } = await import('../services/import-queue-worker.js');
+
+    const settingsGet = vi.fn().mockResolvedValue({ audibleRegion: 'us', path: '/library/root' });
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = settingsGet;
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    // ImportQueueWorker constructor should receive the resolver as its 4th arg
+    // (signature: db, log, broadcaster, getLibraryRoot)
+    const workerCalls = vi.mocked(ImportQueueWorker).mock.calls;
+    expect(workerCalls).toHaveLength(1);
+    const getLibraryRoot = workerCalls[0]![3];
+    expect(typeof getLibraryRoot).toBe('function');
+
+    // The injected resolver must read the configured library path, not a constant.
+    settingsGet.mockClear();
+    const resolved = await (getLibraryRoot as () => Promise<string | null | undefined>)();
+    expect(resolved).toBe('/library/root');
+    expect(settingsGet).toHaveBeenCalledWith('library');
+  });
 });
