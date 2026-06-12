@@ -1,3 +1,5 @@
+import { resolveVersionTag } from '../../shared/user-agent.js';
+
 let packageVersion: string | undefined;
 let packageCommit: string | undefined;
 let packageBuildTime: string | undefined;
@@ -5,8 +7,7 @@ let packageBuildTime: string | undefined;
 /** Returns the app version from the build-injected git tag, or "dev" when not built from a tag. */
 export function getVersion(): string {
   if (!packageVersion) {
-    const tag = process.env.GIT_TAG;
-    packageVersion = (tag && tag !== 'unknown') ? tag : 'dev';
+    packageVersion = resolveVersionTag();
   }
   return packageVersion;
 }

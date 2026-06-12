@@ -38,6 +38,44 @@ describe('getVersion', () => {
   });
 });
 
+describe('getVersion / getUserAgent shared resolver agreement', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function loadBoth() {
+    const versionMod = await import('./version.js');
+    const uaMod = await import('../../shared/user-agent.js');
+    return { getVersion: versionMod.getVersion, getUserAgent: uaMod.getUserAgent };
+  }
+
+  it('agree for a normal semver tag', async () => {
+    process.env.GIT_TAG = 'v9.9.9';
+    const { getVersion, getUserAgent } = await loadBoth();
+    expect(getVersion()).toBe('v9.9.9');
+    expect(getUserAgent()).toBe('Narratorr/v9.9.9');
+    delete process.env.GIT_TAG;
+  });
+
+  it('agree for an unsafe tag — both consume the sanitized resolver', async () => {
+    process.env.GIT_TAG = 'v1.0\r\n';
+    const { getVersion, getUserAgent } = await loadBoth();
+    expect(getVersion()).toBe('v1.0');
+    expect(getUserAgent()).toBe('Narratorr/v1.0');
+    delete process.env.GIT_TAG;
+  });
+
+  it('memoizes getVersion across repeated calls', async () => {
+    process.env.GIT_TAG = 'v9.9.9';
+    const { getVersion } = await loadBoth();
+    expect(getVersion()).toBe('v9.9.9');
+    // Mutating the env after first resolution must not change the cached value.
+    process.env.GIT_TAG = 'v0.0.0';
+    expect(getVersion()).toBe('v9.9.9');
+    delete process.env.GIT_TAG;
+  });
+});
+
 describe('getCommit', () => {
   beforeEach(() => {
     vi.resetModules();

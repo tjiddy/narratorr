@@ -10,7 +10,7 @@
  * can regress independently — each is asserted here.
  */
 
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
 vi.mock('../utils/network-service.js', async (importActual) => {
@@ -111,5 +111,42 @@ describe('MAM dispatcher-routing regression — fetchTorrentAsDataUri (F3)', () 
     expect(torrentUrl).toContain('/tor/download.php');
     const torrentInit = mockHelper.mock.calls[0]![1] as { dispatcher?: unknown };
     expect(torrentInit.dispatcher).toBeDefined();
+  });
+});
+
+// #1329 — the MAM .torrent grab is a separate adapter-side fetch that does not
+// route through DownloadUrl.resolveHttp, so it needs the canonical User-Agent
+// applied independently. Adding the UA must not drop the existing mam_id Cookie.
+describe('MAM .torrent grab User-Agent (#1329)', () => {
+  beforeEach(() => {
+    mockHelper.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('sends the canonical User-Agent alongside the mam_id Cookie on the torrent fetch', async () => {
+    vi.stubEnv('GIT_TAG', 'v9.9.9');
+    mockHelper.mockResolvedValueOnce(
+      new Response(Buffer.from('fake-torrent'), {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }),
+    );
+
+    await makeDirectIndexer().resolveDownloadUrl({
+      guid: '12345',
+      downloadUrl: 'mam-torrent://12345',
+      protocol: 'torrent',
+      isFreeleech: true,
+    });
+
+    expect(mockHelper).toHaveBeenCalledTimes(1);
+    const init = mockHelper.mock.calls[0]![1] as { headers?: Record<string, string> };
+    expect(init.headers).toMatchObject({
+      'User-Agent': 'Narratorr/v9.9.9',
+      Cookie: 'mam_id=test-mam-id',
+    });
   });
 });
