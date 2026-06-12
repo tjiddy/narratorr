@@ -268,11 +268,14 @@ export class ImportService {
     if (!download.downloadClientId || !download.externalId) return;
 
     try {
-      // The import path defers when the live ratio cannot be fetched — it treats "unknown
-      // state" as "not yet safe to remove". outputPath-nulling is intentionally NOT done here.
+      // For torrents the import path defers when the live ratio cannot be fetched — it treats
+      // "unknown state" as "not yet safe to remove". For usenet, seed ratio is meaningless, so an
+      // unfetchable ratio must not defer; the protocol gate then folds the missing ratio to proceed.
+      // outputPath-nulling is intentionally NOT done here.
+      const deferOnUnavailableRatio = download.protocol === 'torrent';
       const result = await removeOrDeferTorrent(download, importSettings,
         { downloadClientService: this.downloadClientService, log: this.log },
-        { deferOnUnavailableRatio: true });
+        { deferOnUnavailableRatio });
       await this.applyImportRemovalResult(download, importSettings, result);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed to remove torrent after import');

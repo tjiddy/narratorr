@@ -2428,6 +2428,51 @@ describe('ImportService consolidation (issue #79)', () => {
       expect('outputPath' in (pendingCall![0] as Record<string, unknown>)).toBe(false);
     });
 
+    // #1298 — usenet must NOT defer on an unfetchable live ratio (seed ratio is meaningless for
+    // usenet). Import path now derives deferOnUnavailableRatio from download.protocol === 'torrent'.
+    it('proceeds with usenet removal when ratio unfetchable (does not defer)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      // First call for resolveSavePath, second for handleTorrentRemoval returns null (ratio unfetchable)
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce(null);
+
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, protocol: 'usenet' }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      // Regression guard: usenet with unfetchable ratio proceeds to removal, never defers.
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
+      const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
+      const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
+      expect(pendingCall).toBeUndefined();
+    });
+
+    it('proceeds with usenet removal when live ratio available (sanity)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
+        return Promise.resolve({});
+      });
+      mockAdapter.getDownload
+        .mockResolvedValueOnce(defaultDownloadItem)
+        .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 0.5 });
+
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, protocol: 'usenet' }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
+    });
+
     it('handles getDownload throwing — error logged, import succeeds', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
