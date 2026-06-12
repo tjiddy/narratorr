@@ -1454,7 +1454,10 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('evicts oldest entries past the size cap so the cache does not grow unbounded', async () => {
-      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(germanNzbXml(), { status: 200 }));
+      // Fresh Response per call — a single shared one-shot Response's body is
+      // consumable once, so calls 2..N would throw `Body is unusable` and take
+      // the fetch-failed path instead of the resolved success branch (#1330).
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
       const results: SearchResult[] = Array.from({ length: 5001 }, (_, i) =>
         makeResult({ protocol: 'usenet', guid: `cap-${i}`, downloadUrl: `http://nzb.test/cap-${i}` }),
       );
@@ -1462,6 +1465,9 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(enrichmentCache.size).toBeLessThanOrEqual(5000);
+      // A surviving (newest-inserted) entry resolved a live body — proving every
+      // candidate hit the success branch, not the fetch-failed fallback.
+      expect(enrichmentCache.get('test:cap-5000')?.outcome).toBe('resolved');
     });
   });
 
@@ -1499,12 +1505,65 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('uncapped (option omitted) fetches every cache-miss candidate', async () => {
-      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(germanNzbXml(), { status: 200 }));
+      // Fresh Response per call so every candidate consumes a live body and
+      // resolves a language — a single shared one-shot Response would force
+      // calls 2..N down the fetch-failed path (`Body is unusable`) (#1330).
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
       const results = usenetCandidates();
 
       await enrichUsenetLanguages(results, logger);
 
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(13);
+      // Success branch: every candidate resolved german, and its cache entry is
+      // `resolved` (not `fetch-failed`).
+      for (const r of results) expect(r.language).toBe('german');
+      expect(enrichmentCache.get(`test:${results[0]!.guid}`)?.outcome).toBe('resolved');
+    });
+  });
+
+  describe('Phase-2 cap boundary clamp (#1330)', () => {
+    function usenetCandidates(n: number): SearchResult[] {
+      return Array.from({ length: n }, (_, i) =>
+        makeResult({ protocol: 'usenet', guid: `cap-${i}`, downloadUrl: `http://nzb.test/cap-${i}`, matchScore: i + 1 }),
+      );
+    }
+
+    it('maxPhase2Fetches: 0 performs zero fetches', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages(usenetCandidates(5), logger, undefined, { maxPhase2Fetches: 0 });
+
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+
+    it('negative maxPhase2Fetches behaves as 0 after clamping (not slice(0, -n) keep-all-but-n)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages(usenetCandidates(5), logger, undefined, { maxPhase2Fetches: -2 });
+
+      // Without the clamp, `ranked.slice(0, -2)` would keep (and fetch) 3 of the
+      // 5 candidates — the inverse of a cap. The clamp pins it to zero.
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+
+    it('fractional maxPhase2Fetches floors to whole fetches', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages(usenetCandidates(5), logger, undefined, { maxPhase2Fetches: 2.9 });
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
+    });
+
+    it('cap >= candidate count fetches all candidates and emits no skip log', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages(usenetCandidates(3), logger, undefined, { maxPhase2Fetches: 10 });
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(3);
+      expect(logger.debug).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skipped: expect.anything() }),
+        'Phase-2 fetch cap applied — skipped lowest-ranked candidates',
+      );
     });
   });
 

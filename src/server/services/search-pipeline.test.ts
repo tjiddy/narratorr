@@ -1963,6 +1963,53 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
     });
     expect(nonBroadcasterEventHistory.create).toHaveBeenCalledTimes(1);
   });
+
+  it('selects the identical result from a multi-candidate ranked set on both paths (#1330)', async () => {
+    // A 4-candidate set where ranking + best-grabbable selection actually has to
+    // choose, so a divergence between the entry paths would be observable:
+    //  - top-ranked by matchScore LACKS a downloadUrl → `.find(r => r.downloadUrl)` skips it
+    //  - next has an empty-string downloadUrl (falsy) → also skipped
+    //  - the grabbable winner's release title differs from the book title,
+    //    defeating the degenerate makeResult default where they're equal.
+    // (downloadUrl `undefined`/`''` overrides go through makeResult's eopt-safe
+    // override type — `undefined` is deleted, `''` is set — per the
+    // fixture-builder-eopt-overrides learning.)
+    const candidates = [
+      makeResult({ indexerId: 10, title: 'Top Ranked No URL', matchScore: 0.99, seeders: 50, downloadUrl: undefined }),
+      makeResult({ indexerId: 10, title: 'Empty URL Row', matchScore: 0.95, seeders: 40, downloadUrl: '' }),
+      makeResult({ indexerId: 10, title: 'The Real Winner', guid: 'winner-guid', matchScore: 0.90, seeders: 30, downloadUrl: 'magnet:?xt=urn:btih:winner' }),
+      makeResult({ indexerId: 10, title: 'Lower Ranked', guid: 'loser-guid', matchScore: 0.50, seeders: 5, downloadUrl: 'magnet:?xt=urn:btih:loser' }),
+    ];
+    const grab = vi.fn().mockResolvedValue({ id: 1, status: 'downloading' });
+    const downloadOrchestrator = { grab } as unknown as DownloadOrchestrator;
+    const baseDeps = {
+      downloadOrchestrator,
+      qualitySettings: defaultQualitySettings,
+      log,
+      blacklistService,
+      indexerService: mockIndexer,
+      eventHistory,
+    };
+
+    const broadcasterResult = await searchAndGrabForBook(book, {
+      ...baseDeps,
+      indexerSearchService: makeParityIndexer(candidates),
+      broadcaster: { emit: vi.fn() } as unknown as EventBroadcasterService,
+    });
+    const nonBroadcasterResult = await searchAndGrabForBook(book, {
+      ...baseDeps,
+      indexerSearchService: makeParityIndexer(candidates),
+    });
+
+    expect(broadcasterResult).toEqual({ result: 'grabbed', title: 'The Real Winner' });
+    expect(nonBroadcasterResult).toEqual(broadcasterResult);
+
+    // Both paths grabbed; the grab payloads must be byte-identical and point at
+    // the explicit expected guid — not merely "a grab happened".
+    expect(grab).toHaveBeenCalledTimes(2);
+    expect(grab.mock.calls[1]![0]).toEqual(grab.mock.calls[0]![0]);
+    expect(grab.mock.calls[0]![0]).toEqual(expect.objectContaining({ guid: 'winner-guid' }));
+  });
 });
 
 describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
@@ -2913,6 +2960,44 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     // Clean result passes (no multi-part marker in nzbName)
     expect(output.results).toHaveLength(1);
     expect(output.results[0]!.guid).toBe('clean-guid');
+  });
+});
+
+describe('postProcessSearchResults — interactive path stays uncapped (#1330)', () => {
+  function createSettings(): SettingsService {
+    const quality = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' };
+    const metadata = { audibleRegion: 'us', languages: [] };
+    return {
+      get: vi.fn().mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'quality' ? quality : cat === 'metadata' ? metadata : {})),
+    } as unknown as SettingsService;
+  }
+
+  function createBlacklist(): BlacklistService {
+    return {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+  }
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('calls enrichUsenetLanguages without a maxPhase2Fetches cap option (no 4th argument)', async () => {
+    const log = createMockLogger();
+    const results = [makeResult({ protocol: 'usenet', title: 'A Book', downloadUrl: 'http://nzb.test/1' })];
+
+    await postProcessSearchResults(results, 3600, createBlacklist(), createSettings(), mockIndexer, log);
+
+    expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
+    // The interactive/display path must stay uncapped. A copy-paste of
+    // `{ maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP }` from the auto-grab path would
+    // add a 4th argument here and fail both assertions (#1330).
+    expect(mockEnrichUsenet.mock.calls[0]).toHaveLength(3);
+    expect(mockEnrichUsenet.mock.calls[0]![3]).toBeUndefined();
   });
 });
 

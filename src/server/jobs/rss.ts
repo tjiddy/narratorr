@@ -120,10 +120,14 @@ export async function runRssJob(
       continue;
     }
 
-    // Persist the match score so the enrichment Phase-2 cap ranks by it. RSS
-    // computes bestScore here for matching and would otherwise discard it,
-    // leaving the cap to rank only by seeders/grabs (usually absent on usenet)
-    // and effectively falling back to feed order (#1315).
+    // Persist the match score so BOTH downstream consumers rank by it:
+    // (1) the enrichment Phase-2 fetch cap (`selectCappedCandidates`), and
+    // (2) `canonicalCompare`'s matchScore gate during grab selection — a >0.1
+    // score spread across this book's candidates now overrides the
+    // narrator/MB-hr tiers when picking the best RSS result. RSS computes
+    // bestScore here for matching and would otherwise discard it, leaving both
+    // consumers to rank only by seeders/grabs (usually absent on usenet) and
+    // effectively fall back to feed order (#1315).
     item.matchScore = bestScore;
 
     const existing = itemsPerBook.get(bestCandidate.id);

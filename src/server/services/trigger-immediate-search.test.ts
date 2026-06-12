@@ -50,6 +50,16 @@ describe('triggerImmediateSearch', () => {
     expect(deps.settingsService.get).toHaveBeenCalledWith('metadata');
     expect(deps.settingsService.get).toHaveBeenCalledWith('search');
     expect(buildNarratorPriority).toHaveBeenCalledWith('accuracy', [{ name: 'Narrator' }]);
+    // Pin the broadcaster/eventHistory wiring through the deps bag — dropping
+    // either key from the searchAndGrabForBook call (the other three callers are
+    // already pinned) would otherwise fail no test (#1330).
+    expect(searchAndGrabForBook).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        broadcaster: deps.eventBroadcaster,
+        eventHistory: deps.eventHistory,
+      }),
+    );
   });
 
   it('logs warning and does not throw when settings fetch fails', async () => {
