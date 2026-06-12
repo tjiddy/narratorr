@@ -138,13 +138,20 @@ function selectCappedCandidates(
   cap: number | undefined,
   logger: FastifyBaseLogger,
 ): { toFetch: SearchResult[]; skipped: SearchResult[] } {
-  if (cap === undefined || candidates.length <= cap) return { toFetch: candidates, skipped: [] };
+  if (cap === undefined) return { toFetch: candidates, skipped: [] };
+  // Clamp to a non-negative integer before slicing. An unclamped negative cap
+  // would hit `ranked.slice(0, -n)` = keep-all-but-n (the INVERSE of a cap),
+  // and a fractional cap would lean on implicit slice coercion — floor it so a
+  // fractional value rounds down to whole fetches (#1330). No-op on current
+  // call paths (cap is always `AUTO_GRAB_PHASE2_CAP` or undefined).
+  const effectiveCap = Math.max(0, Math.floor(cap));
+  if (candidates.length <= effectiveCap) return { toFetch: candidates, skipped: [] };
   const ranked = [...candidates].sort(comparePhase2);
   logger.debug(
-    { candidates: candidates.length, cap, skipped: candidates.length - cap },
+    { candidates: candidates.length, cap: effectiveCap, skipped: candidates.length - effectiveCap },
     'Phase-2 fetch cap applied — skipped lowest-ranked candidates',
   );
-  return { toFetch: ranked.slice(0, cap), skipped: ranked.slice(cap) };
+  return { toFetch: ranked.slice(0, effectiveCap), skipped: ranked.slice(effectiveCap) };
 }
 
 /**

@@ -783,6 +783,41 @@ describe('rss tests — GUID blacklist filtering', () => {
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:narrator' }),
     );
   });
+
+  // #1330 — `item.matchScore = bestScore` changes RSS grab SELECTION, not just
+  // the enrichment fetch ranking. canonicalCompare's matchScore gate (a >0.1
+  // spread) overrides the narrator/MB-hr tiers, so the score must reach ranking.
+  it('grabs the higher-matchScore release over the narrator/size winner via canonicalCompare (#1330)', async () => {
+    mockEnrichUsenet.mockReset();
+    // Two candidates for the same wanted book:
+    //  - A is narrator-matched and larger → wins the narrator + MB/hr tiers.
+    //  - B is an exact title/author match (matchScore 1.0 vs A's ~0.77 — a >0.1
+    //    spread) but has no narrator match and is smaller.
+    // `item.matchScore = bestScore` feeds canonicalCompare's matchScore gate,
+    // which overrides the lower tiers and selects B. Removing that assignment
+    // leaves matchScore undefined → 0 on both, the gate ties, and the narrator
+    // tier flips the grab back to A.
+    const wanted = [{ ...makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson'), narrators: [{ name: 'Kevin R. Free' }] }];
+    const { bookList } = createMockBookServices(wanted);
+    const settings = createMockSettingsService({
+      rss: { enabled: true, intervalMinutes: 30 },
+      search: { searchPriority: 'accuracy' },
+    });
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.pollRss).mockResolvedValue([
+      makeResult('Way of Kings', 'Sanderson', { narrator: 'Kevin R. Free', size: BYTES_PER_GB, downloadUrl: 'magnet:?xt=urn:btih:narratorpick' }),
+      makeResult('The Way of Kings', 'Brandon Sanderson', { narrator: 'Someone Else', size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:matchscorepick' }),
+    ]);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(download.grab).toHaveBeenCalledTimes(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:matchscorepick' }),
+    );
+  });
 });
 
 describe('#502 runRssJob — enrichment before filtering', () => {

@@ -324,13 +324,19 @@ export type SingleBookSearchResult =
   | { result: 'skipped'; reason: string }
   | { result: 'grab_error'; error: Error };
 
-/** Attempt to grab the best result and return the search outcome. */
+/**
+ * Attempt to grab the best result and return the search outcome. The return type
+ * excludes `no_results` — `tryGrab` is only reached once a grabbable result has
+ * been selected, so it can only resolve to grabbed/skipped/grab_error. Narrowing
+ * here keeps the outcome chain in {@link runSearchAndGrab} statically aligned with
+ * the three branches it actually handles (#1330, type-only — no behavior change).
+ */
 async function tryGrab(
   best: SearchResult,
   book: { id: number; title: string },
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
-): Promise<SingleBookSearchResult> {
+): Promise<Exclude<SingleBookSearchResult, { result: 'no_results' }>> {
   try {
     await downloadOrchestrator.grab(
       buildGrabPayload(best, book.id, { guid: best.guid }),
