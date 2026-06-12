@@ -10,6 +10,10 @@ vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   writeFile: vi.fn().mockResolvedValue(undefined),
+  open: vi.fn().mockResolvedValue({
+    sync: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 vi.mock('../utils/post-processing-script.js', () => ({
@@ -29,12 +33,13 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, statfs, readdir, mkdir, rename, writeFile } from 'node:fs/promises';
+import { stat, rm, statfs, readdir, mkdir, rename, writeFile, open } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize, ContentFailureError } from './import-helpers.js';
 import { PathOutsideLibraryError } from './paths.js';
 import type { Stats } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 
 import {
   validateSource,
@@ -743,11 +748,19 @@ describe('commitStagedImport', () => {
     const log = createMockLog();
     const marker = `${target}.import-commit-pending`;
     readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    // Track the directory handle so we can assert it is sync'd then closed on the
+    // success path (the swallowed-failure path is covered by a sibling test).
+    const dirSync = vi.fn().mockResolvedValue(undefined);
+    const dirClose = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(open).mockResolvedValueOnce({ sync: dirSync, close: dirClose } as unknown as FileHandle);
 
     await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
-    // Marker written (empty) once a backup is about to be created...
-    expect(writeFile).toHaveBeenCalledWith(marker, '');
+    // Marker written (empty) once a backup is about to be created — and DURABLY
+    // flushed (`{ flush: true }`) so a power loss can't persist the renames while
+    // dropping the un-fsync'd marker (#1339). A regression that drops the flush
+    // fails this assertion.
+    expect(writeFile).toHaveBeenCalledWith(marker, '', expect.objectContaining({ flush: true }));
     // ...and strict-removed on a successful commit.
     expect(rm).toHaveBeenCalledWith(marker, { force: true });
     // The marker MUST be written BEFORE the first destructive backup rename — a
@@ -760,7 +773,23 @@ describe('commitStagedImport', () => {
       (c) => c[0] === `${target}/old.mp3` && c[1] === `${backup}/old.mp3`,
     );
     expect(firstBackupRename).toBeGreaterThanOrEqual(0);
-    expect(markerWriteOrder).toBeLessThan(vi.mocked(rename).mock.invocationCallOrder[firstBackupRename]!);
+    const firstBackupRenameOrder = vi.mocked(rename).mock.invocationCallOrder[firstBackupRename]!;
+    expect(markerWriteOrder).toBeLessThan(firstBackupRenameOrder);
+    // The best-effort parent-directory fsync (entry durability) opens the marker's
+    // parent dir BEFORE the first backup rename (#1339).
+    expect(open).toHaveBeenCalledWith('/library/Author', 'r');
+    const dirOpenOrder = vi.mocked(open).mock.invocationCallOrder[0]!;
+    expect(dirOpenOrder).toBeLessThan(firstBackupRenameOrder);
+    // ...and — the assertion that actually pins durability — the handle `sync()`
+    // (the fsync that flushes the directory entry) COMPLETES before the first
+    // backup rename. Pinning `open()` alone is insufficient: a regression that
+    // opens the dir early, renames, and only then awaits `sync()` would still
+    // satisfy the open-order check while violating the ordering this PR protects.
+    expect(dirSync).toHaveBeenCalled();
+    const dirSyncOrder = dirSync.mock.invocationCallOrder[0]!;
+    expect(dirSyncOrder).toBeLessThan(firstBackupRenameOrder);
+    // The handle is always closed (no descriptor leak).
+    expect(dirClose).toHaveBeenCalled();
   });
 
   it('a marker-write failure aborts before any destructive backup rename — nothing destroyed (#1290)', async () => {
@@ -776,6 +805,29 @@ describe('commitStagedImport', () => {
 
     // The original was NOT moved into .import-bak — the existing book is untouched.
     expect(rename).not.toHaveBeenCalledWith(`${target}/old.mp3`, `${backup}/old.mp3`);
+  });
+
+  it('a parent-directory fsync failure does NOT abort the commit — backup renames still run, handle closed (#1339)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    const close = vi.fn().mockResolvedValue(undefined);
+    // The marker file flush succeeds; only the best-effort directory fsync rejects
+    // (some filesystems reject fsync on a directory handle). The file flush already
+    // provides the durability that matters, so the commit must proceed regardless.
+    vi.mocked(open).mockResolvedValueOnce({
+      sync: vi.fn().mockRejectedValue(new Error('EINVAL fsync on dir')),
+      close,
+    } as unknown as FileHandle);
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    // The commit proceeded: the original was backed up and the staged file moved in.
+    expect(rename).toHaveBeenCalledWith(`${target}/old.mp3`, `${backup}/old.mp3`);
+    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    // The directory handle is closed even on the swallowed-fsync path (no leak).
+    expect(close).toHaveBeenCalled();
   });
 
   it('first import (empty target): never writes the commit-pending marker (#1290)', async () => {
