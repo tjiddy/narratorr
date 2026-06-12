@@ -19,9 +19,13 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
     return { state: services.healthCheck.getAggregateState() };
   });
 
-  // POST /api/system/health/run — trigger immediate health check
-  app.post('/api/system/health/run', async () => {
-    return services.healthCheck.runAllChecks();
+  // POST /api/system/health/run — trigger immediate health check. A manual run
+  // fires a live version check first (awaited, best-effort) so the returned
+  // report reflects a fresh update status rather than the daily-cached value
+  // (#1411). The scheduled `health-check` cron stays cache-only by calling
+  // `runAllChecks()` directly.
+  app.post('/api/system/health/run', async (request) => {
+    return await services.healthCheck.runManualChecks(request.log);
   });
 
   // GET /api/system/tasks — list all scheduled tasks

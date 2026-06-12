@@ -12,7 +12,7 @@ import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { getUpdateStatus } from '../jobs/version-check.js';
+import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';
@@ -45,6 +45,7 @@ export class HealthCheckService {
   private cachedResults: HealthCheckResult[] = [];
   private running = false;
   private pendingRerun = false;
+  private versionUpdateCallback?: () => void;
 
   constructor(
     private indexerService: IndexerService,
@@ -83,6 +84,46 @@ export class HealthCheckService {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Register the version-update health-nudge callback owned by the boot/2 AM
+   * version-check invocations (jobs/index.ts `onUpdateChanged`). The manual
+   * "Run Now" path (`runManualChecks`) passes this *same* callback into
+   * `checkForUpdate`, so its SSE/health-nudge side-effects stay identical to the
+   * scheduled path (#1411, AC #5). Set once during `startJobs`; left undefined in
+   * contexts that don't boot jobs (e.g. route tests), in which case the manual
+   * run simply fires no nudge callback — harmless, the awaited fetch still
+   * freshens the cache.
+   */
+  setVersionUpdateCallback(callback: () => void): void {
+    this.versionUpdateCallback = callback;
+  }
+
+  /**
+   * Manual "Run Now" entry point: live-refresh the version-update cache *before*
+   * reading the health report, then run a full pass. The version-update row is
+   * otherwise a pure cache read (`checkVersionUpdate` → `getUpdateStatus`) fed
+   * only by the daily 2 AM version-check job, so a manual run could surface an
+   * up-to-24h-stale row presenting with the same freshness as the live-probed
+   * rows (#1411).
+   *
+   * Ordering is serial and deterministic: `checkForUpdate` is awaited to
+   * completion (bounded by its own 10s `AbortSignal.timeout`) before
+   * `runAllChecks` reads `getUpdateStatus` mid-pass, so the returned report
+   * always reflects the post-fetch cache — never a pre-fetch stale result.
+   *
+   * Best-effort: `checkForUpdate` already swallows all fetch/parse errors and
+   * resolves `void`; the defensive `.catch` is a contract guard so a hung or
+   * rejecting check never fails the health run — it falls through to the existing
+   * cached value. The scheduled `health-check` cron calls `runAllChecks` directly
+   * and pays no fetch cost (AC #3).
+   */
+  async runManualChecks(log: FastifyBaseLogger): Promise<HealthCheckResult[]> {
+    await checkForUpdate(log, this.versionUpdateCallback).catch((error: unknown) => {
+      log.error({ error: serializeError(error) }, 'Manual health run: live version check failed');
+    });
+    return await this.runAllChecks();
   }
 
   /** Run one full pass of every check and fire state-transition notifications. */
