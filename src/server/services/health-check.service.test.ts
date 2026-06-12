@@ -865,21 +865,35 @@ describe('HealthCheckService', () => {
   });
 
   describe('concurrency', () => {
-    it('returns cached results when check is already in progress (mutex)', async () => {
-      let resolveCheck: () => void;
-      const slowIndexer = {
-        getAll: vi.fn().mockReturnValue(new Promise<unknown[]>((r) => { resolveCheck = () => r([]); })),
-        test: vi.fn(),
-      };
-      const { service } = createService({ indexer: slowIndexer });
+    // A call that lands while a pass is running coalesces into the mutex: it does
+    // NOT spawn a parallel pass. Post-#1411 (F1) it resolves with the guaranteed
+    // trailing rerun's result — a pass that begins after it registered — instead
+    // of returning the pre-existing cachedResults immediately. Returning stale
+    // cache here was the bug that let a manual Run Now overlapping a scheduled
+    // pass miss its freshly-fetched version row.
+    it('a coalesced call waits for and resolves with the trailing rerun, not the pre-existing cache (#1411 F1)', async () => {
+      let resolveFirstPass!: () => void;
+      const getAll = vi.fn()
+        .mockReturnValueOnce(new Promise<unknown[]>((r) => { resolveFirstPass = () => r([]); }))
+        .mockResolvedValue([]);
+      const { service } = createService({ indexer: { getAll, test: vi.fn() } });
 
       const first = service.runAllChecks();
-      const second = await service.runAllChecks(); // Should return cached immediately
+      let secondResolved = false;
+      const second = service.runAllChecks().then((r) => { secondResolved = true; return r; });
 
-      expect(second).toEqual([]); // Empty cached results (no previous run)
+      // While pass #1 is gated, the coalesced call must NOT have resolved — it
+      // parks for the trailing rerun rather than handing back stale cache.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(secondResolved).toBe(false);
 
-      resolveCheck!();
-      await first;
+      resolveFirstPass!();
+      const [, secondResults] = await Promise.all([first, second]);
+
+      // It resolved with a real pass result, and exactly two passes ran (the
+      // initial pass + one trailing rerun) — coalesced, not an unbounded loop.
+      expect(secondResults).toEqual(expect.any(Array));
+      expect(getAll).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1270,6 +1284,51 @@ describe('HealthCheckService', () => {
       // The scheduled health-check cron calls runAllChecks() directly; it must
       // never reach checkForUpdate — that lives only in the manual entry point.
       expect(checkForUpdate).not.toHaveBeenCalled();
+    });
+
+    it('returns a post-fetch report even when the manual run overlaps an active health pass (AC #1, F1)', async () => {
+      // Gate the first (scheduled) pass on a slow indexer so the manual run lands
+      // while runAllChecks is already `running` and would otherwise coalesce into
+      // the in-progress branch and return the pre-fetch cachedResults.
+      let releaseScheduledPass!: () => void;
+      const getAll = vi.fn()
+        .mockReturnValueOnce(new Promise<unknown[]>((r) => { releaseScheduledPass = () => r([]); }))
+        .mockResolvedValue([]);
+      const { service, log } = createService({ indexer: { getAll, test: vi.fn() } });
+
+      // Update only becomes visible AFTER the manual run's checkForUpdate resolves.
+      let fetched = false;
+      vi.mocked(checkForUpdate).mockImplementation(async () => { fetched = true; });
+      vi.mocked(getUpdateStatus).mockImplementation(() =>
+        fetched
+          ? { latestVersion: '2.0.0', releaseUrl: 'https://example.com/r2', channel: 'stable' }
+          : undefined,
+      );
+
+      // Scheduled pass #1 is now parked on the gated getAll (running === true).
+      const scheduled = service.runAllChecks();
+
+      // Manual run: awaits the live fetch (stamps 2.0.0), then coalesces into the
+      // active pass. It must resolve with the trailing rerun's post-fetch report.
+      const manual = service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      // Let the manual fetch resolve and its coalesced runAllChecks register
+      // before the scheduled pass drains.
+      await new Promise((r) => setTimeout(r, 0));
+      releaseScheduledPass();
+
+      const [, manualResults] = await Promise.all([scheduled, manual]);
+
+      // The report the manual caller receives reflects the post-fetch cache — the
+      // pre-fetch (undefined) cachedResults would have omitted this row entirely.
+      expect(manualResults.find((r) => r.checkName === 'version-update')).toMatchObject({
+        checkName: 'version-update',
+        state: 'warning',
+        message: 'Update available: v2.0.0',
+      });
+      // Exactly one trailing rerun: pass #1 + one rerun = 2 full passes (getAll
+      // called once per pass) — the overlap coalesced, it did not spawn a loop.
+      expect(getAll).toHaveBeenCalledTimes(2);
     });
   });
 });

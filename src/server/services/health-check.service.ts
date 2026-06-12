@@ -46,6 +46,12 @@ export class HealthCheckService {
   private running = false;
   private pendingRerun = false;
   private versionUpdateCallback?: () => void;
+  // Callers that coalesce into an in-flight pass park here and are resolved with
+  // the result of the *next* full pass — the guaranteed trailing rerun, which
+  // begins after they registered. This is what lets the manual "Run Now" path
+  // (#1411) observe its freshly-fetched version cache even when it overlaps an
+  // active scheduled pass, instead of getting the pre-fetch `cachedResults`.
+  private trailingWaiters: Array<(results: HealthCheckResult[]) => void> = [];
 
   constructor(
     private indexerService: IndexerService,
@@ -60,27 +66,50 @@ export class HealthCheckService {
   /**
    * Recompute every health check and store the result for the cached-read
    * endpoints. Overlapping requests coalesce: a call that lands while a pass is
-   * already running sets `pendingRerun` and returns the current cached results
-   * immediately, and the active pass runs exactly one trailing recompute after
-   * it finishes so the latest state (e.g. a freshly-cached version update from a
-   * manual/boot version-check) is always observed within one UI poll — never
-   * silently dropped. The trailing rerun is bounded to a single pass per
+   * already running sets `pendingRerun` and the active pass runs exactly one
+   * trailing recompute after it finishes, so the latest state (e.g. a freshly-
+   * cached version update from a manual/boot version-check) is always observed —
+   * never silently dropped. The trailing rerun is bounded to a single pass per
    * overlapping request (no unbounded loop), and only fires when a request lands
    * during an active pass, so non-overlapping scheduled cron runs are untouched.
+   *
+   * A coalesced caller resolves with the result of that guaranteed trailing
+   * rerun — a pass that *begins after the caller registered* — not with the
+   * pre-existing `cachedResults`. This is load-bearing for the manual "Run Now"
+   * path (#1411): `runManualChecks` awaits the live version fetch before calling
+   * `runAllChecks`, so the trailing rerun it awaits reads the post-fetch cache.
+   * Returning `cachedResults` immediately here would hand the route a report
+   * computed before the fetch resolved, violating AC #1's deterministic-freshness
+   * contract whenever the manual run overlaps a scheduled pass.
    */
   async runAllChecks(): Promise<HealthCheckResult[]> {
     if (this.running) {
       this.pendingRerun = true;
-      return this.cachedResults;
+      // Park until the next full pass completes; that pass starts after this
+      // call (pendingRerun guarantees the active loop iterates again), so the
+      // result reflects any state visible now.
+      return new Promise<HealthCheckResult[]>((resolve) => {
+        this.trailingWaiters.push(resolve);
+      });
     }
     this.running = true;
 
     try {
+      let results: HealthCheckResult[];
       do {
         this.pendingRerun = false;
-        this.cachedResults = await this.runChecksOnce();
+        // Capture the waiters registered before this iteration started; this
+        // pass's result satisfies exactly them. Waiters that arrive mid-pass go
+        // into a fresh list and are served by the next iteration (which their
+        // own `pendingRerun = true` guarantees) — so every coalesced caller gets
+        // a pass that began strictly after it registered.
+        const waiters = this.trailingWaiters;
+        this.trailingWaiters = [];
+        results = await this.runChecksOnce();
+        this.cachedResults = results;
+        for (const resolve of waiters) resolve(results);
       } while (this.pendingRerun);
-      return this.cachedResults;
+      return results;
     } finally {
       this.running = false;
     }
@@ -111,7 +140,10 @@ export class HealthCheckService {
    * Ordering is serial and deterministic: `checkForUpdate` is awaited to
    * completion (bounded by its own 10s `AbortSignal.timeout`) before
    * `runAllChecks` reads `getUpdateStatus` mid-pass, so the returned report
-   * always reflects the post-fetch cache — never a pre-fetch stale result.
+   * always reflects the post-fetch cache — never a pre-fetch stale result. This
+   * holds even when the manual run overlaps an active scheduled pass: the
+   * `runAllChecks` call coalesces and resolves with the guaranteed trailing
+   * rerun, which begins after this fetch resolved (see `runAllChecks`).
    *
    * Best-effort: `checkForUpdate` already swallows all fetch/parse errors and
    * resolves `void`; the defensive `.catch` is a contract guard so a hung or
