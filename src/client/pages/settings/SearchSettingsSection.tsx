@@ -4,21 +4,11 @@ import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { errorInputClass as inputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { protocolPreferenceSchema, searchPrioritySchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { protocolPreferenceSchema, searchPrioritySchema, searchFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const PROTOCOL_LABELS: Record<string, string> = { none: 'No Preference', usenet: 'Prefer Usenet', torrent: 'Prefer Torrent' };
 const PRIORITY_LABELS: Record<string, string> = { quality: 'Audio Quality', accuracy: 'Narrator Accuracy' };
-
-const searchFormSchema = z.object({
-  searchEnabled: z.boolean(),
-  searchIntervalMinutes: z.number().int().min(5).max(1440),
-  searchPriority: searchPrioritySchema,
-  protocolPreference: protocolPreferenceSchema,
-  blacklistTtlDays: z.number().int().min(1).max(365),
-  rssEnabled: z.boolean(),
-  rssIntervalMinutes: z.number().int().min(5).max(1440),
-});
 
 type SearchFormData = z.infer<typeof searchFormSchema>;
 

@@ -6,31 +6,8 @@ import { getErrorMessage } from '@/lib/error-message.js';
 import { WifiIcon, LoadingSpinner } from '@/components/icons';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { networkFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-
-const VALID_PROXY_SCHEMES = ['http:', 'https:', 'socks5:'];
-const SENTINEL = '********';
-
-const networkFormSchema = z.object({
-  proxyUrl: z.string().transform((val) => {
-    const trimmed = val.trim();
-    if (!trimmed) return '';
-    if (trimmed === SENTINEL) return SENTINEL;
-    return trimmed.replace(/\/+$/, '');
-  }).pipe(
-    z.string().refine((val) => {
-      if (!val) return true;
-      if (val === SENTINEL) return true;
-      try {
-        const url = new URL(val);
-        return VALID_PROXY_SCHEMES.includes(url.protocol);
-      } catch {
-        return false;
-      }
-    }, { message: 'Must be a valid URL with http, https, or socks5 scheme' }),
-  ),
-});
 
 type NetworkFormData = z.infer<typeof networkFormSchema>;
 

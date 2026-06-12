@@ -16,7 +16,11 @@ import { importSettingsSchema } from './import.js';
 import { processingSettingsSchema, processingFormSchema } from './processing.js';
 import { generalSettingsSchema, generalFormSchema } from './general.js';
 import { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
-import { qualityFormSchema } from './quality.js';
+import { qualityFormSchema, qualitySettingsSchema } from './quality.js';
+import { searchSettingsSchema, searchFormSchema } from './search.js';
+import { rssSettingsSchema } from './rss.js';
+import { metadataSettingsSchema, metadataFormSchema, filteringFormSchema } from './metadata.js';
+import { networkSettingsSchema, networkFormSchema } from './network.js';
 
 // Single documented source of truth for fields a pick-based / page form schema
 // intentionally omits from its category schema. The sibling invariant below
@@ -947,5 +951,197 @@ describe('settingsRegistry', () => {
     it('DEFAULT_SETTINGS.search includes searchPriority: accuracy', () => {
       expect(DEFAULT_SETTINGS.search.searchPriority).toBe('accuracy');
     });
+  });
+
+  // ===== #1388 — page form-schema drift guards (Search, Filtering, Metadata, Network) =====
+  // Four page-level form schemas are client-local merges/renames/partials of one
+  // or more category schemas. Like generalFormSchema / discoveryFormSchema (guarded
+  // above) and the registered formSchema overrides (#1308/#1350), a field added to
+  // a category schema but not surfaced on the page silently vanishes from the form.
+  // These guards import the ACTUAL relocated schemas from their shared modules and
+  // assert each form key maps to a real category field, and each unsurfaced category
+  // field is an explicitly-documented omission — so undocumented drift fails.
+  describe('page form-schema drift guards (#1388)', () => {
+    type Shape = { shape: Record<string, unknown> };
+
+    // 'category.field' identifiers for every field across the given category schemas.
+    function categoryFieldIds(categories: Record<string, Shape>): string[] {
+      return Object.entries(categories).flatMap(([cat, schema]) =>
+        Object.keys(schema.shape).map((field) => `${cat}.${field}`),
+      );
+    }
+
+    // Category-field ids NOT consumed by the form mapping (the unsurfaced set),
+    // sorted — compared against the documented omission allowlist.
+    function unmappedFieldIds(ids: string[], mapping: Record<string, string>): string[] {
+      const mapped = new Set(Object.values(mapping));
+      return ids.filter((id) => !mapped.has(id)).sort();
+    }
+
+    // ---- Cross-category pages: Search and Filtering ----
+    // Mappings are typed `Record<keyof <FormData>, string>` so renaming a form
+    // field (without updating the mapping) is a COMPILE error, not just a runtime
+    // miss — covering the renamed-key hazard at the type layer (AC, test plan #7).
+
+    // Search merges `search` + `quality.protocolPreference` + `rss` with renamed keys.
+    const SEARCH_CATEGORY_SCHEMAS: Record<string, Shape> = {
+      search: searchSettingsSchema,
+      quality: qualitySettingsSchema,
+      rss: rssSettingsSchema,
+    };
+    const SEARCH_FORM_MAPPING: Record<keyof z.infer<typeof searchFormSchema>, string> = {
+      searchEnabled: 'search.enabled',
+      searchIntervalMinutes: 'search.intervalMinutes',
+      searchPriority: 'search.searchPriority',
+      blacklistTtlDays: 'search.blacklistTtlDays',
+      protocolPreference: 'quality.protocolPreference',
+      rssEnabled: 'rss.enabled',
+      rssIntervalMinutes: 'rss.intervalMinutes',
+    };
+    // quality + rss fields intentionally not surfaced on the Search page.
+    const SEARCH_OMISSION_ALLOWLIST = [
+      'quality.grabFloor',
+      'quality.minSeeders',
+      'quality.minDownloadSize',
+      'quality.maxDownloadSize',
+      'quality.searchImmediately',
+      'quality.rejectWords',
+      'quality.requiredWords',
+    ];
+
+    // Filtering merges `metadata.languages` + `metadata.minDurationMinutes` with
+    // `quality.rejectWords` + `quality.requiredWords`.
+    const FILTERING_CATEGORY_SCHEMAS: Record<string, Shape> = {
+      metadata: metadataSettingsSchema,
+      quality: qualitySettingsSchema,
+    };
+    const FILTERING_FORM_MAPPING: Record<keyof z.infer<typeof filteringFormSchema>, string> = {
+      languages: 'metadata.languages',
+      minDurationMinutes: 'metadata.minDurationMinutes',
+      rejectWords: 'quality.rejectWords',
+      requiredWords: 'quality.requiredWords',
+    };
+    // metadata + quality fields intentionally not surfaced on the Filtering page.
+    const FILTERING_OMISSION_ALLOWLIST = [
+      'metadata.audibleRegion',
+      'metadata.hardcoverApiKey',
+      'quality.grabFloor',
+      'quality.protocolPreference',
+      'quality.minSeeders',
+      'quality.minDownloadSize',
+      'quality.maxDownloadSize',
+      'quality.searchImmediately',
+    ];
+
+    const crossCategoryPages = [
+      {
+        name: 'search',
+        formSchema: searchFormSchema as Shape,
+        mapping: SEARCH_FORM_MAPPING as Record<string, string>,
+        categories: SEARCH_CATEGORY_SCHEMAS,
+        omissionAllowlist: SEARCH_OMISSION_ALLOWLIST,
+      },
+      {
+        name: 'filtering',
+        formSchema: filteringFormSchema as Shape,
+        mapping: FILTERING_FORM_MAPPING as Record<string, string>,
+        categories: FILTERING_CATEGORY_SCHEMAS,
+        omissionAllowlist: FILTERING_OMISSION_ALLOWLIST,
+      },
+    ] as const;
+
+    for (const { name, formSchema, mapping, categories, omissionAllowlist } of crossCategoryPages) {
+      describe(`${name}FormSchema (cross-category)`, () => {
+        it('form keys exactly equal the documented mapping keys', () => {
+          expect(Object.keys(formSchema.shape).sort()).toEqual(Object.keys(mapping).sort());
+        });
+
+        it('every mapped form key targets a real field on its category schema', () => {
+          for (const [formKey, target] of Object.entries(mapping)) {
+            const [cat, field] = target.split('.') as [string, string];
+            const categorySchema = categories[cat];
+            expect(categorySchema, `mapping '${formKey}' → unknown category '${cat}'`).toBeDefined();
+            expect(
+              Object.keys(categorySchema!.shape),
+              `mapping '${formKey}' → '${target}' references a non-existent category field (renamed-key drift)`,
+            ).toContain(field);
+          }
+        });
+
+        it('category fields not surfaced equal the documented omission allowlist', () => {
+          const omitted = unmappedFieldIds(categoryFieldIds(categories), mapping);
+          expect(omitted).toEqual([...omissionAllowlist].sort());
+        });
+
+        it('non-vacuity: the mapping covers at least one form key', () => {
+          expect(Object.keys(mapping).length).toBeGreaterThan(0);
+        });
+
+        it('negative backstop: a newly added, un-mapped, un-allowlisted category field fails the guard', () => {
+          const [firstCat] = Object.keys(categories);
+          const injected = [...categoryFieldIds(categories), `${firstCat}.__injectedDriftField`];
+          const omitted = unmappedFieldIds(injected, mapping);
+          // The injected field is neither mapped nor in the allowlist, so the
+          // omission set no longer matches — the guard above would fail.
+          expect(omitted).not.toEqual([...omissionAllowlist].sort());
+        });
+
+        it('renamed-key typo: a form key mapped to a non-existent category field is detectable', () => {
+          const [firstKey] = Object.keys(mapping) as [string];
+          const [cat] = mapping[firstKey]!.split('.') as [string];
+          // Simulate a typo'd target (e.g. 'search.enabledd'). The "targets a real
+          // field" guard above would reject it.
+          expect(Object.keys(categories[cat]!.shape)).not.toContain('__renamed_typo');
+        });
+      });
+    }
+
+    // ---- Single-category pages: Metadata (intentional partial) and Network (1:1) ----
+    // Metadata intentionally omits `languages`/`minDurationMinutes` (edited on the
+    // Filtering page — see the inline note at metadataFormSchema in metadata.ts).
+    const METADATA_OMISSION_ALLOWLIST = ['languages', 'minDurationMinutes'];
+    // Network is currently 1:1 with the `network` category (empty omission list);
+    // guarded anyway so a future-added `network` field that isn't surfaced fails.
+    const NETWORK_OMISSION_ALLOWLIST: string[] = [];
+
+    const singleCategoryPages = [
+      {
+        name: 'metadata',
+        formSchema: metadataFormSchema as Shape,
+        categorySchema: metadataSettingsSchema as Shape,
+        omissionAllowlist: METADATA_OMISSION_ALLOWLIST,
+      },
+      {
+        name: 'network',
+        formSchema: networkFormSchema as Shape,
+        categorySchema: networkSettingsSchema as Shape,
+        omissionAllowlist: NETWORK_OMISSION_ALLOWLIST,
+      },
+    ] as const;
+
+    for (const { name, formSchema, categorySchema, omissionAllowlist } of singleCategoryPages) {
+      describe(`${name}FormSchema (single-category)`, () => {
+        it('form keys equal category keys minus the documented omission allowlist', () => {
+          const expected = Object.keys(categorySchema.shape)
+            .filter((k) => !omissionAllowlist.includes(k))
+            .sort();
+          expect(Object.keys(formSchema.shape).sort()).toEqual(expected);
+        });
+
+        it('every omission-allowlist entry exists on the category schema (no stale allowlist masking a real omission)', () => {
+          const categoryKeys = Object.keys(categorySchema.shape);
+          for (const hidden of omissionAllowlist) {
+            expect(categoryKeys, `${name} allowlist entry '${hidden}' must exist in its category schema`).toContain(hidden);
+          }
+        });
+
+        it('negative backstop: a newly added, un-allowlisted category field fails the guard', () => {
+          const augmentedKeys = [...Object.keys(categorySchema.shape), '__injectedDriftField'];
+          const expected = augmentedKeys.filter((k) => !omissionAllowlist.includes(k)).sort();
+          // The form schema (unchanged) no longer matches the augmented expectation.
+          expect(Object.keys(formSchema.shape).sort()).not.toEqual(expected);
+        });
+      });
+    }
   });
 });

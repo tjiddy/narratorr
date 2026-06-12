@@ -2,16 +2,9 @@ import { useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { GlobeIcon } from '@/components/icons';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
-import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { filteringFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { CANONICAL_LANGUAGES, type CanonicalLanguage } from '../../../shared/language-constants.js';
 import { SettingsSection } from './SettingsSection';
-
-const filteringFormSchema = z.object({
-  languages: z.array(z.string()),
-  minDurationMinutes: z.number().int().nonnegative(),
-  rejectWords: z.string(),
-  requiredWords: z.string(),
-});
 
 type FilteringFormData = z.infer<typeof filteringFormSchema>;
 
