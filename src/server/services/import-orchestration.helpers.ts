@@ -13,7 +13,7 @@ import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
-import { prepareImportSiblings } from '../utils/import-staging.js';
+import { prepareImportSiblings, assertMarkerPathWritable } from '../utils/import-staging.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -78,6 +78,15 @@ async function recoverInterruptedCommit(
   libraryRoot: string,
   log: FastifyBaseLogger,
 ): Promise<void> {
+  // #1341 marker-path collision preflight — BEFORE `prepareImportSiblings`. This is the
+  // FIRST destructive touch on the manual/staged path (it runs ahead of the populated-target
+  // gate that later calls `stagedAudioReplace`). A directory occupying the marker path reads
+  // as marker-absent under the #1341 `isFile` change, which would otherwise send
+  // `prepareImportSiblings` down its strict-clear branch and destroy an adjacent `.import-bak`
+  // before `stagedAudioReplace`'s own preflight could fire. Aborting here leaves siblings
+  // untouched; `copyToLibrary` has no local try/catch around this call, so the throw
+  // propagates cleanly to the import worker.
+  await assertMarkerPathWritable(targetPath);
   await prepareImportSiblings({
     stagingPath: `${targetPath}.import-tmp`,
     backupPath: `${targetPath}.import-bak`,

@@ -627,7 +627,7 @@ describe('prepareImportSiblings', () => {
 
   it('marker present → recovers backed-up audio into target before clearing (#1290)', async () => {
     const log = createMockLog();
-    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.m4b')] : []) as never);
 
     await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
@@ -645,7 +645,7 @@ describe('prepareImportSiblings', () => {
 
   it('marker present but backup empty (in-process rollback already restored) → just removes marker, no restore', async () => {
     const log = createMockLog();
-    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockResolvedValue([] as never);                 // empty backup
 
     await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
@@ -657,7 +657,7 @@ describe('prepareImportSiblings', () => {
 
   it('marker present, restore rename fails → throws BackupRecoveryError, leaves backup + marker on disk', async () => {
     const log = createMockLog();
-    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.m4b')] : []) as never);
     vi.mocked(rename).mockRejectedValueOnce(new Error('EIO restore'));
 
@@ -684,7 +684,7 @@ describe('prepareImportSiblings', () => {
 
   it('marker present, staging strict-clear fails (EBUSY) → BackupRecoveryError, backup preserved (#1336 window 3)', async () => {
     const log = createMockLog();
-    vi.mocked(stat).mockResolvedValue(undefined as never);             // marker exists
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);             // marker exists (#1341: a real marker reads as a file)
     // A killed commit leaves a populated .import-tmp; an EBUSY clearing it on the recovery
     // boot must surface as BackupRecoveryError (→ preserve), not propagate raw.
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
@@ -1030,9 +1030,11 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     // even though the rethrown error is the PLAIN move-in error (not a BackupRecoveryError).
     vi.mocked(readdir).mockImplementation(async (p: unknown) =>
       (p === target ? [dirent('a.mp3'), dirent('z.mp3')] : p === staging ? [dirent('new.m4b')] : []) as never);
-    // prepareImportSiblings stats the marker first (absent → no recovery); the catch's
-    // markerPresent then sees it present (commitStagedImport wrote it before backing up).
-    vi.mocked(stat).mockRejectedValueOnce(enoent()).mockResolvedValue(undefined as never);
+    // Stat order: the #1341 stagedAudioReplace preflight stats the marker (absent → no
+    // conflict), then prepareImportSiblings stats it (absent → no recovery); the catch's
+    // markerPresent then sees it present (commitStagedImport wrote it before backing up) —
+    // a real marker is a file, so it reads as present (#1341 isFile).
+    vi.mocked(stat).mockRejectedValueOnce(enoent()).mockRejectedValueOnce(enoent()).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
       const s = String(src), d = String(dst);
       if (s === `${staging}/new.m4b`) throw new Error('EIO move-in');           // move-in fails → rollback
@@ -1065,7 +1067,7 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     vi.mocked(rename).mockResolvedValue(undefined as never);
     vi.mocked(rm).mockReset();
     vi.mocked(rm).mockResolvedValue(undefined as never);
-    vi.mocked(stat).mockResolvedValue(undefined as never);                       // marker present
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);                       // marker present (#1341: a real marker reads as a file)
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('z.mp3')] : []) as never);
 
     await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
@@ -1190,7 +1192,7 @@ describe('handleImportFailure', () => {
   it('preserves .import-bak and the commit-pending marker while the marker is on disk, clears only staging (#1290/#1336)', async () => {
     const log = createMockLog();
     const target = '/library/Author/Title';
-    vi.mocked(stat).mockResolvedValue(undefined as never); // marker present on disk
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never); // marker present on disk (#1341: a real marker reads as a file)
     await expect(handleImportFailure({
       error: new BackupRecoveryError(target), targetPath: target,
       stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
@@ -1207,7 +1209,7 @@ describe('handleImportFailure', () => {
   it('preserves the backup for a PLAIN Error when the marker is on disk — identity is no longer load-bearing (#1336)', async () => {
     const log = createMockLog();
     const target = '/library/Author/Title';
-    vi.mocked(stat).mockResolvedValue(undefined as never); // marker present on disk
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never); // marker present on disk (#1341: a real marker reads as a file)
     // A raw readdir/stat error or pre-flight throw reaches cleanup as a plain Error — the
     // prior `instanceof BackupRecoveryError` gate would have deleted the stranded originals.
     await expect(handleImportFailure({
@@ -1224,7 +1226,7 @@ describe('handleImportFailure', () => {
   it('preserves the backup for a cause-chain-WRAPPED BackupRecoveryError when the marker is on disk (#1336)', async () => {
     const log = createMockLog();
     const target = '/library/Author/Title';
-    vi.mocked(stat).mockResolvedValue(undefined as never); // marker present on disk
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never); // marker present on disk (#1341: a real marker reads as a file)
     // `new Error(msg, { cause })` strips the BackupRecoveryError identity — the disk gate holds.
     const wrapped = new Error('wrapped commit failure', { cause: new BackupRecoveryError(target) });
     await expect(handleImportFailure({

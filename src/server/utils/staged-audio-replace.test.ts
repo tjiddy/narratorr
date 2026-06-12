@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { stagedAudioReplace, prepareImportSiblings, BackupRecoveryError } from './import-steps.js';
+import { stagedAudioReplace, prepareImportSiblings, BackupRecoveryError, markerPresent, MarkerPathConflictError } from './import-steps.js';
 import { copyAudioFiles, copyDiscGroup, getAudioPathSize } from './import-helpers.js';
 
 /**
@@ -441,5 +441,97 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
 
     expect(await pathExists(staging)).toBe(false);
     expect(await pathExists(join(target, 'scratch.mp3'))).toBe(false);
+  });
+});
+
+/**
+ * #1341 — a metadata-derived folder can collide with the commit-pending marker path, so a
+ * DIRECTORY (or any non-file) sits at `<target>.import-commit-pending`. Reads must treat it
+ * as marker-absent, but a full import must ABORT before any destructive sibling clearing —
+ * never strict-clearing an adjacent pre-existing `.import-bak` nor raising a raw EISDIR.
+ */
+describe('marker-path directory collision (#1341)', () => {
+  let libraryRoot: string;
+  let target: string;
+  let source: string;
+
+  beforeEach(async () => {
+    libraryRoot = mkdtempSync(join(tmpdir(), 'narratorr-1341-'));
+    target = join(libraryRoot, 'Author', 'Title');
+    source = join(libraryRoot, '_downloads', 'release');
+    await mkdir(target, { recursive: true });
+    await mkdir(source, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(libraryRoot, { recursive: true, force: true });
+  });
+
+  it('markerPresent reads a DIRECTORY at the marker path as marker-absent (false)', async () => {
+    await mkdir(`${target}.import-commit-pending`, { recursive: true });
+
+    // Verified through the exported read-side caller, not the private markerExists.
+    expect(await markerPresent(target, makeLog())).toBe(false);
+  });
+
+  it('full-flow abort: throws MarkerPathConflictError, leaves an adjacent .import-bak + target audio intact, never stages', async () => {
+    const targetBytes = Buffer.from('TARGET-AUDIO');
+    const bakBytes = Buffer.from('REAL-BOOK-IN-BAK');
+    await writeFile(join(target, 'existing.mp3'), targetBytes);
+    // A DIRECTORY squats at the marker path (metadata collision).
+    await mkdir(`${target}.import-commit-pending`, { recursive: true });
+    // A real adjacent pre-existing `.import-bak` holding a real book's audio.
+    await mkdir(`${target}.import-bak`, { recursive: true });
+    await writeFile(join(`${target}.import-bak`, 'realbook.mp3'), bakBytes);
+
+    let staged = false;
+    await expect(stagedAudioReplace({
+      targetPath: target,
+      libraryRoot,
+      log: makeLog(),
+      sourceAudioSize: 200,
+      stage: async (stagingPath) => {
+        staged = true;
+        await mkdir(stagingPath, { recursive: true });
+        await writeFile(join(stagingPath, 'new.mp3'), Buffer.alloc(200, 2));
+      },
+    })).rejects.toBeInstanceOf(MarkerPathConflictError);
+
+    // Aborted at the preflight — staging never ran.
+    expect(staged).toBe(false);
+    // The adjacent pre-existing `.import-bak` audio survives intact — not strict-cleared,
+    // not soft-removed by failure cleanup.
+    expect(await readFile(join(`${target}.import-bak`, 'realbook.mp3'))).toEqual(bakBytes);
+    // Existing target audio is byte-unchanged and no `.import-tmp` was committed.
+    expect(await readFile(join(target, 'existing.mp3'))).toEqual(targetBytes);
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+  });
+
+  it('preservation: a genuine non-ENOENT marker stat error still returns true from markerPresent (#1336)', async () => {
+    // An ancestor that is a FILE makes stat on the derived marker path throw ENOTDIR (a
+    // non-ENOENT error) — markerPresent must fail toward preservation and return true.
+    const ancestorFile = join(libraryRoot, 'AuthorAsFile');
+    await writeFile(ancestorFile, 'x');
+    const wedgedTarget = join(ancestorFile, 'Title');
+
+    expect(await markerPresent(wedgedTarget, makeLog())).toBe(true);
+  });
+
+  it('happy-path regression: a normal replace (no collision) writes then removes the marker and swaps cleanly', async () => {
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(300, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(300, 2));
+
+    const sourceAudioSize = await getAudioPathSize(source);
+    await stagedAudioReplace({
+      targetPath: target,
+      libraryRoot,
+      log: makeLog(),
+      sourceAudioSize,
+      stage: (stagingPath) => copyAudioFiles(source, stagingPath),
+    });
+
+    expect(await listAllFiles(target)).toEqual(['new.mp3']);
+    expect(await pathExists(`${target}.import-commit-pending`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
 });
