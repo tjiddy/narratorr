@@ -13,7 +13,7 @@ import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
-import { prepareImportSiblings, assertMarkerPathWritable } from '../utils/import-staging.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -49,52 +49,10 @@ async function getTargetAudioSize(targetPath: string): Promise<number> {
   }
 }
 
-/**
- * Run the marker-gated recovery the auto path runs unconditionally
- * (`prepareImportSiblings`) BEFORE the populated-target gate (#1337). A commit
- * killed after the backup-out renames but before the first move-in strands the
- * target audio-EMPTY with an armed `.import-commit-pending` marker + populated
- * `.import-bak`. Without this, `getTargetAudioSize` reads `0`, the direct-copy
- * fast path runs and orphans the armed marker/backup — a *later* import then
- * fires bogus recovery and restores the stale originals OVER the manual import
- * (backup-authoritative is actively wrong here), and a subsequent ordinary
- * failure can delete the backup + marker, silently regressing the library.
- *
- * Marker PRESENT → recovery restores the stranded originals into `targetPath`
- * and consumes the marker + backup; the populated-target gate below then sees
- * audio and routes the manual import through the staged swap (which re-runs
- * `prepareImportSiblings` itself — a no-op now the marker is gone). Marker
- * ABSENT → both siblings are disposable scratch and are strict-cleared (no
- * recovery, no behavior change), and the direct-copy fast path runs as today.
- *
- * Deliberately reuses `prepareImportSiblings` rather than re-checking the marker
- * inline: it is the single encapsulation of "marker present → recover; marker
- * absent → strict-clear" and fails toward preservation on stat errors (#1336).
- * The sibling paths mirror `stagedAudioReplace`'s derivation so the pre-gate
- * recovery and the staged swap operate on the same `.import-tmp` / `.import-bak`.
- */
-async function recoverInterruptedCommit(
-  targetPath: string,
-  libraryRoot: string,
-  log: FastifyBaseLogger,
-): Promise<void> {
-  // #1341 marker-path collision preflight — BEFORE `prepareImportSiblings`. This is the
-  // FIRST destructive touch on the manual/staged path (it runs ahead of the populated-target
-  // gate that later calls `stagedAudioReplace`). A directory occupying the marker path reads
-  // as marker-absent under the #1341 `isFile` change, which would otherwise send
-  // `prepareImportSiblings` down its strict-clear branch and destroy an adjacent `.import-bak`
-  // before `stagedAudioReplace`'s own preflight could fire. Aborting here leaves siblings
-  // untouched; `copyToLibrary` has no local try/catch around this call, so the throw
-  // propagates cleanly to the import worker.
-  await assertMarkerPathWritable(targetPath);
-  await prepareImportSiblings({
-    stagingPath: `${targetPath}.import-tmp`,
-    backupPath: `${targetPath}.import-bak`,
-    targetPath,
-    libraryRoot,
-    log,
-  });
-}
+// `recoverInterruptedCommit` (the marker-gated recovery sequence run before the
+// populated-target gate, #1337) now lives in `utils/recover-interrupted-commit.ts` so the
+// rename and merge writers can share the same `assertMarkerPathWritable` +
+// `prepareImportSiblings` sequence (#1418). Imported above.
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
 export async function copyToLibrary(

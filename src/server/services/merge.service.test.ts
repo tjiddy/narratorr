@@ -13,6 +13,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -38,6 +39,15 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn(),
+}));
+
+// The marker-gated recovery sequence (#1418) touches real fs and short-circuits to
+// "marker present" under mocked fs (#1391), so it is stubbed here. These unit tests
+// assert it is invoked with bookPath; the real on-disk recovery behavior (including
+// the post-recovery file-set re-read and F9 minimum re-validation) is covered in
+// merge.service.marker.test.ts (real tmpdir).
+vi.mock('../utils/recover-interrupted-commit.js', () => ({
+  recoverInterruptedCommit: vi.fn().mockResolvedValue(undefined),
 }));
 
 const BOOK_PATH = '/library/Author/Title';
@@ -174,6 +184,62 @@ describe('MergeService', () => {
 
       // Staging dir cleaned
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+    });
+
+    // #1418 — marker convergence runs on bookPath before any staging work
+    it('converges the commit-pending marker on bookPath before staging', async () => {
+      setupHappyPath();
+      const { service } = createService();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      // Recovery invoked on the book path before the source files are copied to staging.
+      expect(recoverInterruptedCommit).toHaveBeenCalledWith(BOOK_PATH, expect.any(String), expect.anything());
+      const recoverOrder = (recoverInterruptedCommit as Mock).mock.invocationCallOrder[0]!;
+      const cpOrder = (cp as Mock).mock.invocationCallOrder[0]!;
+      expect(recoverOrder).toBeLessThan(cpOrder);
+    });
+
+    // #1418 — a recovery failure aborts before any ffmpeg work and emits merge_failed
+    it('aborts the merge (no staging, merge_failed) when recovery throws', async () => {
+      setupHappyPath();
+      (recoverInterruptedCommit as Mock).mockRejectedValueOnce(new Error('recovery failed'));
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      // No ffmpeg/staging work ran, and nothing was committed into bookPath.
+      expect(processAudioFiles).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      // The existing catch cleaned up the (unused) staging dir and surfaced merge_failed.
+      expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+      expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42, reason: 'error' }));
+    });
+
+    // #1418 (F9) — recovery can shrink the converged folder below the merge minimum, so
+    // executeMerge re-reads bookPath AFTER recovery and re-validates the ≥2 minimum. Here the
+    // first (enqueue-validation) read sees 2 files; the second (post-recovery) read sees 1.
+    it('F9: a post-recovery audio set below the merge minimum aborts before staging', async () => {
+      let bookPathReads = 0;
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return [];
+        bookPathReads++;
+        return bookPathReads === 1 ? ['01.mp3', '02.mp3'] : ['01.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      // No staging/ffmpeg work ran — the guard fired on the post-recovery count.
+      expect(processAudioFiles).not.toHaveBeenCalled();
+      expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42 }));
     });
 
     it('with outputFormat mp3: passes mp3 to processAudioFiles and discovers/commits the staged .mp3', async () => {
@@ -1769,7 +1835,7 @@ describe('#257 merge observability — merge service', () => {
       // Mutable concurrency so the test can raise capacity between enqueues.
       const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 1 };
       const settingsService = inject<SettingsService>({
-        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : undefined)),
+        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : cat === 'library' ? { path: '/library' } : undefined)),
         getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn(),
       });
       const { service, startedIds } = buildService(bookService, settingsService);
@@ -1826,7 +1892,7 @@ describe('#257 merge observability — merge service', () => {
       // Mutable concurrency so the test can lower capacity between enqueues.
       const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 2 };
       const settingsService = inject<SettingsService>({
-        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : undefined)),
+        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : cat === 'library' ? { path: '/library' } : undefined)),
         getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn(),
       });
       const { service, startedIds } = buildService(bookService, settingsService);
@@ -1864,7 +1930,7 @@ describe('#257 merge observability — merge service', () => {
       gatedProcessing();
       const get = vi.fn()
         .mockRejectedValueOnce(new Error('settings cache DB error'))
-        .mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? { ...processingOverrides.processing } : undefined));
+        .mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? { ...processingOverrides.processing } : cat === 'library' ? { path: '/library' } : undefined));
       const settingsService = inject<SettingsService>({ get, getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn() });
       const { service } = buildService(bookService, settingsService);
 
@@ -1879,7 +1945,7 @@ describe('#257 merge observability — merge service', () => {
     it('#1368 no duplicate settings read: the enqueue validate+size path reads get(\'processing\') once', async () => {
       const { bookService } = setupMultiBook([42, 43]);
       const gate = gatedProcessing();
-      const get = vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? { ...processingOverrides.processing } : undefined));
+      const get = vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? { ...processingOverrides.processing } : cat === 'library' ? { path: '/library' } : undefined));
       const settingsService = inject<SettingsService>({ get, getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn() });
       const { service } = buildService(bookService, settingsService);
 
@@ -1908,7 +1974,7 @@ describe('#257 merge observability — merge service', () => {
 
       const processing = { ...processingOverrides.processing, maxConcurrentProcessing: 1 };
       const settingsService = inject<SettingsService>({
-        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : undefined)),
+        get: vi.fn().mockImplementation((cat: string) => Promise.resolve(cat === 'processing' ? processing : cat === 'library' ? { path: '/library' } : undefined)),
         getAll: vi.fn(), set: vi.fn(), patch: vi.fn(), update: vi.fn(),
       });
       const { service, startedIds } = buildService(bookService, settingsService);

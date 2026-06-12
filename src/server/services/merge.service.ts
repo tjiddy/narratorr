@@ -20,6 +20,7 @@ import type { MergePhase, MergeFailedReason } from '../../shared/schemas/sse-eve
 import { safeEmit } from '../utils/safe-emit.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -269,8 +270,7 @@ export class MergeService {
     const processingSettings = await this.settingsService.get('processing');
     if (!processingSettings?.ffmpegPath?.trim()) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not configured' };
 
-    const allEntries = await readdir(bookPath);
-    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const librarySettings = await this.settingsService.get('library');
 
     const controller = new AbortController();
     this.abortControllers.set(bookId, controller);
@@ -279,6 +279,30 @@ export class MergeService {
     const stagingDir = bookPath + '.merge-tmp';
 
     try {
+      // Converge any interrupted commit-pending marker at bookPath BEFORE any staging
+      // work (#1418). A killed import can leave bookPath with an armed marker + populated
+      // `.import-bak`; without recovery, the merge output lands inside an armed path and a
+      // later import/boot recovery silently reverts the merge by restoring `.import-bak`.
+      // Recovery runs inside the try so a failure (BackupRecoveryError / MarkerPathConflictError
+      // / raw stat error) routes to the catch → merge_failed + `.merge-tmp` cleanup, before
+      // any ffmpeg work. It costs no staging work on failure.
+      await recoverInterruptedCommit(bookPath, librarySettings.path, this.log);
+
+      // Read the top-level audio set AFTER recovery — recovery can restore a different
+      // original set into bookPath, and this list feeds both runStaging (what gets merged)
+      // and commitMerge's originals-deletion. Reading it before recovery would stage/delete
+      // a stale file list.
+      const allEntries = await readdir(bookPath);
+      const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+
+      // Re-validate the merge minimum on the CONVERGED folder (F9): recovery can shrink a
+      // previously-valid queued merge below two top-level audio files, and processAudioFiles
+      // won't merge a single-file candidate even with mergeBehavior 'always'. Abort before
+      // runStaging/commitMerge — the throw routes to the catch → merge_failed + cleanup.
+      if (topLevelAudioFiles.length < 2) {
+        throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+      }
+
       this.emitMergeProgress(bookId, book.title, 'staging');
       const stagedOutput = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
 

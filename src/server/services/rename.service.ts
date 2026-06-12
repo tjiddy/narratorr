@@ -11,6 +11,7 @@ import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -136,6 +137,15 @@ export class RenameService {
     );
 
     const oldPath = book.path;
+
+    // Converge any interrupted commit-pending marker at oldPath BEFORE any destructive
+    // mutation (#1418). Both destructive paths below can otherwise strand or re-arm a
+    // marker/`.import-bak` sibling: the folder move relocates the folder but orphans the
+    // marker at the old path, and the in-place file-template renames run with the marker
+    // still armed. Recovery restores `.import-bak` into the folder and clears the marker
+    // first; on failure it throws (BackupRecoveryError → 503, MarkerPathConflictError → 409,
+    // raw stat error → 500) and no rename runs, leaving on-disk state intact.
+    await recoverInterruptedCommit(oldPath, librarySettings.path, this.log);
 
     // Check for conflicts: another book at the target path
     if (pathChanged) {

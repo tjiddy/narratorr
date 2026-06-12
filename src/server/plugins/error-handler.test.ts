@@ -17,6 +17,7 @@ import { DownloadError, DuplicateDownloadError } from '../services/download.serv
 import { TaskRegistryError } from '../services/task-registry.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
+import { BackupRecoveryError, MarkerPathConflictError } from '../utils/import-staging.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -55,6 +56,9 @@ function createTestApp() {
   app.get('/throw-dc-auth', async () => { throw new DownloadClientAuthError('qBittorrent', 'Session expired'); });
   app.get('/throw-dc-timeout', async () => { throw new DownloadClientTimeoutError('SABnzbd', 'Request timed out'); });
   app.get('/throw-dc-generic', async () => { throw new DownloadClientError('Transmission', 'HTTP 500: Internal Server Error'); });
+  // #1418 — marker-recovery failures surfaced by the synchronous rename route
+  app.get('/throw-backup-recovery', async () => { throw new BackupRecoveryError('/library/Author/Title'); });
+  app.get('/throw-marker-conflict', async () => { throw new MarkerPathConflictError('/library/Author/Title.import-commit-pending'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -176,6 +180,19 @@ describe('error-handler plugin', () => {
     it('maps MergeError ALREADY_IN_PROGRESS to 409', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-merge-in-progress' });
       expect(res.statusCode).toBe(409);
+    });
+
+    // #1418 — marker-recovery error mappings on the synchronous rename route
+    it('maps BackupRecoveryError BACKUP_RECOVERY_FAILED to 503', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-backup-recovery' });
+      expect(res.statusCode).toBe(503);
+      expect(JSON.parse(res.payload).error).toContain('Failed to recover interrupted import backup');
+    });
+
+    it('maps MarkerPathConflictError MARKER_PATH_CONFLICT to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-marker-conflict' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error).toContain('non-file already occupies');
     });
 
     // #149 — DownloadError and TaskRegistryError typed error mapping (ERR-1)
