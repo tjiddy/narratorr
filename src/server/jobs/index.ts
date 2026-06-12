@@ -53,6 +53,13 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     fireAndForget(services.healthCheck.runAllChecks(), log, 'Version-check health nudge failed');
   };
 
+  // Expose that same nudge to the manual "Run Now" health route so a manual run
+  // can fire a live version check (`runManualChecks`) using the *identical*
+  // callback the boot/2 AM invocations use — keeping the SSE/health-nudge
+  // side-effects consistent across paths (#1411). The scheduled health-check cron
+  // is untouched: it calls `runAllChecks()` directly and pays no fetch cost.
+  services.healthCheck.setVersionUpdateCallback(onUpdateChanged);
+
   /** Job registry — adding a new job requires one entry here. */
   const jobRegistry: JobEntry[] = [
     { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping, services.qualityGateOrchestrator, services.eventHistory) },

@@ -78,6 +78,10 @@ describe('startJobs', () => {
     // Startup version check (#1225) chains .catch on the return value, so the mock
     // must return a Promise. Default to a resolved one; specific tests override.
     vi.mocked(checkForUpdate).mockResolvedValue(undefined);
+    // startJobs registers the manual-run version-update nudge on the health
+    // service (#1411). The proxy mock would otherwise auto-stub this as a
+    // rejecting promise; the call is fire-and-void, so make it a no-op.
+    (services.healthCheck.setVersionUpdateCallback as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
   });
 
   afterEach(() => {
@@ -864,6 +868,49 @@ describe('startJobs', () => {
       // The mocked checkForUpdate never calls its callback (mirrors a same-version
       // no-op check). The health service must not be recomputed by the nudge path.
       expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
+    });
+
+    // #1411 — the manual "Run Now" health route fires a live version check using
+    // the SAME nudge the boot/2 AM invocations use. startJobs must register that
+    // exact callback on the health service so runManualChecks can reach it.
+    it('registers the version-update nudge on the health service for the manual Run Now path (#1411 AC#5)', async () => {
+      const setCb = services.healthCheck.setVersionUpdateCallback as ReturnType<typeof vi.fn>;
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      vi.mocked(checkForUpdate).mockClear();
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Registered exactly once with a function.
+      expect(setCb).toHaveBeenCalledTimes(1);
+      const registered = setCb.mock.calls[0]![0] as () => void;
+      expect(typeof registered).toBe('function');
+
+      // It is the IDENTICAL reference the version-check cron passes to
+      // checkForUpdate — proving the manual path nudges health exactly as the
+      // boot/2 AM path does (not a hand-rolled duplicate).
+      await services.taskRegistry.executeTracked('version-check');
+      const cronCall = vi.mocked(checkForUpdate).mock.calls.find((c) => typeof c[1] === 'function');
+      expect(cronCall).toBeDefined();
+      expect(cronCall![1]).toBe(registered);
+    });
+
+    it('the scheduled health-check cron stays cache-only — it does not fire a version check (#1411 AC#3)', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Discard the boot version-check call; we only care about the scheduled tick.
+      vi.mocked(checkForUpdate).mockClear();
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockClear();
+
+      await services.taskRegistry.executeTracked('health-check');
+
+      expect(services.healthCheck.runAllChecks).toHaveBeenCalledTimes(1);
+      expect(checkForUpdate).not.toHaveBeenCalled();
     });
   });
 

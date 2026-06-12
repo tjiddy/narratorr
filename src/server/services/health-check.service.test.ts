@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { HealthCheckService } from './health-check.service.js';
-import { getUpdateStatus } from '../jobs/version-check.js';
+import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
 import { inject, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
@@ -865,21 +865,35 @@ describe('HealthCheckService', () => {
   });
 
   describe('concurrency', () => {
-    it('returns cached results when check is already in progress (mutex)', async () => {
-      let resolveCheck: () => void;
-      const slowIndexer = {
-        getAll: vi.fn().mockReturnValue(new Promise<unknown[]>((r) => { resolveCheck = () => r([]); })),
-        test: vi.fn(),
-      };
-      const { service } = createService({ indexer: slowIndexer });
+    // A call that lands while a pass is running coalesces into the mutex: it does
+    // NOT spawn a parallel pass. Post-#1411 (F1) it resolves with the guaranteed
+    // trailing rerun's result — a pass that begins after it registered — instead
+    // of returning the pre-existing cachedResults immediately. Returning stale
+    // cache here was the bug that let a manual Run Now overlapping a scheduled
+    // pass miss its freshly-fetched version row.
+    it('a coalesced call waits for and resolves with the trailing rerun, not the pre-existing cache (#1411 F1)', async () => {
+      let resolveFirstPass!: () => void;
+      const getAll = vi.fn()
+        .mockReturnValueOnce(new Promise<unknown[]>((r) => { resolveFirstPass = () => r([]); }))
+        .mockResolvedValue([]);
+      const { service } = createService({ indexer: { getAll, test: vi.fn() } });
 
       const first = service.runAllChecks();
-      const second = await service.runAllChecks(); // Should return cached immediately
+      let secondResolved = false;
+      const second = service.runAllChecks().then((r) => { secondResolved = true; return r; });
 
-      expect(second).toEqual([]); // Empty cached results (no previous run)
+      // While pass #1 is gated, the coalesced call must NOT have resolved — it
+      // parks for the trailing rerun rather than handing back stale cache.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(secondResolved).toBe(false);
 
-      resolveCheck!();
-      await first;
+      resolveFirstPass!();
+      const [, secondResults] = await Promise.all([first, second]);
+
+      // It resolved with a real pass result, and exactly two passes ran (the
+      // initial pass + one trailing rerun) — coalesced, not an unbounded loop.
+      expect(secondResults).toEqual(expect.any(Array));
+      expect(getAll).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1138,6 +1152,182 @@ describe('HealthCheckService', () => {
 
       // Two awaited, non-overlapping passes → exactly two getAll calls. A spurious
       // trailing rerun would push this to 3.
+      expect(getAll).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // #1411 — manual "Run Now" fires a live version check before reading the
+  // report, so the version-update row reflects a fresh check instead of the
+  // up-to-24h-stale daily cache. Scheduled runs keep calling runAllChecks().
+  describe('#1411 — runManualChecks (manual Run Now fires a live version check)', () => {
+    beforeEach(() => {
+      vi.mocked(checkForUpdate).mockReset();
+      vi.mocked(getUpdateStatus).mockReset();
+      // checkForUpdate resolves void in production; default to a settled promise
+      // so the awaited `.catch` chain in runManualChecks has a thenable to bind.
+      vi.mocked(checkForUpdate).mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      vi.mocked(checkForUpdate).mockReset();
+      vi.mocked(getUpdateStatus).mockReset();
+    });
+
+    it('awaits checkForUpdate BEFORE reading the report, so the run reflects the fresh cache (AC #1)', async () => {
+      const { service, log } = createService();
+      // The update only becomes visible AFTER checkForUpdate resolves. If
+      // runAllChecks read getUpdateStatus before/concurrently, the row would be
+      // absent — its presence proves serial ordering.
+      let fetched = false;
+      vi.mocked(checkForUpdate).mockImplementation(async () => {
+        await Promise.resolve();
+        fetched = true;
+      });
+      vi.mocked(getUpdateStatus).mockImplementation(() =>
+        fetched
+          ? { latestVersion: '2.0.0', releaseUrl: 'https://example.com/r', channel: 'stable' }
+          : undefined,
+      );
+
+      const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      expect(checkForUpdate).toHaveBeenCalledOnce();
+      expect(results.find((r) => r.checkName === 'version-update')).toMatchObject({
+        checkName: 'version-update',
+        state: 'warning',
+        message: 'Update available: v2.0.0',
+      });
+    });
+
+    it('a delayed checkForUpdate still gates runAllChecks — the pass does not start early (AC #1 negative-timing)', async () => {
+      const { service, log } = createService();
+      let fetched = false;
+      vi.mocked(checkForUpdate).mockImplementation(
+        () => new Promise<void>((resolve) => { setTimeout(() => { fetched = true; resolve(); }, 25); }),
+      );
+      vi.mocked(getUpdateStatus).mockImplementation(() =>
+        fetched
+          ? { latestVersion: '3.1.0', releaseUrl: 'https://example.com/r3', channel: 'stable' }
+          : undefined,
+      );
+
+      const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      // Even with a 25ms-delayed fetch, the row is present → runAllChecks waited
+      // for the fetch to land rather than reading the pre-fetch (undefined) cache.
+      expect(results.find((r) => r.checkName === 'version-update')).toMatchObject({
+        message: 'Update available: v3.1.0',
+      });
+    });
+
+    it('passes the registered onUpdateChanged callback (same as boot/2 AM) into checkForUpdate (AC #5)', async () => {
+      const { service, log } = createService();
+      const onUpdateChanged = vi.fn();
+      service.setVersionUpdateCallback(onUpdateChanged);
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+
+      await service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      expect(checkForUpdate).toHaveBeenCalledWith(log, onUpdateChanged);
+    });
+
+    it('passes undefined when no callback is registered, without throwing (boot-less / route-test context)', async () => {
+      const { service, log } = createService();
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+
+      await expect(service.runManualChecks(log as unknown as FastifyBaseLogger)).resolves.toBeDefined();
+      expect(checkForUpdate).toHaveBeenCalledWith(log, undefined);
+    });
+
+    it('a failing version fetch does not fail the run — falls through to the cached value (AC #2)', async () => {
+      const { service, log } = createService();
+      // Defensive: the production checkForUpdate swallows its own errors and never
+      // rejects, but runManualChecks guards it so a rejection can't fail the run.
+      vi.mocked(checkForUpdate).mockRejectedValue(new Error('GitHub unreachable'));
+      // The prior cached value remains intact and is what the report reflects.
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '1.2.3',
+        releaseUrl: 'https://example.com/cached',
+        channel: 'stable',
+      });
+
+      const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      // Run still completed with the cached row; the failure was logged, not thrown.
+      expect(results.find((r) => r.checkName === 'version-update')).toMatchObject({
+        message: 'Update available: v1.2.3',
+      });
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'GitHub unreachable' }) }),
+        'Manual health run: live version check failed',
+      );
+    });
+
+    it('dev/unbuilt build: checkForUpdate is a silent no-op and the run completes cleanly with no version-update row (AC #5)', async () => {
+      const { service, log } = createService();
+      // Mirrors checkForUpdate's `version === 'dev'` early return: touches nothing.
+      vi.mocked(checkForUpdate).mockResolvedValue(undefined);
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+
+      const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      expect(results.find((r) => r.checkName === 'version-update')).toBeUndefined();
+      expect(checkForUpdate).toHaveBeenCalledOnce();
+    });
+
+    it('does NOT fire a version check on the scheduled path — runAllChecks() stays cache-only (AC #3)', async () => {
+      const { service } = createService();
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+
+      await service.runAllChecks();
+
+      // The scheduled health-check cron calls runAllChecks() directly; it must
+      // never reach checkForUpdate — that lives only in the manual entry point.
+      expect(checkForUpdate).not.toHaveBeenCalled();
+    });
+
+    it('returns a post-fetch report even when the manual run overlaps an active health pass (AC #1, F1)', async () => {
+      // Gate the first (scheduled) pass on a slow indexer so the manual run lands
+      // while runAllChecks is already `running` and would otherwise coalesce into
+      // the in-progress branch and return the pre-fetch cachedResults.
+      let releaseScheduledPass!: () => void;
+      const getAll = vi.fn()
+        .mockReturnValueOnce(new Promise<unknown[]>((r) => { releaseScheduledPass = () => r([]); }))
+        .mockResolvedValue([]);
+      const { service, log } = createService({ indexer: { getAll, test: vi.fn() } });
+
+      // Update only becomes visible AFTER the manual run's checkForUpdate resolves.
+      let fetched = false;
+      vi.mocked(checkForUpdate).mockImplementation(async () => { fetched = true; });
+      vi.mocked(getUpdateStatus).mockImplementation(() =>
+        fetched
+          ? { latestVersion: '2.0.0', releaseUrl: 'https://example.com/r2', channel: 'stable' }
+          : undefined,
+      );
+
+      // Scheduled pass #1 is now parked on the gated getAll (running === true).
+      const scheduled = service.runAllChecks();
+
+      // Manual run: awaits the live fetch (stamps 2.0.0), then coalesces into the
+      // active pass. It must resolve with the trailing rerun's post-fetch report.
+      const manual = service.runManualChecks(log as unknown as FastifyBaseLogger);
+
+      // Let the manual fetch resolve and its coalesced runAllChecks register
+      // before the scheduled pass drains.
+      await new Promise((r) => setTimeout(r, 0));
+      releaseScheduledPass();
+
+      const [, manualResults] = await Promise.all([scheduled, manual]);
+
+      // The report the manual caller receives reflects the post-fetch cache — the
+      // pre-fetch (undefined) cachedResults would have omitted this row entirely.
+      expect(manualResults.find((r) => r.checkName === 'version-update')).toMatchObject({
+        checkName: 'version-update',
+        state: 'warning',
+        message: 'Update available: v2.0.0',
+      });
+      // Exactly one trailing rerun: pass #1 + one rerun = 2 full passes (getAll
+      // called once per pass) — the overlap coalesced, it did not spawn a loop.
       expect(getAll).toHaveBeenCalledTimes(2);
     });
   });
