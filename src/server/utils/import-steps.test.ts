@@ -583,6 +583,11 @@ describe('prepareImportSiblings', () => {
   const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
   beforeEach(() => {
+    // `mockReset()` BEFORE establishing the default drains any `*Once()` stat queue a prior
+    // test left behind — the global `beforeEach(clearAllMocks)` does NOT drain those queues
+    // (CLAUDE.md `vi.clearAllMocks()` gotcha), and these marker-state tests sequence stat
+    // results, so a leaked queued response would otherwise contaminate this default (#1340 gap 6).
+    vi.mocked(stat).mockReset();
     // Default: no commit-pending marker on disk → no recovery, fast strict-clear path.
     vi.mocked(stat).mockRejectedValue(enoent());
   });
@@ -768,17 +773,27 @@ describe('commitStagedImport', () => {
     // the ordering directly: the (sole) marker write precedes the first rename
     // (`${target}/old.mp3` → `${backup}/old.mp3`), so reordering the write after
     // the backup loop would fail this test.
+    // Windows path-separator normalization (CLAUDE.md "Windows path separators in tests"):
+    // production builds the rename/open args with `join()`, which emits backslashes on
+    // Windows but forward slashes on Linux/CI. Normalize the ACTUAL mock-call args before
+    // matching the forward-slash needles so this ordering pin holds on a Windows dev machine,
+    // not just on Linux CI — without it the `findIndex` returns -1 on Windows and the ordering
+    // assertion runs against index -1 (a silent local-only failure, #1340 gap 5).
+    const norm = (p: unknown): string => String(p).split('\\').join('/');
     const markerWriteOrder = vi.mocked(writeFile).mock.invocationCallOrder[0]!;
     const firstBackupRename = vi.mocked(rename).mock.calls.findIndex(
-      (c) => c[0] === `${target}/old.mp3` && c[1] === `${backup}/old.mp3`,
+      (c) => norm(c[0]) === `${target}/old.mp3` && norm(c[1]) === `${backup}/old.mp3`,
     );
+    // Fail LOUDLY when the needle is genuinely absent (e.g. a real reordering regression):
+    // guard the index before using it as an invocationCallOrder subscript.
     expect(firstBackupRename).toBeGreaterThanOrEqual(0);
     const firstBackupRenameOrder = vi.mocked(rename).mock.invocationCallOrder[firstBackupRename]!;
     expect(markerWriteOrder).toBeLessThan(firstBackupRenameOrder);
     // The best-effort parent-directory fsync (entry durability) opens the marker's
     // parent dir BEFORE the first backup rename (#1339).
-    expect(open).toHaveBeenCalledWith('/library/Author', 'r');
-    const dirOpenOrder = vi.mocked(open).mock.invocationCallOrder[0]!;
+    const dirOpenIdx = vi.mocked(open).mock.calls.findIndex((c) => norm(c[0]) === '/library/Author' && c[1] === 'r');
+    expect(dirOpenIdx).toBeGreaterThanOrEqual(0);
+    const dirOpenOrder = vi.mocked(open).mock.invocationCallOrder[dirOpenIdx]!;
     expect(dirOpenOrder).toBeLessThan(firstBackupRenameOrder);
     // ...and — the assertion that actually pins durability — the handle `sync()`
     // (the fsync that flushes the directory entry) COMPLETES before the first
@@ -837,6 +852,60 @@ describe('commitStagedImport', () => {
     await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
     expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('success-leftover ordering: the strict marker removal runs (inside the try) BEFORE the best-effort backup cleanup; a forced post-success backup-rm failure leaves the marker already gone, so the next import does NOT recover the stale leftover (#1290 gap 1)', async () => {
+    const log = createMockLog();
+    const marker = `${target}.import-commit-pending`;
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    // Force the POST-success best-effort backup cleanup (`removeImportSibling(backupPath)`,
+    // outside the try) to reject; the strict marker removal (last step inside the try) and
+    // the staging cleanup still succeed. A best-effort failure is swallowed, so the commit
+    // resolves with the disposable backup left on disk.
+    vi.mocked(rm).mockImplementation(async (p: unknown) => {
+      if (p === backup) throw Object.assign(new Error('EBUSY backup leftover'), { code: 'EBUSY' });
+      return undefined as never;
+    });
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    // ORDERING PIN: the strict marker removal (`rm(marker, { force })`, inside the try) must
+    // precede the best-effort backup cleanup (`rm(backup, { recursive, force })`, post-success).
+    // Reordering them would leave marker + backup TOGETHER after a SUCCESS — the next import
+    // would "recover" the stale backup over the committed audio. Assert the invocation order
+    // directly so that swap fails this test.
+    const markerRmIdx = vi.mocked(rm).mock.calls.findIndex(
+      (c) => c[0] === marker && (c[1] as { force?: boolean; recursive?: boolean })?.force === true && !(c[1] as { recursive?: boolean })?.recursive,
+    );
+    const backupRmIdx = vi.mocked(rm).mock.calls.findIndex(
+      (c) => c[0] === backup && (c[1] as { recursive?: boolean })?.recursive === true,
+    );
+    expect(markerRmIdx).toBeGreaterThanOrEqual(0);
+    expect(backupRmIdx).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(rm).mock.invocationCallOrder[markerRmIdx]!)
+      .toBeLessThan(vi.mocked(rm).mock.invocationCallOrder[backupRmIdx]!);
+
+    // Restore the default rm + isolate rename history for the realistic next-import phase.
+    // (`clearAllMocks()` does NOT reset implementations — drop the path-specific throw so it
+    // never leaks into later tests; #1340 gap 6 / CLAUDE.md `clearAllMocks` gotcha.)
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined as never);
+    vi.mocked(rename).mockClear();
+
+    // The marker is already gone (strict rm ran first), so the next import over the leftover
+    // backup sees marker-ABSENT → strict-clears the disposable backup, NEVER recovers it. This
+    // is the REALISTIC no-marker leftover state (produced by the forced backup-rm failure
+    // above), distinct from the false-positive guard that fabricates it.
+    vi.mocked(stat).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => (p === backup ? [dirent('old.mp3')] : []) as never);
+
+    await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
+
+    // No recovery restore from the stale leftover — the marker-absent path strict-clears it.
+    expect(rename).not.toHaveBeenCalled();
+    expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
   });
 
   it('a strict marker-removal failure triggers rollback and rethrows (#1290)', async () => {
@@ -1086,6 +1155,10 @@ describe('handleImportFailure', () => {
   const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
   beforeEach(() => {
+    // `mockReset()` first drains any `*Once()` stat queue a prior test left behind — the global
+    // `beforeEach(clearAllMocks)` does NOT drain those queues (CLAUDE.md gotcha), so without
+    // this a leaked queued response would shadow the ENOENT default below (#1340 gap 6).
+    vi.mocked(stat).mockReset();
     // Default: NO commit-pending marker on disk → ordinary cleanup. Preservation now rides
     // on the durable disk marker (#1336), not the error's identity, so the gate stats the
     // marker; an absent marker (ENOENT) means "delete the disposable backup as before".
@@ -1282,6 +1355,32 @@ describe('handleImportFailure', () => {
     // Siblings cleaned, but the existing book folder is never recursively removed.
     expect(rm).not.toHaveBeenCalledWith('/library/Author/Title', expect.objectContaining({ recursive: true }));
     expect(rm).toHaveBeenCalledWith('/library/Author/Title.import-tmp', { recursive: true, force: true });
+  });
+
+  it('does NOT blanket-remove an UNPROTECTED target while the commit-pending marker is on disk — the half-restored originals survive (#1290 gap 4)', async () => {
+    const log = createMockLog();
+    const target = '/library/Author/Title';
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never); // marker present on disk (#1341: a real marker reads as a file)
+    // protectTarget:false would normally blanket-rm the target (first-import / move-path), but
+    // the marker's presence (preserveBackup) must VETO that — the half-restored originals live
+    // IN the target during a preserved recovery. This pins the `!preserveBackup` clause on the
+    // target blanket-rm in handleImportFailure: removing it (so the rm gates only on
+    // `!protectTarget`) would delete the genuine-loss collision case the marker protects, and
+    // the existing protectTarget:true tests would NOT catch that (they skip the rm via
+    // `!protectTarget` regardless of the marker).
+    await expect(handleImportFailure({
+      error: new BackupRecoveryError(target), targetPath: target,
+      stagingPath: `${target}.import-tmp`, backupPath: `${target}.import-bak`,
+      libraryRoot: '/library', protectTarget: false, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: target }, log,
+    })).rejects.toBeInstanceOf(BackupRecoveryError);
+    // The target is NOT blanket-removed despite protectTarget:false...
+    expect(rm).not.toHaveBeenCalledWith(target, { recursive: true, force: true });
+    // ...and the backup + marker survive for the next boot's recovery...
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-bak`, { recursive: true, force: true });
+    expect(rm).not.toHaveBeenCalledWith(`${target}.import-commit-pending`, { force: true });
+    // ...while staging is still cleared (re-derivable scratch).
+    expect(rm).toHaveBeenCalledWith(`${target}.import-tmp`, { recursive: true, force: true });
   });
 
   it('still removes a disposable (unprotected) target on failure — first import / move-path', async () => {
