@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
+import { formatZodError } from './format-zod-error.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
@@ -147,7 +148,7 @@ export class HardcoverProvider implements ImportListProvider {
     if (!parsed.success) {
       throw new ImportListError(
         this.name,
-        `Hardcover returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        `Hardcover returned unexpected response: ${formatZodError(parsed.error)}`,
         { cause: parsed.error },
       );
     }
@@ -178,7 +179,7 @@ export class HardcoverProvider implements ImportListProvider {
       if (!parsed.success) {
         return {
           success: false,
-          message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+          message: `Validation failed: ${formatZodError(parsed.error)}`,
         };
       }
       const data = parsed.data;

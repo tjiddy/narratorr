@@ -8,7 +8,8 @@ import { serializeError } from '../utils/serialize-error.js';
 import { makeTestSchema } from '../utils/secret-codec.js';
 import { resolveSentinelSettings } from '../utils/sentinel-resolver.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
-import { absLibrariesResponseSchema, formatAbsZodError } from '../../core/import-lists/abs-provider.js';
+import { absLibrariesResponseSchema } from '../../core/import-lists/abs-provider.js';
+import { formatZodError } from '../../core/import-lists/format-zod-error.js';
 import { fetchWithTimeout } from '../../core/utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../../core/utils/constants.js';
 
@@ -89,7 +90,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
             'ABS library fetch failed schema validation',
           );
           return await reply.status(502).send({
-            error: `ABS API returned an unexpected response: ${formatAbsZodError(parsed.error)}`,
+            error: `ABS API returned an unexpected response: ${formatZodError(parsed.error)}`,
           });
         }
         return { libraries: parsed.data.libraries };

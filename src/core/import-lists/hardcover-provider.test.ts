@@ -348,6 +348,28 @@ describe('HardcoverProvider', () => {
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/validation failed/i);
     });
+
+    it('prepends the dotted data path for a malformed probe data shape', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { __typename: 42 } })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/validation failed: data/i);
+    });
+
+    it('test() message has no leading ": " artifact for a top-level (empty-path) failure', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json('html-interstitial')),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).not.toContain('failed: :');
+    });
   });
 
   describe('timeout helper', () => {
@@ -372,6 +394,30 @@ describe('HardcoverProvider', () => {
       expect(err).toBeInstanceOf(ImportListError);
       const zod = await import('zod');
       expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
+      // Message carries the dotted Zod path so operators see WHERE it broke.
+      expect((err as ImportListError).message).toMatch(/Hardcover returned unexpected response: errors/);
+    });
+
+    it('throws with the dotted data path when the GraphQL data shape is malformed', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { trending_books: 'not-an-array' } })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      expect((err as ImportListError).message).toMatch(/Hardcover returned unexpected response: data/);
+    });
+
+    it('fetchItems message has no leading ": " artifact for a top-level (empty-path) failure', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json('not-an-object')),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const err = await provider.fetchItems().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportListError);
+      expect((err as ImportListError).message).not.toContain('response: :');
     });
 
     it('treats { data: null, errors: null } as a successful empty list (passthrough handles nullish)', async () => {
