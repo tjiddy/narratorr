@@ -3,7 +3,9 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
+import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { IndexerCard } from './IndexerCard';
+import { INDEXER_REGISTRY, INDEXER_TYPES } from '../../../shared/indexer-registry.js';
 import type { Indexer, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 import type { Mock } from 'vitest';
@@ -1127,11 +1129,22 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // Foreign keys (not in MAM defaults, not in stored settings) MUST NOT leak
-      expect(payloadSettings).not.toHaveProperty('hostname');
-      expect(payloadSettings).not.toHaveProperty('pageLimit');
-      expect(payloadSettings).not.toHaveProperty('apiUrl');
-      expect(payloadSettings).not.toHaveProperty('apiKey');
+      // Foreign keys (declared by another indexer type's defaults, not by MAM) MUST NOT leak.
+      // Registry-derived via the shared #908-family helper: covers hostname/pageLimit (abb) and
+      // apiUrl/apiKey (newznab/torznab). MAM's schema-only keys (isVip/classname/mamUsername — no
+      // default) are asserted as present below, not here.
+      //
+      // flareSolverrUrl is excluded from the absence check: it's in the other types' defaults
+      // (so the defaults-derived helper lists it) but the form schema's superRefine ALWAYS
+      // materializes settings.flareSolverrUrl — to `undefined` for MAM (schemas/indexer.ts:162-176)
+      // — so the key is present on every indexer payload. This is the indexer schema⊃defaults gap
+      // the spec calls out (#1343); the original hardcoded list omitted it for the same reason.
+      const foreignKeys = foreignRegistryKeys('myanonamouse', INDEXER_TYPES, INDEXER_REGISTRY)
+        .filter((k) => k !== 'flareSolverrUrl');
+      expect(foreignKeys).toEqual(expect.arrayContaining(['hostname', 'pageLimit', 'apiUrl', 'apiKey']));
+      for (const key of foreignKeys) {
+        expect(payloadSettings).not.toHaveProperty(key);
+      }
 
       // Persisted MAM-specific keys MUST round-trip
       expect(payloadSettings).toHaveProperty('mamId', 'mam-secret');
@@ -1254,6 +1267,31 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
       expect(payloadSettings.searchType).toBe('active');
+    });
+
+    // Mutation-kill: the create-mode reset effect (IndexerCard.tsx:135-139). Validation-free
+    // (DOM field state), because the Test button is RHF `handleSubmit`-gated and a freshly
+    // switched-to type has empty required fields — so we round-trip a type switch and assert the
+    // previous type's field value did not survive. The default create type is newznab (apiUrl
+    // field); switching to abb (hostname field) and back must clear apiUrl. Deleting the reset
+    // effect leaves the typed apiUrl in RHF state across the switch, so the remounted field shows
+    // the stale value and this reds.
+    it('#908 create-mode type switch resets the previous type\'s field (reset-effect guard)', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <IndexerCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+
+      const apiUrlInput = screen.getByPlaceholderText('https://indexer.example.com/api');
+      await user.type(apiUrlInput, 'https://typed.example.com/api');
+      expect(apiUrlInput).toHaveValue('https://typed.example.com/api');
+
+      const typeSelect = screen.getByLabelText('Type');
+      await user.selectOptions(typeSelect, 'abb');
+      await user.selectOptions(typeSelect, 'newznab');
+
+      // After the round-trip the reset effect must have cleared the stale apiUrl.
+      expect(screen.getByPlaceholderText('https://indexer.example.com/api')).toHaveValue('');
     });
   });
 });
