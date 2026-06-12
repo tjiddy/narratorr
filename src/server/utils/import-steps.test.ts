@@ -776,12 +776,19 @@ describe('commitStagedImport', () => {
     const firstBackupRenameOrder = vi.mocked(rename).mock.invocationCallOrder[firstBackupRename]!;
     expect(markerWriteOrder).toBeLessThan(firstBackupRenameOrder);
     // The best-effort parent-directory fsync (entry durability) opens the marker's
-    // parent dir and also completes BEFORE the first backup rename (#1339).
+    // parent dir BEFORE the first backup rename (#1339).
     expect(open).toHaveBeenCalledWith('/library/Author', 'r');
-    const dirFsyncOrder = vi.mocked(open).mock.invocationCallOrder[0]!;
-    expect(dirFsyncOrder).toBeLessThan(firstBackupRenameOrder);
-    // The handle is fsync'd and always closed (no descriptor leak).
+    const dirOpenOrder = vi.mocked(open).mock.invocationCallOrder[0]!;
+    expect(dirOpenOrder).toBeLessThan(firstBackupRenameOrder);
+    // ...and — the assertion that actually pins durability — the handle `sync()`
+    // (the fsync that flushes the directory entry) COMPLETES before the first
+    // backup rename. Pinning `open()` alone is insufficient: a regression that
+    // opens the dir early, renames, and only then awaits `sync()` would still
+    // satisfy the open-order check while violating the ordering this PR protects.
     expect(dirSync).toHaveBeenCalled();
+    const dirSyncOrder = dirSync.mock.invocationCallOrder[0]!;
+    expect(dirSyncOrder).toBeLessThan(firstBackupRenameOrder);
+    // The handle is always closed (no descriptor leak).
     expect(dirClose).toHaveBeenCalled();
   });
 
