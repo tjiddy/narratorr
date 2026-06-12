@@ -1,5 +1,5 @@
 import { useWatch } from 'react-hook-form';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { GlobeIcon } from '@/components/icons';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { filteringFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';

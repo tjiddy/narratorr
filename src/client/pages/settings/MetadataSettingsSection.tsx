@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useWatch } from 'react-hook-form';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { toast } from 'sonner';
 import { BookOpenIcon } from '@/components/icons';
 import { TestButton } from '@/components/TestButton';
