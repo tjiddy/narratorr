@@ -29,6 +29,30 @@ describe('sanitizePath', () => {
     expect(sanitizePath('Too   Many    Spaces')).toBe('Too Many Spaces');
   });
 
+  describe('reserves import-sibling suffixes (#1341)', () => {
+    it('strips a trailing reserved suffix so the segment never ends in one', () => {
+      expect(sanitizePath('The Way of Kings.import-bak')).toBe('The Way of Kings');
+      expect(sanitizePath('Draft.import-tmp')).toBe('Draft');
+      expect(sanitizePath('X.import-commit-pending')).toBe('X');
+    });
+
+    it('unwinds a doubled reserved suffix', () => {
+      expect(sanitizePath('Foo.import-bak.import-bak')).toBe('Foo');
+    });
+
+    it('falls back to Unknown when stripping empties the segment', () => {
+      expect(sanitizePath('.import-bak')).toBe('Unknown');
+    });
+
+    it('leaves a title ending in -bak without the .import prefix untouched', () => {
+      expect(sanitizePath('Project Backup-bak')).toBe('Project Backup-bak');
+    });
+
+    it('leaves a title that only contains the substring mid-string untouched', () => {
+      expect(sanitizePath('My .import-bak Notes')).toBe('My .import-bak Notes');
+    });
+  });
+
   it('collapses spaces left by stripped characters', () => {
     // Colon removal leaves double space: "Author: Name" → "Author  Name" → "Author Name"
     expect(sanitizePath('Author: Name')).toBe('Author Name');

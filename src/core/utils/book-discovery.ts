@@ -1,6 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { IMPORT_SIBLING_SUFFIXES } from './import-sibling-suffixes.js';
 import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
 import { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
@@ -107,6 +108,13 @@ async function scanDir(dirPath: string): Promise<DirInfo> {
 
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
+    // Exclude stranded import siblings (#1341): a `Title.import-bak` / `.import-tmp` /
+    // `.import-commit-pending` entry does NOT begin with a dot, so it slips past the
+    // leading-dot skip above and would otherwise be walked as a normal directory (or, for
+    // a marker file, ignored only because it lacks an audio extension). Drop any entry —
+    // directory or file — ending in a reserved suffix before recursion/candidate collection
+    // so a preserved-by-design backup never surfaces as a phantom importable book.
+    if (IMPORT_SIBLING_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue;
     const fullPath = join(dirPath, entry.name);
 
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {

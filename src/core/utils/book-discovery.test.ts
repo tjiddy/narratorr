@@ -209,6 +209,60 @@ describe('discoverBooks', () => {
     expect(result[0]!.totalSize).toBe(5000);
   });
 
+  // ---- Import-sibling suffix exclusion (#1341) ----
+
+  describe('import-sibling suffix exclusion (#1341)', () => {
+    it('excludes .import-bak / .import-tmp / .import-commit-pending siblings, discovers only the real book', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'Real Book', isFile: false },
+          { name: 'Real Book.import-bak', isFile: false },
+          { name: 'Staging.import-tmp', isFile: false },
+          { name: 'Pending.import-commit-pending', isFile: false },
+        ],
+        '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+        // Each suffixed sibling holds audio — without the exclusion they'd surface as phantom books.
+        '/audiobooks/Author/Real Book.import-bak': [{ name: 'old.mp3', isFile: true, size: 4000 }],
+        '/audiobooks/Author/Staging.import-tmp': [{ name: 'staged.mp3', isFile: true, size: 3000 }],
+        '/audiobooks/Author/Pending.import-commit-pending': [{ name: 'pending.mp3', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'Real Book']);
+      expect(result[0]!.totalSize).toBe(5000);
+    });
+
+    it('excludes a directory named like the marker-collision dir (Real Book.import-commit-pending)', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'Real Book', isFile: false },
+          { name: 'Real Book.import-commit-pending', isFile: false },
+        ],
+        '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+        '/audiobooks/Author/Real Book.import-commit-pending': [{ name: 'audio.mp3', isFile: true, size: 4000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'Real Book']);
+    });
+
+    it('still discovers a folder whose name merely contains the substring mid-string', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [{ name: 'import-bak archive', isFile: false }],
+        '/audiobooks/Author/import-bak archive': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'import-bak archive']);
+    });
+  });
+
   // ---- Folder structure parsing (folderParts) ----
 
   it('parses Author/Book structure into folderParts', async () => {
