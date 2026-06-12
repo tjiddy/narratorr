@@ -1777,6 +1777,27 @@ describe('enrichUsenetLanguages', () => {
       // The genuinely-other, lower-ranked release is the one cap-skipped (no title marker).
       expect(other.language).toBeUndefined();
     });
+
+    it('fetches the highest-ranked (comparePhase2) group member as the representative, not insertion order', async () => {
+      // Distinguish WHICH duplicate is fetched: same guid → same group, but the
+      // lower-ranked member is inserted FIRST and the higher-ranked member carries
+      // a different downloadUrl. A `group[0]` representative would fetch '/low';
+      // the comparePhase2 representative fetches '/high'.
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+      const low = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/low', matchScore: 1, title: 'Low' });
+      const high = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/high', matchScore: 9, title: 'High' });
+
+      await enrichUsenetLanguages([low, high], logger);
+
+      // One fetch, and it is the higher-ranked representative's URL — pins ranking.
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
+      expect(fetchedUrls).toEqual(['http://nzb.test/high']);
+      expect(fetchedUrls).not.toContain('http://nzb.test/low');
+      // Both duplicates carry the representative's enrichment regardless of which was fetched.
+      expect(low.language).toBe('german');
+      expect(high.language).toBe('german');
+    });
   });
 
   describe('info-level cache counters (#1328)', () => {
@@ -1799,6 +1820,39 @@ describe('enrichUsenetLanguages', () => {
 
       expect(logger.info).toHaveBeenLastCalledWith(
         expect.objectContaining({ cacheHits: 1, capSkipped: 1 }),
+        'Usenet language detection complete',
+      );
+    });
+
+    it('counts an unresolved cache hit in cacheHits even though it sets no language', async () => {
+      // A successful fetch with no language signal is cached as `unresolved` — a
+      // HIT that applies no language. `cacheHits` (total hits) must count it even
+      // though `hitsDetected`/`languagesDetected` (language-setting hits) do not.
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(plainNzbXml(), { status: 200 }));
+      const make = () => makeResult({ protocol: 'usenet', guid: 'u-hit', indexer: 'alpha', downloadUrl: 'http://nzb.test/u-hit', title: 'Plain English Audiobook' });
+
+      await enrichUsenetLanguages([make()], logger); // warm the unresolved entry
+      await enrichUsenetLanguages([make()], logger); // served from the unresolved hit
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cacheHits: 1, languagesDetected: 0, nzbFetched: 0 }),
+        'Usenet language detection complete',
+      );
+    });
+
+    it('counts a fetch-failed cache hit in cacheHits without incrementing languagesDetected', async () => {
+      // A fetch-failed entry with no title fallback is also a HIT within its TTL —
+      // it sets no language, so it counts toward `cacheHits` but not `languagesDetected`.
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response('err', { status: 500 }));
+      const make = () => makeResult({ protocol: 'usenet', guid: 'f-hit', indexer: 'alpha', downloadUrl: 'http://nzb.test/f-hit', title: 'Stephen King - The Stand (2012) MP3' });
+
+      await enrichUsenetLanguages([make()], logger); // warm the fetch-failed entry
+      await enrichUsenetLanguages([make()], logger); // served from the fetch-failed hit
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cacheHits: 1, languagesDetected: 0, nzbFetched: 0 }),
         'Usenet language detection complete',
       );
     });
