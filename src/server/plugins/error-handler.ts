@@ -15,6 +15,7 @@ import { RefreshScanError } from '../services/refresh-scan.service.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
+import { BackupRecoveryError, MarkerPathConflictError } from '../utils/import-staging.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -47,6 +48,12 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [DownloadClientTimeoutError, { type: 'flat', status: 504 }],
   [DownloadClientError, { type: 'flat', status: 502 }],
   [SentinelOnNonSecretFieldError, { type: 'flat', status: 400 }],
+  // Marker-recovery failures surfaced by the synchronous rename route (#1418). 503 is
+  // transient (recovery re-attempts on retry / next boot sweep); 409 is structural (operator
+  // must remove the stray folder occupying the marker path). The async merge route surfaces
+  // these via merge_failed (already 202'd), not the global handler.
+  [BackupRecoveryError, { type: 'coded', codes: { BACKUP_RECOVERY_FAILED: 503 } }],
+  [MarkerPathConflictError, { type: 'coded', codes: { MARKER_PATH_CONFLICT: 409 } }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */

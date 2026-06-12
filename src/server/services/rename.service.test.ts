@@ -3,6 +3,7 @@ import { createMockLogger, createMockDb, mockDbChain, inject, createMockSettings
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { RenameService, RenameError } from './rename.service.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -23,6 +24,14 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     cp: vi.fn(),
   };
 });
+
+// The marker-gated recovery sequence (#1418) touches real fs and short-circuits to
+// "marker present" under mocked fs (#1391), so it is stubbed here. These unit tests
+// assert it is invoked with the path the writer is about to mutate; the real on-disk
+// recovery behavior is covered in rename.service.marker.test.ts (real tmpdir).
+vi.mock('../utils/recover-interrupted-commit.js', () => ({
+  recoverInterruptedCommit: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mockAuthor = createMockDbAuthor();
 const mockBook = {
@@ -416,6 +425,59 @@ describe('RenameService', () => {
 
       expect(cp).toHaveBeenCalled();
       expect(rm).toHaveBeenCalled();
+    });
+
+    // #1418 — marker convergence runs before any destructive mutation
+    it('converges the commit-pending marker on oldPath before moving the folder', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([{ name: 'foo.m4b', isFile: () => true }]);
+
+      await service.renameBook(1);
+
+      // Recovery is invoked on the OLD path with the library root, before the move.
+      expect(recoverInterruptedCommit).toHaveBeenCalledWith(
+        '/library/Wrong Author/Old Title',
+        '/library',
+        expect.anything(),
+      );
+      // Recovery happened before the destructive rename.
+      const recoverOrder = (recoverInterruptedCommit as Mock).mock.invocationCallOrder[0]!;
+      const renameOrder = (rename as Mock).mock.invocationCallOrder[0]!;
+      expect(recoverOrder).toBeLessThan(renameOrder);
+    });
+
+    // #1418 (F5) — recovery runs even when the folder name is unchanged (file-only rename)
+    it('converges the marker even when pathChanged is false (file-template rename only)', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([{ name: 'old-name.m4b', isFile: () => true }]);
+
+      await service.renameBook(1);
+
+      expect(recoverInterruptedCommit).toHaveBeenCalledWith(
+        '/library/Brandon Sanderson/The Way of Kings',
+        '/library',
+        expect.anything(),
+      );
+    });
+
+    // #1418 — a recovery failure aborts before any destructive mutation
+    it('aborts the rename when recovery throws, leaving DB and disk untouched', async () => {
+      const { service, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+      bookService.getById.mockResolvedValue(book);
+      (recoverInterruptedCommit as Mock).mockRejectedValueOnce(new Error('recovery failed'));
+
+      await expect(service.renameBook(1)).rejects.toThrow('recovery failed');
+
+      // No destructive mutation ran: neither the folder move nor the file-template
+      // renames (both go through rename()), and the DB row was not updated.
+      expect(rename).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
     });
   });
 
