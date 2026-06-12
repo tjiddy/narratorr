@@ -1594,8 +1594,9 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
 
       // No cache entry was written for the cap-skipped candidate — title-only is
-      // not a terminal outcome and must not suppress the real NZB fetch.
-      expect(enrichmentCache.get('cap-german')).toBeUndefined();
+      // not a terminal outcome and must not suppress the real NZB fetch. Key is
+      // namespaced by indexer now (#1328): default makeResult indexer is 'test'.
+      expect(enrichmentCache.get('test:cap-german')).toBeUndefined();
 
       // Behavioral proof: a second, uncapped run fetches the previously-skipped
       // NZB (its key was never cached as a hit).
@@ -1626,6 +1627,180 @@ describe('enrichUsenetLanguages', () => {
       const capSkippedSignal = 'title-cap-skipped';
       expect(capSkippedSignal).not.toBe('title-pattern');
       expect(capSkippedSignal).not.toBe('title-after-fetch-fail');
+    });
+  });
+
+  describe('indexer-scoped cache keys (#1328)', () => {
+    it('same guid from two different indexers produces two distinct cache entries (no cross-indexer collision)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+      const a = makeResult({ protocol: 'usenet', guid: 'shared-123', indexer: 'alpha', downloadUrl: 'http://nzb.test/a' });
+      const b = makeResult({ protocol: 'usenet', guid: 'shared-123', indexer: 'beta', downloadUrl: 'http://nzb.test/b' });
+
+      await enrichUsenetLanguages([a, b], logger);
+
+      // Distinct namespaced keys → both fetched, both cached separately.
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
+      expect(enrichmentCache.get('alpha:shared-123')).toBeDefined();
+      expect(enrichmentCache.get('beta:shared-123')).toBeDefined();
+    });
+
+    it('keys under indexerId when present (preferred over the indexer name)', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(germanNzbXml(), { status: 200 }));
+      const r = makeResult({ protocol: 'usenet', guid: 'g-77', indexer: 'alpha', indexerId: 77, downloadUrl: 'http://nzb.test/x' });
+
+      await enrichUsenetLanguages([r], logger);
+
+      expect(enrichmentCache.get('77:g-77')).toBeDefined();
+      // The name-based key is NOT used when the numeric indexerId is stamped.
+      expect(enrichmentCache.get('alpha:g-77')).toBeUndefined();
+    });
+
+    it('a cached entry under one indexer does not serve a same-guid release from another indexer', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/a' })], logger);
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+
+      // Different indexer, same guid → cache MISS, fetches independently.
+      await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'beta', downloadUrl: 'http://nzb.test/b' })], logger);
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('empty-guid key guard (#1328)', () => {
+    it('keys a guid:"" result under indexer:downloadUrl, never a poison empty/namespace-only key', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(germanNzbXml(), { status: 200 }));
+      const r = makeResult({ protocol: 'usenet', guid: '', indexer: 'alpha', downloadUrl: 'http://nzb.test/u' });
+
+      await enrichUsenetLanguages([r], logger);
+
+      expect(enrichmentCache.get('alpha:http://nzb.test/u')).toBeDefined();
+      expect(enrichmentCache.get('alpha:')).toBeUndefined();
+      expect(enrichmentCache.get('alpha:undefined')).toBeUndefined();
+    });
+
+    it('a guid:"" result with no downloadUrl is uncacheable, never fetched, and produces no key', async () => {
+      const { downloadUrl: _omit, ...noUrl } = makeResult({ protocol: 'usenet', guid: '', indexer: 'alpha', title: 'No Key Book' });
+
+      await expect(enrichUsenetLanguages([noUrl as SearchResult], logger)).resolves.toBeUndefined();
+
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+      expect(enrichmentCache.size).toBe(0);
+    });
+
+    it('two guid:"" results with different downloadUrls get distinct keys, never a shared empty key', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+      const a = makeResult({ protocol: 'usenet', guid: '', indexer: 'alpha', downloadUrl: 'http://nzb.test/a' });
+      const b = makeResult({ protocol: 'usenet', guid: '', indexer: 'alpha', downloadUrl: 'http://nzb.test/b' });
+
+      await enrichUsenetLanguages([a, b], logger);
+
+      // Distinct downloadUrls → distinct keys → two fetches, no collapse onto one poison key.
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
+      expect(enrichmentCache.size).toBe(2);
+    });
+  });
+
+  describe('within-run duplicate dedup (#1328)', () => {
+    it('two results sharing a key fetch once; both carry the representative language and nzbName', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(germanNzbXml('Der.Pack.part01.rar'), { status: 200 }));
+      const dupA = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/dup', title: 'A' });
+      const dupB = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/dup', title: 'B' });
+
+      await enrichUsenetLanguages([dupA, dupB], logger);
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(dupA.language).toBe('german');
+      expect(dupB.language).toBe('german');
+      expect(dupA.nzbName).toBe('Der.Pack.part01.rar');
+      expect(dupB.nzbName).toBe('Der.Pack.part01.rar');
+      // Exactly one cache entry under the shared key.
+      expect(enrichmentCache.size).toBe(1);
+      expect(enrichmentCache.get('alpha:dup')).toBeDefined();
+      // The duplicate is enriched from the representative, not separately fetched.
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: 'within-run-dup', language: 'german' }),
+        expect.any(String),
+      );
+    });
+
+    it('a fetch-failed representative still dedups: one fetch, one cache entry, a later run does not re-fetch', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response('err', { status: 500 }));
+      const dupA = makeResult({ protocol: 'usenet', guid: 'dupf', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupf', title: 'Plain English A' });
+      const dupB = makeResult({ protocol: 'usenet', guid: 'dupf', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupf', title: 'Plain English B' });
+
+      await enrichUsenetLanguages([dupA, dupB], logger);
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(dupA.language).toBeUndefined();
+      expect(dupB.language).toBeUndefined();
+      // Internal discriminant observed through cache state, not a SearchResult field.
+      expect(enrichmentCache.size).toBe(1);
+
+      // Second uncapped run: the fetch-failed entry is a HIT within its 1h TTL → no re-fetch.
+      mockFetchWithSsrfRedirect.mockClear();
+      await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dupf', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupf', title: 'Plain English A' })], logger);
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+
+    it('an unresolved representative (successful fetch, no signal) dedups and is recorded as a hit', async () => {
+      mockFetchWithSsrfRedirect.mockResolvedValue(new Response(plainNzbXml(), { status: 200 }));
+      const dupA = makeResult({ protocol: 'usenet', guid: 'dupu', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupu', title: 'Plain A' });
+      const dupB = makeResult({ protocol: 'usenet', guid: 'dupu', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupu', title: 'Plain B' });
+
+      await enrichUsenetLanguages([dupA, dupB], logger);
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(dupA.language).toBeUndefined();
+      expect(dupB.language).toBeUndefined();
+
+      // Second uncapped run does NOT re-fetch — the unresolved outcome is a cached hit.
+      mockFetchWithSsrfRedirect.mockClear();
+      await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dupu', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupu', title: 'Plain A' })], logger);
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+
+    it('cap-straddle: a duplicate key consumes one cap slot and both duplicates get the representative enrichment', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+      // The duplicate pair outranks the lone `other`; cap 1 admits a single key.
+      const dupA = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/dup', title: 'Plain A', matchScore: 5 });
+      const dupB = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/dup', title: 'Plain B', matchScore: 5 });
+      const other = makeResult({ protocol: 'usenet', guid: 'other', indexer: 'alpha', downloadUrl: 'http://nzb.test/other', title: 'Plain Other', matchScore: 1 });
+
+      await enrichUsenetLanguages([dupA, dupB, other], logger, undefined, { maxPhase2Fetches: 1 });
+
+      // One distinct key takes the single cap slot → one fetch, both duplicates enriched.
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(dupA.language).toBe('german');
+      // Grouping-before-cap: dupB is NOT stranded in the cap-skipped title-only tail.
+      expect(dupB.language).toBe('german');
+      // The genuinely-other, lower-ranked release is the one cap-skipped (no title marker).
+      expect(other.language).toBeUndefined();
+    });
+  });
+
+  describe('info-level cache counters (#1328)', () => {
+    it('the completion log reports cacheHits and capSkipped', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+
+      // Warm the cache for one release.
+      await enrichUsenetLanguages(
+        [makeResult({ protocol: 'usenet', guid: 'warm', indexer: 'alpha', downloadUrl: 'http://nzb.test/warm' })],
+        logger,
+      );
+
+      // Run with one cache hit (warm) and two fresh candidates under cap 1 → one cap-skip.
+      const run = [
+        makeResult({ protocol: 'usenet', guid: 'warm', indexer: 'alpha', downloadUrl: 'http://nzb.test/warm' }),
+        makeResult({ protocol: 'usenet', guid: 'fresh1', indexer: 'alpha', downloadUrl: 'http://nzb.test/fresh1', matchScore: 5, title: 'Plain One' }),
+        makeResult({ protocol: 'usenet', guid: 'fresh2', indexer: 'alpha', downloadUrl: 'http://nzb.test/fresh2', matchScore: 1, title: 'Plain Two' }),
+      ];
+      await enrichUsenetLanguages(run, logger, undefined, { maxPhase2Fetches: 1 });
+
+      expect(logger.info).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cacheHits: 1, capSkipped: 1 }),
+        'Usenet language detection complete',
+      );
     });
   });
 });
