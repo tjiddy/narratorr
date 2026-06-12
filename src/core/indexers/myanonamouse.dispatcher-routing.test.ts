@@ -150,3 +150,38 @@ describe('MAM .torrent grab User-Agent (#1329)', () => {
     });
   });
 });
+
+// #1423 — the MAM search/JSON API path (loadSearchJSONbasic.php / jsonLoad.php)
+// flows through fetchWithCookieMeta, which previously sent only the mam_id Cookie
+// and identified as the undici default. It must send the canonical User-Agent too,
+// matching the grab-path, without dropping the existing Cookie.
+describe('MAM search/JSON API User-Agent (#1423)', () => {
+  beforeEach(() => {
+    mockHelper.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('sends the canonical User-Agent alongside the mam_id Cookie on the search fetch', async () => {
+    vi.stubEnv('GIT_TAG', 'v9.9.9');
+    mockHelper.mockResolvedValue(
+      new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await makeDirectIndexer().search('test');
+
+    expect(mockHelper).toHaveBeenCalled();
+    const url = mockHelper.mock.calls[0]![0] as string;
+    expect(url).toContain('loadSearchJSONbasic.php');
+    const init = mockHelper.mock.calls[0]![1] as { headers?: Record<string, string> };
+    expect(init.headers).toMatchObject({
+      'User-Agent': 'Narratorr/v9.9.9',
+      Cookie: 'mam_id=test-mam-id',
+    });
+  });
+});

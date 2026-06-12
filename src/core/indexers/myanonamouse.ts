@@ -305,6 +305,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const fetchOptions: DispatcherFetchInit = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
+          'User-Agent': getUserAgent(),
         },
         signal,
         dispatcher,
