@@ -88,14 +88,28 @@ export function DiffRow({ sign, text, tone }: { sign: string; text: string; tone
  *
  * Edge cases (see #1439 F5): different segment counts compare up to the shorter
  * length and emphasize the longer path's trailing segments; identical paths dim
- * entirely (`'' === ''` keeps empty segments unchanged); a single-segment path
- * (no `/`) is one segment — full-tone unless identical; a trailing-slash
- * difference (`A/B/` vs `A/B`) surfaces as an emphasized empty trailing segment
- * so it isn't silently swallowed.
+ * entirely; a single-segment path (no `/`) is one segment — full-tone unless
+ * identical. Empty segments (interior `A//B` or trailing `A/B/`) are `/` artifacts:
+ * they're cleaned out before the real segments are compared positionally — so
+ * `A//B` vs `A/B` still aligns `B` against `B` instead of shifting it into a
+ * changed slot — while an empty segment itself is emphasized only when the other
+ * path lacks the same artifact at that position, keeping a meaningful
+ * trailing-slash difference (`A/B/` vs `A/B`) visible rather than swallowed.
  */
 function diffPathSegments(path: string, other: string): Array<{ text: string; changed: boolean }> {
-  const otherSegs = other.split('/');
-  return path.split('/').map((text, i) => ({ text, changed: text !== otherSegs[i] }));
+  const rawOther = other.split('/');
+  const cleanedOther = rawOther.filter((s) => s !== '');
+  let cleanIdx = 0;
+  return path.split('/').map((text, i) => {
+    if (text === '') {
+      // A `/` artifact — never let it shift real-segment alignment; emphasize only
+      // when the other path has no matching empty at this raw position.
+      return { text, changed: rawOther[i] !== '' };
+    }
+    const changed = text !== cleanedOther[cleanIdx];
+    cleanIdx += 1;
+    return { text, changed };
+  });
 }
 
 function PathDiffLine({

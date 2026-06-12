@@ -64,6 +64,16 @@ describe('PathDiffRow segment emphasis (F5)', () => {
     expect(screen.getByText('C').className).not.toContain('opacity-50');
   });
 
+  it('cleans an empty middle segment before comparison so the later real segment is not shifted (A//B vs A/B)', () => {
+    render(<PathDiffRow from="A//B" to="A/B" />);
+
+    // The empty middle segment must not push `B` into a changed slot: after
+    // cleaning, `A` aligns with `A` and `B` aligns with `B` — both dimmed on both lines.
+    for (const el of [...screen.getAllByText('A'), ...screen.getAllByText('B')]) {
+      expect(el.className).toContain('opacity-50');
+    }
+  });
+
   it('preserves a trailing-slash difference in display instead of swallowing it', () => {
     const { container } = render(<PathDiffRow from="A/B/" to="A/B" />);
     const [fromLine, toLine] = Array.from(container.querySelectorAll('div'));
