@@ -104,15 +104,9 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
   // GET /api/system/backups/:filename/download — download a backup file
   app.get<{ Params: { filename: string } }>('/api/system/backups/:filename/download', async (request, reply) => {
-    const filePath = services.backup.getBackupPath(request.params.filename);
+    const filePath = await resolveExistingBackup(services, request.params.filename, reply);
     if (!filePath) {
-      return reply.status(400).send({ error: 'Invalid backup filename' });
-    }
-
-    try {
-      await fsp.access(filePath);
-    } catch {
-      return reply.status(404).send({ error: 'Backup not found' });
+      return reply;
     }
 
     const stream = fs.createReadStream(filePath);
@@ -125,15 +119,9 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
   // POST /api/system/backups/:filename/restore — validate and stage a server-side backup for restore
   app.post<{ Params: { filename: string } }>('/api/system/backups/:filename/restore', async (request, reply) => {
-    const filePath = services.backup.getBackupPath(request.params.filename);
+    const filePath = await resolveExistingBackup(services, request.params.filename, reply);
     if (!filePath) {
-      return reply.status(400).send({ error: 'Invalid backup filename' });
-    }
-
-    try {
-      await fsp.access(filePath);
-    } catch {
-      return reply.status(404).send({ error: 'Backup not found' });
+      return reply;
     }
 
     try {
@@ -196,6 +184,37 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 }
 
 /**
+ * Validates a raw backup filename and confirms the file exists on disk. Returns the validated
+ * absolute path, or sends the error response itself and returns `null`:
+ * - falsy `getBackupPath` (traversal/invalid name) → `400 { error: 'Invalid backup filename' }`
+ * - `fsp.access` rejection (missing file) → `404 { error: 'Backup not found' }`
+ *
+ * Call sites short-circuit with `return reply` on `null` to avoid double-sending. Callers that
+ * forward the filename to a service (restore/delete) keep passing the raw `filename`, not the
+ * returned path — this helper changes validation only, not the value handed downstream.
+ */
+async function resolveExistingBackup(
+  services: Services,
+  filename: string,
+  reply: FastifyReply,
+): Promise<string | null> {
+  const filePath = services.backup.getBackupPath(filename);
+  if (!filePath) {
+    await reply.status(400).send({ error: 'Invalid backup filename' });
+    return null;
+  }
+
+  try {
+    await fsp.access(filePath);
+  } catch {
+    await reply.status(404).send({ error: 'Backup not found' });
+    return null;
+  }
+
+  return filePath;
+}
+
+/**
  * DELETE /api/system/backups/:filename handler. Validates the raw filename via getBackupPath
  * (400 on traversal/invalid names) and fsp.access (404 on a missing file), then deletes it.
  * Passes the raw filename to deleteBackup, matching the restore route's filename-passing
@@ -208,15 +227,9 @@ async function handleDeleteBackup(
   request: FastifyRequest<{ Params: { filename: string } }>,
   reply: FastifyReply,
 ) {
-  const filePath = services.backup.getBackupPath(request.params.filename);
+  const filePath = await resolveExistingBackup(services, request.params.filename, reply);
   if (!filePath) {
-    return reply.status(400).send({ error: 'Invalid backup filename' });
-  }
-
-  try {
-    await fsp.access(filePath);
-  } catch {
-    return reply.status(404).send({ error: 'Backup not found' });
+    return reply;
   }
 
   try {
