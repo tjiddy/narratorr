@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useWatch } from 'react-hook-form';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { toast } from 'sonner';
 import { BookOpenIcon } from '@/components/icons';
 import { TestButton } from '@/components/TestButton';
@@ -8,7 +8,7 @@ import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { api } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
-import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { audibleRegionSchema, metadataFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const REGION_LABELS: Record<string, string> = {
@@ -23,11 +23,6 @@ const REGION_LABELS: Record<string, string> = {
   in: 'India',
   es: 'Spain',
 };
-
-const metadataFormSchema = z.object({
-  audibleRegion: audibleRegionSchema,
-  hardcoverApiKey: z.string(),
-});
 
 type MetadataFormData = z.infer<typeof metadataFormSchema>;
 

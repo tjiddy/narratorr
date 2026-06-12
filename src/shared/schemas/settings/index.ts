@@ -1,13 +1,13 @@
 // Barrel re-export — all category schemas, registry, and derived types
 export { folderFormatSchema, fileFormatSchema, librarySettingsSchema, libraryFormSchema, namingFormSchema, FOLDER_FORMAT_ALLOWED_TOKENS, FILE_FORMAT_ALLOWED_TOKENS, namingSeparatorValues, namingSeparatorSchema, namingCaseValues, namingCaseSchema, type NamingSeparator, type NamingCase, hasTitle, hasAuthor, validateTokens, FOLDER_TITLE_MSG, FOLDER_TOKEN_MSG, FILE_TITLE_MSG, FILE_TOKEN_MSG, AUTHOR_ADVISORY_MSG } from './library.js';
-export { searchSettingsSchema, searchPrioritySchema } from './search.js';
+export { searchSettingsSchema, searchPrioritySchema, searchFormSchema } from './search.js';
 export { importSettingsSchema } from './import.js';
 export { logLevelSchema, type LogLevel, generalSettingsSchema, generalFormSchema } from './general.js';
-export { audibleRegionSchema, type AudibleRegion, metadataSettingsSchema } from './metadata.js';
+export { audibleRegionSchema, type AudibleRegion, metadataSettingsSchema, metadataFormSchema, filteringFormSchema } from './metadata.js';
 export { outputFormatSchema, type OutputFormat, mergeBehaviorSchema, type MergeBehavior, processingSettingsSchema, processingFormSchema } from './processing.js';
 export { tagModeSchema, type TagMode, taggingSettingsSchema } from './tagging.js';
 export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchema, qualityFormSchema, qualityFilteringFormSchema, newBookDefaultsFormSchema } from './quality.js';
-export { networkSettingsSchema } from './network.js';
+export { networkSettingsSchema, networkFormSchema } from './network.js';
 export { systemSettingsSchema, systemFormSchema } from './system.js';
 export { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
 export {
