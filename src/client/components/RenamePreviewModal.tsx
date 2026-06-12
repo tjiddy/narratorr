@@ -38,7 +38,7 @@ export function RenamePreviewModal({ bookId, isOpen, onClose, onConfirm }: Renam
   const canRename = data !== undefined && !conflict && !isEmpty;
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-2xl p-6" scrollable>
+    <Modal onClose={onClose} className="w-full max-w-4xl p-6" scrollable>
       <div
         role="dialog"
         aria-modal="true"

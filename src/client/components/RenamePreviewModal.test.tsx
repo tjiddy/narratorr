@@ -62,6 +62,15 @@ describe('RenamePreviewModal', () => {
     vi.mocked(api.getBookRenamePreview).mockReset();
   });
 
+  it('renders the dialog at max-w-4xl, not max-w-2xl (F1)', async () => {
+    vi.mocked(api.getBookRenamePreview).mockResolvedValue(fullPlan);
+    renderModal();
+
+    await screen.findByText('a.m4b');
+    expect(document.querySelector('.max-w-4xl')).toBeInTheDocument();
+    expect(document.querySelector('.max-w-2xl')).not.toBeInTheDocument();
+  });
+
   it('renders the header banner with libraryRoot, folderFormat, and fileFormat', async () => {
     vi.mocked(api.getBookRenamePreview).mockResolvedValue(fullPlan);
     renderModal();
