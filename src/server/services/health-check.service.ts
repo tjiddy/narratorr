@@ -123,7 +123,7 @@ export class HealthCheckService {
     await checkForUpdate(log, this.versionUpdateCallback).catch((error: unknown) => {
       log.error({ error: serializeError(error) }, 'Manual health run: live version check failed');
     });
-    return await this.runAllChecks();
+    return this.runAllChecks();
   }
 
   /** Run one full pass of every check and fire state-transition notifications. */

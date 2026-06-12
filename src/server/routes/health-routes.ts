@@ -25,7 +25,7 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
   // (#1411). The scheduled `health-check` cron stays cache-only by calling
   // `runAllChecks()` directly.
   app.post('/api/system/health/run', async (request) => {
-    return await services.healthCheck.runManualChecks(request.log);
+    return services.healthCheck.runManualChecks(request.log);
   });
 
   // GET /api/system/tasks — list all scheduled tasks
