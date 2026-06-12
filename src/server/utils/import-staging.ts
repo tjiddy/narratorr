@@ -5,8 +5,9 @@
  * atomically swapped in while the existing audio is backed up and rolled back on
  * failure. Every destructive step is guarded by `assertPathInsideLibrary` (#759).
  */
-import { rm, mkdir, readdir, rename, writeFile, stat } from 'node:fs/promises';
+import { rm, mkdir, readdir, rename, writeFile, stat, open } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
@@ -575,6 +576,28 @@ async function recoverInterruptedBackup(args: RecoverInterruptedBackupArgs): Pro
  * backup step is a no-op and this reduces to "move staged files in". Every
  * destructive step is guarded by `assertPathInsideLibrary` (#759).
  */
+/**
+ * Best-effort fsync of a directory so a just-created child's directory entry is
+ * durable, not merely the child file's own data. `writeFile(..., { flush: true })`
+ * flushes the file's contents + metadata but NOT the parent directory entry, so
+ * after a power loss the marker file could be absent even though its data was
+ * flushed. Some filesystems reject `fsync` on a directory handle — swallow that
+ * (logged at `debug`), since the file flush already covers the primary loss
+ * window and the swallowed failure must not abort an otherwise-durable commit
+ * (#1339). The handle is always closed (success and failure paths alike).
+ */
+async function syncDirectoryEntry(dirPath: string, log: FastifyBaseLogger): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(dirPath, 'r');
+    await handle.sync();
+  } catch (syncError: unknown) {
+    log.debug({ error: serializeError(syncError), dirPath }, 'Best-effort directory fsync failed — file flush already covers durability');
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 export async function commitStagedImport(args: CommitStagedImportArgs): Promise<void> {
   const { stagingPath, targetPath, backupPath, libraryRoot, log } = args;
   assertPathInsideLibrary(stagingPath, libraryRoot);
@@ -599,7 +622,16 @@ export async function commitStagedImport(args: CommitStagedImportArgs): Promise<
       // Writing it FIRST means a marker-write failure aborts before anything is
       // moved — nothing destroyed. A first import / empty target never writes it.
       assertPathInsideLibrary(markerPath, libraryRoot);
-      await writeFile(markerPath, '');
+      // Flush the marker's contents (Node 24 `{ flush: true }`) BEFORE the first
+      // destructive rename: POSIX gives no ordering guarantee between an un-fsync'd
+      // write and the backup-out renames, so on power loss the renames could persist
+      // while the marker did not — the original #1290 data-loss leg (#1339). A flush
+      // failure rejects here, inside the pre-rename guard, so the commit aborts before
+      // anything is moved (same abort semantics as a plain marker-write failure).
+      await writeFile(markerPath, '', { flush: true });
+      // The file flush syncs the marker's data, not its parent's directory entry —
+      // best-effort fsync the directory so the entry itself survives a power loss too.
+      await syncDirectoryEntry(dirname(markerPath), log);
       for (const rel of existingAudio) {
         // Preserve the relative path inside the backup so a rollback can restore
         // nested audio to exactly where it came from.
