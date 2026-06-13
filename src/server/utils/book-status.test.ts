@@ -15,7 +15,7 @@ describe('transitionBookStatus', () => {
     const landed = await transitionBookStatus(db as unknown as Db, 7, { status: 'downloading' });
 
     expect(landed).toBe(true);
-    const setFn = (chain as Record<string, Mock>).set;
+    const setFn = (chain as Record<string, Mock>).set!;
     const setArg = setFn.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).toHaveProperty('status', 'downloading');
     expect(setArg).toHaveProperty('updatedAt');
@@ -35,7 +35,7 @@ describe('transitionBookStatus', () => {
       status: 'imported', path: '/lib/book', size: 1234, lastGrabGuid: 'g', lastGrabInfoHash: 'h',
     });
 
-    const setArg = ((chain as Record<string, Mock>).set).mock.calls[0]![0] as Record<string, unknown>;
+    const setArg = (chain as Record<string, Mock>).set!.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).toMatchObject({ status: 'imported', path: '/lib/book', size: 1234, lastGrabGuid: 'g', lastGrabInfoHash: 'h' });
   });
 
