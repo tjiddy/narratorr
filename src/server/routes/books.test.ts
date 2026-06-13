@@ -243,6 +243,32 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    // #1447 (S2d) — the library filter param is bucket-only: `all` is a
+    // client-only sentinel (the client omits the param), and non-bucket canonical
+    // statuses like `searching`/`importing` are not valid filter buckets.
+    it('rejects ?status=all (client-only sentinel) with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=all' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects ?status=searching (non-bucket canonical status) with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=searching' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('accepts a bucket key like ?status=downloading and forwards it to the service', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=downloading' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        'downloading',
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
+        {},
+      );
+    });
+
     it('rejects limit=0 with 400', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/library/books?limit=0' });
       expect(res.statusCode).toBe(400);

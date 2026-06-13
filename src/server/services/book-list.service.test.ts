@@ -3,6 +3,7 @@ import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookListService } from './book-list.service.js';
 import type { Db } from '../../db/index.js';
+import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket } from '../../shared/schemas/book.js';
 
 const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
@@ -958,6 +959,39 @@ describe('BookListService', () => {
       expect(typeof stats.authors[0]).toBe('string');
       expect(typeof stats.series[0]).toBe('string');
       expect(typeof stats.narrators[0]).toBe('string');
+    });
+
+    // #1447 (S2d) — counts are derived from LIBRARY_FILTER_BUCKETS, so every
+    // canonical status contributes to exactly one bucket and the per-bucket sums
+    // are driven by the map rather than hardcoded pairs.
+    it('returns one entry per LIBRARY_FILTER_BUCKETS key, each summing its canonical states', async () => {
+      // Distinct per-status counts so a mis-summed bucket is detectable.
+      const perStatus: Record<string, number> = {
+        wanted: 5, searching: 1, downloading: 2, importing: 3, imported: 10, failed: 4, missing: 2,
+      };
+      db.select.mockReturnValueOnce(mockDbChain(
+        BOOK_STATUSES.map((status) => ({ status, count: perStatus[status] })),
+      ));
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const stats = await service.getStats();
+
+      // Exactly the bucket keys, nothing else.
+      expect(Object.keys(stats.counts).sort()).toEqual(Object.keys(LIBRARY_FILTER_BUCKETS).sort());
+
+      // Each bucket equals the sum of its canonical member states.
+      for (const bucket of Object.keys(LIBRARY_FILTER_BUCKETS) as LibraryFilterBucket[]) {
+        const expected = LIBRARY_FILTER_BUCKETS[bucket].reduce((sum, s) => sum + perStatus[s]!, 0);
+        expect(stats.counts[bucket]).toBe(expected);
+      }
+
+      // No status is silently uncounted: the bucket totals sum to the grand total.
+      const grandTotal = Object.values(perStatus).reduce((a, b) => a + b, 0);
+      const bucketTotal = Object.values(stats.counts).reduce((a, b) => a + b, 0);
+      expect(bucketTotal).toBe(grandTotal);
     });
   });
 });
