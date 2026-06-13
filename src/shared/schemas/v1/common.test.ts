@@ -5,7 +5,20 @@ import {
   v1PaginationParamsSchema,
   v1ListResponseSchema,
 } from './common.js';
+import * as barrel from '../../schemas.js';
 import { paginationParamsSchema } from '../common.js';
+
+describe('shared schemas barrel re-export', () => {
+  // Guards the downstream consumer contract: the v1 building blocks must be
+  // reachable through `src/shared/schemas.ts`, not only via the local module.
+  // Deleting the `export * from './schemas/v1/common.js'` barrel line would
+  // fail these assertions.
+  it('exposes the v1 building blocks through the shared barrel as the same objects', () => {
+    expect(barrel.v1ErrorEnvelopeSchema).toBe(v1ErrorEnvelopeSchema);
+    expect(barrel.v1PaginationParamsSchema).toBe(v1PaginationParamsSchema);
+    expect(barrel.v1ListResponseSchema).toBe(v1ListResponseSchema);
+  });
+});
 
 describe('v1ErrorEnvelopeSchema', () => {
   it('accepts the object form { error: { code, message } }', () => {
