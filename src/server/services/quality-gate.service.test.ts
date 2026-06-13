@@ -727,12 +727,22 @@ describe('QualityGateService', () => {
   });
 
   describe('atomicClaim', () => {
-    it('returns true when claim succeeds (status was completed)', async () => {
+    it('guards on (completed, idle) and SETs only pipelineStage=checking', async () => {
       const { service, db } = createService();
-      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      const chain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(chain);
 
       const result = await service.atomicClaim(1);
+
       expect(result).toBe(true);
+      // SET shape: pipelineStage axis only — never clientStatus.
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ pipelineStage: 'checking' });
+      expect('clientStatus' in setArg).toBe(false);
+      // WHERE compiles the expected (completed, idle) guard.
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.clientStatus, 'completed'), eq(downloads.pipelineStage, 'idle')),
+      );
     });
 
     it('returns false when already claimed (no matching row)', async () => {
@@ -745,13 +755,16 @@ describe('QualityGateService', () => {
   });
 
   describe('hold', () => {
-    it('writes the pipelineStage axis in DB', async () => {
+    it('SETs only pipelineStage=pending_review (no clientStatus write)', async () => {
       const { service, db } = createService();
-      db.update.mockReturnValue(mockDbChain([]));
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
       await service.hold(1);
 
-      expect(db.update).toHaveBeenCalled();
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ pipelineStage: 'pending_review' });
+      expect('clientStatus' in setArg).toBe(false);
     });
   });
 
@@ -759,13 +772,23 @@ describe('QualityGateService', () => {
     it('transitions pending_review download to importing and returns context', async () => {
       const { service, db } = createService();
       db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review' }, book: baseBook }]));
-      db.update.mockReturnValue(mockDbChain([]));
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
       const result = await service.approve(1);
       expect(result.id).toBe(1);
       expect(result.status).toBe('importing');
       expect(result.download).toBeDefined();
       expect(result.book).toEqual(baseBook);
+
+      // SET shape: pipelineStage axis only — never clientStatus.
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ pipelineStage: 'importing' });
+      expect('clientStatus' in setArg).toBe(false);
+      // WHERE guards on the expected pending_review stage.
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.pipelineStage, 'pending_review')),
+      );
     });
 
     it('returns null book when download has no bookId', async () => {
@@ -795,16 +818,26 @@ describe('QualityGateService', () => {
   });
 
   describe('reject', () => {
-    it('transitions pending_review download to failed and returns context', async () => {
+    it('writes the canonical failure tuple (failed, idle) in one guarded update', async () => {
       const { service, db } = createService();
       db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review' }, book: baseBook }]));
-      db.update.mockReturnValue(mockDbChain([]));
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
       const result = await service.reject(1);
       expect(result.id).toBe(1);
       expect(result.status).toBe('failed');
       expect(result.download).toBeDefined();
       expect(result.book).toEqual(baseBook);
+
+      // Sanctioned cross-axis write: both axes set in ONE update, no extra keys.
+      expect(chain.set as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ clientStatus: 'failed', pipelineStage: 'idle' });
+      // WHERE guards on the expected pending_review stage.
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.pipelineStage, 'pending_review')),
+      );
     });
 
     it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {

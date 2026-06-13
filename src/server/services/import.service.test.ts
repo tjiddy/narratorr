@@ -324,7 +324,8 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       // Second select: get book with author
       // update calls: set importing, then update book, then update download to imported
-      db.update.mockReturnValue(mockDbChain());
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
 
       const result = await service.importDownload(1);
 
@@ -333,6 +334,19 @@ describe('ImportService', () => {
       expect(result.targetPath).toMatch(/audiobooks/);
       expect(mkdir).toHaveBeenCalled();
       expect(cp).toHaveBeenCalled();
+
+      // Two load-bearing pipeline-axis writes (#1445). Both touch ONLY the
+      // pipelineStage axis — an accidental clientStatus key would fail toEqual.
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      // Pre-import claim is the FIRST DB write, before any filesystem work.
+      expect(setCalls[0]).toEqual({ pipelineStage: 'importing' });
+      // Success write flips the stage to imported (in-transaction with the book update).
+      expect(setCalls).toContainEqual({ pipelineStage: 'imported' });
+      // No download write ever carries clientStatus on the happy path.
+      const downloadAxisWrites = setCalls.filter((s) => 'pipelineStage' in s);
+      for (const w of downloadAxisWrites) {
+        expect('clientStatus' in w).toBe(false);
+      }
     });
 
     it('throws when download has no linked book', async () => {
