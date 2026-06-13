@@ -649,6 +649,120 @@ describe('AuthService', () => {
       expect(result!.shouldRenew).toBe(true);
     });
   });
+
+  // #1453 — stream token mint/verify with token-type domain separation. The
+  // stream token authenticates the SSE endpoints without exposing the API key or
+  // a long-lived session secret in the URL; it must be non-interchangeable with a
+  // session cookie even under secret reuse.
+  describe('stream token (#1453)', () => {
+    const secret = 'test-secret-key-for-hmac';
+
+    it('mintStreamToken produces a base64.signature token that verifyStreamToken round-trips', () => {
+      const token = service.mintStreamToken(secret);
+      expect(token.split('.')).toHaveLength(2);
+
+      const payload = service.verifyStreamToken(token, secret);
+      expect(payload).not.toBeNull();
+      expect(payload!.kind).toBe('stream');
+      // No username on a stream token.
+      expect((payload as unknown as Record<string, unknown>).username).toBeUndefined();
+    });
+
+    it('verifyStreamToken returns null for a tampered signature', () => {
+      const token = service.mintStreamToken(secret);
+      const tampered = token.slice(0, -5) + 'XXXXX';
+      expect(service.verifyStreamToken(tampered, secret)).toBeNull();
+    });
+
+    it('verifyStreamToken returns null for a tampered payload', () => {
+      const token = service.mintStreamToken(secret);
+      const [, sig] = token.split('.');
+      const forgedPayload = Buffer.from(JSON.stringify({ kind: 'stream', issuedAt: 0, expiresAt: Date.now() + 10_000 })).toString('base64url');
+      expect(service.verifyStreamToken(`${forgedPayload}.${sig}`, secret)).toBeNull();
+    });
+
+    it('verifyStreamToken returns null for an expired token', () => {
+      const now = Date.now();
+      // Mint with issuedAt 10 minutes ago → expiresAt (issuedAt + 5min) is in the past.
+      vi.spyOn(Date, 'now').mockReturnValueOnce(now - 10 * 60 * 1000);
+      const token = service.mintStreamToken(secret);
+      vi.restoreAllMocks();
+
+      expect(service.verifyStreamToken(token, secret)).toBeNull();
+    });
+
+    it('verifyStreamToken returns null for malformed input (wrong segment count)', () => {
+      expect(service.verifyStreamToken('no-dots-here', secret)).toBeNull();
+      expect(service.verifyStreamToken('one.two.three', secret)).toBeNull();
+      expect(service.verifyStreamToken('', secret)).toBeNull();
+    });
+
+    it('stream-token TTL is short (5 minutes), independent of the 7-day session TTL', () => {
+      const token = service.mintStreamToken(secret);
+      const payload = JSON.parse(Buffer.from(token.split('.')[0]!, 'base64url').toString());
+      expect(payload.expiresAt - payload.issuedAt).toBe(5 * 60 * 1000);
+    });
+
+    it('a session renewal between mint and verify does NOT invalidate a still-live stream token', () => {
+      const token = service.mintStreamToken(secret);
+      // A session cookie issued (or renewed) after the token does not touch the
+      // token — the secret is the same, so it still verifies and is NOT renewed.
+      service.createSessionCookie('admin', secret);
+      const payload = service.verifyStreamToken(token, secret);
+      expect(payload).not.toBeNull();
+      // Stream tokens have no sliding-renewal signal (unlike SessionVerifyResult).
+      expect((payload as unknown as Record<string, unknown>).shouldRenew).toBeUndefined();
+    });
+
+    describe('cross-domain rejection', () => {
+      it('a stream token does NOT verify via verifySessionCookie (no username / wrong secret)', () => {
+        const token = service.mintStreamToken(secret);
+        expect(service.verifySessionCookie(token, secret)).toBeNull();
+      });
+
+      it('a session cookie does NOT verify via verifyStreamToken (wrong kind / wrong secret)', () => {
+        const cookie = service.createSessionCookie('admin', secret);
+        expect(service.verifyStreamToken(cookie, secret)).toBeNull();
+      });
+
+      it('a hand-crafted {issuedAt,expiresAt} payload signed with the RAW session secret is rejected by verifyStreamToken', () => {
+        // This is the exact pre-#1453 shape that would have verified as a session
+        // cookie. Signed with the raw secret, it fails verifyStreamToken at the
+        // domain-separated-secret signature check.
+        const payloadB64 = Buffer.from(JSON.stringify({ issuedAt: Date.now(), expiresAt: Date.now() + 10_000 })).toString('base64url');
+        const rawSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+        expect(service.verifyStreamToken(`${payloadB64}.${rawSig}`, secret)).toBeNull();
+      });
+
+      it('a kind:"stream" payload signed with the RAW session secret is rejected by verifySessionCookie (no username)', () => {
+        const payloadB64 = Buffer.from(JSON.stringify({ kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 10_000 })).toString('base64url');
+        const rawSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+        expect(service.verifySessionCookie(`${payloadB64}.${rawSig}`, secret)).toBeNull();
+      });
+    });
+
+    describe('verifySessionCookie hardening (#1453)', () => {
+      it('rejects an otherwise-valid HMAC payload that is missing username', () => {
+        const payloadB64 = Buffer.from(JSON.stringify({ kind: 'session', issuedAt: Date.now(), expiresAt: Date.now() + 10_000 })).toString('base64url');
+        const sig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+        expect(service.verifySessionCookie(`${payloadB64}.${sig}`, secret)).toBeNull();
+      });
+
+      it('rejects an otherwise-valid HMAC payload bearing kind:"stream"', () => {
+        const payloadB64 = Buffer.from(JSON.stringify({ username: 'admin', kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 10_000 })).toString('base64url');
+        const sig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+        expect(service.verifySessionCookie(`${payloadB64}.${sig}`, secret)).toBeNull();
+      });
+
+      it('accepts a legacy cookie (username present, kind absent) for backward compatibility', () => {
+        const payloadB64 = Buffer.from(JSON.stringify({ username: 'admin', issuedAt: Date.now(), expiresAt: Date.now() + 10_000 })).toString('base64url');
+        const sig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+        const result = service.verifySessionCookie(`${payloadB64}.${sig}`, secret);
+        expect(result).not.toBeNull();
+        expect(result!.payload.username).toBe('admin');
+      });
+    });
+  });
 });
 
 // #1404 — AuthService threads `this.log` into decryptFields so a corrupt/wrong-key

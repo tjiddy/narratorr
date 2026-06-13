@@ -892,6 +892,148 @@ describe('auth routes', () => {
     });
   });
 
+  // #1453 — POST /api/auth/stream-token mints a short-lived stream token. It
+  // authenticates via the non-key chain (forms/basic+CSRF/none/LAN), is NOT
+  // API-key-reachable (non-`v*` path), and is NOT reachable by another stream
+  // token (mint is not an SSE endpoint). Uses the real authPlugin so the matrix
+  // is exercised end-to-end.
+  describe('POST /api/auth/stream-token (#1453)', () => {
+    const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
+    const VALID_COOKIE = 'valid-session-cookie';
+
+    async function buildApp(status: Record<string, unknown>) {
+      const svcs = createMockServices();
+      const authSvc = svcs.auth as unknown as Record<string, Mock>;
+      authSvc.getStatus = vi.fn().mockResolvedValue(status);
+      authSvc.getSessionSecret = vi.fn().mockResolvedValue('test-secret');
+      authSvc.mintStreamToken = vi.fn().mockReturnValue('minted-stream-token');
+      authSvc.validateApiKey = vi.fn().mockResolvedValue(true);
+      authSvc.verifyStreamToken = vi.fn().mockReturnValue(null);
+      authSvc.verifyCredentials = vi.fn().mockResolvedValue({ username: 'admin' });
+      authSvc.verifySessionCookie = vi.fn().mockImplementation((c: string) =>
+        c === VALID_COOKIE
+          ? { payload: { username: 'admin', issuedAt: Date.now(), expiresAt: Date.now() + 1_000_000 }, shouldRenew: false }
+          : null);
+
+      const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+      app.setValidatorCompiler(validatorCompiler);
+      app.setSerializerCompiler(serializerCompiler);
+      await app.register(cookie);
+      const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+      await app.register(errorHandlerPlugin);
+      await app.register(authPlugin, { authService: svcs.auth as unknown as AuthService });
+      await authRoutes(app, svcs.auth as Parameters<typeof authRoutes>[1]);
+      await app.ready();
+      return { app, authSvc };
+    }
+
+    it('forms session cookie → 200 + { token, expiresInMs }', async () => {
+      const { app, authSvc } = await buildApp({ mode: 'forms', hasUser: true, localBypass: false });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/auth/stream-token',
+          cookies: { narratorr_session: VALID_COOKIE },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.token).toBe('minted-stream-token');
+        expect(typeof body.expiresInMs).toBe('number');
+        expect(authSvc.mintStreamToken).toHaveBeenCalledWith('test-secret');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('basic-auth + X-Requested-With → 200 + token', async () => {
+      const { app } = await buildApp({ mode: 'basic', hasUser: true, localBypass: false });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/auth/stream-token',
+          headers: { authorization: basicAuthHeader, 'x-requested-with': 'XMLHttpRequest' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).token).toBe('minted-stream-token');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('basic-auth without X-Requested-With → 403 CSRF', async () => {
+      const { app } = await buildApp({ mode: 'basic', hasUser: true, localBypass: false });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/auth/stream-token',
+          headers: { authorization: basicAuthHeader },
+        });
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('API-key-only → 401 (mint is not key-reachable)', async () => {
+      const { app, authSvc } = await buildApp({ mode: 'forms', hasUser: true, localBypass: false });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/auth/stream-token',
+          headers: { 'x-api-key': 'valid-key' },
+        });
+        expect(res.statusCode).toBe(401);
+        // Out of `/api/v*` scope → API-key contract body, key never validated, never mints.
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
+        expect(authSvc.validateApiKey).not.toHaveBeenCalled();
+        expect(authSvc.mintStreamToken).not.toHaveBeenCalled();
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('stream-token-only → 401 (cannot mint from a stream token)', async () => {
+      const { app, authSvc } = await buildApp({ mode: 'forms', hasUser: true, localBypass: false });
+      // Even if a token were valid, mint is not an SSE endpoint so the plugin
+      // never consults verifyStreamToken here.
+      authSvc.verifyStreamToken = vi.fn().mockReturnValue({ kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 });
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/auth/stream-token?token=anything',
+        });
+        expect(res.statusCode).toBe(401);
+        expect(authSvc.verifyStreamToken).not.toHaveBeenCalled();
+        expect(authSvc.mintStreamToken).not.toHaveBeenCalled();
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('none mode → 200 (open)', async () => {
+      const { app } = await buildApp({ mode: 'none', hasUser: false, localBypass: false });
+      try {
+        const res = await app.inject({ method: 'POST', url: '/api/auth/stream-token' });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).token).toBe('minted-stream-token');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('unauthenticated (forms, no creds) → 401', async () => {
+      const { app, authSvc } = await buildApp({ mode: 'forms', hasUser: true, localBypass: false });
+      try {
+        const res = await app.inject({ method: 'POST', url: '/api/auth/stream-token' });
+        expect(res.statusCode).toBe(401);
+        expect(authSvc.mintStreamToken).not.toHaveBeenCalled();
+      } finally {
+        await app.close();
+      }
+    });
+  });
+
   describe('PUT /api/auth/password — forms-mode session reissue (real authPlugin)', () => {
     let formsApp: FastifyInstance;
     let formsServices: Services;

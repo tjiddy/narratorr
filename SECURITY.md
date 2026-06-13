@@ -86,6 +86,19 @@ An API key is generated on first run (`crypto.randomUUID`). It can be regenerate
 - `X-Api-Key` header (recommended)
 - `?apikey=` query parameter (convenience for webhook URLs — note that query parameters may appear in server logs and referrer headers)
 
+**Scope — the API key authenticates `/api/v*` only (#1453).** The key is no longer god-mode over the whole `/api/*` surface: a valid key authenticates the versioned public API (`/api/v1/...`) and is **rejected with 401 `{ error: 'Invalid API key' }`** on every other `/api/*` path (`/api/books`, `/api/settings`, the SSE endpoints, etc.). The scope check narrows only the API-key branch in `src/server/plugins/auth.ts` and is URL_BASE-aware (it composes with `config.urlBase` the same way the `/api/` interception does, and is pinned to `v` + digit so paths like `/api/version-history` are not swept in). All non-key credentials (forms session cookie, Basic-auth header, `none` mode, LAN/private-IP bypass, `AUTH_BYPASS`) are unchanged and still authorize the full `/api/*` surface with their existing CSRF rules. The Prowlarr/Readarr compatibility shim (`/api/v1/indexer*`, `/api/v1/system/status`) lives under `/api/v1/` and therefore stays key-reachable (see the documented contract exception under [API Versioning Policy](#api-versioning-policy)).
+
+### SSE / stream auth — short-lived stream token (#1453)
+
+The SSE/stream endpoints (`GET /api/events`, `GET /api/search/stream`) are **not API-key-reachable** — a bare key is rejected there, which is what makes "internal SSE stays numeric" honest (a public key-holder cannot pull numeric rowids off the event stream). The browser authenticates them with a **short-lived, session-scoped stream token**:
+
+- The frontend mints one via `POST /api/auth/stream-token` (itself authenticated by the normal non-key chain — forms cookie / Basic+CSRF / `none` / LAN — and **not** key-reachable, since it sits outside `/api/v*`). The token travels as a `?token=` query param because `EventSource` cannot set request headers; it is re-minted transparently before/at expiry so live updates never drop.
+- The token is HMAC-SHA256 signed (reusing the session-cookie machinery) with a **short TTL (minutes)**, independent of the 7-day session TTL and not sliding-renewed — a session renewal neither extends nor invalidates a live stream token.
+- **Token-type domain separation.** Session cookies carry `kind: 'session'` + a `username`; stream tokens carry `kind: 'stream'` + no `username`, and are signed with a **domain-separated key** derived from the session secret (`HMAC(sessionSecret, 'stream-token')`). `verifyStreamToken` requires `kind === 'stream'`; `verifySessionCookie` requires a `username` and rejects a foreign `kind`. Net effect: a stream token never authenticates a session-cookie check and vice versa, even under secret reuse. (Legacy cookies issued before #1453 carry a `username` but no `kind` and stay valid until they expire or the session secret rotates.)
+- The search-stream cancel route (`POST /api/search/stream/:sessionId/cancel/:indexerId`) is also key-unreachable; it authenticates via the ambient non-key credential the UI already sends (`fetchApi` → cookie/Basic+CSRF), not the stream token.
+
+In `basic`/`none` modes the browser already authenticates same-origin `EventSource`/fetch via the Basic header or the open `none` chain; the stream token is the mechanism that lets **forms** mode authenticate SSE without putting a long-lived secret in the URL.
+
 ## Security Headers
 
 Narratorr uses `@fastify/helmet` for HTTP security headers in production:
