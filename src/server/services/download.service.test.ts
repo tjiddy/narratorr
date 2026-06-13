@@ -139,6 +139,19 @@ describe('DownloadService', () => {
       const result = await service.getById(999);
       expect(result).toBeNull();
     });
+
+    it('derives the display status from the (clientStatus, pipelineStage) tuple (#1445 F1 seam)', async () => {
+      // A completed client download mid-pipeline displays the pipeline stage.
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'pending_review' }, book: mockBook }]),
+      );
+
+      const result = await service.getById(1);
+      expect(result!.status).toBe('pending_review');
+      // The underlying axis fields are exposed alongside the derived status.
+      expect(result!.clientStatus).toBe('completed');
+      expect(result!.pipelineStage).toBe('pending_review');
+    });
   });
 
   describe('getActive', () => {
