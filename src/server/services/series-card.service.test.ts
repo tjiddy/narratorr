@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -30,7 +31,7 @@ async function seedBookWithSeries(db: Db, opts: {
   seriesPosition?: number | null;
   authorName?: string | null;
 }): Promise<number> {
-  const [book] = await db.insert(books).values({
+  const [book] = await db.insert(books).values({ publicId: generatePublicId('bk'),
     title: opts.title,
     seriesName: opts.seriesName,
     seriesPosition: opts.seriesPosition ?? null,
@@ -38,7 +39,7 @@ async function seedBookWithSeries(db: Db, opts: {
   if (opts.authorName) {
     const slug = opts.authorName.toLowerCase().replace(/\s+/g, '-');
     const existing = await db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
-    const authorId = existing[0]?.id ?? (await db.insert(authors).values({ name: opts.authorName, slug }).returning())[0]!.id;
+    const authorId = existing[0]?.id ?? (await db.insert(authors).values({ publicId: generatePublicId('au'), name: opts.authorName, slug }).returning())[0]!.id;
     await db.insert(bookAuthors).values({ bookId: book!.id, authorId, position: 0 });
   }
   return book!.id;
@@ -296,7 +297,7 @@ describe('SeriesCardService — unit', () => {
 
     it('runScheduledRefresh returns { refreshed: 0, skipped: 0 } and never fetches when no key', async () => {
       // Seed a stale row that WOULD be swept if a key were present.
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'The Band', normalizedName: 'the band', hardcoverSeriesId: 5523, authorName: 'Nicholas Eames',
         lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
       });
@@ -317,7 +318,7 @@ describe('SeriesCardService — unit', () => {
     it('matches case-insensitively by title, falls through on empty normalized title, and never double-claims a library book', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       // Cache-hit path: hardcoverSeriesId present → buildCardFromCache.
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Nicholas Eames', lastFetchedAt: new Date(),
       }).returning();
       await db.insert(seriesMembers).values([
@@ -356,17 +357,17 @@ describe('SeriesCardService — unit', () => {
 
       // Strictly older than cutoff → swept. Has a hardcoverSeriesId so it takes
       // the refreshById path with a successful fetch.
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Stale', normalizedName: 'stale', hardcoverSeriesId: 5523, authorName: 'A',
         lastFetchedAt: new Date(cutoff - 1),
       });
       // Exactly at the cutoff → NOT swept (lt is strict).
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Boundary', normalizedName: 'boundary', hardcoverSeriesId: 6000, authorName: 'B',
         lastFetchedAt: new Date(cutoff),
       });
       // Younger than the cutoff → NOT swept.
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Fresh', normalizedName: 'fresh', hardcoverSeriesId: 7000, authorName: 'C',
         lastFetchedAt: new Date(cutoff + 1),
       });
@@ -391,7 +392,7 @@ describe('SeriesCardService — unit', () => {
   describe('cache re-resolution branches', () => {
     it('cache hit (hardcoverSeriesId present) is served without a fetch', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Cached Author', lastFetchedAt: new Date(),
       }).returning();
       await db.insert(seriesMembers).values({
@@ -411,7 +412,7 @@ describe('SeriesCardService — unit', () => {
     it('cached row with null hardcoverSeriesId falls through to a fresh resolve + persist', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       // Cache exists but is unresolved (null hardcoverSeriesId) → cache miss path.
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: null, name: 'The Band', normalizedName: 'the band', authorName: null, lastFetchedAt: new Date(),
       });
       const fetchMock = mockFetchOnce(hardcoverSeriesPayload({
@@ -429,7 +430,7 @@ describe('SeriesCardService — unit', () => {
     });
 
     it('runScheduledRefresh takes the by-id path for a stale row with a hardcoverSeriesId', async () => {
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'The Band', normalizedName: 'the band', hardcoverSeriesId: 5523, authorName: 'Old Author',
         lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
       }).returning();
@@ -449,7 +450,7 @@ describe('SeriesCardService — unit', () => {
     });
 
     it('runScheduledRefresh resolves a null-id row via its lowest-books.id linked book', async () => {
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Shared Series', normalizedName: 'shared series', hardcoverSeriesId: null, authorName: null,
         lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
       }).returning();
@@ -484,7 +485,7 @@ describe('SeriesCardService — unit', () => {
     });
 
     it('runScheduledRefresh counts a null-id row with no qualifying linked book as skipped', async () => {
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Ghost', normalizedName: 'ghost', hardcoverSeriesId: null, authorName: null,
         lastFetchedAt: new Date(Date.now() - 30 * 86_400_000),
       });
@@ -555,7 +556,7 @@ describe('SeriesCardService — unit', () => {
   describe('refreshSeriesForBook', () => {
     it('re-fetches via GetSeriesMembersById when a cached hardcoverSeriesId exists', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Old Author', lastFetchedAt: new Date(0),
       });
       const fetchMock = mockFetchOnce(hardcoverSeriesPayload({
@@ -766,7 +767,7 @@ describe('SeriesCardService — unit', () => {
 
     it('re-links the book to the canonical series and deletes the emptied old series row', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
-      const [oldRow] = await db.insert(series).values({
+      const [oldRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'The Earthsea Cycle', normalizedName: normalizeSeriesName('The Earthsea Cycle'),
       }).returning();
       await db.insert(seriesMembers).values({
@@ -793,14 +794,14 @@ describe('SeriesCardService — unit', () => {
 
     it('merges onto a pre-existing row already bound to the chosen id with no unique-index collision', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
-      const [oldRow] = await db.insert(series).values({
+      const [oldRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'The Earthsea Cycle', normalizedName: normalizeSeriesName('The Earthsea Cycle'),
       }).returning();
       await db.insert(seriesMembers).values({
         seriesId: oldRow!.id, bookId, title: 'A Wizard of Earthsea', normalizedTitle: 'a wizard of earthsea', position: 1, source: 'local',
       });
       // A separate row ALREADY carries the chosen Hardcover id.
-      const [targetRow] = await db.insert(series).values({
+      const [targetRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 4242, name: 'The Earthsea Quartet', normalizedName: normalizeSeriesName('The Earthsea Quartet'), authorName: 'Ursula K. Le Guin', lastFetchedAt: new Date(),
       }).returning();
       mockFetchOnce(hardcoverSeriesPayload({

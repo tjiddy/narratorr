@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -204,13 +205,13 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
   });
 
   async function insertBookRow(asin: string, title: string): Promise<number> {
-    const [row] = await db.insert(books).values({ title, asin }).returning();
+    const [row] = await db.insert(books).values({ publicId: generatePublicId('bk'), title, asin }).returning();
     return row!.id;
   }
 
   it('args=null: deletes all prior series_members rows for the book and inserts nothing', async () => {
     const bookId = await insertBookRow('B_NS', 'Standalone');
-    const [seriesRow] = await db.insert(series).values({
+    const [seriesRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       name: 'Old Series',
       normalizedName: 'old series',
     }).returning();
@@ -233,7 +234,7 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
 
   it('args=payload: deletes prior row(s) AND inserts exactly one new local member', async () => {
     const bookId = await insertBookRow('B_RM', 'Rematched');
-    const [oldSeries] = await db.insert(series).values({
+    const [oldSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       name: 'Old Series',
       normalizedName: 'old series',
     }).returning();
@@ -269,7 +270,7 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
 
   it('reuses an existing series row when normalizedName matches', async () => {
     const bookId = await insertBookRow('B_REUSE', 'Reuse');
-    const [seeded] = await db.insert(series).values({
+    const [seeded] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       name: 'Seed Series',
       normalizedName: 'seed series',
     }).returning();

@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { generatePublicId } from '../utils/public-id.js';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -159,7 +160,7 @@ export async function seedBookAndDownload(
   // Set book to 'downloading' (realistic pre-import state after grab)
   await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
 
-  const [download] = await e2e.db.insert(downloads).values({
+  const [download] = await e2e.db.insert(downloads).values({ publicId: generatePublicId('dl'),
     bookId,
     downloadClientId,
     title,

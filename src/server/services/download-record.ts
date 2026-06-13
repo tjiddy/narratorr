@@ -1,6 +1,7 @@
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads } from '../../db/schema.js';
+import { generatePublicId } from '../utils/public-id.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import { DownloadUrl, type LanAllowlist } from '../../core/utils/download-url.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
@@ -60,6 +61,7 @@ export async function insertDownloadRecord(
   return db
     .insert(downloads)
     .values({
+      publicId: generatePublicId('dl'),
       bookId: params.bookId,
       indexerId: params.indexerId,
       downloadClientId: ctx.clientId,

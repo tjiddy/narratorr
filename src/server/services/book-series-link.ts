@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { DbOrTx } from '../../db/index.js';
 import { series, seriesMembers } from '../../db/schema.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { generatePublicId } from '../utils/public-id.js';
 import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -34,7 +35,7 @@ async function resolveSeriesId(tx: DbOrTx, name: string, normalized: string): Pr
   if (found.length > 0) return found[0]!.id;
   const inserted = await tx
     .insert(series)
-    .values({ name, normalizedName: normalized })
+    .values({ publicId: generatePublicId('sr'), name, normalizedName: normalized })
     .returning({ id: series.id });
   return inserted[0]!.id;
 }

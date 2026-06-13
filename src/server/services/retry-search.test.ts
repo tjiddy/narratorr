@@ -39,6 +39,7 @@ const mockSearchResult = {
 
 const mockDownload: DownloadWithBook = {
   id: 2,
+  publicId: 'dl_test000000000000000',
   bookId: 1,
   indexerId: 1,
   downloadClientId: 1,
@@ -658,7 +659,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const bookWithNarrators: BookWithAuthor = {
       ...createMockDbBook({ duration: 36000 }),
       authors: [createMockDbAuthor()],
-      narrators: [{ id: 1, name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
+      narrators: [{ id: 1, publicId: 'nr_test000000000000000', name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
     };
     const deps = createDeps({
       bookService: inject<BookService>({

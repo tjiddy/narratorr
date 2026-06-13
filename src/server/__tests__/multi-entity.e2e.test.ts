@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { join } from 'node:path';
@@ -373,7 +374,7 @@ describe('Job lifecycle E2E', () => {
 
     await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
 
-    const [dl] = await e2e.db.insert(downloads).values({
+    const [dl] = await e2e.db.insert(downloads).values({ publicId: generatePublicId('dl'),
       bookId,
       downloadClientId,
       title: 'Monitor Test Book',

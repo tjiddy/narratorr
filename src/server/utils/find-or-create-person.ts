@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { DbOrTx } from '../../db/index.js';
 import { authors, narrators } from '../../db/schema.js';
 import { slugify } from '../../shared/utils.js';
+import { generatePublicId } from './public-id.js';
 
 /** Table reference for authors or narrators — both have id + slug columns. */
 type PersonTable = typeof authors | typeof narrators;
@@ -60,7 +61,7 @@ export async function findOrCreateAuthor(db: DbOrTx, name: string, asin?: string
     'author',
     name,
     slug,
-    () => db.insert(authors).values({ name, slug, asin }).returning({ id: authors.id }),
+    () => db.insert(authors).values({ publicId: generatePublicId('au'), name, slug, asin }).returning({ id: authors.id }),
     asin
       ? async (dbHandle, row) => {
           const full = row as { id: number; asin: string | null };
@@ -85,6 +86,6 @@ export async function findOrCreateNarrator(db: DbOrTx, name: string): Promise<nu
     'narrator',
     name,
     slug,
-    () => db.insert(narrators).values({ name, slug }).returning({ id: narrators.id }),
+    () => db.insert(narrators).values({ publicId: generatePublicId('nr'), name, slug }).returning({ id: narrators.id }),
   );
 }

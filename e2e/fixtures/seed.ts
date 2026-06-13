@@ -2,6 +2,7 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { runMigrations } from '../../src/db/migrate.js';
 import { authors, bookAuthors, books, downloadClients, indexers, settings } from '../../src/db/schema.js';
+import { generatePublicId } from '../../src/server/utils/public-id.js';
 
 /**
  * Pre-boot Drizzle seed for the E2E harness. Runs migrations against the
@@ -102,6 +103,7 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
       const [authorRow] = await tx
         .insert(authors)
         .values({
+          publicId: generatePublicId('au'),
           name: SEED_AUTHOR_NAME,
           slug: authorSlug,
         })
@@ -110,6 +112,7 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
       const [bookRow] = await tx
         .insert(books)
         .values({
+          publicId: generatePublicId('bk'),
           title: SEED_BOOK_TITLE,
           status: 'wanted',
           enrichmentStatus: 'pending',

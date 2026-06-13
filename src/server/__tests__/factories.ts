@@ -8,6 +8,7 @@ const now = new Date('2024-01-01T00:00:00Z');
 export function createMockDbAuthor(overrides?: Record<string, unknown>) {
   return {
     id: 1,
+    publicId: 'au_test000000000000000',
     name: 'Brandon Sanderson',
     slug: 'brandon-sanderson',
     asin: null as string | null,
@@ -20,6 +21,7 @@ export function createMockDbAuthor(overrides?: Record<string, unknown>) {
 export function createMockDbBook(overrides?: Record<string, unknown>) {
   return {
     id: 1,
+    publicId: 'bk_test000000000000000',
     title: 'The Way of Kings',
     description: 'An epic fantasy' as string | null,
     coverUrl: null as string | null,

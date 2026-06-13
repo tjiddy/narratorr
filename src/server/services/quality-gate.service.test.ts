@@ -20,7 +20,7 @@ function createService() {
 }
 
 const baseDownload = {
-  id: 1, bookId: 1, title: 'Test Book',
+  id: 1, publicId: 'dl_test000000000000000', bookId: 1, title: 'Test Book',
   clientStatus: 'completed' as const, pipelineStage: 'idle' as const,
   externalId: 'ext-1', downloadClientId: 1, infoHash: 'abc123',
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
@@ -31,7 +31,7 @@ const baseDownload = {
 };
 
 const baseBook = {
-  id: 1, title: 'Test Book', status: 'imported' as const,
+  id: 1, publicId: 'bk_test000000000000000', title: 'Test Book', status: 'imported' as const,
   narrators: [{ name: 'John Smith' }], size: 400_000_000, duration: 600,
   audioTotalSize: null, audioDuration: 36000, path: '/library/test',
   asin: null, isbn: null, coverUrl: null, description: null,
