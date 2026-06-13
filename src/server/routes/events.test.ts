@@ -135,11 +135,11 @@ describe('GET /api/events', () => {
       await app.close();
     });
 
-    it('rejects the API key on /api/events even when valid (de-god-moded #1453)', async () => {
+    it('rejects the API key on /api/events even when valid, with the API-key 401 body (de-god-moded #1453)', async () => {
       // Post-#1453 the SSE endpoints are no longer API-key-reachable — they use a
       // short-lived stream token. A valid key on `/api/events` (a non-`v*` path)
-      // is ignored; the forms-mode chain (no cookie) returns 401, and the key is
-      // never validated.
+      // is never validated, and an API-key-only request returns the canonical
+      // API-key contract `{ error: 'Invalid API key' }`, not the generic ambient 401.
       const authService = {
         validateApiKey: vi.fn().mockResolvedValue(true),
         getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
@@ -159,6 +159,7 @@ describe('GET /api/events', () => {
 
       const res = await app.inject({ method: 'GET', url: '/api/events?apikey=valid-key' });
       expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
       expect(authService.validateApiKey).not.toHaveBeenCalled();
 
       await app.close();

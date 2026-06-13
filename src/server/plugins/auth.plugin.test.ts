@@ -186,7 +186,7 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(200);
     });
 
-    it('valid key on a non-v* path is rejected (de-god-moded #1453) — forms mode, no cookie → 401', async () => {
+    it('valid key on a non-v* path is rejected with the API-key 401 body (de-god-moded #1453) — forms mode, no cookie', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
       const res = await app.inject({
@@ -195,9 +195,12 @@ describe('auth middleware', () => {
         headers: { 'x-api-key': 'valid-key' },
       });
       expect(res.statusCode).toBe(401);
+      // Contract: an API-key-only request outside /api/v* returns the canonical
+      // API-key body, NOT the generic ambient 'Authentication required'.
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
     });
 
-    it('valid key on /api/version-history (starts with v, not v+digit) is rejected — not in scope', async () => {
+    it('valid key on /api/version-history (starts with v, not v+digit) is rejected with the API-key 401 body — not in scope', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
       const res = await app.inject({
@@ -206,6 +209,7 @@ describe('auth middleware', () => {
         headers: { 'x-api-key': 'valid-key' },
       });
       expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
     });
 
     it('valid key on bare /api/v1 classifies as in-scope (auth passes → 404, not 401)', async () => {
@@ -510,9 +514,10 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(200);
     });
 
-    it('valid X-Api-Key + POST to a non-v* path is rejected (de-god-moded) — basic mode, no header → 401', async () => {
+    it('valid X-Api-Key + POST to a non-v* path is rejected with the API-key 401 body (de-god-moded) — basic mode, no header', async () => {
       // The key no longer reaches `/api/library/scan-debug`; with no Basic header
-      // the basic-mode chain rejects with 401 (not the old api-key 200 bypass).
+      // (the only credential is the out-of-scope key) the chain rejects with the
+      // canonical API-key body, not the old api-key 200 bypass.
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -520,6 +525,7 @@ describe('auth middleware', () => {
       });
 
       expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
     });
 
     it('public route (POST /api/auth/login) is exempt — no CSRF check', async () => {
@@ -1103,6 +1109,7 @@ describe('auth middleware', () => {
 
         const outOfScope = await app.inject({ method: 'GET', url: '/narratorr/api/books', headers: { 'x-api-key': 'valid-key' } });
         expect(outOfScope.statusCode, 'key under {base}/api/books rejected').toBe(401);
+        expect(JSON.parse(outOfScope.payload)).toEqual({ error: 'Invalid API key' });
       } finally {
         await app.close();
       }
@@ -1139,12 +1146,13 @@ describe('auth middleware', () => {
       }
     });
 
-    it('API-key-only is rejected on both SSE endpoints and the cancel route', async () => {
+    it('API-key-only is rejected with the API-key 401 body on both SSE endpoints and the cancel route', async () => {
       const app = await createApp(createStreamApp());
       try {
         for (const path of SSE_PATHS) {
           const res = await app.inject({ method: 'GET', url: path, headers: { 'x-api-key': 'valid-key' } });
           expect(res.statusCode, `${path} rejects API key`).toBe(401);
+          expect(JSON.parse(res.payload), `${path} returns the API-key contract body`).toEqual({ error: 'Invalid API key' });
         }
         const cancel = await app.inject({
           method: 'POST',
@@ -1152,6 +1160,7 @@ describe('auth middleware', () => {
           headers: { 'x-api-key': 'valid-key' },
         });
         expect(cancel.statusCode, 'cancel route rejects API key').toBe(401);
+        expect(JSON.parse(cancel.payload)).toEqual({ error: 'Invalid API key' });
       } finally {
         await app.close();
       }

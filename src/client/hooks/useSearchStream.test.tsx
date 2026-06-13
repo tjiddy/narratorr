@@ -422,7 +422,18 @@ describe('useSearchStream', () => {
     expect(result.current.state.hasResults).toBe(false);
   });
 
-  it('sets error state on EventSource connection failure', async () => {
+  // #1453 / F3 — a stream error during an active search is most likely an expired
+  // stream token; the hook must re-mint a fresh token and reconnect transparently
+  // rather than surfacing a terminal failure.
+  it('re-mints and reconnects on a stream error (token expiry) instead of failing permanently', async () => {
+    // mockClear (not the queue-draining resets) zeroes the call history accumulated
+    // by earlier tests' query mounts while preserving the Once queue below, so the
+    // absolute toHaveBeenCalledTimes assertion counts only this test's mints.
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+    (api.mintStreamToken as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 }) // query mount
+      .mockResolvedValueOnce({ token: 'token-2', expiresInMs: 300_000 }); // remint on error
+
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
     await waitForAuth(result);
@@ -430,13 +441,55 @@ describe('useSearchStream', () => {
       result.current.actions.start();
     });
 
-    const es = MockEventSource.instances[0];
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0]!.url).toContain('token=token-1');
+
+    // Active-search stream error → transparent re-mint + reconnect.
+    await act(async () => {
+      MockEventSource.instances[0]!.onerror?.(new Event('error'));
+    });
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // mintStreamToken called again, new EventSource opened with the fresh ?token=.
+    expect(api.mintStreamToken).toHaveBeenCalledTimes(2);
+    expect(MockEventSource.instances.at(-1)!.url).toContain('token=token-2');
+    // Connection recovered — not surfaced as a user-visible failure.
+    expect(result.current.state.error).toBeNull();
+    expect(result.current.state.phase).toBe('searching');
+  });
+
+  it('treats a second stream error after re-mint as a terminal failure (no infinite reconnect)', async () => {
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+    (api.mintStreamToken as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+      .mockResolvedValueOnce({ token: 'token-2', expiresInMs: 300_000 });
+
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
     act(() => {
-      es!.onerror?.(new Event('error'));
+      result.current.actions.start();
+    });
+
+    // First error → re-mint + reconnect.
+    await act(async () => {
+      MockEventSource.instances[0]!.onerror?.(new Event('error'));
+    });
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // Second error on the reconnected stream → terminal failure, no further remint.
+    await act(async () => {
+      MockEventSource.instances.at(-1)!.onerror?.(new Event('error'));
     });
 
     expect(result.current.state.error).toBe('Search connection failed');
     expect(result.current.state.phase).toBe('idle');
+    expect(api.mintStreamToken).toHaveBeenCalledTimes(2);
   });
 
   it('cleans up EventSource on unmount', async () => {

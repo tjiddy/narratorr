@@ -984,7 +984,8 @@ describe('auth routes', () => {
           headers: { 'x-api-key': 'valid-key' },
         });
         expect(res.statusCode).toBe(401);
-        // Out of `/api/v*` scope → key never validated, never mints.
+        // Out of `/api/v*` scope → API-key contract body, key never validated, never mints.
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
         expect(authSvc.validateApiKey).not.toHaveBeenCalled();
         expect(authSvc.mintStreamToken).not.toHaveBeenCalled();
       } finally {

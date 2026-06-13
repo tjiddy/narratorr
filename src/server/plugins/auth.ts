@@ -59,45 +59,51 @@ function setUser(request: FastifyRequest, username: string) {
   request.user = { username };
 }
 
-/**
- * Try API key auth. Returns true if handled (pass or reject), false to continue.
- *
- * De-god-moded in #1453: the API key only authenticates the versioned public
- * surface (`/api/v*`). When `inVScope` is false the key is treated as absent —
- * we return false so the non-key credential chain (forms cookie / basic / none /
- * LAN bypass) is still evaluated and a valid one wins. This is what prevents a
- * stray `?apikey=` from shadowing a valid cookie or stream token on the SSE
- * endpoints, while an API-key-*only* request to a non-`v*` path still falls
- * through to the mode handler's 401.
- */
-async function tryApiKey(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  authService: AuthService,
-  inVScope: boolean,
-): Promise<boolean> {
+/** Extract the supplied API key from the `X-Api-Key` header or `?apikey=` query (string-narrowed). */
+function extractApiKey(request: FastifyRequest): string | undefined {
   const rawHeader = request.headers['x-api-key'];
   const apiKeyHeader = typeof rawHeader === 'string' ? rawHeader : undefined;
   const rawQuery = (request.query as Record<string, unknown>)?.apikey;
   const apiKeyQuery = typeof rawQuery === 'string' ? rawQuery : undefined;
-  const apiKey = apiKeyHeader || apiKeyQuery;
+  return apiKeyHeader || apiKeyQuery;
+}
 
-  if (!apiKey) return false;
-
-  // Out of `/api/v*` scope the key is no longer god-mode — ignore it and let the
-  // ambient credential chain decide (and reject if no other credential exists).
-  if (!inVScope) return false;
-
-  const valid = await authService.validateApiKey(apiKey);
-  if (valid) {
+/**
+ * Authenticate an in-scope (`/api/v*`) API key (#1453). On a valid key it sets
+ * `request.user`; on an invalid key it sends the canonical 401
+ * `{ error: 'Invalid API key' }`. The caller invokes this only for keys inside
+ * `/api/v*`; out-of-scope keys are de-god-moded and handled by the ambient chain
+ * (see `handleAmbientAuth`).
+ */
+async function authenticateApiKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authService: AuthService,
+  apiKey: string,
+): Promise<void> {
+  if (await authService.validateApiKey(apiKey)) {
     request.log.debug('Auth: API key validated');
     setUser(request, 'api-key');
-    return true;
+    return;
   }
-
   request.log.debug('Auth: invalid API key');
   reply.status(401).send({ error: 'Invalid API key' });
-  return true;
+}
+
+/**
+ * Does the request carry a real ambient (non-key) credential for the active
+ * mode? Used so a de-god-moded API key never shadows a genuine credential: when
+ * a cookie (forms) or Basic header (basic) is present, the out-of-scope-key
+ * rejection is skipped and the normal mode handler runs (and a valid credential
+ * wins). `none` already short-circuits before this is consulted.
+ */
+function hasAmbientCredential(request: FastifyRequest, mode: 'none' | 'basic' | 'forms'): boolean {
+  if (mode === 'forms') return Boolean(request.cookies?.['narratorr_session']);
+  if (mode === 'basic') {
+    const header = request.headers.authorization;
+    return typeof header === 'string' && header.startsWith('Basic ');
+  }
+  return false;
 }
 
 /**
@@ -203,6 +209,7 @@ async function handleAmbientAuth(
   request: FastifyRequest,
   reply: FastifyReply,
   authService: AuthService,
+  outOfScopeApiKey: boolean,
 ): Promise<void> {
   const status = await authService.getStatus();
 
@@ -214,6 +221,18 @@ async function handleAmbientAuth(
   }
 
   if (status.mode === 'none') return;
+
+  // De-god-moded API key (#1453): a key presented on a non-`/api/v*` path does
+  // not authenticate, but when it is the ONLY credential the rejection must carry
+  // the existing API-key contract `{ error: 'Invalid API key' }`, not the generic
+  // ambient 401. A real ambient credential (session cookie / Basic header) still
+  // wins — its presence skips this branch — so a stale `?apikey=` never shadows it.
+  if (outOfScopeApiKey && !hasAmbientCredential(request, status.mode)) {
+    request.log.debug('Auth: out-of-scope API key rejected');
+    reply.status(401).send({ error: 'Invalid API key' });
+    return;
+  }
+
   if (status.mode === 'basic') {
     await handleBasicAuth(request, reply, authService);
     // Apply CSRF protection only after successful basic-auth (request.user populated).
@@ -279,24 +298,26 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
       return;
     }
 
+    const apiKey = extractApiKey(request);
+    const inVScope = isApiVScope(routePath);
+
     // Stream token (#1453) — accepted only on the SSE endpoints, before the API
     // key is consulted, so a valid token authenticates even when a stale
     // `?apikey=` is also present. Absent/invalid token falls through.
-    if (STREAM_ROUTES.has(routePath)) {
-      if (await tryStreamToken(request, authService)) return;
-    }
+    if (STREAM_ROUTES.has(routePath) && await tryStreamToken(request, authService)) return;
 
-    // API key auth — scoped to `/api/v*` only (#1453). On non-`v*` paths the key
-    // is ignored and the request continues to the ambient credential chain.
-    if (await tryApiKey(request, reply, authService, isApiVScope(routePath))) {
-      // tryApiKey may have set request.user (success) or sent 401 (failure).
-      // CSRF check is skipped either way: api-key clients are exempt (AC5),
-      // and on 401 the reply has already been sent.
+    // API key auth — scoped to `/api/v*` only (#1453). In-scope: accept the
+    // valid key or reject with `{ error: 'Invalid API key' }`. Either way the
+    // api-key branch is terminal and CSRF is skipped (api-key clients are exempt).
+    if (apiKey && inVScope) {
+      await authenticateApiKey(request, reply, authService, apiKey);
       return;
     }
 
-    // Ambient (non-key) credential chain: LAN bypass → mode handler → 401.
-    await handleAmbientAuth(request, reply, authService);
+    // Ambient (non-key) credential chain: LAN bypass → mode handler → 401. An
+    // out-of-scope API key that is the only credential is rejected here with the
+    // API-key contract (so a stale `?apikey=` next to a valid cookie still loses).
+    await handleAmbientAuth(request, reply, authService, Boolean(apiKey) && !inVScope);
   });
 }
 

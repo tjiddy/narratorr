@@ -570,7 +570,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
       return { app, sessionId: session.sessionId };
     }
 
-    it('rejects an API-key-only cancel (de-god-moded)', async () => {
+    it('rejects an API-key-only cancel with the API-key 401 body (de-god-moded)', async () => {
       const { app, sessionId } = await buildCancelApp();
       try {
         const res = await app.inject({
@@ -579,6 +579,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
           headers: { 'x-api-key': 'valid-key' },
         });
         expect(res.statusCode).toBe(401);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
       } finally {
         await app.close();
       }
