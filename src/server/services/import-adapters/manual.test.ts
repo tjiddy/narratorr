@@ -190,6 +190,18 @@ describe('ManualImportAdapter', () => {
       expect(phases).toContain('copying');
       expect(phases).toContain('fetching_metadata');
 
+      // Direct assertion on the helper-backed status promotion (#1446): the adapter
+      // must write `status: 'imported'` via transitionBookStatus → db.update(books).set(...).
+      // Without this, deleting/no-opping the promotion line still passes the phase/event
+      // assertions above. The adapter calls set() twice (path/size, then status); grab the
+      // status write from the shared set call log.
+      const statusUpdateSet = (mockDb.update.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> }).set;
+      const statusCall = statusUpdateSet.mock.calls.find((c: unknown[]) => {
+        const arg = c[0] as Record<string, unknown>;
+        return arg && typeof arg === 'object' && arg.status === 'imported';
+      });
+      expect(statusCall, 'expected a db.update(books).set({ status: "imported" }) write').toBeDefined();
+
       expect(mockEventHistory.create).toHaveBeenCalled();
     });
 
