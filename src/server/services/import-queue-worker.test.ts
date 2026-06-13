@@ -46,8 +46,8 @@ function createMockDb() {
     // `db.update` (resolved at call time, so tests that reassign `db.update` to a
     // payload-recording spy transparently capture the transactional writes). Rollback
     // tests override `db.transaction` per-test with their own staging impl.
-    transaction: vi.fn(async (cb: (tx: { update: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
-      await cb({ update: (...args: unknown[]) => db.update(...(args as [])) })),
+    transaction: vi.fn((cb: (tx: { update: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
+      cb({ update: (...args: unknown[]) => db.update(...(args as [])) })),
   };
   return {
     db,
