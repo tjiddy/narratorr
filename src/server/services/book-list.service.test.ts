@@ -1,9 +1,19 @@
 import { describe, it, expect, beforeEach, type Mock } from 'vitest';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookListService } from './book-list.service.js';
 import type { Db } from '../../db/index.js';
 import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket } from '../../shared/schemas/book.js';
+
+// Serialize a Drizzle SQL expression to a raw SQL string + bound params so the
+// bucket-expansion predicate can be asserted against real SQL, not mock calls
+// (mirrors blacklist.service.test.ts).
+const dialect = new SQLiteSyncDialect();
+function compileWhere(expr: unknown): { sql: string; params: unknown[] } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL());
+}
 
 const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
@@ -371,6 +381,50 @@ describe('BookListService', () => {
         const args = (dataChain.orderBy as Mock).mock.calls[0];
         expect(args!.length).toBeGreaterThanOrEqual(2);
       }
+    });
+  });
+
+  // #1447 (S2d / F1) — pin the actual SQL `buildListWhere` generates for each
+  // library bucket. The earlier getAll('downloading') tests only assert mocked
+  // totals, so they'd still pass if the bucket branch regressed to
+  // `eq(books.status, status)`. Compiling the captured predicate and asserting it
+  // is an `IN (...)` over the bucket's exact member statuses catches that
+  // regression directly (an `eq` would drop the second member and emit `= ?`).
+  describe('buildListWhere bucket expansion — generated SQL (#1447 / F1)', () => {
+    /** Capture the WHERE clause `getAllForLibrary` passes to the count query. */
+    async function captureLibraryWhere(bucket: LibraryFilterBucket) {
+      const countChain = mockDbChain([{ value: 0 }]);
+      const rowsChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(rowsChain);
+
+      await service.getAllForLibrary(bucket);
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(whereArg).toBeDefined();
+      return compileWhere(whereArg);
+    }
+
+    for (const bucket of Object.keys(LIBRARY_FILTER_BUCKETS) as LibraryFilterBucket[]) {
+      const members = [...LIBRARY_FILTER_BUCKETS[bucket]];
+
+      it(`expands bucket "${bucket}" to an IN over exactly [${members.join(', ')}]`, async () => {
+        const { sql, params } = await captureLibraryWhere(bucket);
+
+        // IN-expansion, not an `eq` — a regression to `eq(books.status, status)`
+        // would emit `"status" = ?` and fail this assertion.
+        expect(sql.toLowerCase()).toContain('"status" in (');
+        expect(sql.toLowerCase()).not.toContain('"status" = ');
+        // Bound params are exactly the canonical member statuses of the bucket.
+        expect(params).toEqual(members);
+      });
+    }
+
+    it('multi-member buckets bind every member (not just the first)', async () => {
+      const { params } = await captureLibraryWhere('downloading');
+      expect(params).toEqual(['searching', 'downloading']);
+      expect(params).toHaveLength(2);
     });
   });
 
