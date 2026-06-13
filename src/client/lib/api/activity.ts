@@ -1,6 +1,6 @@
 import { fetchApi } from './client.js';
 import type { DownloadProtocol } from '../../../core/indexers/types.js';
-import type { DownloadStatus, QualityGateReason } from '../../../shared/schemas.js';
+import type { ClientStatus, DownloadStatus, PipelineStage, QualityGateReason } from '../../../shared/schemas.js';
 
 export interface Download {
   id: number;
@@ -14,7 +14,13 @@ export interface Download {
   downloadUrl?: string;
   size?: number;
   seeders: number | null;
+  /**
+   * Derived display status — the compatibility seam (#1445). UI keys off this.
+   * `clientStatus`/`pipelineStage` are the underlying two-axis truth.
+   */
   status: DownloadStatus;
+  clientStatus: ClientStatus;
+  pipelineStage: PipelineStage;
   /** Quality gate comparison data, present when status is pending_review */
   qualityGate?: QualityGateData;
   progress: number;

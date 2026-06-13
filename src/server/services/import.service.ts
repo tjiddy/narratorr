@@ -1,4 +1,4 @@
-import { eq, and, inArray, isNotNull } from 'drizzle-orm';
+import { eq, and, isNotNull } from 'drizzle-orm';
 import { normalize } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -22,6 +22,8 @@ import {
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
+import { transitionDownloadState, completedDisplayDownloadCondition } from '../utils/download-state.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -95,7 +97,7 @@ export class ImportService {
     return {
       downloadId,
       downloadTitle: download.title,
-      downloadStatus: download.status,
+      downloadStatus: deriveDisplayStatus(download.clientStatus, download.pipelineStage),
       bookId: book.id,
       bookTitle: book.title,
       bookStatus: book.status,
@@ -123,7 +125,8 @@ export class ImportService {
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
 
-    await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
+    // Pipeline-only write: claim the download for import.
+    await transitionDownloadState(this.db, downloadId, { pipelineStage: 'importing' });
 
     let targetPath: string | undefined;
     let stagingPath: string | undefined;
@@ -195,7 +198,8 @@ export class ImportService {
 
       await this.db.transaction(async (tx) => {
         await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
-        await tx.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
+        // Pipeline-only write, in-transaction with the book promotion.
+        await transitionDownloadState(tx, downloadId, { pipelineStage: 'imported' });
       });
 
       // Delete the old folder only after the DB durably points the book at
@@ -243,7 +247,7 @@ export class ImportService {
       .select({ id: downloads.id, bookId: downloads.bookId })
       .from(downloads)
       .where(and(
-        inArray(downloads.status, ['completed']),
+        completedDisplayDownloadCondition(),
         isNotNull(downloads.externalId),
         isNotNull(downloads.completedAt),
         isNotNull(downloads.bookId),
@@ -323,7 +327,7 @@ export class ImportService {
     if (!importSettings.deleteAfterImport) return;
 
     const candidates = await this.db.select().from(downloads)
-      .where(and(eq(downloads.status, 'imported'), isNotNull(downloads.pendingCleanup)));
+      .where(and(eq(downloads.pipelineStage, 'imported'), isNotNull(downloads.pendingCleanup)));
     if (candidates.length === 0) return;
 
     for (const download of candidates) {

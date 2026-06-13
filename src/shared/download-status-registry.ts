@@ -1,4 +1,4 @@
-import { downloadStatusSchema, type DownloadStatus } from './schemas.js';
+import { downloadStatusSchema, type DownloadStatus, type ClientStatus, type PipelineStage } from './schemas.js';
 
 export type DownloadStatusCategory = 'inProgress' | 'terminal';
 
@@ -137,4 +137,74 @@ const CLIENT_POLLED_STATUSES: DownloadStatus[] = ['downloading', 'queued', 'paus
 
 export function getClientPolledStatuses(): DownloadStatus[] {
   return CLIENT_POLLED_STATUSES;
+}
+
+// ============================================================================
+// Two-axis derivation (#1445)
+//
+// `deriveDisplayStatus` is the compatibility seam: it collapses the
+// `(clientStatus, pipelineStage)` tuple back into the legacy 9-value display
+// enum, preserving the REST/SSE/client contract. `displayStatusToTuple` is its
+// exact inverse (and the backfill mapping) — the pair round-trips for every
+// legacy `DownloadStatus`.
+// ============================================================================
+
+/**
+ * Derive the legacy display status from the two-axis tuple.
+ * When the pipeline is active (`pipelineStage !== 'idle'`) the pipeline stage
+ * wins; otherwise the client status is the display status. Note `imported` is a
+ * pipeline stage, so an imported download displays `imported` regardless of its
+ * (always `completed`) client status — and the canonical failure tuple
+ * `(failed, idle)` resolves to display `failed`.
+ */
+export function deriveDisplayStatus(clientStatus: ClientStatus, pipelineStage: PipelineStage): DownloadStatus {
+  return pipelineStage === 'idle' ? clientStatus : pipelineStage;
+}
+
+/**
+ * Inverse of `deriveDisplayStatus` — maps a legacy display status to its
+ * canonical `(clientStatus, pipelineStage)` tuple. This IS the backfill mapping:
+ * the pipeline display values resolve to `clientStatus='completed'` (the client
+ * download had finished) with the corresponding stage; the client-only display
+ * values resolve to `pipelineStage='idle'`.
+ */
+export function displayStatusToTuple(status: DownloadStatus): { clientStatus: ClientStatus; pipelineStage: PipelineStage } {
+  switch (status) {
+    case 'queued':
+    case 'downloading':
+    case 'paused':
+    case 'completed':
+    case 'failed':
+      return { clientStatus: status, pipelineStage: 'idle' };
+    case 'checking':
+    case 'pending_review':
+    case 'importing':
+    case 'imported':
+      return { clientStatus: 'completed', pipelineStage: status };
+  }
+}
+
+/** Tuple predicate: does the download display as in-progress (non-terminal)? */
+export function isInProgressState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
+  return isInProgressStatus(deriveDisplayStatus(clientStatus, pipelineStage));
+}
+
+/** Tuple predicate: does the download display as terminal (finished)? */
+export function isTerminalState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
+  return isTerminalStatus(deriveDisplayStatus(clientStatus, pipelineStage));
+}
+
+/**
+ * Tuple predicate: can this download be replaced by a new grab?
+ * Mirrors `getReplaceableStatuses()` over the tuple — preserves the load-bearing
+ * invariant that an `importing` download (`pipelineStage === 'importing'`) is
+ * NOT replaceable.
+ */
+export function isReplaceableState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
+  return REPLACEABLE_STATUSES.includes(deriveDisplayStatus(clientStatus, pipelineStage));
+}
+
+/** Tuple predicate: should this download be polled from its external client? */
+export function isClientPolledState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
+  return CLIENT_POLLED_STATUSES.includes(deriveDisplayStatus(clientStatus, pipelineStage));
 }

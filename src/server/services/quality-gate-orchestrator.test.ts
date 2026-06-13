@@ -71,7 +71,7 @@ function createOrchestrator(opts?: {
     getCompletedDownloads: vi.fn().mockResolvedValue([]),
     getCompletedDownloadById: vi.fn().mockResolvedValue(null),
     atomicClaim: vi.fn().mockResolvedValue(true),
-    setStatus: vi.fn().mockResolvedValue(undefined),
+    hold: vi.fn().mockResolvedValue(undefined),
     processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
     approve: vi.fn().mockResolvedValue({ id: 1, status: 'importing', download: baseDownload, book: baseBook }),
     reject: vi.fn().mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook }),
@@ -112,7 +112,8 @@ function createOrchestrator(opts?: {
 }
 
 const baseDownload = {
-  id: 1, bookId: 1, title: 'Test Book', status: 'completed' as const,
+  id: 1, bookId: 1, title: 'Test Book',
+  clientStatus: 'completed' as const, pipelineStage: 'idle' as const,
   externalId: 'ext-1', downloadClientId: 1, infoHash: 'abc123',
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
   seeders: 10, progress: 1, errorMessage: null, guid: null,
@@ -208,7 +209,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       expect(qualityGateService.processDownload).toHaveBeenCalledTimes(2);
     });
   });
@@ -221,7 +222,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       expect(qualityGateService.processDownload).not.toHaveBeenCalled();
     });
 
@@ -232,7 +233,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
     });
 
     it('sets pending_review via service.setStatus when scanAudioDirectory returns null', async () => {
@@ -242,7 +243,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
     });
 
     it('calls processDownload (not setStatus pending_review) when resolved path is a single audio file', async () => {
@@ -254,7 +255,7 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.processCompletedDownloads();
 
       expect(qualityGateService.processDownload).toHaveBeenCalledWith(baseDownload, baseBook, makeScan());
-      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).not.toHaveBeenCalledWith(1);
     });
 
     it('passes derived ffprobePath and diagnostic callbacks to scanAudioDirectory when ffmpegPath is configured', async () => {
@@ -336,7 +337,7 @@ describe('QualityGateOrchestrator', () => {
           return arg.reason?.probeFailure === true;
         });
       expect(probeFailureCalls).toHaveLength(0);
-      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).not.toHaveBeenCalledWith(1);
       // Info log records the fallback usage
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 1, resolvedPath: '/downloads/stale-from-qb', outputPath: '/downloads/persisted-correct-path' }),
@@ -353,8 +354,8 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.processCompletedDownloads();
 
       expect(scanAudioDirectory).toHaveBeenCalledTimes(1);
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
-      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      expect(qualityGateService.hold).toHaveBeenCalledTimes(1);
       expect(eventHistory.create).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: null, fallbackAttempted: false }),
@@ -372,8 +373,8 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledTimes(1);
       expect(scanAudioDirectory).not.toHaveBeenCalledWith('', expect.any(Object));
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
-      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      expect(qualityGateService.hold).toHaveBeenCalledTimes(1);
       expect(eventHistory.create).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: '', fallbackAttempted: false }),
@@ -392,8 +393,8 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.processCompletedDownloads();
 
       expect(scanAudioDirectory).toHaveBeenCalledTimes(2);
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
-      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      expect(qualityGateService.hold).toHaveBeenCalledTimes(1);
       expect(eventHistory.create).toHaveBeenCalledTimes(1);
       // Persisted reason is the unchanged NULL_REASON-based object (no diagnostic keys)
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -422,7 +423,7 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.processCompletedDownloads();
 
       expect(scanAudioDirectory).toHaveBeenCalledTimes(1);
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ outputPath: samePath, fallbackAttempted: false }),
         'Quality gate: no audio files found',
@@ -468,8 +469,8 @@ describe('QualityGateOrchestrator', () => {
 
       await expect(orchestrator.processCompletedDownloads()).resolves.toBeUndefined();
 
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
-      expect(qualityGateService.setStatus).toHaveBeenCalledTimes(1);
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      expect(qualityGateService.hold).toHaveBeenCalledTimes(1);
       expect(eventHistory.create).toHaveBeenCalledTimes(1);
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
@@ -742,7 +743,7 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.processCompletedDownloads();
 
       // The outer catch should have set pending_review
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       // And recorded an unhandled_error decision
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         reason: expect.objectContaining({ probeFailure: true, holdReasons: ['unhandled_error'] }),
@@ -1925,9 +1926,8 @@ describe('QualityGateOrchestrator', () => {
         expect.anything(), 1, 1, expect.any(Function), expect.anything(),
       );
       // Critical: no transition to pending_review on conflict.
-      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(
+      expect(qualityGateService.hold).not.toHaveBeenCalledWith(
         expect.anything(),
-        'pending_review',
       );
     });
 
@@ -2031,7 +2031,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processOneDownload(1);
 
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         old_status: 'importing', new_status: 'downloading',
       }));
@@ -2064,7 +2064,7 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.processOneDownload(1);
 
       // Download set to pending_review
-      expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       // Book reverted from importing → downloading
       expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         book_id: 1, old_status: 'importing', new_status: 'downloading',
@@ -2110,7 +2110,7 @@ describe('QualityGateOrchestrator', () => {
         getCompletedDownloads: vi.fn().mockResolvedValue([]),
         getCompletedDownloadById: vi.fn().mockResolvedValue({ download: baseDownload, book: baseBook }),
         atomicClaim: vi.fn().mockResolvedValue(true),
-        setStatus: vi.fn().mockResolvedValue(undefined),
+        hold: vi.fn().mockResolvedValue(undefined),
         processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
         approve: vi.fn(),
         reject: vi.fn(),
@@ -2140,9 +2140,9 @@ describe('QualityGateOrchestrator', () => {
       // out of processOneDownload so the composition-root bug is visible.
       await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
 
-      // Critical: setStatus('pending_review') must NOT be called — that is
+      // Critical: hold() (pending_review fallback) must NOT be called — that is
       // the recoverable-error fallback and would mask the wiring bug.
-      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(baseDownload.id, 'pending_review');
+      expect(qualityGateService.hold).not.toHaveBeenCalledWith(baseDownload.id);
     });
 
     // fail-fast contract: no state transitions before wire check.
@@ -2184,7 +2184,7 @@ describe('QualityGateOrchestrator', () => {
         getCompletedDownloads: vi.fn().mockResolvedValue([]),
         getCompletedDownloadById: vi.fn().mockResolvedValue(null),
         atomicClaim: vi.fn().mockResolvedValue(true),
-        setStatus: vi.fn().mockResolvedValue(undefined),
+        hold: vi.fn().mockResolvedValue(undefined),
         processDownload: vi.fn().mockResolvedValue({ action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } }),
         approve: vi.fn().mockResolvedValue({ id: 1, status: 'importing', download: baseDownload, book: baseBook }),
         reject: vi.fn().mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook }),

@@ -13,7 +13,7 @@ import type {
   suggestions,
 } from '../../db/schema.js';
 import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
 import type { BlacklistReason, BlacklistType } from '../../shared/schemas/blacklist.js';
 import type { DownloadProtocol } from '../../core/indexers/types.js';
 import type { DownloadClientType } from '../../shared/download-client-registry.js';
@@ -37,8 +37,12 @@ export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStat
   enrichmentStatus: EnrichmentStatus;
 };
 
-export type DownloadRow = Omit<typeof downloads.$inferSelect, 'status' | 'protocol' | 'bookStatusAtGrab'> & {
-  status: DownloadStatus;
+// Two-axis download state (#1445): narrow both axis columns to their Zod-derived
+// unions (Drizzle's $inferSelect widens text-enum columns to `string`). There is
+// no `status` column anymore — the display status is derived from the tuple.
+export type DownloadRow = Omit<typeof downloads.$inferSelect, 'clientStatus' | 'pipelineStage' | 'protocol' | 'bookStatusAtGrab'> & {
+  clientStatus: ClientStatus;
+  pipelineStage: PipelineStage;
   protocol: DownloadProtocol;
   bookStatusAtGrab: BookStatus | null;
 };

@@ -1,8 +1,15 @@
-import { eq, inArray, and, ne } from 'drizzle-orm';
+import { eq, and, or, ne } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
-import { getInProgressStatuses, getClientPolledStatuses } from '../../shared/download-status-registry.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import {
+  transitionDownloadState,
+  clientPolledDownloadCondition,
+  inProgressDownloadCondition,
+  completedDisplayDownloadCondition,
+} from '../utils/download-state.js';
+import type { ClientStatus } from '../../shared/schemas/activity.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
@@ -39,7 +46,7 @@ export async function monitorDownloads(
   const activeDownloads = await db
     .select()
     .from(downloads)
-    .where(inArray(downloads.status, getClientPolledStatuses()));
+    .where(clientPolledDownloadCondition());
 
   if (activeDownloads.length === 0) {
     log.trace('No active downloads to monitor');
@@ -90,10 +97,8 @@ async function handleMissingItem(
 ): Promise<void> {
   log.warn({ id: download.id }, 'Download not found in client');
   const errorMessage = 'Download not found in download client';
-  await db
-    .update(downloads)
-    .set({ status: 'failed', errorMessage })
-    .where(eq(downloads.id, download.id));
+  // Client-side failure: poller writes only the `clientStatus` axis.
+  await transitionDownloadState(db, download.id, { clientStatus: 'failed', errorMessage });
 
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage, log });
 
@@ -132,31 +137,32 @@ async function processDownloadUpdate(
 ): Promise<void> {
   const progress = item.progress / 100;
   const newStatus = mapDownloadStatus(item.status);
-  const isCompleted = newStatus === 'completed';
+  // Poller-owned rows are pipeline-idle, so the display status equals the client
+  // status — but derive it explicitly so the comparison stays correct.
+  const oldDisplay = deriveDisplayStatus(download.clientStatus, download.pipelineStage);
 
-  if (download.status !== newStatus) {
+  if (download.clientStatus !== newStatus) {
     log.info({ id: download.id, status: newStatus }, 'Download state changed');
   } else {
     log.debug({ id: download.id, progress }, 'Download progress');
   }
 
-  const isCompletionTransition = isCompleted && download.status !== 'completed';
+  const isCompleted = newStatus === 'completed';
+  const isCompletionTransition = isCompleted && download.clientStatus !== 'completed';
   const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log, isCompletionTransition);
 
   const progressChanged = progress !== download.progress;
-  await db
-    .update(downloads)
-    .set({
-      progress,
-      status: newStatus,
-      completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
-      ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
-      ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
-      ...(resolvedOutputPath ? { outputPath: resolvedOutputPath } : {}),
-    })
-    .where(eq(downloads.id, download.id));
+  // Client poller writes ONLY the `clientStatus` axis (never `pipelineStage`).
+  await transitionDownloadState(db, download.id, {
+    clientStatus: newStatus,
+    progress,
+    completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
+    ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
+    ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
+    ...(resolvedOutputPath ? { outputPath: resolvedOutputPath } : {}),
+  });
 
-  emitProgressEvents(download, progress, newStatus, item.downloadSpeed, broadcaster, log);
+  emitProgressEvents(download, oldDisplay, progress, newStatus, item.downloadSpeed, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
 
@@ -203,16 +209,19 @@ async function resolveOutputPath(
 /** Emit SSE progress and status change events. Each emit is independent so a failure in one doesn't skip the rest. */
 function emitProgressEvents(
   download: DownloadRow,
+  oldDisplay: DownloadStatus,
   progress: number,
-  newStatus: DownloadStatus,
+  newStatus: ClientStatus,
   downloadSpeed: number | undefined,
   broadcaster: EventBroadcasterService | undefined,
   log: FastifyBaseLogger,
 ): void {
   if (!download.bookId) return;
   safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: downloadSpeed ?? null, eta: null }, log);
-  if (download.status !== newStatus) {
-    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status, new_status: newStatus }, log);
+  // Both endpoints are derived display statuses. For a poller-owned (pipeline-idle)
+  // row the new display equals `newStatus`; suppress the emit when unchanged.
+  if (oldDisplay !== newStatus) {
+    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: oldDisplay, new_status: newStatus }, log);
   }
 }
 
@@ -226,7 +235,7 @@ async function handleFailureTransition(
   log: FastifyBaseLogger,
   eventHistory?: EventHistoryService,
 ): Promise<void> {
-  if (newStatus !== 'failed' || download.status === 'failed') return;
+  if (newStatus !== 'failed' || download.clientStatus === 'failed') return;
 
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage: errorMessage ?? 'Download failed', log });
 
@@ -248,7 +257,7 @@ function handleCompletionNotification(
   notifierService: NotifierService,
   log: FastifyBaseLogger,
 ): void {
-  if (!isCompleted || download.status === 'completed') return;
+  if (!isCompleted || download.clientStatus === 'completed') return;
 
   log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
 
@@ -383,15 +392,12 @@ async function handleDownloadFailure(
  */
 async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: number, log: FastifyBaseLogger): Promise<void> {
   // Recovery guard: in-progress statuses plus 'completed' (pre-import pipeline awareness)
-  const activeStatuses = [...getInProgressStatuses(), 'completed' as const];
-
-  // Check for other active downloads for the same book
   const otherActive = await db
     .select()
     .from(downloads)
     .where(and(
       eq(downloads.bookId, bookId),
-      inArray(downloads.status, [...activeStatuses]),
+      or(inProgressDownloadCondition(), completedDisplayDownloadCondition()),
       ne(downloads.id, failedDownloadId),
     ));
 
@@ -410,7 +416,7 @@ async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: numbe
 
 function mapDownloadStatus(
   status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'
-): 'queued' | 'downloading' | 'paused' | 'completed' | 'importing' | 'imported' | 'failed' {
+): ClientStatus {
   switch (status) {
     case 'downloading':
       return 'downloading';

@@ -1,6 +1,6 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import { DOWNLOAD_STATUSES } from '../shared/schemas/activity';
+import { CLIENT_STATUSES, PIPELINE_STAGES } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
 import { BOOK_STATUSES, ENRICHMENT_STATUSES } from '../shared/schemas/book';
 import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
@@ -250,11 +250,21 @@ export const downloads = sqliteTable('downloads', {
   downloadUrl: text('download_url'),
   size: integer('size'),
   seeders: integer('seeders'),
-  status: text('status', {
-    enum: DOWNLOAD_STATUSES,
+  // Two-axis download state (#1445). `clientStatus` is pure download-client
+  // truth (written only by the poller); `pipelineStage` is narratorr's
+  // processing overlay (written only by the quality-gate / import pipeline).
+  // The legacy single `status` column was split + backfilled into this pair;
+  // the derived display status (`deriveDisplayStatus`) is computed from it.
+  clientStatus: text('client_status', {
+    enum: CLIENT_STATUSES,
   })
     .notNull()
     .default('queued'),
+  pipelineStage: text('pipeline_stage', {
+    enum: PIPELINE_STAGES,
+  })
+    .notNull()
+    .default('idle'),
   progress: real('progress').notNull().default(0),
   externalId: text('external_id'),
   errorMessage: text('error_message'),
@@ -273,8 +283,8 @@ export const downloads = sqliteTable('downloads', {
   progressUpdatedAt: integer('progress_updated_at', { mode: 'timestamp' }),
   pendingCleanup: integer('pending_cleanup', { mode: 'timestamp' }),
 }, (table) => [
-  index('idx_downloads_status').on(table.status),
-  index('idx_downloads_status_completed').on(table.status, table.completedAt),
+  index('idx_downloads_status').on(table.clientStatus, table.pipelineStage),
+  index('idx_downloads_status_completed').on(table.clientStatus, table.completedAt),
   index('idx_downloads_book_id').on(table.bookId),
   index('idx_downloads_pending_cleanup').on(table.pendingCleanup),
 ]);

@@ -6,8 +6,7 @@ import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { downloads } from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { transitionDownloadState } from './download-state.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
@@ -405,11 +404,12 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
 async function revertAndRethrow(args: HandleImportFailureArgs): Promise<never> {
   const { error, db, downloadId, book, log, elapsedMs } = args;
 
-  // Revert download to failed
-  await db.update(downloads).set({
-    status: 'failed',
+  // Import failure → canonical failure tuple in one guarded UPDATE.
+  await transitionDownloadState(db, downloadId, {
+    clientStatus: 'failed',
+    pipelineStage: 'idle',
     errorMessage: getErrorMessage(error),
-  }).where(eq(downloads.id, downloadId));
+  });
 
   // Recover book status
   const revertStatus = await revertBookStatus(db, book);

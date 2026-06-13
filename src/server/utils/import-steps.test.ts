@@ -1151,7 +1151,7 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
 // ── handleImportFailure ─────────────────────────────────────────────────
 
 describe('handleImportFailure', () => {
-  const mockDb = { update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn() }) }) };
+  const mockDb = { update: vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) }) }) }) };
   const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 
   beforeEach(() => {
@@ -1196,7 +1196,7 @@ describe('handleImportFailure', () => {
 
   it('sets download status to failed with error message', async () => {
     const log = createMockLog();
-    const where = vi.fn();
+    const where = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) });
     const set = vi.fn().mockReturnValue({ where });
     const update = vi.fn().mockReturnValue({ set });
     const db = { update } as never;
@@ -1206,8 +1206,10 @@ describe('handleImportFailure', () => {
       downloadId: 42, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('broke');
 
+    // Import failure → canonical failure tuple (failed, idle) in one guarded update.
     expect(set).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
+      clientStatus: 'failed',
+      pipelineStage: 'idle',
       errorMessage: 'broke',
     }));
   });

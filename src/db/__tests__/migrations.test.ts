@@ -93,6 +93,64 @@ describe('drizzle baseline migration', () => {
     expect(suggestionColumns.has('dismissed_at'), 'expected survivor column suggestions.dismissed_at').toBe(true);
   });
 
+  // #1445 — the backfill (migration 0003) must reproduce the exact inverse of
+  // deriveDisplayStatus for every legacy `status` value. Drive the real backfill
+  // SQL against a seeded post-0002 table shape and assert the resulting tuple.
+  it('0003 backfill maps every legacy status to the correct (client_status, pipeline_stage) tuple', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-backfill-test-'));
+    const dbPath = join(tmpDir, 'test.db');
+
+    // The AC mapping table — hardcoded here so it is an independent regression
+    // guard, not a re-derivation of the production helper.
+    const EXPECTED: Record<string, { client: string; pipeline: string }> = {
+      queued: { client: 'queued', pipeline: 'idle' },
+      downloading: { client: 'downloading', pipeline: 'idle' },
+      paused: { client: 'paused', pipeline: 'idle' },
+      completed: { client: 'completed', pipeline: 'idle' },
+      failed: { client: 'failed', pipeline: 'idle' },
+      checking: { client: 'completed', pipeline: 'checking' },
+      pending_review: { client: 'completed', pipeline: 'pending_review' },
+      importing: { client: 'completed', pipeline: 'importing' },
+      imported: { client: 'completed', pipeline: 'imported' },
+    };
+
+    const client = createClient({ url: `file:${dbPath}` });
+    try {
+      // Reproduce the post-0002 table shape: legacy `status` plus the two new
+      // axis columns with their migration-0002 defaults.
+      await client.execute(
+        `CREATE TABLE downloads (
+           id INTEGER PRIMARY KEY,
+           status TEXT NOT NULL,
+           client_status TEXT NOT NULL DEFAULT 'queued',
+           pipeline_stage TEXT NOT NULL DEFAULT 'idle'
+         )`,
+      );
+      const legacyValues = Object.keys(EXPECTED);
+      for (let i = 0; i < legacyValues.length; i++) {
+        await client.execute({
+          sql: 'INSERT INTO downloads (id, status) VALUES (?, ?)',
+          args: [i + 1, legacyValues[i]!],
+        });
+      }
+
+      // Execute the real backfill SQL, statement by statement.
+      const sql = readFileSync(join(PROD_DRIZZLE, '0003_backfill_download_status_axes.sql'), 'utf-8');
+      for (const stmt of sql.split('--> statement-breakpoint')) {
+        const trimmed = stmt.replace(/^\s*--.*$/gm, '').trim();
+        if (trimmed) await client.execute(trimmed);
+      }
+
+      const rows = await client.execute('SELECT status, client_status, pipeline_stage FROM downloads');
+      for (const row of rows.rows) {
+        const legacy = row.status as string;
+        expect({ client: row.client_status, pipeline: row.pipeline_stage }).toEqual(EXPECTED[legacy]);
+      }
+    } finally {
+      client.close();
+    }
+  });
+
   it('is idempotent — re-running the migrator is a no-op', async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-baseline-test-'));
     const dbPath = join(tmpDir, 'test.db');
