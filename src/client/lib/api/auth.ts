@@ -20,6 +20,11 @@ export interface AuthConfig {
   localBypass: boolean;
 }
 
+export interface StreamToken {
+  token: string;
+  expiresInMs: number;
+}
+
 export const authApi = {
   getAuthStatus: () => fetchApi<AuthStatus>('/auth/status'),
 
@@ -43,6 +48,12 @@ export const authApi = {
     }),
 
   getAuthConfig: () => fetchApi<AuthConfig>('/auth/config'),
+
+  // Mint a short-lived, session-scoped stream token (#1453) for SSE auth. POST so
+  // it inherits the Basic-auth CSRF gate; `fetchApi` sends the X-Requested-With
+  // header and forwards the session cookie. Not API-key-reachable.
+  mintStreamToken: () =>
+    fetchApi<StreamToken>('/auth/stream-token', { method: 'POST' }),
 
   updateAuthConfig: (data: { mode?: AuthMode; localBypass?: boolean }) =>
     fetchApi<AuthConfig>('/auth/config', {

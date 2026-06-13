@@ -53,15 +53,19 @@ export interface SearchStreamActions {
   removeResult: (ref: { infoHash?: string; guid?: string }) => void;
 }
 
-/** Build the SSE stream URL with query, context, and api-key params. */
-function buildStreamUrl(query: string, context: SearchContext | undefined, apiKey: string): string {
+/** Build the SSE stream URL with query, context, and stream-token params (#1453). */
+function buildStreamUrl(query: string, context: SearchContext | undefined, token: string): string {
   const params = new URLSearchParams({ q: query });
   if (context?.author) params.set('author', context.author);
   if (context?.title) params.set('title', context.title);
   if (context?.bookDuration) params.set('bookDuration', String(context.bookDuration));
-  if (apiKey) params.set('apikey', apiKey);
+  if (token) params.set('token', token);
   return `${URL_BASE}/api/search/stream?${params.toString()}`;
 }
+
+// Re-mint the stream token before its server-side TTL (5 min, #1453) lapses so an
+// on-demand search never opens with a stale token.
+const STREAM_TOKEN_REFRESH_MS = 4 * 60 * 1000;
 
 /** Drop all results matching `ref` from a held response. A row matches when
  *  EITHER non-empty identifier in `ref` equals the row's corresponding
@@ -109,10 +113,14 @@ export function useSearchStream(
   const cancelledRef = useRef(new Set<number>());
   const finalizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { data: authConfig } = useQuery({
-    queryKey: queryKeys.auth.config(),
-    queryFn: api.getAuthConfig,
-    staleTime: Infinity,
+  // Mint a short-lived stream token (#1453) for SSE auth instead of reading the
+  // long-lived API key — the search-stream endpoint is no longer key-reachable.
+  const { data: streamToken } = useQuery({
+    queryKey: queryKeys.auth.streamToken(),
+    queryFn: api.mintStreamToken,
+    staleTime: STREAM_TOKEN_REFRESH_MS,
+    refetchInterval: STREAM_TOKEN_REFRESH_MS,
+    refetchOnWindowFocus: false,
   });
 
   const clearFinalizingTimeout = useCallback(() => {
@@ -131,8 +139,8 @@ export function useSearchStream(
   }, [clearFinalizingTimeout]);
 
   const start = useCallback(() => {
-    // Gate on auth config readiness — don't open an unauthenticated stream
-    if (!authConfig) return;
+    // Gate on stream-token readiness — don't open an unauthenticated stream
+    if (!streamToken) return;
 
     cleanup();
     setPhase('searching');
@@ -142,7 +150,7 @@ export function useSearchStream(
     setSessionId(null);
     cancelledRef.current.clear();
 
-    const url = buildStreamUrl(query, context, authConfig.apiKey ?? '');
+    const url = buildStreamUrl(query, context, streamToken.token ?? '');
     const es = new EventSource(url);
     esRef.current = es;
 
@@ -208,7 +216,7 @@ export function useSearchStream(
       setPhase('idle');
       es.close();
     };
-  }, [query, context, authConfig, cleanup, clearFinalizingTimeout]);
+  }, [query, context, streamToken, cleanup, clearFinalizingTimeout]);
 
   const cancelIndexer = useCallback((indexerId: number) => {
     if (!sessionId || cancelledRef.current.has(indexerId)) return;
@@ -265,7 +273,7 @@ export function useSearchStream(
 
   const hasResults = indexers.some(idx => idx.status === 'complete' && (idx.resultCount ?? 0) > 0);
 
-  const authReady = !!authConfig;
+  const authReady = !!streamToken;
 
   return {
     state: { phase, sessionId, indexers, results, error, hasResults, authReady },

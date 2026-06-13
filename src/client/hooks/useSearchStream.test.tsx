@@ -4,10 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useSearchStream } from './useSearchStream';
 
-// Mock api
+// Mock api — streams authenticate via a minted stream token (#1453), not the API key.
 vi.mock('@/lib/api', () => ({
   api: {
-    getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
+    mintStreamToken: vi.fn().mockResolvedValue({ token: 'test-stream-token', expiresInMs: 300_000 }),
     cancelSearchIndexer: vi.fn().mockResolvedValue({ cancelled: true }),
   },
 }));
@@ -68,7 +68,7 @@ describe('useSearchStream', () => {
     MockEventSource.instances = [];
     vi.stubGlobal('EventSource', MockEventSource);
     // Reset mock to default resolved value
-    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ apiKey: 'test-key' });
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockResolvedValue({ token: 'test-stream-token', expiresInMs: 300_000 });
   });
 
   afterEach(() => {
@@ -508,9 +508,9 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[2]!.status).toBe('pending');
   });
 
-  it('does not open EventSource when auth config is not yet loaded', () => {
+  it('does not open EventSource when the stream token is not yet minted', () => {
     // Override mock to return pending promise (never resolves during this test)
-    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 

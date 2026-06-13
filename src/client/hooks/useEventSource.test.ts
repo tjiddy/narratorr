@@ -103,19 +103,30 @@ function createWrapper() {
 
 describe('useEventSource', () => {
   describe('connection lifecycle', () => {
-    it('connects to /api/events with apikey query param', () => {
+    it('connects to /api/events with the stream token query param (#1453)', () => {
       const { wrapper } = createWrapper();
-      renderHook(() => useEventSource('test-api-key'), { wrapper });
+      renderHook(() => useEventSource('test-stream-token'), { wrapper });
 
       expect(MockEventSource.instances).toHaveLength(1);
-      expect(MockEventSource.instances[0]!.url).toBe('/api/events?apikey=test-api-key');
+      expect(MockEventSource.instances[0]!.url).toBe('/api/events?token=test-stream-token');
     });
 
-    it('does not connect when apiKey is null', () => {
+    it('does not connect when the stream token is null', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource(null), { wrapper });
 
       expect(MockEventSource.instances).toHaveLength(0);
+    });
+
+    it('invokes onStreamError when the EventSource errors so the caller can re-mint (#1453)', () => {
+      const { wrapper } = createWrapper();
+      const onStreamError = vi.fn();
+      renderHook(() => useEventSource('test-stream-token', onStreamError), { wrapper });
+
+      const es = MockEventSource.instances[0];
+      act(() => { es!.simulateError(); });
+
+      expect(onStreamError).toHaveBeenCalled();
     });
 
     it('cleans up EventSource on unmount', () => {

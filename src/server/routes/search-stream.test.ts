@@ -373,9 +373,23 @@ vi.mock('../config.js', () => ({
 describe('searchStreamRoutes — app.inject() integration', () => {
   let postProcessSpy: MockInstance;
 
+  // #1453 — the SSE/cancel routes are no longer API-key-reachable. Streams
+  // authenticate via a short-lived stream token (`?token=`); the cancel route
+  // (a plain POST) authenticates via the ambient non-key chain (here, a forms
+  // session cookie).
+  const VALID_STREAM_TOKEN = 'valid-stream-token';
+  const VALID_COOKIE = 'valid-cookie';
+
   function createMockAuthService(valid = false) {
     return {
       validateApiKey: vi.fn().mockResolvedValue(valid),
+      getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
+      verifyStreamToken: vi.fn().mockImplementation((token: string) =>
+        token === VALID_STREAM_TOKEN ? { kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 } : null),
+      verifySessionCookie: vi.fn().mockImplementation((cookie: string) =>
+        cookie === VALID_COOKIE
+          ? { payload: { username: 'admin', issuedAt: Date.now(), expiresAt: Date.now() + 1_000_000 }, shouldRenew: false }
+          : null),
       getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
       hasUser: vi.fn().mockResolvedValue(true),
     } as unknown as AuthService;
@@ -440,7 +454,8 @@ describe('searchStreamRoutes — app.inject() integration', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: `/api/search/stream/${session.sessionId}/cancel/1?apikey=valid-key`,
+      url: `/api/search/stream/${session.sessionId}/cancel/1`,
+      cookies: { narratorr_session: VALID_COOKIE },
     });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ cancelled: true });
@@ -448,9 +463,10 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     await app.close();
   });
 
-  it('successful GET with valid apikey and zero indexers returns SSE stream with empty results', async () => {
+  it('successful GET with a valid stream token and zero indexers returns SSE stream with empty results', async () => {
     // app.inject() hangs on hijacked SSE responses (per fastify-sse-hijack-testing learning),
-    // so use fetchSseEvents() to test the full Fastify stack over real HTTP.
+    // so use fetchSseEvents() to test the full Fastify stack over real HTTP. Auth is via
+    // the #1453 stream token (`?token=`), not the API key.
     const authService = createMockAuthService(true);
     const zeroIndexerSearchService = {
       ...createMockIndexerSearchService(),
@@ -475,7 +491,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     );
 
     try {
-      const { status, headers, events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { status, headers, events } = await fetchSseEvents(app, `/api/search/stream?q=test&token=${VALID_STREAM_TOKEN}`);
 
       // Auth accepted — 200 with SSE headers
       expect(status).toBe(200);
@@ -522,11 +538,91 @@ describe('searchStreamRoutes — app.inject() integration', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/search/stream/nonexistent/cancel/1?apikey=valid-key',
+      url: '/api/search/stream/nonexistent/cancel/1',
+      cookies: { narratorr_session: VALID_COOKIE },
     });
     expect(res.statusCode).toBe(404);
 
     await app.close();
+  });
+
+  // #1453 — cancel route (a plain POST, not hijacked) is fully inject-testable.
+  describe('cancel route auth matrix (#1453)', () => {
+    async function buildCancelApp() {
+      const authService = createMockAuthService(true);
+      const sessionMgr = new SearchSessionManager();
+      const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+      app.setValidatorCompiler(validatorCompiler);
+      app.setSerializerCompiler(serializerCompiler);
+      await app.register(cookie);
+      await app.register(authPlugin, { authService });
+      const { searchStreamRoutes } = await import('./search-stream.js');
+      await searchStreamRoutes(
+        app,
+        createMockIndexerSearchService(),
+        createMockBlacklistService(),
+        createMockSettingsService(),
+        mockIndexer,
+        sessionMgr,
+      );
+      await app.ready();
+      const session = sessionMgr.create([{ id: 1, name: 'Test' }]);
+      return { app, sessionId: session.sessionId };
+    }
+
+    it('rejects an API-key-only cancel (de-god-moded)', async () => {
+      const { app, sessionId } = await buildCancelApp();
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/search/stream/${sessionId}/cancel/1`,
+          headers: { 'x-api-key': 'valid-key' },
+        });
+        expect(res.statusCode).toBe(401);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('rejects a stream-token cancel (cancel is not an SSE endpoint)', async () => {
+      const { app, sessionId } = await buildCancelApp();
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/search/stream/${sessionId}/cancel/1?token=${VALID_STREAM_TOKEN}`,
+        });
+        expect(res.statusCode).toBe(401);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('accepts a forms-cookie cancel (no CSRF header needed in forms mode)', async () => {
+      const { app, sessionId } = await buildCancelApp();
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/search/stream/${sessionId}/cancel/1`,
+          cookies: { narratorr_session: VALID_COOKIE },
+        });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('rejects an unauthenticated cancel (forms mode, no creds)', async () => {
+      const { app, sessionId } = await buildCancelApp();
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/search/stream/${sessionId}/cancel/1`,
+        });
+        expect(res.statusCode).toBe(401);
+      } finally {
+        await app.close();
+      }
+    });
   });
 
 });

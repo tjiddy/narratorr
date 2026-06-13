@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { SSEProvider } from './SSEProvider';
-import type { AuthConfig } from '@/lib/api';
 
+// #1453 — SSEProvider mints a short-lived stream token and threads it into
+// useEventSource as `?token=`, instead of reading the long-lived API key.
 vi.mock('@/lib/api', () => ({
   api: {
-    getAuthConfig: vi.fn(),
+    mintStreamToken: vi.fn(),
   },
 }));
 
@@ -35,6 +36,8 @@ class MockEventSource {
   addEventListener() {}
   removeEventListener() {}
   close() { this.readyState = 2; }
+
+  simulateError() { this.onerror?.(new Event('error')); }
 }
 
 const originalEventSource = globalThis.EventSource;
@@ -60,20 +63,44 @@ function renderProvider() {
 }
 
 describe('SSEProvider', () => {
-  it('does not create an EventSource while auth config query is pending', () => {
-    vi.mocked(api.getAuthConfig).mockReturnValue(new Promise(() => {})); // never resolves
+  it('does not create an EventSource while the stream-token mint is pending', () => {
+    vi.mocked(api.mintStreamToken).mockReturnValue(new Promise(() => {})); // never resolves
     renderProvider();
     expect(MockEventSource.instances).toHaveLength(0);
   });
 
-  it('passes apiKey to useEventSource when auth config resolves', async () => {
-    const authConfig: AuthConfig = { mode: 'forms', apiKey: 'test-api-key', localBypass: false };
-    vi.mocked(api.getAuthConfig).mockResolvedValue(authConfig);
+  it('mints a stream token and opens the EventSource with ?token= (not ?apikey=)', async () => {
+    vi.mocked(api.mintStreamToken).mockResolvedValue({ token: 'minted-token', expiresInMs: 300_000 });
     renderProvider();
 
     await waitFor(() => {
       expect(MockEventSource.instances).toHaveLength(1);
     });
-    expect(MockEventSource.instances[0]!.url).toContain('apikey=test-api-key');
+    expect(MockEventSource.instances[0]!.url).toContain('token=minted-token');
+    expect(MockEventSource.instances[0]!.url).not.toContain('apikey=');
+  });
+
+  it('re-mints and reconnects on a stream error (e.g. token expiry) #1453', async () => {
+    // First mint → token1, second mint (after the error-driven refetch) → token2.
+    vi.mocked(api.mintStreamToken)
+      .mockResolvedValueOnce({ token: 'token1', expiresInMs: 300_000 })
+      .mockResolvedValueOnce({ token: 'token2', expiresInMs: 300_000 });
+
+    renderProvider();
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+    expect(MockEventSource.instances[0]!.url).toContain('token=token1');
+
+    // Simulate the stream dropping (expired token). The provider should re-mint
+    // and reopen with the fresh token rather than failing permanently.
+    act(() => { MockEventSource.instances[0]!.simulateError(); });
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(api.mintStreamToken).toHaveBeenCalledTimes(2);
+    expect(MockEventSource.instances.at(-1)!.url).toContain('token=token2');
   });
 });

@@ -40,6 +40,7 @@ export const queryKeys = {
     status: () => ['auth', 'status'] as const,
     adminStatus: () => ['auth', 'admin-status'] as const,
     config: () => ['auth', 'config'] as const,
+    streamToken: () => ['auth', 'stream-token'] as const,
   },
   eventHistory: {
     root: () => ['eventHistory'] as const,

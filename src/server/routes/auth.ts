@@ -1,6 +1,6 @@
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
-import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
+import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError, STREAM_TOKEN_TTL_MS } from '../services/auth.service.js';
 import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
 import { config } from '../config.js';
 import { isPrivateIp } from '../plugins/auth.js';
@@ -204,6 +204,19 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       }
     },
   );
+
+  // POST /api/auth/stream-token — protected, mints a short-lived stream token (#1453).
+  // Reaching this handler means the request already passed the non-key auth chain
+  // (forms cookie / basic+CSRF / none / LAN bypass) in the auth plugin — the route
+  // is NOT under `/api/v*`, so the API key cannot authenticate it, and the plugin
+  // never accepts a stream token here (stream tokens are accepted only on the SSE
+  // endpoints), so a stream token cannot mint another. Basic-auth callers reach
+  // this POST through the existing `enforceCsrf` gate (X-Requested-With required).
+  app.post('/api/auth/stream-token', async () => {
+    const secret = await authService.getSessionSecret();
+    const token = authService.mintStreamToken(secret);
+    return { token, expiresInMs: STREAM_TOKEN_TTL_MS };
+  });
 
   // POST /api/auth/api-key/regenerate — protected
   app.post('/api/auth/api-key/regenerate', {

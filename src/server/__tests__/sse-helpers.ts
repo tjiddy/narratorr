@@ -93,15 +93,23 @@ export function parseSseFrames(body: string): SseEvent[] {
  * The returned `headers` is the Fetch API `Headers` instance directly off the
  * response — not a rebuilt object — so case-insensitive lookups via
  * `headers.get('content-type')` work as expected.
+ *
+ * Pass `init` (a `RequestInit`) to exercise non-key acceptance over real HTTP —
+ * e.g. a Basic `Authorization` header or a session `Cookie` (#1453). Stream-token
+ * auth travels as a `?token=` query param in `path` and needs no `init`.
  */
-export async function fetchSseEvents(app: FastifyInstance, path: string): Promise<FetchSseResult> {
+export async function fetchSseEvents(
+  app: FastifyInstance,
+  path: string,
+  init?: RequestInit,
+): Promise<FetchSseResult> {
   if (!app.server.listening) {
     await app.listen({ port: 0, host: '127.0.0.1' });
   }
   const address = app.server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}${path}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, init);
   const body = await res.text();
   const events = parseSseFrames(body);
 

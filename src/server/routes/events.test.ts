@@ -135,9 +135,16 @@ describe('GET /api/events', () => {
       await app.close();
     });
 
-    it('returns 401 with invalid API key', async () => {
+    it('rejects the API key on /api/events even when valid (de-god-moded #1453)', async () => {
+      // Post-#1453 the SSE endpoints are no longer API-key-reachable — they use a
+      // short-lived stream token. A valid key on `/api/events` (a non-`v*` path)
+      // is ignored; the forms-mode chain (no cookie) returns 401, and the key is
+      // never validated.
       const authService = {
-        validateApiKey: vi.fn().mockResolvedValue(false),
+        validateApiKey: vi.fn().mockResolvedValue(true),
+        getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
+        verifyStreamToken: vi.fn().mockReturnValue(null),
+        verifySessionCookie: vi.fn().mockReturnValue(null),
         getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
         hasUser: vi.fn().mockResolvedValue(true),
       } as unknown as AuthService;
@@ -150,9 +157,34 @@ describe('GET /api/events', () => {
       await eventsRoutes(app, broadcaster);
       await app.ready();
 
-      const res = await app.inject({ method: 'GET', url: '/api/events?apikey=bad-key' });
+      const res = await app.inject({ method: 'GET', url: '/api/events?apikey=valid-key' });
       expect(res.statusCode).toBe(401);
-      expect(authService.validateApiKey).toHaveBeenCalledWith('bad-key');
+      expect(authService.validateApiKey).not.toHaveBeenCalled();
+
+      await app.close();
+    });
+
+    it('rejects an invalid stream token on /api/events (forms mode, no cookie)', async () => {
+      const authService = {
+        validateApiKey: vi.fn().mockResolvedValue(false),
+        getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
+        verifyStreamToken: vi.fn().mockReturnValue(null),
+        verifySessionCookie: vi.fn().mockReturnValue(null),
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+        hasUser: vi.fn().mockResolvedValue(true),
+      } as unknown as AuthService;
+
+      const app = Fastify({ logger: false });
+      await app.register(cookie);
+      await app.register(authPlugin, { authService });
+
+      const { eventsRoutes } = await import('./events.js');
+      await eventsRoutes(app, broadcaster);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/api/events?token=bogus' });
+      expect(res.statusCode).toBe(401);
+      expect(authService.verifyStreamToken).toHaveBeenCalledWith('bogus', 'test-secret');
 
       await app.close();
     });

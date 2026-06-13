@@ -141,8 +141,14 @@ function asPayload<T extends SSEEventType>(data: SSEEventPayloads[SSEEventType])
 /**
  * Connects to the SSE endpoint and handles cache invalidation + toast notifications.
  * Should be mounted once at the app root.
+ *
+ * `streamToken` is the short-lived, session-scoped token (#1453) passed as the
+ * `?token=` query param — EventSource cannot set headers. A null token means
+ * "not ready yet" and no connection is opened. `onStreamError` (optional) fires
+ * on the EventSource `error` event so the caller can re-mint an expired token and
+ * reconnect (the token changing re-runs this effect).
  */
-export function useEventSource(apiKey: string | null) {
+export function useEventSource(streamToken: string | null, onStreamError?: () => void) {
   const queryClient = useQueryClient();
   const esRef = useRef<EventSource | null>(null);
 
@@ -162,9 +168,9 @@ export function useEventSource(apiKey: string | null) {
   }, [queryClient]);
 
   useEffect(() => {
-    if (!apiKey) return;
+    if (!streamToken) return;
 
-    const url = `${URL_BASE}/api/events?apikey=${encodeURIComponent(apiKey)}`;
+    const url = `${URL_BASE}/api/events?token=${encodeURIComponent(streamToken)}`;
     const es = new EventSource(url);
     esRef.current = es;
 
@@ -174,7 +180,10 @@ export function useEventSource(apiKey: string | null) {
 
     es.onerror = () => {
       setSseConnected(false);
-      // Browser auto-reconnects; on reconnect we invalidate everything
+      // Browser auto-reconnects with the same URL; if the token has expired that
+      // reconnect keeps failing, so ask the caller to re-mint (#1453). A fresh
+      // token changes the effect dependency and reopens the connection.
+      onStreamError?.();
     };
 
     // Listen for each event type — derived from schema (single source of truth)
@@ -211,7 +220,7 @@ export function useEventSource(apiKey: string | null) {
       es.close();
       esRef.current = null;
     };
-  }, [apiKey, handleEvent, queryClient]);
+  }, [streamToken, handleEvent, queryClient, onStreamError]);
 }
 
 function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
