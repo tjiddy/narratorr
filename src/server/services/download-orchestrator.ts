@@ -10,7 +10,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import { eq } from 'drizzle-orm';
 import { books } from '../../db/schema.js';
-import { revertBookStatus } from '../utils/book-status.js';
+import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import {
   emitGrabStarted, emitBookStatusChangeOnGrab, emitDownloadProgress,
   emitDownloadStatusChange, emitBookStatusChange, notifyGrab,
@@ -74,10 +74,12 @@ export class DownloadOrchestrator {
     if (params.bookId) {
       // Update book status in DB (downloading, or missing for handoff)
       const bookStatus = isHandoff ? 'missing' as const : 'downloading' as const;
-      await this.db.update(books).set({ status: bookStatus, updatedAt: new Date() }).where(eq(books.id, params.bookId));
+      await transitionBookStatus(this.db, params.bookId, { status: bookStatus });
 
       this.safe(() => emitGrabStarted({ broadcaster: this.broadcaster, downloadId: download.id, bookId: params.bookId!, bookTitle: params.title, releaseTitle: params.title, log: this.log }));
-      this.safe(() => emitBookStatusChangeOnGrab({ broadcaster: this.broadcaster, bookId: params.bookId!, isHandoff, log: this.log }));
+      // Grab SSE old_status uses the captured pre-grab lifecycle, so a re-grab from
+      // failed/missing/imported reports the true transition (not a hardcoded 'wanted').
+      this.safe(() => emitBookStatusChangeOnGrab({ broadcaster: this.broadcaster, bookId: params.bookId!, isHandoff, oldStatus: bookStatusAtGrab, log: this.log }));
     }
 
     this.safe(() => notifyGrab({ notifierService: this.notifierService, title: params.title, size: params.size, log: this.log }));
@@ -114,7 +116,10 @@ export class DownloadOrchestrator {
     // Side effects — each independently guarded
     if (download.bookId) {
       try {
-        const revertStatus = await revertBookStatus(this.db, { id: download.bookId, path: download.book?.path ?? null });
+        // Restore the explicit pre-grab lifecycle (the captured snapshot), never a
+        // path-inferred guess — a book that was failed/missing before the grab is
+        // restored to that exact state.
+        const revertStatus = await revertBookStatus(this.db, { id: download.bookId }, download.bookStatusAtGrab ?? null);
         this.safe(() => emitBookStatusChange({ broadcaster: this.broadcaster, bookId: download.bookId!, oldStatus: oldBookStatus, newStatus: revertStatus, log: this.log }));
       } catch (revertError: unknown) {
         this.log.warn({ error: serializeError(revertError) }, 'Failed to revert book status during cancel');

@@ -2312,6 +2312,7 @@ describe('ImportQueueWorker', () => {
       bookId: 601,
       bookTitle: 'Test Book',
       bookStatus: 'wanted',
+      bookStatusAtGrab: 'wanted',
       bookPath: null,
       authorName: 'Test Author',
       narratorStr: null,

@@ -11,11 +11,10 @@ import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BookRow, DownloadRow } from './types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 import { NULL_REASON } from './quality-gate.types.js';
-import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { resolveSavePath } from '../utils/download-path.js';
-import { revertBookStatus } from '../utils/book-status.js';
+import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
@@ -112,7 +111,7 @@ export class QualityGateOrchestrator {
 
     // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
     if (row.book) {
-      await this.db.update(books).set({ status: 'importing' }).where(eq(books.id, row.book.id));
+      await transitionBookStatus(this.db, row.book.id, { status: 'importing' });
       safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status, new_status: 'importing' }, this.log);
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
       row.book.status = 'importing'; // Update in-memory so revert guards work
@@ -135,7 +134,7 @@ export class QualityGateOrchestrator {
       await this.qualityGateService.hold(row.download.id);
       // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
-        await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
+        await transitionBookStatus(this.db, row.book.id, { status: 'downloading', expected: { status: 'importing' } });
         safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
       }
       const probeError = getErrorMessage(error);
@@ -276,7 +275,7 @@ export class QualityGateOrchestrator {
       safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
       // Revert book from importing → downloading (monitor pre-promoted on completion)
       if (book.status === 'importing') {
-        await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
+        await transitionBookStatus(this.db, book.id, { status: 'downloading', expected: { status: 'importing' } });
         safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
       }
     }
@@ -301,7 +300,7 @@ export class QualityGateOrchestrator {
         safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
         // Revert book from importing → downloading (monitor pre-promoted on completion)
         if (book.status === 'importing') {
-          await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, book.id));
+          await transitionBookStatus(this.db, book.id, { status: 'downloading', expected: { status: 'importing' } });
           safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
         }
       }
@@ -337,9 +336,10 @@ export class QualityGateOrchestrator {
 
     await this.gatedRejectionCleanup(download);
 
-    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
+    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review).
+    // Restore the explicit pre-grab lifecycle (snapshot), never a path-inferred guess.
     if (book) {
-      const revertStatus = await revertBookStatus(this.db, book);
+      const revertStatus = await revertBookStatus(this.db, { id: book.id }, download.bookStatusAtGrab ?? null);
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' }, this.log);
       safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: book.status, new_status: revertStatus }, this.log);
     }

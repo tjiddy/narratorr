@@ -9,6 +9,7 @@ import type {
   PhaseHistoryEntry,
 } from '../../shared/schemas/import-job.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
+import { transitionBookStatus } from '../utils/book-status.js';
 
 export interface ImportJobListing {
   id: number;
@@ -157,10 +158,7 @@ export class BookImportService {
           return enqueued;
         }
 
-        await tx
-          .update(books)
-          .set({ status: 'importing', updatedAt: new Date() })
-          .where(eq(books.id, bookId));
+        await transitionBookStatus(tx, bookId, { status: 'importing' });
 
         return { jobId: enqueued.jobId };
       });

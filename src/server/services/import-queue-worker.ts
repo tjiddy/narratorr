@@ -13,6 +13,7 @@ import { getRowsAffected } from '../utils/db-helpers.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { sweepCommitPendingMarkers } from '../utils/import-staging.js';
+import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
 
@@ -117,10 +118,9 @@ export class ImportQueueWorker {
           }).where(eq(importJobs.id, orphan.id));
 
           if (orphan.bookId != null) {
-            await tx.update(books).set({
-              status: 'failed',
-              updatedAt: now,
-            }).where(eq(books.id, orphan.bookId));
+            // Guarded book write in the SAME transaction as the job write (#1448):
+            // both rows commit together or neither does.
+            await transitionBookStatus(tx, orphan.bookId, { status: 'failed' });
           }
         });
         recovered++;
@@ -379,10 +379,9 @@ export class ImportQueueWorker {
       }).where(eq(importJobs.id, jobId));
 
       if (bookId != null) {
-        await tx.update(books).set({
-          status: 'failed',
-          updatedAt: now,
-        }).where(eq(books.id, bookId));
+        // Guarded book write in the SAME transaction as the job write (#1448):
+        // both rows commit together or neither does.
+        await transitionBookStatus(tx, bookId, { status: 'failed' });
       }
     });
 

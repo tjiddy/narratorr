@@ -17,6 +17,7 @@ import {
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+import { REVERT_FALLBACK_STATUS } from '../utils/book-status.js';
 import type { BookImportService } from './book-import.service.js';
 import { WireOnce } from './wire-helpers.js';
 
@@ -151,8 +152,10 @@ export class ImportOrchestrator {
   }
 
   private dispatchFailureSideEffects(error: unknown, ctx: ImportContext): void {
-    // Fire-and-forget: SSE failure — use 'wanted' as reverted status since we don't know the exact revert
-    emitImportFailure({ broadcaster: this.broadcaster, downloadId: ctx.downloadId, bookId: ctx.bookId, revertedBookStatus: ctx.bookPath ? 'imported' : 'wanted', log: this.log });
+    // Fire-and-forget: SSE failure — emit the REAL reverted lifecycle (the pre-grab
+    // snapshot, falling back to the conservative REVERT_FALLBACK_STATUS for legacy
+    // null rows) so the payload matches the persisted revert. Never path-derived.
+    emitImportFailure({ broadcaster: this.broadcaster, downloadId: ctx.downloadId, bookId: ctx.bookId, revertedBookStatus: ctx.bookStatusAtGrab ?? REVERT_FALLBACK_STATUS, log: this.log });
 
     // Fire-and-forget: failure notification
     notifyImportFailure({ notifierService: this.notifierService, downloadTitle: ctx.downloadTitle, error, log: this.log });

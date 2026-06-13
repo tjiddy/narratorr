@@ -14,6 +14,7 @@ import type { RenameableBook } from '../../utils/paths.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
+import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
@@ -119,7 +120,7 @@ export class ManualImportAdapter implements ImportAdapter {
         buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null),
       );
 
-      await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
+      await transitionBookStatus(db, bookId, { status: 'imported' });
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
 
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))

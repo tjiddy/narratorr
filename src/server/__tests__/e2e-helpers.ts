@@ -167,6 +167,9 @@ export async function seedBookAndDownload(
     externalId: opts.externalId ?? 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
     clientStatus: 'completed' as const,
     pipelineStage: 'idle' as const,
+    // Pre-grab lifecycle snapshot — the book was 'wanted' when grabbed, so a failed
+    // import reverts it to 'wanted' (the authoritative revert reads this, not path).
+    bookStatusAtGrab: 'wanted' as const,
     completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
   }).returning();
 

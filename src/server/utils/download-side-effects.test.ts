@@ -59,34 +59,52 @@ describe('emitGrabStarted', () => {
 });
 
 describe('emitBookStatusChangeOnGrab', () => {
-  it('emits book_status_change SSE with old_status=wanted, new_status=downloading', () => {
+  it('emits book_status_change SSE with the captured prior lifecycle as old_status (wanted → downloading)', () => {
     const broadcaster = createMockBroadcaster();
     const log = createMockLog();
-    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: false, log });
+    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: false, oldStatus: 'wanted', log });
     expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
       book_id: 2, old_status: 'wanted', new_status: 'downloading',
     });
   });
 
-  it('emits book_status_change SSE with new_status=missing for handoff clients', () => {
+  it('uses the real prior lifecycle for a re-grab (failed → downloading), not a hardcoded wanted', () => {
     const broadcaster = createMockBroadcaster();
     const log = createMockLog();
-    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: true, log });
+    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: false, oldStatus: 'failed', log });
     expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
-      book_id: 2, old_status: 'wanted', new_status: 'missing',
+      book_id: 2, old_status: 'failed', new_status: 'downloading',
+    });
+  });
+
+  it('emits the real prior lifecycle on a handoff re-grab (imported → missing)', () => {
+    const broadcaster = createMockBroadcaster();
+    const log = createMockLog();
+    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: true, oldStatus: 'imported', log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+      book_id: 2, old_status: 'imported', new_status: 'missing',
+    });
+  });
+
+  it('falls back to wanted when no snapshot is available (null)', () => {
+    const broadcaster = createMockBroadcaster();
+    const log = createMockLog();
+    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: false, oldStatus: null, log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+      book_id: 2, old_status: 'wanted', new_status: 'downloading',
     });
   });
 
   it('skips emission when broadcaster is undefined', () => {
     const log = createMockLog();
-    emitBookStatusChangeOnGrab({ broadcaster: undefined, bookId: 2, isHandoff: false, log });
+    emitBookStatusChangeOnGrab({ broadcaster: undefined, bookId: 2, isHandoff: false, oldStatus: 'wanted', log });
   });
 
   it('catches and logs SSE emission errors', () => {
     const broadcaster = createMockBroadcaster();
     (broadcaster.emit as ReturnType<typeof vi.fn>).mockImplementation(() => { throw new Error('SSE fail'); });
     const log = createMockLog();
-    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: false, log });
+    emitBookStatusChangeOnGrab({ broadcaster, bookId: 2, isHandoff: false, oldStatus: 'wanted', log });
     expect(log.debug).toHaveBeenCalled();
   });
 });

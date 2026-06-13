@@ -67,6 +67,7 @@ const mockContext: ImportContext = {
   bookId: 1,
   bookTitle: 'The Way of Kings',
   bookStatus: 'wanted',
+  bookStatusAtGrab: 'wanted',
   bookPath: null,
   authorName: 'Brandon Sanderson',
   narratorStr: 'Michael Kramer',
@@ -227,9 +228,10 @@ describe('ImportOrchestrator', () => {
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(importError);
     });
 
-    it('dispatches failure SSE when importService.importDownload throws', async () => {
+    it('dispatches failure SSE with the real prior lifecycle (snapshot) as reverted status', async () => {
       await expect(orchestrator.importDownload(1)).rejects.toThrow('Import pipeline crashed');
 
+      // mockContext.bookStatusAtGrab === 'wanted' → reverted status mirrors the snapshot.
       expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
         downloadId: 1, bookId: 1, revertedBookStatus: 'wanted',
       }));
@@ -255,9 +257,23 @@ describe('ImportOrchestrator', () => {
       await expect(orchestrator.importDownload(1)).rejects.toBe(importError);
     });
 
-    it('uses "imported" as reverted book status when book had a path (upgrade)', async () => {
-      const upgradeCtx = { ...mockContext, bookPath: '/audiobooks/old/path' };
-      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(upgradeCtx);
+    it('uses the real prior lifecycle (failed) even when the book has a path — path no longer drives the value', async () => {
+      // A book in 'failed' before this import, but with a path on disk. The old
+      // path-derived logic would force 'imported'; the snapshot must win.
+      const failedCtx = { ...mockContext, bookStatusAtGrab: 'failed' as const, bookPath: '/audiobooks/old/path' };
+      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(failedCtx);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        revertedBookStatus: 'failed',
+      }));
+    });
+
+    it('falls back to the conservative REVERT_FALLBACK_STATUS when the snapshot is null (legacy rows)', async () => {
+      // Null snapshot + a path present: must NOT path-infer; falls back to 'imported'.
+      const legacyCtx = { ...mockContext, bookStatusAtGrab: null, bookPath: '/audiobooks/old/path' };
+      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(legacyCtx);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
 

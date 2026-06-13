@@ -6,6 +6,7 @@ import { books, authors, bookAuthors } from '../../db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '../../core/utils/parse.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
+import { transitionBookStatus } from '../utils/book-status.js';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
@@ -135,13 +136,20 @@ export class LibraryScanService {
         }
 
         if (row.status === 'imported' && !exists) {
-          await this.db.update(books).set({ status: 'missing', updatedAt: new Date() }).where(eq(books.id, row.id));
-          this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
-          missing++;
+          // Guarded: only flip imported → missing if the row is STILL imported. A
+          // concurrent in-flight import (importing) must not be clobbered by the
+          // scan's reconciliation, which read row.status before the import landed.
+          const flipped = await transitionBookStatus(this.db, row.id, { status: 'missing', expected: { status: 'imported' } });
+          if (flipped) {
+            this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
+            missing++;
+          }
         } else if (row.status === 'missing' && exists) {
-          await this.db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, row.id));
-          this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
-          restored++;
+          const flipped = await transitionBookStatus(this.db, row.id, { status: 'imported', expected: { status: 'missing' } });
+          if (flipped) {
+            this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
+            restored++;
+          }
         }
       }
 

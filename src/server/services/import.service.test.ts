@@ -129,6 +129,9 @@ const mockDownload = {
   addedAt: now,
   completedAt: new Date(Date.now() - 3600_000), // 1 hour ago
   guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
+  // Default pre-grab snapshot: a normal first-download (book was 'wanted' at grab),
+  // so a failed import reverts the book to 'wanted'. Override per-test for upgrades.
+  bookStatusAtGrab: 'wanted' as const,
 };
 
 const defaultDownloadItem = {
@@ -1131,7 +1134,8 @@ describe('ImportService', () => {
     it('post-commit DB failure preserves the committed new target AND the old path, reverting the book to imported', async () => {
       // Move re-import: old path differs from targetPath → protectTarget starts false.
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: OLD_PATH })));
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      // Pre-grab snapshot: book was 'imported' (re-import of an existing book) → revert to 'imported'.
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'imported' }]));
       failPostCommitUpdate(); // commit succeeds (rename resolves by default), then update #3 throws
 
       await expect(service.importDownload(1)).rejects.toThrow('constraint violation');
@@ -1210,13 +1214,14 @@ describe('ImportService', () => {
   describe('book status recovery on import failure', () => {
     beforeEach(setupDefaults);
 
-    it('reverts book to imported when import fails and book has a path', async () => {
+    it('reverts book to its imported pre-grab snapshot when an upgrade import fails', async () => {
       const importedBook = createMockDbBook({
         status: 'downloading' as const,
         path: '/audiobooks/existing',
       });
       mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      // Pre-grab snapshot: the book was 'imported' (an auto-upgrade replacement that failed).
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'imported' }]));
       db.update.mockReturnValue(mockDbChain());
 
       // Make stat throw to trigger failure
@@ -1235,8 +1240,9 @@ describe('ImportService', () => {
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
     });
 
-    it('reverts book to wanted when import fails and book has no path', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+    it('reverts book to its wanted pre-grab snapshot when a first-download import fails', async () => {
+      // Pre-grab snapshot: the book was 'wanted' (a normal first-download flow).
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
@@ -1259,7 +1265,8 @@ describe('ImportService', () => {
         path: '/audiobooks/existing',
       });
       mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      // Pre-grab snapshot: book was 'imported' (upgrade replacement that fails on copy).
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'imported' }]));
       db.update.mockReturnValue(mockDbChain());
 
       const cpMock = vi.mocked(cp);
@@ -1281,7 +1288,7 @@ describe('ImportService', () => {
     beforeEach(setupDefaults);
 
     it('preserves targetPath when DB update throws after copy (#1257 — committed version protected)', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
 
       // First two updates succeed (book status='importing', download status='importing')
       // Then fail on the book update (status='imported', path=targetPath)
@@ -1328,7 +1335,7 @@ describe('ImportService', () => {
       // targetPath cleanup rm only fires on a PRE-commit failure (protectTarget
       // still false). Trigger one via a copy failure so this still exercises the
       // "Failed to clean up target path" warn-log + DB-revert-continues behavior.
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
       db.update.mockReturnValue(mockDbChain());
 
       vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during copy'));

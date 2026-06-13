@@ -2,7 +2,7 @@ import { eq, and, isNotNull } from 'drizzle-orm';
 import { normalize } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '../../db/schema.js';
+import { downloads } from '../../db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
@@ -23,6 +23,7 @@ import {
 import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 import { transitionDownloadState, completedDisplayDownloadCondition } from '../utils/download-state.js';
+import { transitionBookStatus } from '../utils/book-status.js';
 import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
@@ -61,6 +62,8 @@ export interface ImportContext {
   bookId: number;
   bookTitle: string;
   bookStatus: BookStatus;
+  /** Pre-grab lifecycle snapshot — the real prior status to revert to on failure. */
+  bookStatusAtGrab: BookStatus | null;
   bookPath: string | null;
   authorName: string | null;
   narratorStr: string | null;
@@ -101,6 +104,7 @@ export class ImportService {
       bookId: book.id,
       bookTitle: book.title,
       bookStatus: book.status,
+      bookStatusAtGrab: download.bookStatusAtGrab ?? null,
       bookPath: book.path,
       authorName,
       narratorStr,
@@ -197,8 +201,8 @@ export class ImportService {
       protectTarget = true;
 
       await this.db.transaction(async (tx) => {
-        await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
-        // Pipeline-only write, in-transaction with the book promotion.
+        // Book promotion + pipeline write commit together (single transaction).
+        await transitionBookStatus(tx, book.id, { status: 'imported', path: targetPath!, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null });
         await transitionDownloadState(tx, downloadId, { pipelineStage: 'imported' });
       });
 
@@ -222,7 +226,8 @@ export class ImportService {
       // Orchestrator catches the rethrow for failure-path side effects.
       return handleImportFailure({
         error, targetPath, stagingPath, backupPath, libraryRoot, protectTarget,
-        db: this.db, downloadId, book, log: this.log, elapsedMs: Date.now() - startMs,
+        db: this.db, downloadId, book, bookStatusAtGrab: download.bookStatusAtGrab ?? null,
+        log: this.log, elapsedMs: Date.now() - startMs,
       });
     }
   }
