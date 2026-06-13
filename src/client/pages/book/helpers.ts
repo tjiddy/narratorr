@@ -30,8 +30,8 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const publisher = metadataBook?.publisher;
   const year = formatYear(libraryBook.publishedDate || metadataBook?.publishedDate);
   const status = requireDefined(
-    bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted,
-    `mergeBookData: bookStatusConfig missing both "${libraryBook.status}" and fallback "wanted"`,
+    bookStatusConfig[libraryBook.status],
+    `mergeBookData: bookStatusConfig missing entry for "${libraryBook.status}"`,
   );
   const narratorNames = (libraryBook.narrators.length > 0 ? libraryBook.narrators.map((n) => n.name).join(', ') : null) || metadataBook?.narrators?.join(', ');
 

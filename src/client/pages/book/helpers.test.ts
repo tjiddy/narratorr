@@ -54,12 +54,13 @@ describe('mergeBookData', () => {
       expect(result.statusBarClass).toBe(bookStatusConfig.imported!.barClass);
     });
 
-    it('falls back to wanted config for unknown status string', () => {
+    // #1447 (S2d) — the `?? bookStatusConfig.wanted` masking fallback was removed.
+    // bookStatusConfig is now drift-guarded to set-equal BOOK_STATUSES, so every
+    // canonical status resolves first-class; an off-enum value surfaces the drift
+    // (throws) instead of being silently masked as "Wanted".
+    it('surfaces an off-enum status instead of masking it as wanted', () => {
       const book = createMockBook({ status: 'nonexistent' as unknown as BookStatus });
-      const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.wanted!.dotClass);
-      expect(result.statusBarClass).toBe(bookStatusConfig.wanted!.barClass);
-      expect(result.statusLabel).toBe('Wanted');
+      expect(() => mergeBookData(book)).toThrow(/missing entry for "nonexistent"/);
     });
   });
 
