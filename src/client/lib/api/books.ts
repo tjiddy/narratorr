@@ -1,4 +1,4 @@
-import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
+import type { BookStatus, EnrichmentStatus, LibraryFilterBucket } from '../../../shared/schemas.js';
 import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
@@ -243,7 +243,10 @@ export interface BookListParams {
   offset?: number;
 }
 
-export interface LibraryBookListParams extends BookListParams {
+// The library list filter carries a `LibraryFilterBucket` (bucket key), not a
+// per-book `BookStatus` — `all` is a client-only sentinel omitted from the wire.
+export interface LibraryBookListParams extends Omit<BookListParams, 'status'> {
+  status?: LibraryFilterBucket;
   collapse?: boolean;
 }
 

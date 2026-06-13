@@ -1,30 +1,39 @@
 import { resolveBookQualityInputs, toSortTitle } from '@core/utils/index.js';
 import type { LibraryBookListItem } from '@/lib/api';
+import {
+  LIBRARY_FILTER_BUCKETS,
+  LIBRARY_FILTER_VALUES,
+  type LibraryFilterValue,
+} from '../../../shared/schemas/book.js';
 
-export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported' | 'failed' | 'missing';
+export type StatusFilter = LibraryFilterValue;
 export type SortField = 'createdAt' | 'title' | 'author' | 'narrator' | 'series' | 'quality' | 'size' | 'format';
 export type SortDirection = 'asc' | 'desc';
 
 export type DisplayBook = LibraryBookListItem;
 
-export const filterTabs: { key: StatusFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'wanted', label: 'Wanted' },
-  { key: 'downloading', label: 'Downloading' },
-  { key: 'imported', label: 'Imported' },
-  { key: 'failed', label: 'Failed' },
-  { key: 'missing', label: 'Missing' },
-];
+const FILTER_LABELS: Record<StatusFilter, string> = {
+  all: 'All',
+  wanted: 'Wanted',
+  downloading: 'Downloading',
+  imported: 'Imported',
+  failed: 'Failed',
+  missing: 'Missing',
+};
+
+/** Dropdown tabs derived from the canonical filter vocabulary — order and
+ *  membership track `LIBRARY_FILTER_VALUES`, so the client can never offer a
+ *  bucket the server doesn't count. */
+export const filterTabs: { key: StatusFilter; label: string }[] = LIBRARY_FILTER_VALUES.map(
+  (key) => ({ key, label: FILTER_LABELS[key] }),
+);
 
 
 export function matchesStatusFilter(status: string, filter: StatusFilter): boolean {
   if (filter === 'all') return true;
-  if (filter === 'wanted') return status === 'wanted';
-  if (filter === 'downloading') return status === 'searching' || status === 'downloading';
-  if (filter === 'imported') return status === 'imported' || status === 'importing';
-  if (filter === 'failed') return status === 'failed';
-  if (filter === 'missing') return status === 'missing';
-  return false;
+  // Drive membership from the canonical bucket map, not hardcoded literals, so it
+  // stays in lockstep with the server's `getStats` bucket sums.
+  return (LIBRARY_FILTER_BUCKETS[filter] as readonly string[]).includes(status);
 }
 
 export function getStatusCount(books: LibraryBookListItem[], filter: StatusFilter): number {
