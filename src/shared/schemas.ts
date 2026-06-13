@@ -19,3 +19,4 @@ export * from './schemas/sse-events.js';
 export * from './schemas/search-stream.js';
 export * from './schemas/enrichment.js';
 export * from './schemas/quality-gate-reason.js';
+export * from './schemas/v1/common.js';
