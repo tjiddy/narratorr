@@ -209,6 +209,30 @@ A handful of endpoints have no in-tree caller but are preserved as a stable cont
 |----------|-----------|
 | `POST /api/system/tasks/search` | Manual trigger for the scheduled search cycle. The generic `POST /api/system/tasks/:name/run` is the preferred surface for new integrations, but legacy automations may target this dedicated path. Removed in code review only. |
 
+## API Versioning Policy
+
+Narratorr exposes two HTTP API surfaces with deliberately different stability guarantees:
+
+- **`/api/*` — internal & unstable.** This is the surface the bundled web UI consumes. It carries **no backwards-compatibility promise**: routes, request/response shapes, and error envelopes may change between releases without notice. Do not build external integrations against it.
+- **`/api/v1/*` — public & supported.** The versioned, native public API. Its contract is locked by the canonical v1 building blocks in `src/shared/schemas/v1/common.ts` and the conventions below. Breaking changes require a new version prefix (`/api/v2/*`), never a silent change under `/api/v1/`.
+
+**Documented contract exception — Prowlarr/Readarr compatibility shim.** The endpoints `/api/v1/indexer*` and `/api/v1/system/status` (`src/server/routes/prowlarr-compat.ts`) live under the `/api/v1/` prefix but are **not** native v1. They impersonate Prowlarr/Readarr so those tools can manage narratorr as an indexer target, and their shapes are dictated by the external product, not by narratorr's v1 conventions. Treat them as a named exception; do not mistake them for, or align them with, the native v1 contract.
+
+### v1 conventions (ADR)
+
+These decisions are locked by S0 (#1442, part of the Public API v1 epic #1441) and codified in `src/shared/schemas/v1/common.ts`. Downstream stories import those types rather than re-deriving them.
+
+| Concern | Decision |
+|---------|----------|
+| **Pagination** | Offset/limit (`limit`, `offset`), reusing `paginationParamsSchema` from `src/shared/schemas/common.ts`. A single-user library is not a feed — cursor pagination is explicitly rejected. The v1 schema does **not** fork a second pagination shape. |
+| **Filter/sort param naming** | camelCase, short, optional (`sortField`, `sortDirection`, `author`, `series`, `narrator`) — never `sort_by` / `filter_author`. Matches `bookListQuerySchema`. |
+| **Error envelope** | `{ error: { code, message } }` — an object with a stable machine-readable `code` and human-readable `message`, never a bare string. **v1-only:** the internal `/api/*` error handler (`src/server/plugins/error-handler.ts`) keeps its existing ad-hoc shape and is **not** retrofitted. |
+| **List response** | `{ data, total }` (never a bare array), aligning with the existing `PaginatedResponse<T>`. |
+| **Date format** | ISO 8601 strings. Fastify + `fastify-type-provider-zod` already serialize `Date → ISO` automatically; no new serialization code is needed. |
+| **Request-validator strictness** | Native v1 request validators are schemas narratorr owns → Zod `.strict()`. This is the **opposite** of the prowlarr-compat surface, which must stay `.strip()` (the impersonated product controls that payload). v1 schemas must not drift toward `.strip()`/`.passthrough()`. |
+| **CORS** | Target shape is a configurable comma-separated allowlist of origins, for future browser-based sidecars. **Documented now, implementation deferred** to the first browser consumer — today CORS is a single configurable `CORS_ORIGIN` (`src/server/cors-config.ts`) and that runtime behavior is unchanged by this policy. |
+| **Rate-limiting** | Native public API v1 rate limiting is **deliberately out of scope** (single-user self-hosted threat model, not public abuse). This is a documented decision, not an oversight. The existing auth and filesystem-browse rate limits (see [Rate Limiting](#rate-limiting)) remain unchanged. |
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability, please report it privately rather than opening a public issue. Contact the maintainer directly or use GitHub's private vulnerability reporting feature.
