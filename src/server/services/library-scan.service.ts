@@ -118,39 +118,11 @@ export class LibraryScanService {
       let restored = 0;
 
       for (const row of rows) {
-        if (!row.path) continue;
-
-        // Path ancestry check — skip books outside library root
-        const resolvedPath = resolve(row.path);
-        const rel = relative(resolvedRoot, resolvedPath);
-        if (rel.startsWith('..') || isAbsolute(rel)) continue;
-
+        const outcome = await this.reconcileBookPath(row, resolvedRoot);
+        if (outcome === 'skipped') continue;
         scanned++;
-
-        let exists = false;
-        try {
-          await access(row.path);
-          exists = true;
-        } catch {
-          // path does not exist
-        }
-
-        if (row.status === 'imported' && !exists) {
-          // Guarded: only flip imported → missing if the row is STILL imported. A
-          // concurrent in-flight import (importing) must not be clobbered by the
-          // scan's reconciliation, which read row.status before the import landed.
-          const flipped = await transitionBookStatus(this.db, row.id, { status: 'missing', expected: { status: 'imported' } });
-          if (flipped) {
-            this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
-            missing++;
-          }
-        } else if (row.status === 'missing' && exists) {
-          const flipped = await transitionBookStatus(this.db, row.id, { status: 'imported', expected: { status: 'missing' } });
-          if (flipped) {
-            this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
-            restored++;
-          }
-        }
+        if (outcome === 'missing') missing++;
+        else if (outcome === 'restored') restored++;
       }
 
       this.log.info({ scanned, missing, restored, elapsedMs: Date.now() - startMs }, 'Library rescan complete');
@@ -158,6 +130,48 @@ export class LibraryScanService {
     } finally {
       this.scanning = false;
     }
+  }
+
+  /**
+   * Reconcile a single book row's on-disk presence against its persisted status.
+   * Returns `'skipped'` for rows outside the library root or with no path (not
+   * counted as scanned), `'missing'`/`'restored'` when a guarded transition
+   * lands, or `null` when scanned but unchanged. The `expected` guard ensures a
+   * concurrent in-flight import (`importing`) is never clobbered by the scan's
+   * reconciliation, which read the row status before the import landed.
+   */
+  private async reconcileBookPath(
+    row: { id: number; path: string | null; status: string },
+    resolvedRoot: string,
+  ): Promise<'skipped' | 'missing' | 'restored' | null> {
+    if (!row.path) return 'skipped';
+
+    // Path ancestry check — skip books outside library root
+    const rel = relative(resolvedRoot, resolve(row.path));
+    if (rel.startsWith('..') || isAbsolute(rel)) return 'skipped';
+
+    let exists = false;
+    try {
+      await access(row.path);
+      exists = true;
+    } catch {
+      // path does not exist
+    }
+
+    if (row.status === 'imported' && !exists) {
+      const flipped = await transitionBookStatus(this.db, row.id, { status: 'missing', expected: { status: 'imported' } });
+      if (flipped) {
+        this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
+        return 'missing';
+      }
+    } else if (row.status === 'missing' && exists) {
+      const flipped = await transitionBookStatus(this.db, row.id, { status: 'imported', expected: { status: 'missing' } });
+      if (flipped) {
+        this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
+        return 'restored';
+      }
+    }
+    return null;
   }
 
   /**
