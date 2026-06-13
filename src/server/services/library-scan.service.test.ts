@@ -263,6 +263,9 @@ describe('LibraryScanService', () => {
       where: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue([]),
       set: vi.fn().mockReturnThis(),
+      // The guarded `transitionBookStatus` book write ends in `.returning()`; a non-empty
+      // result means the precondition matched so the rescan counters increment.
+      returning: vi.fn().mockResolvedValue([{ id: 1 }]),
     };
     // select/update calls return the chain by default
     db.select.mockReturnValue(chainMethods as never);
@@ -1055,6 +1058,23 @@ describe('LibraryScanService', () => {
         expect.objectContaining({ bookId: 1 }),
         expect.stringContaining('missing from disk'),
       );
+    });
+
+    it('does not clobber an in-flight import: guarded missing-write no-ops when the row is no longer imported', async () => {
+      // Scan read the row as 'imported', but a concurrent import flipped it to 'importing'
+      // before the guarded write — the `expected: { status: 'imported' }` predicate matches
+      // no row, so `.returning()` is empty and the scan must NOT count it as missing.
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
+        { id: 1, path: '/library/Author/Book', status: 'imported' },
+      ]);
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).returning!.mockResolvedValueOnce([]);
+      vi.mocked(access)
+        .mockResolvedValueOnce(undefined) // library root check
+        .mockRejectedValueOnce(new Error('ENOENT'));
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
     });
 
     it('restores missing book whose path reappears', async () => {

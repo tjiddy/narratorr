@@ -24,6 +24,7 @@ vi.mock('../utils/download-side-effects.js', () => ({
 // Mock book-status utility
 vi.mock('../utils/book-status.js', () => ({
   revertBookStatus: vi.fn().mockResolvedValue('wanted'),
+  transitionBookStatus: vi.fn().mockResolvedValue(true),
 }));
 
 import {
@@ -31,7 +32,7 @@ import {
   emitDownloadStatusChange, emitBookStatusChange, notifyGrab,
   recordGrabbedEvent, recordDownloadCompletedEvent, recordDownloadFailedEvent,
 } from '../utils/download-side-effects.js';
-import { revertBookStatus } from '../utils/book-status.js';
+import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 
 function inject<T>(partial: Record<string, unknown>): T {
   return partial as T;
@@ -141,16 +142,17 @@ describe('DownloadOrchestrator', () => {
       }));
     });
 
-    it('dispatches book_status_change SSE after successful grab (bookId present)', async () => {
+    it('dispatches book_status_change SSE after successful grab with the captured prior lifecycle as old_status', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
+      // Default fixture pre-grab status is 'imported' (auto-upgrade shape).
       expect(emitBookStatusChangeOnGrab).toHaveBeenCalledWith(expect.objectContaining({
-        broadcaster, bookId: 2, isHandoff: false,
+        broadcaster, bookId: 2, isHandoff: false, oldStatus: 'imported',
       }));
     });
 
-    it('updates book status to downloading in DB after successful grab', async () => {
+    it('transitions book status to downloading via the guarded helper after successful grab', async () => {
       await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
-      expect((mockDb as Record<string, unknown>).update).toHaveBeenCalled();
+      expect(transitionBookStatus).toHaveBeenCalledWith(mockDb, 2, { status: 'downloading' });
     });
 
     it('updates book status to missing for handoff client (externalId=null)', async () => {
@@ -255,7 +257,8 @@ describe('DownloadOrchestrator', () => {
       });
 
       it('captures the pre-grab status BEFORE the orchestrator flips the book to downloading', async () => {
-        // Capture call order — select (books.status) must happen before update (book status)
+        // Capture call order — select (books.status) must happen before the guarded
+        // transition that flips the book status.
         const callOrder: string[] = [];
         (mockDb as Record<string, unknown>).select = vi.fn().mockImplementation(() => {
           callOrder.push('select');
@@ -267,15 +270,14 @@ describe('DownloadOrchestrator', () => {
             }),
           };
         });
-        const originalUpdate = (mockDb as Record<string, unknown>).update as (...args: unknown[]) => unknown;
-        (mockDb as Record<string, unknown>).update = vi.fn().mockImplementation((...args: unknown[]) => {
-          callOrder.push('update');
-          return originalUpdate(...args);
+        (transitionBookStatus as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+          callOrder.push('transition');
+          return Promise.resolve(true);
         });
 
         await orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 });
 
-        expect(callOrder.indexOf('select')).toBeLessThan(callOrder.indexOf('update'));
+        expect(callOrder.indexOf('select')).toBeLessThan(callOrder.indexOf('transition'));
       });
     });
   });
@@ -296,7 +298,7 @@ describe('DownloadOrchestrator', () => {
 
     it('reverts book status via revertBookStatus when bookId present', async () => {
       await orchestrator.cancel(1);
-      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2 }, null);
     });
 
     it('emits download_status_change SSE with old status from prefetched download, new status failed', async () => {
@@ -373,7 +375,7 @@ describe('DownloadOrchestrator', () => {
     it('still runs revertBookStatus and SSE side effects when both identifiers are null', async () => {
       (downloadService.getById as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockDownload, infoHash: null, guid: null });
       await orchestrator.cancel(1);
-      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2 }, null);
       expect(emitBookStatusChange).toHaveBeenCalledWith(expect.objectContaining({ bookId: 2 }));
       expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1, bookId: 2, newStatus: 'failed' }));
     });
@@ -396,7 +398,7 @@ describe('DownloadOrchestrator', () => {
     it('still runs revertBookStatus and SSE side effects after blacklistService.create() rejects', async () => {
       (blacklistService.create as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('blacklist boom'));
       await orchestrator.cancel(1);
-      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2, path: null });
+      expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 2 }, null);
       expect(emitBookStatusChange).toHaveBeenCalledWith(expect.objectContaining({ bookId: 2 }));
       expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1, bookId: 2, newStatus: 'failed' }));
     });

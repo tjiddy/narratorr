@@ -409,17 +409,19 @@ describe('monitor job', () => {
   });
 
   describe('book status recovery', () => {
-    it('sets book to wanted when download fails and book has no path', async () => {
+    it('restores the pre-grab snapshot (wanted) when a download with that snapshot fails', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
         // Other active downloads check: none
         .mockReturnValueOnce(mockDbChain([]))
-        // Get book: no path
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+        // Get book: path present, but the snapshot — not the path — drives the revert
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]))
+        // Failed download's pre-grab snapshot
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
 
       await runMonitor();
 
@@ -429,17 +431,38 @@ describe('monitor job', () => {
       );
     });
 
-    it('sets book to imported when download fails and book has a path', async () => {
+    it('preserves a failed snapshot on revert — path presence no longer forces imported', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads check: none
         .mockReturnValueOnce(mockDbChain([]))
-        // Get book: has path
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]));
+        // Book HAS a path on disk — old path-inference would force 'imported'
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]))
+        // …but the pre-grab snapshot was 'failed', which must win
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'failed' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
+
+      await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'failed' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('falls back to the conservative imported status when the snapshot is null (legacy rows)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
+        // Legacy/orphan download: null snapshot → conservative 'imported', NOT path-derived 'wanted'
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: null }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
 
       await runMonitor();
 
@@ -449,44 +472,27 @@ describe('monitor job', () => {
       );
     });
 
-    it('sets book to wanted when download not found and book has no path', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([
-          { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
-        ]))
-        .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
-      adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-
-      await runMonitor();
-
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 42, status: 'wanted' }),
-        'Book status recovered after download failure',
-      );
-    });
-
-    it('sets book to imported when adapter reports error and book has path', async () => {
+    it('restores the snapshot (missing) when the adapter reports an error', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
         ]))
-        // update for status transition
         // Other active downloads check: none
         .mockReturnValueOnce(mockDbChain([]))
-        // Get book: has path
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]));
+        // Get book
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]))
+        // Pre-grab snapshot: book was 'missing' before the grab
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'missing' }]));
       adapter.getDownload.mockResolvedValueOnce({
         progress: 30,
         status: 'error',
       });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
 
       await runMonitor();
 
       expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 42, status: 'imported' }),
+        expect.objectContaining({ bookId: 42, status: 'missing' }),
         'Book status recovered after download failure',
       );
     });
@@ -653,9 +659,11 @@ describe('monitor job', () => {
         // Other active downloads: none (others already failed)
         .mockReturnValueOnce(mockDbChain([]))
         // Get book: no path
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
+        // Failed download's pre-grab snapshot
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
 
       await runMonitor();
 
@@ -877,9 +885,10 @@ describe('monitor job', () => {
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
         ]))
         .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
 
       // Call without retryDeps (undefined)
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
@@ -1093,11 +1102,12 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 42 }]);
       db.update.mockReturnValue(chain);
       db.select
         .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1159,12 +1169,13 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 30, status: 'error', errorMessage: 'CRC mismatch', savePath: '', size: 0 });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 42 }]);
       db.update.mockReturnValue(chain);
-      // recoverBookStatus selects: no other active downloads, then the book
+      // recoverBookStatus selects: no other active downloads, the book, then the snapshot
       db.select
         .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
+        .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 

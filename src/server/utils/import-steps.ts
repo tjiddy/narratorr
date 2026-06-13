@@ -30,6 +30,7 @@ import {
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { removeImportSibling, removeMarker, markerPresent } from './import-staging.js';
 
@@ -353,6 +354,13 @@ export interface HandleImportFailureArgs {
   db: Db;
   downloadId: number;
   book: { id: number; title: string; path: string | null };
+  /**
+   * Pre-grab lifecycle snapshot (`downloads.bookStatusAtGrab`) — the explicit
+   * prior state the book reverts to on failure. Null/absent (legacy/orphan rows)
+   * falls back to the conservative `REVERT_FALLBACK_STATUS`, never path inference.
+   * The production caller (`ImportService.importDownload`) always supplies it.
+   */
+  bookStatusAtGrab?: BookStatus | null;
   log: FastifyBaseLogger;
   elapsedMs?: number;
 }
@@ -402,7 +410,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
 
 /** Revert download + book statuses after a failed import, then rethrow the original error. */
 async function revertAndRethrow(args: HandleImportFailureArgs): Promise<never> {
-  const { error, db, downloadId, book, log, elapsedMs } = args;
+  const { error, db, downloadId, book, bookStatusAtGrab, log, elapsedMs } = args;
 
   // Import failure → canonical failure tuple in one guarded UPDATE.
   await transitionDownloadState(db, downloadId, {
@@ -411,8 +419,8 @@ async function revertAndRethrow(args: HandleImportFailureArgs): Promise<never> {
     errorMessage: getErrorMessage(error),
   });
 
-  // Recover book status
-  const revertStatus = await revertBookStatus(db, book);
+  // Recover book status to its explicit pre-grab lifecycle (snapshot), not a path guess.
+  const revertStatus = await revertBookStatus(db, book, bookStatusAtGrab ?? null);
 
   log.error({ error: serializeError(error), downloadId, bookStatus: revertStatus, elapsedMs }, 'Import failed');
 

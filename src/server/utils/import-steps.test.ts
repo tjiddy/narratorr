@@ -1220,7 +1220,18 @@ describe('handleImportFailure', () => {
       error: new Error('fail'), targetPath: undefined, db: mockDb as never,
       downloadId: 1, book: { id: 5, title: 'Book', path: '/old' }, log,
     })).rejects.toThrow('fail');
-    expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 5, title: 'Book', path: '/old' });
+    expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 5, title: 'Book', path: '/old' }, null);
+  });
+
+  it('threads the bookStatusAtGrab snapshot into revertBookStatus (explicit prior-state, not path)', async () => {
+    const log = createMockLog();
+    // Book has a path on disk (old path-inference would force 'imported'), but the
+    // captured pre-grab lifecycle was 'failed' — the revert must restore 'failed'.
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: undefined, db: mockDb as never,
+      downloadId: 1, book: { id: 5, title: 'Book', path: '/old' }, bookStatusAtGrab: 'failed', log,
+    })).rejects.toThrow('fail');
+    expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 5, title: 'Book', path: '/old' }, 'failed');
   });
 
   it('rethrows the original error', async () => {

@@ -26,6 +26,7 @@ vi.mock('../utils/download-path.js', () => ({
 
 vi.mock('../utils/book-status.js', () => ({
   revertBookStatus: vi.fn(),
+  transitionBookStatus: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -40,7 +41,7 @@ vi.mock('./retry-search.js', () => ({
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveSavePath } from '../utils/download-path.js';
-import { revertBookStatus } from '../utils/book-status.js';
+import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { stat, rm } from 'node:fs/promises';
 import { retrySearch } from './retry-search.js';
 import type { SettingsService } from './settings.service.js';
@@ -1823,20 +1824,18 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('#324 — quality gate held revert book status', () => {
-    it('when download held for pending_review (probe failure), book status reverted from importing to downloading in DB', async () => {
+    it('when download held for pending_review (probe failure), book status reverted from importing to downloading via guarded helper', async () => {
       const importingBook = { ...baseBook, status: 'importing' as const };
       const { orchestrator, qualityGateService, db } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: importingBook, narrators: [] }]);
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('probe failed'));
       (resolveSavePath as ReturnType<typeof vi.fn>).mockReturnValue('/path');
-      const chain = { set: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue(undefined) };
-      db.update.mockReturnValue(chain as never);
 
       await orchestrator.processCompletedDownloads();
 
-      // Book status should be reverted to 'downloading'
-      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'downloading' }));
+      // Revert goes through the guarded transition (expected: importing) so a concurrent
+      // writer can't be clobbered.
+      expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'downloading', expected: { status: 'importing' } });
     });
 
     it('when download held for pending_review, book_status_change SSE emitted with revert', async () => {
@@ -1940,8 +1939,10 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processOneDownload(1);
 
-      // Book was promoted to importing then reverted to downloading on hold
-      expect(db.update).toHaveBeenCalled();
+      // Book was promoted to importing then reverted to downloading on hold — both
+      // via the guarded transition helper.
+      expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'importing' });
+      expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'downloading', expected: { status: 'importing' } });
       expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         book_id: 1, old_status: 'importing', new_status: 'downloading',
       }));
@@ -1972,17 +1973,13 @@ describe('QualityGateOrchestrator', () => {
       expect(importOrchestrator.importDownload).not.toHaveBeenCalled();
     });
 
-    it('promotes book status to importing in DB after atomic claim', async () => {
+    it('promotes book status to importing via the guarded helper after atomic claim', async () => {
       const { orchestrator, qualityGateService, db } = createOrchestrator();
-      const chain = mockDbChain();
-      db.update.mockReturnValue(chain);
       qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
       await orchestrator.processOneDownload(1);
 
-      // The first set call should be the book promotion to 'importing'
-      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls[0]).toEqual(expect.objectContaining({ status: 'importing' }));
+      expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'importing' });
     });
 
     it('emits book_status_change SSE after promoting book', async () => {
