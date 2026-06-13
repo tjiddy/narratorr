@@ -34,6 +34,7 @@ import { triggerImmediateSearch } from '../services/trigger-immediate-search.js'
 import {
   idParamSchema,
   bookListQuerySchema,
+  libraryStatusFilterSchema,
   paginationParamsSchema,
   createBookBodySchema,
   updateBookBodySchema,
@@ -53,7 +54,12 @@ import { registerSeriesRoutes } from './books-series.js';
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
 
+// The library list filter carries a `LibraryFilterBucket` (bucket key), distinct
+// from the generic route's per-book `BookStatus`. Override `status` to the
+// bucket-only schema so `?status=all` (client-only sentinel) and non-bucket
+// statuses like `?status=searching` are rejected with a 400.
 const libraryBooksListQuerySchema = booksListQuerySchema.extend({
+  status: libraryStatusFilterSchema.optional(),
   collapse: z.enum(['true', 'false']).optional().transform(v => v === undefined ? undefined : v === 'true'),
 });
 type LibraryBooksListQuery = z.infer<typeof libraryBooksListQuerySchema>;

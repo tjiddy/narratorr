@@ -40,8 +40,8 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   const isMissing = book.status === 'missing' || book.status === 'failed';
   const isCollapsed = (collapsedCount ?? 0) > 0;
   const statusBar = requireDefined(
-    bookStatusConfig[book.status] ?? bookStatusConfig.wanted,
-    `LibraryBookCard: bookStatusConfig missing both "${book.status}" and fallback "wanted"`,
+    bookStatusConfig[book.status],
+    `LibraryBookCard: bookStatusConfig missing entry for "${book.status}"`,
   );
 
   return (

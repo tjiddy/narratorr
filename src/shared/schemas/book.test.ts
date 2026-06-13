@@ -5,7 +5,9 @@ import {
   enrichmentStatusSchema,
   BOOK_STATUSES,
   LIBRARY_FILTER_BUCKETS,
+  LIBRARY_FILTER_BUCKET_KEYS,
   LIBRARY_FILTER_VALUES,
+  libraryStatusFilterSchema,
 } from './book.js';
 
 describe('enrichmentStatusSchema', () => {
@@ -54,6 +56,34 @@ describe('LIBRARY_FILTER_BUCKETS — canonical lifecycle partition (#1444)', () 
 
   it('exposes `all` plus one value per bucket as the dropdown values', () => {
     expect([...LIBRARY_FILTER_VALUES]).toEqual(['all', ...Object.keys(LIBRARY_FILTER_BUCKETS)]);
+  });
+});
+
+describe('libraryStatusFilterSchema — bucket-only wire contract (#1447)', () => {
+  it('accepts each of the five concrete bucket keys', () => {
+    for (const key of LIBRARY_FILTER_BUCKET_KEYS) {
+      expect(libraryStatusFilterSchema.parse(key)).toBe(key);
+    }
+  });
+
+  it('rejects the client-only `all` sentinel (never sent over the wire)', () => {
+    expect(libraryStatusFilterSchema.safeParse('all').success).toBe(false);
+  });
+
+  it('rejects non-bucket canonical statuses (searching / importing)', () => {
+    expect(libraryStatusFilterSchema.safeParse('searching').success).toBe(false);
+    expect(libraryStatusFilterSchema.safeParse('importing').success).toBe(false);
+  });
+
+  it('bucket keys are a subset of the canonical BookStatus set', () => {
+    const canonical = new Set<string>(BOOK_STATUSES);
+    for (const key of LIBRARY_FILTER_BUCKET_KEYS) {
+      expect(canonical.has(key)).toBe(true);
+    }
+  });
+
+  it('bucket keys == LIBRARY_FILTER_VALUES minus `all`', () => {
+    expect([...LIBRARY_FILTER_BUCKET_KEYS]).toEqual(LIBRARY_FILTER_VALUES.filter((v) => v !== 'all'));
   });
 });
 

@@ -5,6 +5,8 @@ import { renderWithProviders } from '../../__tests__/helpers.js';
 import { createMockLibraryBook } from '../../__tests__/factories.js';
 import { LibraryTableView } from './LibraryTableView.js';
 import type { SortField, SortDirection, DisplayBook } from './helpers.js';
+import { bookStatusChipStyles } from '@/lib/status';
+import { BOOK_STATUSES } from '../../../shared/schemas/book.js';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal();
@@ -334,6 +336,26 @@ describe('LibraryTableView', () => {
       const { container } = renderTable({ books: [] });
       // Component returns null for empty books array
       expect(container.querySelector('table')).toBeNull();
+    });
+  });
+
+  // #1447 (S2d) — drift guard for the table-view status styling map. Keys must
+  // set-equal the canonical BookStatus set so the chip can never fall back to an
+  // empty style for an unmapped status.
+  describe('status chip completeness (#1447)', () => {
+    it('bookStatusChipStyles keys set-equal BOOK_STATUSES', () => {
+      expect(Object.keys(bookStatusChipStyles).sort()).toEqual([...BOOK_STATUSES].sort());
+    });
+
+    it('renders a first-class chip style for every canonical status', () => {
+      for (const status of BOOK_STATUSES) {
+        const book = createMockLibraryBook({ status });
+        const { container, unmount } = renderTable({ books: [book] });
+        const chip = container.querySelector('tbody td:nth-child(2) span');
+        expect(chip).not.toBeNull();
+        expect(chip!.className).toContain(bookStatusChipStyles[status].text);
+        unmount();
+      }
     });
   });
 

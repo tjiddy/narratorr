@@ -9,6 +9,7 @@ import { createMockLibraryBook } from '@/__tests__/factories';
 import * as ImageErrorModule from '@/hooks/useImageError';
 import { api } from '@/lib/api';
 import type { BookStatus } from '../../../shared/schemas.js';
+import { bookStatusConfig } from '@/lib/status';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -205,10 +206,18 @@ describe('LibraryBookCard', () => {
       expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
     });
 
-    it('falls back to wanted style for unknown status', () => {
-      const book = createMockLibraryBook({ status: 'bogus_status' as unknown as BookStatus });
-      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
-      expect(screen.getByTestId('status-bar').className).toContain('bg-stone');
+    // #1447 (S2d) — the `?? bookStatusConfig.wanted` masking fallback was removed;
+    // bookStatusConfig is drift-guarded against BOOK_STATUSES. Every canonical
+    // status renders first-class, so an off-enum value surfaces the drift (throws)
+    // rather than being silently masked with the "wanted" stone style.
+    it('renders each canonical status with its own first-class bar style', () => {
+      const statuses: BookStatus[] = ['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed'];
+      for (const status of statuses) {
+        const book = createMockLibraryBook({ status });
+        const { unmount } = renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+        expect(screen.getByTestId('status-bar').className).toContain(bookStatusConfig[status]!.barClass.split(' ')[0]!);
+        unmount();
+      }
     });
   });
 

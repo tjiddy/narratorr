@@ -43,14 +43,17 @@ export type BookLifecycle = BookStatus;
  *   3. client dropdown      — `matchesStatusFilter` / `filterTabs` (`pages/library/helpers.ts`)
  *                             + `VALID_STATUS_FILTERS` (`pages/library/useLibraryFilters.ts`)
  *
- * Invariant (enforced in book.test.ts, the property S2d's `getStats` tests rely on):
+ * Invariant (enforced in book.test.ts, the property `getStats` tests rely on):
  * the buckets PARTITION the canonical states — their union equals all 7 states,
  * they are pairwise disjoint, and no bucket references a non-canonical state. That
  * partition is why per-bucket counts sum to the total book count.
  *
- * NOTE (S2a scope): this constant is purely additive — it changes no runtime
- * behavior. Rewiring the three sites above onto it is S2d's job; do NOT delete or
- * re-point `TAB_STATUS_MAP`, `getStats`, or the client helpers in this story.
+ * As of S2d (#1447) this IS the single source of truth: the three sites above all
+ * derive their grouping from this map — server `getStats` per-bucket sums and
+ * `buildListWhere` expansion (`book-list.service.ts`, the `TAB_STATUS_MAP`
+ * successor), and the client dropdown (`matchesStatusFilter`/`filterTabs` +
+ * `VALID_STATUS_FILTERS`). The wire/route filter contract is the bucket-key
+ * subset only — see `libraryStatusFilterSchema` below.
  */
 export const LIBRARY_FILTER_BUCKETS = {
   wanted: ['wanted'],
@@ -63,8 +66,21 @@ export const LIBRARY_FILTER_BUCKETS = {
 /** A concrete (non-`All`) library filter bucket key. */
 export type LibraryFilterBucket = keyof typeof LIBRARY_FILTER_BUCKETS;
 
+/** The concrete bucket keys (the wire/route vocabulary — `all` excluded). Derived
+ *  from `LIBRARY_FILTER_BUCKETS` so it can never drift from the grouping. */
+export const LIBRARY_FILTER_BUCKET_KEYS = Object.keys(LIBRARY_FILTER_BUCKETS) as [LibraryFilterBucket, ...LibraryFilterBucket[]];
+
+/**
+ * Wire/route schema for the library status filter. Accepts ONLY the concrete
+ * bucket keys (`wanted`/`downloading`/`imported`/`failed`/`missing`) — NOT the
+ * client-only `all` sentinel and NOT a non-bucket canonical `BookStatus` like
+ * `searching`/`importing`. The client omits `status` entirely when the filter is
+ * `all`, so `all` never reaches the wire (see `useLibraryFilters` apiParams).
+ */
+export const libraryStatusFilterSchema = z.enum(LIBRARY_FILTER_BUCKET_KEYS);
+
 /** Full set of library filter dropdown values, including `all` (= no filter). */
-export const LIBRARY_FILTER_VALUES = ['all', ...Object.keys(LIBRARY_FILTER_BUCKETS)] as const;
+export const LIBRARY_FILTER_VALUES = ['all', ...LIBRARY_FILTER_BUCKET_KEYS] as const;
 export type LibraryFilterValue = 'all' | LibraryFilterBucket;
 
 export const ENRICHMENT_STATUSES = ['pending', 'enriched', 'failed', 'skipped', 'file-enriched'] as const;
