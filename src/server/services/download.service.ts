@@ -4,7 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
-import { isTerminalStatus, getReplaceableStatuses, deriveDisplayStatus, displayStatusToTuple } from '../../shared/download-status-registry.js';
+import { isTerminalState, isReplaceableState, deriveDisplayStatus, displayStatusToTuple } from '../../shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
   terminalDownloadCondition,
@@ -244,14 +244,16 @@ export class DownloadService {
 
   private async checkDuplicateDownloads(bookId: number): Promise<void> {
     const allActive = await this.getActiveByBookId(bookId);
-    const replaceableSet = new Set<string>(getReplaceableStatuses());
-    const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
+    // Derive replaceability straight from the canonical `(clientStatus,
+    // pipelineStage)` axes (S2b) rather than re-deriving the display status and
+    // doing a set membership check — same result, one fewer indirection.
+    const replaceableActive = allActive.filter((dl) => isReplaceableState(dl.clientStatus, dl.pipelineStage));
 
     if (replaceableActive.length > 0) {
       throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0]!.id})`, 'ACTIVE_DOWNLOAD_EXISTS');
     }
 
-    const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+    const pipelineActive = allActive.filter((dl) => !isReplaceableState(dl.clientStatus, dl.pipelineStage));
     if (pipelineActive.length > 0) {
       throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0]!.id})`, 'PIPELINE_ACTIVE');
     }
@@ -431,7 +433,7 @@ export class DownloadService {
     const existing = await this.getById(id);
     if (!existing) return false;
 
-    if (!isTerminalStatus(existing.status)) {
+    if (!isTerminalState(existing.clientStatus, existing.pipelineStage)) {
       throw new DownloadError(`Cannot delete download with status '${existing.status}' — use cancel instead`, 'INVALID_STATUS');
     }
 
