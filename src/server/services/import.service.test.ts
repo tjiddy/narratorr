@@ -121,7 +121,8 @@ const mockDownload = {
   downloadUrl: 'magnet:?xt=urn:btih:abc123',
   size: 500_000_000,
   seeders: 10,
-  status: 'completed' as const,
+  clientStatus: 'completed' as const,
+  pipelineStage: 'idle' as const,
   progress: 1,
   externalId: 'ext-1',
   errorMessage: null,
@@ -1103,7 +1104,9 @@ describe('ImportService', () => {
         updateCallCount++;
         const chain = mockDbChain();
         if (updateCallCount === 3) {
-          (chain.where as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('constraint violation'));
+          // #3 is the download imported write, which goes through transitionDownloadState
+          // and terminates at .returning() (the guarded UPDATE returns the matched id).
+          (chain.returning as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('constraint violation'));
         }
         return chain as never;
       });
@@ -1130,7 +1133,7 @@ describe('ImportService', () => {
 
       // DB revert: download → failed, book → imported (non-null old path), NOT wanted.
       const allSetArgs = collectSetArgs(db);
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ clientStatus: 'failed' }));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
       expect(allSetArgs).not.toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
@@ -1272,8 +1275,8 @@ describe('ImportService', () => {
       db.update.mockImplementation(() => {
         updateCallCount++;
         if (updateCallCount === 3) {
-          // 3rd update: book status='imported' — this is the one that should fail
-          return { set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }) } as never;
+          // 3rd update: the download imported write (transitionDownloadState → .returning()).
+          return { set: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockRejectedValue(new Error('DB write failed')) }) }) } as never;
         }
         return mockDbChain() as never;
       });
@@ -1302,7 +1305,7 @@ describe('ImportService', () => {
         })
         .filter(Boolean);
       const allSetArgs = setCalls!.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ clientStatus: 'failed' }));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
 
@@ -1350,7 +1353,7 @@ describe('ImportService', () => {
         })
         .filter(Boolean);
       const allSetArgs = setCalls!.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ clientStatus: 'failed' }));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
   });
@@ -1656,7 +1659,8 @@ describe('ImportService', () => {
         updateCallCount++;
         const chain = mockDbChain();
         if (updateCallCount === 3) {
-          (chain.where as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB constraint violation'));
+          // #3 download imported write → transitionDownloadState terminates at .returning().
+          (chain.returning as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB constraint violation'));
         }
         return chain;
       });
@@ -1680,7 +1684,7 @@ describe('ImportService', () => {
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
       const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ clientStatus: 'failed' }));
     });
 
     it('logs warn (not error) when re-import rm() fails on old path', async () => {
@@ -1922,7 +1926,8 @@ describe('ImportService', () => {
       expect(updateSetCalls).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            status: 'failed',
+            clientStatus: 'failed',
+            pipelineStage: 'idle',
             errorMessage: expect.stringContaining('insufficient disk space'),
           }),
         ]),

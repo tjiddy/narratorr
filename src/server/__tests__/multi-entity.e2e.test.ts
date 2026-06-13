@@ -379,7 +379,7 @@ describe('Job lifecycle E2E', () => {
       title: 'Monitor Test Book',
       protocol: 'torrent' as const,
       externalId: TORRENT_HASH,
-      status: 'downloading' as const,
+      clientStatus: 'downloading' as const,
     }).returning();
 
     // qBittorrent reports download as complete (progress 100%)
@@ -411,7 +411,8 @@ describe('Job lifecycle E2E', () => {
 
     // Verify download is completed with timestamp
     const [updated] = await e2e.db.select().from(downloads).where(eq(downloads.id, dl!.id));
-    expect(updated!.status).toBe('completed');
+    expect(updated!.clientStatus).toBe('completed');
+    expect(updated!.pipelineStage).toBe('idle');
     expect(updated!.completedAt).toBeTruthy();
 
     // Book stays 'downloading' — promotion to 'importing' now happens in processOneDownload
@@ -443,6 +444,6 @@ describe('Job lifecycle E2E', () => {
 
     // Download should be imported too
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl!.status).toBe('imported');
+    expect(dl!.pipelineStage).toBe('imported');
   });
 });

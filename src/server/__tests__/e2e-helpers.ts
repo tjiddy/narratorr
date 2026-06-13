@@ -165,7 +165,8 @@ export async function seedBookAndDownload(
     title,
     protocol: 'torrent' as const,
     externalId: opts.externalId ?? 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
-    status: 'completed' as const,
+    clientStatus: 'completed' as const,
+    pipelineStage: 'idle' as const,
     completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
   }).returning();
 

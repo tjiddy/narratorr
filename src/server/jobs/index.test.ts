@@ -697,7 +697,8 @@ describe('startJobs', () => {
       // Verify the reset update was called
       expect(db.update).toHaveBeenCalled();
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'completed' }));
+      // Recovery resets only the pipelineStage axis back to idle (display 'completed').
+      expect(setCalls).toContainEqual(expect.objectContaining({ pipelineStage: 'idle' }));
     });
 
     it('calls batch methods after status reset', async () => {

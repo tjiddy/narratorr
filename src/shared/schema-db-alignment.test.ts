@@ -5,7 +5,7 @@ import { indexerTypeSchema } from './schemas/indexer.js';
 import { downloadClientTypeSchema } from './schemas/download-client.js';
 import { notifierTypeSchema } from './schemas/notifier.js';
 import { importListTypeSchema } from './schemas/import-list.js';
-import { downloadStatusSchema, DOWNLOAD_STATUSES } from './schemas/activity.js';
+import { downloadStatusSchema, DOWNLOAD_STATUSES, clientStatusSchema, CLIENT_STATUSES, pipelineStageSchema, PIPELINE_STAGES } from './schemas/activity.js';
 import { eventSourceSchema } from './schemas/event-history.js';
 import { INDEXER_REGISTRY, INDEXER_TYPES } from './indexer-registry.js';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-client-registry.js';
@@ -87,8 +87,15 @@ describe('schema-DB alignment', () => {
       expect([...importLists.type.enumValues].sort()).toEqual([...IMPORT_LIST_TYPES].sort());
     });
 
-    it('downloads.status DB column enum matches DOWNLOAD_STATUSES', () => {
-      expect([...downloads.status.enumValues].sort()).toEqual([...DOWNLOAD_STATUSES].sort());
+    // The two-axis split (#1445): Drizzle SQLite text-enums emit no DB CHECK, so
+    // these set-equality tests are the only guard against the Zod enum and the
+    // Drizzle column drifting apart for each axis.
+    it('downloads.clientStatus DB column enum matches CLIENT_STATUSES', () => {
+      expect([...downloads.clientStatus.enumValues].sort()).toEqual([...CLIENT_STATUSES].sort());
+    });
+
+    it('downloads.pipelineStage DB column enum matches PIPELINE_STAGES', () => {
+      expect([...downloads.pipelineStage.enumValues].sort()).toEqual([...PIPELINE_STAGES].sort());
     });
 
     it('suggestions.reason DB column enum matches SUGGESTION_REASONS', () => {
@@ -111,6 +118,14 @@ describe('schema-DB alignment', () => {
 
     it('DOWNLOAD_STATUSES equals downloadStatusSchema.options', () => {
       expect([...DOWNLOAD_STATUSES].sort()).toEqual([...downloadStatusSchema.options].sort());
+    });
+
+    it('CLIENT_STATUSES equals clientStatusSchema.options', () => {
+      expect([...CLIENT_STATUSES].sort()).toEqual([...clientStatusSchema.options].sort());
+    });
+
+    it('PIPELINE_STAGES equals pipelineStageSchema.options', () => {
+      expect([...PIPELINE_STAGES].sort()).toEqual([...pipelineStageSchema.options].sort());
     });
   });
 

@@ -92,6 +92,8 @@ const makeDownload = (overrides: Partial<Download> = {}): Download => ({
   title: 'Test Audiobook',
   protocol: 'torrent',
   status: 'queued',
+  clientStatus: 'queued',
+  pipelineStage: 'idle',
   progress: 0,
   addedAt: '2024-06-01T00:00:00Z',
   completedAt: null,

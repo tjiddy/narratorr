@@ -49,6 +49,8 @@ const mockDownload: DownloadWithBook = {
   size: 500000000,
   seeders: 10,
   status: 'downloading',
+  clientStatus: 'downloading',
+  pipelineStage: 'idle',
   progress: 0,
   externalId: 'ext-new',
   errorMessage: null,

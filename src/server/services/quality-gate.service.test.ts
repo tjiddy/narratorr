@@ -5,6 +5,7 @@ import { QualityGateService, QualityGateServiceError } from './quality-gate.serv
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
+import { completedDisplayDownloadCondition } from '../utils/download-state.js';
 
 function createService() {
   const db = createMockDb();
@@ -19,7 +20,8 @@ function createService() {
 }
 
 const baseDownload = {
-  id: 1, bookId: 1, title: 'Test Book', status: 'completed' as const,
+  id: 1, bookId: 1, title: 'Test Book',
+  clientStatus: 'completed' as const, pipelineStage: 'idle' as const,
   externalId: 'ext-1', downloadClientId: 1, infoHash: 'abc123',
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
   seeders: 10, progress: 1, errorMessage: null,
@@ -74,7 +76,7 @@ describe('QualityGateService', () => {
       expect(result).toEqual(expected);
       const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(
-        and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)),
+        and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId)),
       );
     });
 
@@ -102,7 +104,7 @@ describe('QualityGateService', () => {
       expect(result!.book).toEqual({ ...baseBook, narrators: [{ name: 'John Smith' }] });
       const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(
-        and(eq(downloads.id, 1), eq(downloads.status, 'completed')),
+        and(eq(downloads.id, 1), completedDisplayDownloadCondition()),
       );
     });
 
@@ -742,12 +744,12 @@ describe('QualityGateService', () => {
     });
   });
 
-  describe('setStatus', () => {
-    it('updates download status in DB', async () => {
+  describe('hold', () => {
+    it('writes the pipelineStage axis in DB', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      await service.setStatus(1, 'pending_review');
+      await service.hold(1);
 
       expect(db.update).toHaveBeenCalled();
     });
@@ -756,7 +758,7 @@ describe('QualityGateService', () => {
   describe('approve', () => {
     it('transitions pending_review download to importing and returns context', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'pending_review' }, book: baseBook }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review' }, book: baseBook }]));
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.approve(1);
@@ -768,7 +770,7 @@ describe('QualityGateService', () => {
 
     it('returns null book when download has no bookId', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'pending_review', bookId: null }, book: null }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review', bookId: null }, book: null }]));
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.approve(1);
@@ -777,7 +779,7 @@ describe('QualityGateService', () => {
 
     it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'downloading' }, book: baseBook }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, clientStatus: 'downloading' }, book: baseBook }]));
 
       await expect(service.approve(1)).rejects.toThrow(QualityGateServiceError);
       await expect(service.approve(1)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
@@ -795,7 +797,7 @@ describe('QualityGateService', () => {
   describe('reject', () => {
     it('transitions pending_review download to failed and returns context', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'pending_review' }, book: baseBook }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review' }, book: baseBook }]));
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.reject(1);
@@ -807,7 +809,7 @@ describe('QualityGateService', () => {
 
     it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'downloading' }, book: baseBook }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, clientStatus: 'downloading' }, book: baseBook }]));
 
       await expect(service.reject(1)).rejects.toThrow(QualityGateServiceError);
       await expect(service.reject(1)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
@@ -842,7 +844,7 @@ describe('QualityGateService', () => {
     it('returns null when no held_for_review event exists', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getQualityGateData(1);
@@ -860,7 +862,7 @@ describe('QualityGateService', () => {
         probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason }]));
 
       const result = await service.getQualityGateData(1);
@@ -883,7 +885,7 @@ describe('QualityGateService', () => {
         probeFailure: false, probeError: null, holdReasons: null,
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason }]));
 
       const result = await service.getQualityGateData(1);
@@ -906,7 +908,7 @@ describe('QualityGateService', () => {
         probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason }]));
 
       const result = await service.getQualityGateData(1);
@@ -927,7 +929,7 @@ describe('QualityGateService', () => {
         probeFailure: false, probeError: null, holdReasons: null,
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason }]));
 
       const result = await service.getQualityGateData(7);
@@ -954,7 +956,7 @@ describe('QualityGateService', () => {
         probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason }]));
 
       await service.getQualityGateData(1);
@@ -976,8 +978,8 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.select
         .mockReturnValueOnce(mockDbChain([
-          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
-          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+          { ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, pipelineStage: 'pending_review' },
         ]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: batchReason },
@@ -994,7 +996,7 @@ describe('QualityGateService', () => {
     it('returns null for downloads without bookId', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: null, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: null, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -1004,7 +1006,7 @@ describe('QualityGateService', () => {
     it('returns null for downloads without held_for_review event', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -1032,7 +1034,7 @@ describe('QualityGateService', () => {
     it('chunks download lookup at 999 and event lookup at 998 for >999 IDs', async () => {
       const { service, db } = createService();
       const ids = Array.from({ length: 999 }, (_, i) => i + 1);
-      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, status: 'pending_review' as const }));
+      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, pipelineStage: 'pending_review' as const }));
 
       db.select
         .mockReturnValueOnce(mockDbChain(allDownloads))
@@ -1048,7 +1050,7 @@ describe('QualityGateService', () => {
     it('keeps both chunks under SQLite limit for large batches', async () => {
       const { service, db } = createService();
       const ids = Array.from({ length: 2000 }, (_, i) => i + 1);
-      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, status: 'pending_review' as const }));
+      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, pipelineStage: 'pending_review' as const }));
 
       const dlChunk1 = allDownloads.slice(0, 999);
       const dlChunk2 = allDownloads.slice(999, 1998);
@@ -1074,7 +1076,7 @@ describe('QualityGateService', () => {
       const olderReason = { ...batchReason, mbPerHour: 50 };
 
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: newestReason },
           { downloadId: 1, reason: olderReason },
@@ -1090,8 +1092,8 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.select
         .mockReturnValueOnce(mockDbChain([
-          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
-          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+          { ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, pipelineStage: 'pending_review' },
         ]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
@@ -1107,7 +1109,7 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       const { mbPerHour: _m, ...missing } = batchReason;
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: missing }]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -1117,7 +1119,7 @@ describe('QualityGateService', () => {
     it('#1362: a valid full reason parses and returns unchanged', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: batchReason }]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -1131,7 +1133,7 @@ describe('QualityGateService', () => {
     it('#1362 F1: malformed newest event maps to null and is NOT overwritten by an older valid event', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: { ...batchReason, holdReasons: null } }, // newest (desc), malformed
           { downloadId: 1, reason: batchReason },                            // older, valid
@@ -1147,8 +1149,8 @@ describe('QualityGateService', () => {
       const { service, db, log } = createService();
       db.select
         .mockReturnValueOnce(mockDbChain([
-          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
-          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+          { ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, pipelineStage: 'pending_review' },
         ]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
@@ -1170,7 +1172,7 @@ describe('QualityGateService', () => {
     it('#1404: an all-valid batch does not warn', async () => {
       const { service, db, log } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: batchReason }]));
 
       await service.getQualityGateDataBatch([1]);
@@ -1283,7 +1285,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
         probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason: legacyReason }]));
 
       const result = await service.getQualityGateData(1);
@@ -1302,7 +1304,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
         probeFailure: false, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: legacyReason }]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -1315,7 +1317,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
   describe('getDeferredCleanupCandidates', () => {
     it('queries with where(isNotNull(downloads.pendingCleanup)) and returns matching rows', async () => {
       const { service, db } = createService();
-      const deferredDownload = { ...baseDownload, id: 10, status: 'failed', pendingCleanup: new Date() };
+      const deferredDownload = { ...baseDownload, id: 10, clientStatus: 'failed', pendingCleanup: new Date() };
       db.select.mockReturnValue(mockDbChain([deferredDownload]));
 
       const result = await service.getDeferredCleanupCandidates();

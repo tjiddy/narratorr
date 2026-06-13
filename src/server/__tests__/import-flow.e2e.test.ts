@@ -176,9 +176,9 @@ describe('Import flow E2E', () => {
     expect(book.audioDuration).toBe(3600);
     expect(book.enrichmentStatus).toBe('file-enriched');
 
-    // Download record: status transitioned to imported
+    // Download record: pipeline stage transitioned to imported
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl!.status).toBe('imported');
+    expect(dl!.pipelineStage).toBe('imported');
   });
 
   it('fires on_import webhook notification with correct payload', async () => {
@@ -223,7 +223,8 @@ describe('Import flow E2E', () => {
 
     // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl!.status).toBe('failed');
+    expect(dl!.clientStatus).toBe('failed');
+    expect(dl!.pipelineStage).toBe('idle');
     expect(dl!.errorMessage).toBeTruthy();
 
     // Book status recovered — no path so reverts to 'wanted'

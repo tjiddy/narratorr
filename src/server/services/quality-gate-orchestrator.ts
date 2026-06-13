@@ -22,7 +22,6 @@ import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
-import { transitionDownloadState } from '../utils/download-state.js';
 import { removeOrDeferTorrent, deleteDownloadOutputPath, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -89,7 +88,7 @@ export class QualityGateOrchestrator {
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
         // Set pending_review with probeFailure on unhandled error (pipeline-only write)
-        await transitionDownloadState(this.db, row.download.id, { pipelineStage: 'pending_review' });
+        await this.qualityGateService.hold(row.download.id);
         const probeError = getErrorMessage(error);
         this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
       }
@@ -133,7 +132,7 @@ export class QualityGateOrchestrator {
       // ServiceWireError instead of converting to pending_review.
       if (error instanceof ServiceWireError) throw error;
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
-      await transitionDownloadState(this.db, row.download.id, { pipelineStage: 'pending_review' });
+      await this.qualityGateService.hold(row.download.id);
       // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
         await this.db.update(books).set({ status: 'downloading' }).where(eq(books.id, row.book.id));
@@ -269,7 +268,7 @@ export class QualityGateOrchestrator {
     holdReason: string,
     error?: unknown,
   ): Promise<void> {
-    await transitionDownloadState(this.db, download.id, { pipelineStage: 'pending_review' });
+    await this.qualityGateService.hold(download.id);
 
     // SSE: download_status_change (checking → pending_review) + review_needed
     if (book) {

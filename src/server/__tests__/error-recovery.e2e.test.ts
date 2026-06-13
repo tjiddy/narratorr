@@ -133,7 +133,8 @@ describe('Error recovery E2E', () => {
 
     // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl!.status).toBe('failed');
+    expect(dl!.clientStatus).toBe('failed');
+    expect(dl!.pipelineStage).toBe('idle');
     expect(dl!.errorMessage).toBeTruthy();
 
     // Book status recovered — no path so reverts to 'wanted'
