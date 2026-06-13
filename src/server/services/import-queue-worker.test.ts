@@ -37,14 +37,20 @@ function createMockDb() {
     values: vi.fn().mockReturnThis(),
     returning: vi.fn().mockResolvedValue([]),
   };
+  const db = {
+    select: vi.fn().mockReturnValue(chainMethods),
+    update: vi.fn().mockReturnValue({ ...chainMethods, where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+    insert: vi.fn().mockReturnValue(chainMethods),
+    delete: vi.fn().mockReturnValue(chainMethods),
+    // Default transaction executes the callback and delegates `tx.update` to the live
+    // `db.update` (resolved at call time, so tests that reassign `db.update` to a
+    // payload-recording spy transparently capture the transactional writes). Rollback
+    // tests override `db.transaction` per-test with their own staging impl.
+    transaction: vi.fn(async (cb: (tx: { update: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
+      await cb({ update: (...args: unknown[]) => db.update(...(args as [])) })),
+  };
   return {
-    db: {
-      select: vi.fn().mockReturnValue(chainMethods),
-      update: vi.fn().mockReturnValue({ ...chainMethods, where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
-      insert: vi.fn().mockReturnValue(chainMethods),
-      delete: vi.fn().mockReturnValue(chainMethods),
-      transaction: vi.fn(),
-    },
+    db,
     setMock,
     whereMock,
     limitMock,
@@ -1359,6 +1365,132 @@ describe('ImportQueueWorker', () => {
       // Should not throw with 3rd arg
       const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
       expect(w).toBeDefined();
+    });
+  });
+
+  // ===========================================================================
+  // #1448 (S2e) — Import-job failure-window atomicity (phase/status)
+  //
+  // markJobFailed wraps its import_jobs + books failed-state writes in a single
+  // transaction so an observer joining the two rows never sees the job
+  // status='failed' while the book is still importing. Mirrors bootRecovery.
+  // The SSE emit stays OUTSIDE the transaction (side effect, must not roll back
+  // the durable DB write on a broadcaster error).
+  // ===========================================================================
+
+  describe('#1448 failure-window atomicity', () => {
+    /**
+     * Drives a single pending manual job whose adapter throws, through the
+     * claim → process → failure path. selectCallCount walks: boot recovery
+     * (empty), candidate select, full-row fetch, then idle.
+     */
+    function setupFailingJob(jobRow: Record<string, unknown>) {
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process() { throw new Error('copy verification failed'); },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: jobRow.id }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([jobRow]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+    }
+
+    it('a normal job failure commits BOTH the import_jobs (status+phase) and books (status) writes via the tx handle', async () => {
+      // Locks the within-row invariant (status='failed' AND phase='failed' in one
+      // import_jobs write) AND the cross-row commit (books status='failed' too),
+      // both routed through the default callback-executing transaction handle.
+      setupFailingJob({ id: 8, bookId: 80, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      // The default createMockDb transaction delegates tx.update → live db.update,
+      // so reassigning db.update to a recorder captures the transactional writes.
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      // The failure ran through a transaction (not two bare writes).
+      expect(mockDb.db.transaction).toHaveBeenCalled();
+
+      // import_jobs failed write carries BOTH status AND phase in one payload.
+      const failedJob = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
+      expect(failedJob).toBeDefined();
+      expect(failedJob!.lastError).toBeDefined();
+
+      // books failed write carries status only — no phase / lastError discriminator.
+      const failedBook = updateSets.find(s => s.status === 'failed' && !('phase' in s) && !('lastError' in s));
+      expect(failedBook).toBeDefined();
+    });
+
+    it('atomicity: when the books write throws inside the failure transaction, the import_jobs failed-state write is rolled back', async () => {
+      // Mirror of the bootRecovery rollback test: stage writes inside the tx
+      // callback; only commit them if the callback resolves cleanly. The second
+      // write (books) throws, so the staged import_jobs failed write is discarded.
+      setupFailingJob({ id: 9, bookId: 90, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      // Record bare (non-transactional) db.update payloads — the CAS claim
+      // (status:'processing') and any setPhase (phase-only) writes legitimately
+      // run outside a transaction and must NEVER carry status:'failed'.
+      const bareUpdateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          bareUpdateSets.push(payload);
+          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+        }),
+      }));
+
+      const committed: Record<string, unknown>[] = [];
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const staged: Record<string, unknown>[] = [];
+        let writeCount = 0;
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
+              where: vi.fn().mockImplementation(async () => {
+                // First write in the tx = import_jobs, second = books (source order).
+                const isBooks = writeCount > 0;
+                writeCount++;
+                if (isBooks) throw new Error('books write failed');
+                staged.push(payload);
+                return { rowsAffected: 1 };
+              }),
+            })),
+          })),
+        };
+        // Commit staged writes only if the callback resolves cleanly (rollback
+        // contract: an exception aborts the tx and discards staged changes).
+        await cb(tx);
+        committed.push(...staged);
+      });
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      // The failure transaction was attempted...
+      expect(mockDb.db.transaction).toHaveBeenCalled();
+      // ...but nothing committed — the books throw rolled back the import_jobs write.
+      expect(committed).toEqual([]);
+      // No failed-state write leaked through the bare (non-transactional) path.
+      // (CAS claim / setPhase writes are legitimate but must not be status:'failed'.)
+      expect(bareUpdateSets.find(s => s.status === 'failed')).toBeUndefined();
+
+      // markJobFailed rethrows when its transaction aborts, so processJob's promise
+      // rejects and is parked in currentJobPromise (the failure path never nulls it).
+      // Settle + clear it so the shared afterEach stop() doesn't re-await a rejection.
+      const seam = worker as unknown as { currentJobPromise: Promise<void> | null };
+      await seam.currentJobPromise?.catch(() => undefined);
+      seam.currentJobPromise = null;
     });
   });
 

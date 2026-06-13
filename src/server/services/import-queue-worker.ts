@@ -363,21 +363,28 @@ export class ImportQueueWorker {
 
   private async markJobFailed(jobId: number, bookId: number | null, currentPhase: string, bookTitle: string, lastError: string, phaseHistory?: PhaseHistoryEntry[]): Promise<void> {
     const now = new Date();
-    await this.db.update(importJobs).set({
-      status: 'failed',
-      phase: 'failed',
-      lastError,
-      ...(phaseHistory ? { phaseHistory: JSON.stringify(phaseHistory) } : {}),
-      completedAt: now,
-      updatedAt: now,
-    }).where(eq(importJobs.id, jobId));
-
-    if (bookId != null) {
-      await this.db.update(books).set({
+    // Wrap the import_jobs + books failed-state writes in a single transaction so an
+    // observer joining the two rows never sees the job `status='failed'` while the book
+    // is still `status='importing'`. Mirrors the bootRecovery pattern (see above): both
+    // writes commit together or neither commits. The SSE emit stays outside — a
+    // broadcaster failure must not roll back the durable failure write.
+    await this.db.transaction(async (tx) => {
+      await tx.update(importJobs).set({
         status: 'failed',
+        phase: 'failed',
+        lastError,
+        ...(phaseHistory ? { phaseHistory: JSON.stringify(phaseHistory) } : {}),
+        completedAt: now,
         updatedAt: now,
-      }).where(eq(books.id, bookId));
-    }
+      }).where(eq(importJobs.id, jobId));
+
+      if (bookId != null) {
+        await tx.update(books).set({
+          status: 'failed',
+          updatedAt: now,
+        }).where(eq(books.id, bookId));
+      }
+    });
 
     // Parse error message for SSE
     let errorMessage: string;
