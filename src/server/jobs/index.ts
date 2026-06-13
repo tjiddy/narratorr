@@ -130,11 +130,14 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
 }
 
 async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLogger): Promise<void> {
-  // Reset downloads stuck in checking/importing back to completed
+  // Reset downloads stuck mid-pipeline back to the `(completed, idle)` entry point
+  // so the orchestrators re-claim them. This resets ONLY the `pipelineStage` axis —
+  // `clientStatus` (still 'completed', the client download had finished) is
+  // preserved. Bulk recovery write; the per-row transition helper does not apply.
   const resetResult = await db
     .update(downloads)
-    .set({ status: 'completed' })
-    .where(inArray(downloads.status, ['checking', 'importing']))
+    .set({ pipelineStage: 'idle' })
+    .where(inArray(downloads.pipelineStage, ['checking', 'importing']))
     .returning({ id: downloads.id });
 
   if (resetResult.length > 0) {

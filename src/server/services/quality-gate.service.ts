@@ -5,6 +5,7 @@ import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db
 
 import type { BookRow, DownloadRow } from './types.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import { transitionDownloadState, completedDisplayDownloadCondition } from '../utils/download-state.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
 import { QualityGateServiceError } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
@@ -35,7 +36,7 @@ export class QualityGateService {
       .select({ download: downloads, book: books })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
-      .where(and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)));
+      .where(and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId)));
 
     if (rows.length === 0) return rows;
 
@@ -65,7 +66,7 @@ export class QualityGateService {
       .select({ download: downloads, book: books })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
-      .where(and(eq(downloads.id, downloadId), eq(downloads.status, 'completed')))
+      .where(and(eq(downloads.id, downloadId), completedDisplayDownloadCondition()))
       .limit(1);
 
     const row = rows[0];
@@ -110,7 +111,7 @@ export class QualityGateService {
     if (book !== null && book.path !== null && grabStatus === 'imported') {
       reason.action = 'held';
       reason.holdReasons.push('imported_book_replacement');
-      await this.setStatus(download.id, 'pending_review');
+      await this.hold(download.id);
       this.log.info({ downloadId: download.id, holdReasons: reason.holdReasons }, 'Quality gate: held for imported-book replacement review');
       return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     }
@@ -118,48 +119,63 @@ export class QualityGateService {
     // Decision tree (book.path === null — first download flow)
     if (holdReasons.length > 0) {
       reason.action = 'held';
-      await this.setStatus(download.id, 'pending_review');
+      await this.hold(download.id);
       this.log.info({ downloadId: download.id, holdReasons }, 'Quality gate: held for review');
       return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     } else if (book !== null && book.path === null) {
       // First download: book is a search placeholder with no files on disk — skip quality comparison
       reason.action = 'imported';
-      await this.setStatus(download.id, 'completed');
+      await this.autoImport(download.id);
       this.log.info({ downloadId: download.id }, 'Quality gate: first download auto-imported');
       return { action: 'imported', reason, statusTransition: { from: 'checking', to: 'completed' } };
     } else if (newMbPerHour !== null && existingMbPerHour !== null && newMbPerHour > existingMbPerHour) {
       reason.action = 'imported';
-      await this.setStatus(download.id, 'completed');
+      await this.autoImport(download.id);
       this.log.info({ downloadId: download.id, newMbPerHour, existingMbPerHour }, 'Quality gate: auto-import (better quality)');
       return { action: 'imported', reason, statusTransition: { from: 'checking', to: 'completed' } };
     } else if (newMbPerHour !== null && existingMbPerHour !== null) {
       reason.action = 'rejected';
-      await this.setStatus(download.id, 'failed');
+      await this.failPipeline(download.id);
       this.log.info({ downloadId: download.id }, 'Quality gate: auto-rejected (quality same or worse)');
       return { action: 'rejected', reason, statusTransition: { from: 'checking', to: 'failed' } };
     } else {
       reason.action = 'held';
       reason.holdReasons.push('no_quality_data');
-      await this.setStatus(download.id, 'pending_review');
+      await this.hold(download.id);
       this.log.info({ downloadId: download.id }, 'Quality gate: held for review (insufficient quality data)');
       return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     }
   }
 
-  /** Atomically claim a download: completed → checking. Returns true if claimed. */
+  /** Atomically claim a download: `(completed, idle) → (completed, checking)`. Returns true if claimed. */
   async atomicClaim(downloadId: number): Promise<boolean> {
-    const result = await this.db
-      .update(downloads)
-      .set({ status: 'checking' })
-      .where(and(eq(downloads.id, downloadId), eq(downloads.status, 'completed')))
-      .returning({ id: downloads.id });
-
-    return result.length > 0;
+    return transitionDownloadState(this.db, downloadId, {
+      expected: { clientStatus: 'completed', pipelineStage: 'idle' },
+      pipelineStage: 'checking',
+    });
   }
 
-  /** Set download status. */
-  async setStatus(downloadId: number, status: DownloadRow['status']): Promise<void> {
-    await this.db.update(downloads).set({ status }).where(eq(downloads.id, downloadId));
+  /** Hold for review — pipeline-only write to `pending_review`. */
+  async hold(downloadId: number): Promise<void> {
+    await transitionDownloadState(this.db, downloadId, { pipelineStage: 'pending_review' });
+  }
+
+  /**
+   * Auto-import outcome — the pipeline approves with no import needed. This is a
+   * pipeline-only write that resets the stage to `idle` (display `completed`),
+   * NOT a `clientStatus` change: the client download had already finished. The
+   * import orchestrator then re-claims the `(completed, idle)` row.
+   */
+  async autoImport(downloadId: number): Promise<void> {
+    await transitionDownloadState(this.db, downloadId, { pipelineStage: 'idle' });
+  }
+
+  /**
+   * Pipeline failure — the sanctioned cross-axis write to the canonical failure
+   * tuple `(failed, idle)` in ONE guarded UPDATE.
+   */
+  async failPipeline(downloadId: number): Promise<void> {
+    await transitionDownloadState(this.db, downloadId, { clientStatus: 'failed', pipelineStage: 'idle' });
   }
 
   /**
@@ -177,11 +193,15 @@ export class QualityGateService {
     if (result.length === 0) {
       throw new QualityGateServiceError('Download not found', 'NOT_FOUND');
     }
-    if (result[0]!.download.status !== 'pending_review') {
+    if (result[0]!.download.pipelineStage !== 'pending_review') {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
     }
 
-    await this.setStatus(downloadId, 'importing');
+    // Pipeline-only write, guarded on the expected pending_review stage.
+    await transitionDownloadState(this.db, downloadId, {
+      expected: { pipelineStage: 'pending_review' },
+      pipelineStage: 'importing',
+    });
     this.log.info({ downloadId }, 'Quality gate: download approved for import');
 
     return { id: downloadId, status: 'importing', download: result[0]!.download, book: result[0]!.book };
@@ -206,11 +226,16 @@ export class QualityGateService {
     const download = result[0]!.download;
     const book = result[0]!.book;
 
-    if (download.status !== 'pending_review') {
+    if (download.pipelineStage !== 'pending_review') {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
     }
 
-    await this.setStatus(downloadId, 'failed');
+    // Pipeline rejection → canonical failure tuple in one guarded UPDATE.
+    await transitionDownloadState(this.db, downloadId, {
+      expected: { pipelineStage: 'pending_review' },
+      clientStatus: 'failed',
+      pipelineStage: 'idle',
+    });
 
     return { id: downloadId, status: 'failed', download, book };
   }

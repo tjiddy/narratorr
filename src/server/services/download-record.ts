@@ -50,7 +50,8 @@ export async function insertDownloadRecord(
   ctx: InsertDownloadRecordCtx,
 ): Promise<{ id: number }[]> {
   const isHandoff = !ctx.externalId;
-  const downloadStatus: 'completed' | 'downloading' = isHandoff ? 'completed' : 'downloading';
+  // A fresh grab is pure client truth — `pipelineStage` defaults to 'idle'.
+  const clientStatus: 'completed' | 'downloading' = isHandoff ? 'completed' : 'downloading';
   const downloadProgress = isHandoff ? 1 : 0;
   const downloadCompletedAt = isHandoff ? new Date() : undefined;
   if (isHandoff) {
@@ -69,7 +70,7 @@ export async function insertDownloadRecord(
       downloadUrl: ctx.effectiveDownloadUrl,
       size: params.size,
       seeders: params.seeders,
-      status: downloadStatus,
+      clientStatus,
       progress: downloadProgress,
       completedAt: downloadCompletedAt,
       externalId: ctx.externalId ?? undefined,

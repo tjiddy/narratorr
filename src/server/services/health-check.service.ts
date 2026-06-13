@@ -1,12 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
-import { and, inArray } from 'drizzle-orm';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
-import { getInProgressStatuses } from '../../shared/download-status-registry.js';
+import { inProgressDownloadCondition } from '../utils/download-state.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
@@ -387,15 +386,10 @@ export class HealthCheckService {
   private async checkStuckDownloads(): Promise<HealthCheckResult[]> {
     const target: HealthCheckTarget = { kind: 'route', path: '/activity' };
     try {
-      const inProgressStatuses = getInProgressStatuses();
       const activeDownloads = await this.db
         .select()
         .from(downloads)
-        .where(
-          and(
-            inArray(downloads.status, inProgressStatuses),
-          )
-        );
+        .where(inProgressDownloadCondition());
 
       const now = Date.now();
       const stuck = activeDownloads.filter((d) => {
