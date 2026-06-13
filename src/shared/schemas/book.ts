@@ -9,6 +9,64 @@ export const BOOK_STATUSES = ['wanted', 'searching', 'downloading', 'importing',
 export const bookStatusSchema = z.enum(BOOK_STATUSES);
 export type BookStatus = z.infer<typeof bookStatusSchema>;
 
+// ----------------------------------------------------------------------------
+// Canonical book lifecycle (#1444, epic #1441 / S2a)
+// ----------------------------------------------------------------------------
+//
+// `BOOK_STATUSES` above IS the canonical lifecycle vocabulary — the 7 first-class
+// states (`wanted, searching, downloading, importing, imported, missing, failed`)
+// that the book detail screen and status badges render directly via
+// `bookStatusConfig` (`src/client/lib/status.ts`). This block does NOT introduce
+// a new parallel enum; it blesses the existing set as canonical and gives the
+// "lifecycle" concept a name without a blast-radius rename.
+//
+// Naming decision: keep `BOOK_STATUSES` / `bookStatusSchema` / `BookStatus` as
+// the canonical identifiers. `BookLifecycle` is a thin type alias (re-export),
+// NOT a rename — a hard rename would have to travel with the DB enum usages
+// (`books.status`, `bookStatusAtGrab` in `src/db/schema.ts`), the schema-db
+// alignment test (`src/shared/schema-db-alignment.test.ts`), `bookStatusConfig`,
+// and every `BookStatus` consumer, for purely cosmetic gain — and would risk the
+// drizzle migration-prompt hang in successor stories (S2b/S2c) that actually move
+// the column. The granular states remain what badges/detail render; buckets below
+// are a presentation/grouping layer ONLY.
+export type BookLifecycle = BookStatus;
+
+/**
+ * Library status-filter dropdown buckets (`All` is "no filter", so it is not a
+ * key here — it maps to every state). This is a PRESENTATION/GROUPING layer used
+ * only by the library filter dropdown and `getStats` per-bucket counts. It is the
+ * cleaned-up successor to the bucket grouping currently duplicated across three
+ * uncoordinated sites that successor stories (S2b–S2e) converge onto this single
+ * source of truth:
+ *   1. server filter WHERE  — `TAB_STATUS_MAP` (`book-list.service.ts`)
+ *   2. server counts        — `getStats` inline sums (`book-list.service.ts`)
+ *   3. client dropdown      — `matchesStatusFilter` / `filterTabs` (`pages/library/helpers.ts`)
+ *                             + `VALID_STATUS_FILTERS` (`pages/library/useLibraryFilters.ts`)
+ *
+ * Invariant (enforced in book.test.ts, the property S2d's `getStats` tests rely on):
+ * the buckets PARTITION the canonical states — their union equals all 7 states,
+ * they are pairwise disjoint, and no bucket references a non-canonical state. That
+ * partition is why per-bucket counts sum to the total book count.
+ *
+ * NOTE (S2a scope): this constant is purely additive — it changes no runtime
+ * behavior. Rewiring the three sites above onto it is S2d's job; do NOT delete or
+ * re-point `TAB_STATUS_MAP`, `getStats`, or the client helpers in this story.
+ */
+export const LIBRARY_FILTER_BUCKETS = {
+  wanted: ['wanted'],
+  downloading: ['searching', 'downloading'],
+  imported: ['importing', 'imported'],
+  failed: ['failed'],
+  missing: ['missing'],
+} as const satisfies Record<string, readonly BookLifecycle[]>;
+
+/** A concrete (non-`All`) library filter bucket key. */
+export type LibraryFilterBucket = keyof typeof LIBRARY_FILTER_BUCKETS;
+
+/** Full set of library filter dropdown values, including `all` (= no filter). */
+export const LIBRARY_FILTER_VALUES = ['all', ...Object.keys(LIBRARY_FILTER_BUCKETS)] as const;
+export type LibraryFilterValue = 'all' | LibraryFilterBucket;
+
 export const ENRICHMENT_STATUSES = ['pending', 'enriched', 'failed', 'skipped', 'file-enriched'] as const;
 export const enrichmentStatusSchema = z.enum(ENRICHMENT_STATUSES);
 export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
