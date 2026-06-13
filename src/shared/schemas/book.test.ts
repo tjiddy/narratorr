@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createBookBodySchema, updateBookBodySchema, enrichmentStatusSchema } from './book.js';
+import {
+  createBookBodySchema,
+  updateBookBodySchema,
+  enrichmentStatusSchema,
+  BOOK_STATUSES,
+  LIBRARY_FILTER_BUCKETS,
+  LIBRARY_FILTER_VALUES,
+} from './book.js';
 
 describe('enrichmentStatusSchema', () => {
   it.each(['pending', 'enriched', 'failed', 'skipped', 'file-enriched'] as const)(
@@ -18,6 +25,37 @@ const validBook = {
   title: 'My Book',
   authors: [{ name: 'Author Name' }],
 };
+
+describe('LIBRARY_FILTER_BUCKETS — canonical lifecycle partition (#1444)', () => {
+  const bucketStates = Object.values(LIBRARY_FILTER_BUCKETS).flat();
+
+  it('only references canonical BookLifecycle states', () => {
+    const canonical = new Set<string>(BOOK_STATUSES);
+    for (const state of bucketStates) {
+      expect(canonical.has(state)).toBe(true);
+    }
+  });
+
+  it('covers every canonical state (union equals the full state set)', () => {
+    expect([...bucketStates].sort()).toEqual([...BOOK_STATUSES].sort());
+  });
+
+  it('partitions the state set — buckets are pairwise disjoint (no state in two buckets)', () => {
+    // A correct partition has exactly one bucket per state, so the flattened
+    // membership list has no duplicates and its length equals the state count.
+    expect(new Set(bucketStates).size).toBe(bucketStates.length);
+    expect(bucketStates.length).toBe(BOOK_STATUSES.length);
+  });
+
+  it('groups the transient states as designed (Downloading / Imported)', () => {
+    expect([...LIBRARY_FILTER_BUCKETS.downloading]).toEqual(['searching', 'downloading']);
+    expect([...LIBRARY_FILTER_BUCKETS.imported]).toEqual(['importing', 'imported']);
+  });
+
+  it('exposes `all` plus one value per bucket as the dropdown values', () => {
+    expect([...LIBRARY_FILTER_VALUES]).toEqual(['all', ...Object.keys(LIBRARY_FILTER_BUCKETS)]);
+  });
+});
 
 describe('createBookBodySchema — series ASIN (#1071)', () => {
   it('accepts seriesAsin alongside scalar seriesName/seriesPosition', () => {
