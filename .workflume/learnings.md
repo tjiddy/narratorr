@@ -228,3 +228,25 @@ A `vi.mock('<barrel>', () => ({...}))` factory REPLACES the module — any named
 ---
 
 The commit-pending recovery sequence (recoverInterruptedBackup in src/server/utils/import-staging.ts, reached via recoverInterruptedCommit) is ADDITIVE: it renames files from `<target>.import-bak` into the target (overwriting only same-named files), then clears the backup and marker. It never deletes existing target files, so the top-level audio count after recovery is always >= the count before. Do not reason about recovery as 'swapping in' or 'replacing' the target's file set — that's what the #1287 staged swap (stagedAudioReplace/commitStagedImport) does, not bare recovery. Practical effect: a guard that re-checks a minimum-file-count AFTER recovery (e.g. the #1418 merge >=2 re-validation) is correct defense-in-depth but cannot be triggered by the real recovery flow when a pre-recovery validation already enforced that minimum; test such guards by simulating divergent pre/post-recovery readdir results in a mocked-fs suite rather than trying to arrange a real-tmpdir shrink.
+
+## guarded-transition-needs-returning-in-tx-mocks
+
+**source:** #1470
+**added:** 2026-06-14
+**files:** src/server/services/import-queue-worker.test.ts
+**tags:** drizzle, vitest, transaction-mock, transitionBookStatus, expected-guard
+
+---
+
+transitionBookStatus (src/server/utils/book-status.ts) and the symmetric transitionDownloadState compile to two different SQL shapes: an UNGUARDED transition is `db.update(t).set(s).where(eq(id))` and is awaited directly; a GUARDED transition (`expected: { status: X }`) is `...where(and(eq(id), eq(status, X))).returning({ id })` and reads `result.length > 0` to learn whether the precondition matched. Consequence for tests: worker/service transaction-spy mocks that build an update terminus as `where: vi.fn().mockResolvedValue({ rowsAffected: 1 })` work for unguarded writes but throw `TypeError: returning is not a function` the moment a write becomes guarded — and that TypeError reads like a behavior failure, not a stale-mock failure. When you add an `expected` guard to any of these transitions, update the test doubles in the same change: give the update terminus a value that is BOTH awaitable AND exposes `.returning()` (see the `updateWhereTerminus()` thenable helper in import-queue-worker.test.ts), and to assert guard semantics use a stateful mock that returns `[{id}]` on match / `[]` on miss keyed off a mutable tracked status (see `makeGuardedTxUpdate`). Rollback mocks that previously threw inside an async `where` must move the throw to `.returning()` for the guarded (books/downloads) write. Discriminate import_jobs writes (payload has `phase`) from book writes (no `phase`). This is broader than #1470's books axis — the downloads axis has the same shape.
+
+## zod-type-provider-send-union-narrowing
+
+**source:** #1452
+**added:** 2026-06-14
+**files:** src/server/routes/v1/actions.ts
+**tags:** fastify, fastify-type-provider-zod, zod, response-schema, error-envelope
+
+---
+
+fastify-type-provider-zod types FastifyReply.send() as the union of the schemas declared in the route's `response` map. So once a route (using withTypeProvider<ZodTypeProvider>()) declares its 200/201 success shape, `reply.status(400).send(envelope)` fails typecheck unless 400 is also declared in the response map. Two ways to satisfy it: (1) throw a typed error and let a setErrorHandler build the envelope via its own untyped reply (how the v1 READ routes avoid the issue — they throw V1NotFoundError → v1ErrorHandler), or (2) declare an error-envelope schema for every status the handler reply.send()s inline (how the v1 ACTION routes do it: response `{ 200, 201, 400, 401, 404, 409, 500, 502, 504 }`). Helper functions receiving a bare FastifyReply parameter are not subject to the narrowing. Approach (2) also fail-closes error-body serialization. Reference: src/server/routes/v1/actions.ts vs src/server/routes/v1/books.ts + _helpers.ts (v1ErrorHandler).
