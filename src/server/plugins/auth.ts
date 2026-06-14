@@ -4,6 +4,7 @@ import type { AuthService } from '../services/auth.service.js';
 import { config } from '../config.js';
 import { sessionCookieOptions } from '../utils/cookie-options.js';
 import { isProwlarrCompatPath } from '../routes/prowlarr-compat.js';
+import { isV1DocsPath } from '../routes/v1/openapi.js';
 
 const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
@@ -298,6 +299,13 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
 
     // Public routes
     if (PUBLIC_ROUTES.has(routePath)) return;
+
+    // OpenAPI/Swagger docs subtree (#1454) — the public v1 contract. Exempted by
+    // PREFIX (not an exact-match Set entry) because swagger-ui serves a whole
+    // subtree (UI root, `/json`, `/yaml`, `/static/*`); a single allowlist entry
+    // would leave the sub-paths 401. Scoped to the docs subtree only — protected
+    // `/api/v1` DATA routes still require an API key.
+    if (isV1DocsPath(routePath, urlBase)) return;
 
     // /api/auth/setup is public when no user exists
     if (routePath === setupRoute && request.method === 'POST') {

@@ -10,7 +10,7 @@ import {
   bookV1ListQuerySchema,
   toBookV1,
 } from '../../../shared/schemas/v1/books.js';
-import { v1ListResponseSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1BooksRouteDeps {
@@ -46,7 +46,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         {
           schema: {
             querystring: bookV1ListQuerySchema,
-            response: { 200: v1ListResponseSchema(bookV1Schema) },
+            response: { 200: v1ListResponseSchema(bookV1Schema), 400: v1ErrorEnvelopeSchema },
           },
         },
         async (request) => {
@@ -75,7 +75,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         {
           schema: {
             params: publicIdParamSchema,
-            response: { 200: bookV1Schema },
+            response: { 200: bookV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
         async (request) =>

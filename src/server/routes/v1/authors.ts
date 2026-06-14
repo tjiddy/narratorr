@@ -9,7 +9,7 @@ import {
   authorV1ListQuerySchema,
   toAuthorV1,
 } from '../../../shared/schemas/v1/authors.js';
-import { v1ListResponseSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1AuthorsRouteDeps {
@@ -40,7 +40,7 @@ export async function v1AuthorsRoutes(app: FastifyInstance, deps: V1AuthorsRoute
         {
           schema: {
             querystring: authorV1ListQuerySchema,
-            response: { 200: v1ListResponseSchema(authorV1Schema) },
+            response: { 200: v1ListResponseSchema(authorV1Schema), 400: v1ErrorEnvelopeSchema },
           },
         },
         async (request) => {
@@ -59,7 +59,7 @@ export async function v1AuthorsRoutes(app: FastifyInstance, deps: V1AuthorsRoute
         {
           schema: {
             params: publicIdParamSchema,
-            response: { 200: authorV1Schema },
+            response: { 200: authorV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
         async (request) =>
