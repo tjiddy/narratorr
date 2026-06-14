@@ -9,6 +9,7 @@ import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 import { createMockDbBook, createMockDbIndexer } from '../__tests__/factories.js';
 import * as statusRegistry from '../../shared/download-status-registry.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
 const dialect = new SQLiteSyncDialect();
@@ -662,13 +663,15 @@ describe('DownloadService', () => {
   });
 
   describe('setError', () => {
-    it('passes status failed and errorMessage to set()', async () => {
+    it('writes the sanctioned failure tuple (failed, idle) with errorMessage', async () => {
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
 
       await service.setError(1, 'Connection refused');
 
-      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', errorMessage: 'Connection refused' });
+      // Full tuple so the row derives as `failed` regardless of prior pipeline stage.
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Connection refused' });
+      expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
     });
 
     it('logs at warn level', async () => {
@@ -686,22 +689,57 @@ describe('DownloadService', () => {
   });
 
   describe('cancel', () => {
-    it('removes torrent from client and updates status', async () => {
+    it('removes torrent from client and writes the failure tuple (failed, idle)', async () => {
       const mockAdapter = {
         removeDownload: vi.fn().mockResolvedValue(undefined),
       };
+      const chain = mockDbChain();
 
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(chain);
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       const result = await service.cancel(1);
 
       expect(result).toBe(true);
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(mockDownload.externalId, true);
-      expect(db.update).toHaveBeenCalled();
+      // Idle cancel still carries the explicit pipelineStage: 'idle' (no-op on that axis).
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
+    });
+
+    it.each(['pending_review', 'importing', 'checking'] as const)(
+      'resets pipelineStage to idle when cancelling a download in %s (display derives as failed)',
+      async (stage) => {
+        const chain = mockDbChain();
+        db.select.mockReturnValue(
+          mockDbChain([{ download: { ...mockDownload, pipelineStage: stage }, book: mockBook }]),
+        );
+        db.update.mockReturnValue(chain);
+        (clientService.getAdapter as Mock).mockResolvedValue(null);
+
+        const result = await service.cancel(1);
+
+        expect(result).toBe(true);
+        expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
+        // The written tuple derives as `failed`, not the stale in-pipeline stage.
+        expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
+      },
+    );
+
+    it('uses a custom cancellation reason as the errorMessage', async () => {
+      const chain = mockDbChain();
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, pipelineStage: 'importing' }, book: mockBook }]),
+      );
+      db.update.mockReturnValue(chain);
+      (clientService.getAdapter as Mock).mockResolvedValue(null);
+
+      const result = await service.cancel(1, 'some reason');
+
+      expect(result).toBe(true);
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'some reason' });
     });
 
     it('returns false when download not found', async () => {
@@ -709,6 +747,7 @@ describe('DownloadService', () => {
 
       const result = await service.cancel(999);
       expect(result).toBe(false);
+      expect(db.update).not.toHaveBeenCalled();
     });
 
     it('still cancels when adapter removal fails', async () => {
@@ -1204,7 +1243,7 @@ describe('DownloadService', () => {
 
       await service.cancel(1);
 
-      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', errorMessage: 'Cancelled by user' });
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
     });
 
     it('does not update book status (orchestrator responsibility)', async () => {
@@ -1219,7 +1258,7 @@ describe('DownloadService', () => {
       // Only one db.update call — for download status, not for book status
       const setCalls = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).toHaveLength(1);
-      expect(setCalls[0]).toEqual({ clientStatus: 'failed', errorMessage: 'Cancelled by user' });
+      expect(setCalls[0]).toEqual({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
     });
   });
 
