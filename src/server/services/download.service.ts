@@ -4,7 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
-import { isTerminalState, isReplaceableState, deriveDisplayStatus, displayStatusToTuple } from '../../shared/download-status-registry.js';
+import { isTerminalState, isReplaceableState, deriveDisplayStatus } from '../../shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
   terminalDownloadCondition,
@@ -337,13 +337,6 @@ export class DownloadService {
     if (progress >= 1) {
       this.log.info({ id }, 'Download completed');
     }
-  }
-
-  async updateStatus(id: number, status: DownloadStatus, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
-    // Generic display-status setter — translate to the canonical axis tuple.
-    const { clientStatus, pipelineStage } = displayStatusToTuple(status);
-    await transitionDownloadState(this.db, id, { clientStatus, pipelineStage });
-    this.log.info({ id, status }, 'Download status changed');
   }
 
   async setError(id: number, errorMessage: string, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {

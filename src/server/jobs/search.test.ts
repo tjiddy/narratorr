@@ -43,7 +43,6 @@ function createMockDownloadOrchestrator(): DownloadOrchestrator {
     getActive: vi.fn(),
     getActiveByBookId: vi.fn(),
     updateProgress: vi.fn(),
-    updateStatus: vi.fn(),
     setError: vi.fn(),
     cancel: vi.fn(),
     delete: vi.fn(),

@@ -156,14 +156,6 @@ export class DownloadOrchestrator {
     }
   }
 
-  /** Update download status with SSE dispatch. */
-  async updateStatus(id: number, status: DownloadStatus, meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
-    await this.downloadService.updateStatus(id, status, meta);
-    if (meta?.bookId && meta?.oldStatus) {
-      emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: meta.bookId, oldStatus: meta.oldStatus, newStatus: status, log: this.log });
-    }
-  }
-
   /** Run a side-effect function, catching and logging any error. */
   private safe(fn: () => void): void {
     try { fn(); } catch (error: unknown) { this.log.warn({ error: serializeError(error) }, 'Side-effect dispatch failed'); }

@@ -144,9 +144,7 @@ export function getClientPolledStatuses(): DownloadStatus[] {
 //
 // `deriveDisplayStatus` is the compatibility seam: it collapses the
 // `(clientStatus, pipelineStage)` tuple back into the legacy 9-value display
-// enum, preserving the REST/SSE/client contract. `displayStatusToTuple` is its
-// exact inverse (and the backfill mapping) — the pair round-trips for every
-// legacy `DownloadStatus`.
+// enum, preserving the REST/SSE/client contract.
 // ============================================================================
 
 /**
@@ -159,29 +157,6 @@ export function getClientPolledStatuses(): DownloadStatus[] {
  */
 export function deriveDisplayStatus(clientStatus: ClientStatus, pipelineStage: PipelineStage): DownloadStatus {
   return pipelineStage === 'idle' ? clientStatus : pipelineStage;
-}
-
-/**
- * Inverse of `deriveDisplayStatus` — maps a legacy display status to its
- * canonical `(clientStatus, pipelineStage)` tuple. This IS the backfill mapping:
- * the pipeline display values resolve to `clientStatus='completed'` (the client
- * download had finished) with the corresponding stage; the client-only display
- * values resolve to `pipelineStage='idle'`.
- */
-export function displayStatusToTuple(status: DownloadStatus): { clientStatus: ClientStatus; pipelineStage: PipelineStage } {
-  switch (status) {
-    case 'queued':
-    case 'downloading':
-    case 'paused':
-    case 'completed':
-    case 'failed':
-      return { clientStatus: status, pipelineStage: 'idle' };
-    case 'checking':
-    case 'pending_review':
-    case 'importing':
-    case 'imported':
-      return { clientStatus: 'completed', pipelineStage: status };
-  }
 }
 
 /** Tuple predicate: does the download display as in-progress (non-terminal)? */
