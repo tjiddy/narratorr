@@ -21,3 +21,6 @@ export * from './schemas/enrichment.js';
 export * from './schemas/quality-gate-reason.js';
 export * from './schemas/v1/common.js';
 export * from './schemas/v1/books.js';
+export * from './schemas/v1/authors.js';
+export * from './schemas/v1/narrators.js';
+export * from './schemas/v1/series.js';

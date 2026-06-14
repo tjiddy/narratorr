@@ -35,6 +35,7 @@ vi.mock('../services', () => ({
   RetryBudget: vi.fn(),
   DiscoveryService: vi.fn(),
   SeriesCardService: vi.fn(),
+  ReferenceReadService: vi.fn(),
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
 vi.mock('../services/import-orchestrator.js', () => ({
@@ -71,13 +72,13 @@ vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(
 vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 27 route factories', () => {
+  it('contains all 30 route factories', () => {
     // books, bookFiles, bookPreview, search, activity, importJobs, indexers, downloadClients,
     // settings, metadata, libraryScan, system, notifiers, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events, searchStream,
     // prowlarrCompat, importLists, discover, bulkOperations, retryImport, importPreview,
-    // v1Books
-    expect(routeRegistry).toHaveLength(27);
+    // v1Books, v1Authors, v1Narrators, v1Series
+    expect(routeRegistry).toHaveLength(30);
   });
 
   it('every entry is a function', () => {
