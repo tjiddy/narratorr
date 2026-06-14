@@ -243,6 +243,42 @@ describe('v1 action routes (search + grab)', () => {
   });
 
   // --------------------------------------------------------------------------
+  // Search → grab round-trip (the signed-token public contract)
+  // --------------------------------------------------------------------------
+
+  describe('POST /search → POST /grab (signed releaseId round-trip)', () => {
+    it('accepts a releaseId minted by /search at /grab and forwards that release to the download client', async () => {
+      // The contract that matters for #1488: the token the search endpoint hands
+      // out must verify on the grab endpoint. Mint it via the real search route
+      // (not a hand-signed token) so an accidental re-wire of search to the
+      // unsigned body encoder would fail here even while the reject tests stay green.
+      (indexerSearchService.searchAll as Mock).mockResolvedValue([searchResult()]);
+
+      const searchRes = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+      expect(searchRes.statusCode).toBe(200);
+      const releaseId = searchRes.json().data[0].releaseId as string;
+      expect(typeof releaseId).toBe('string');
+
+      const grabRes = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+      expect(grabRes.statusCode).toBe(201);
+      expect(downloadV1Schema.parse(grabRes.json())).toBeTruthy();
+      expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
+      const [params] = (downloadOrchestrator.grab as Mock).mock.calls[0]!;
+      // The grab side effect receives the searched release's own grab fields —
+      // proving the signed token round-tripped its payload, not an attacker's.
+      expect(params).toMatchObject({
+        downloadUrl: 'http://indexer.example/torrent/1',
+        title: 'The Way of Kings (Unabridged)',
+        protocol: 'torrent',
+        guid: 'guid-1',
+        indexerId: 3,
+        bookId: BOOK_ID,
+      });
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Grab — idempotency
   // --------------------------------------------------------------------------
 
