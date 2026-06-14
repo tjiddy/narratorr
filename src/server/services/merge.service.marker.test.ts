@@ -37,7 +37,28 @@ const SCAN_RESULT = {
 const OUTPUT = 'The Way of Kings.m4b';
 
 const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
-const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 50));
+
+/**
+ * Deterministically wait for the fire-and-forget background merge to reach a terminal
+ * state instead of guessing with a fixed sleep. `enqueueMerge` returns immediately while
+ * `executeMerge` runs on the event loop; the service signals completion through the injected
+ * broadcaster `emit` — `merge_complete` on success, `merge_failed` on failure. Awaiting that
+ * signal guarantees the background work has finished before assertions and before `afterEach`
+ * removes `libraryRoot`.
+ *
+ * Note: `merge_complete` is emitted only AFTER `commitMerge` returns, i.e. after its
+ * `rm(<bookPath>.merge-tmp)` cleanup — so the success-path wait is post-cleanup (this is what
+ * the original 50 ms sleep was racing). On the failure path `merge_failed` is emitted just
+ * before the catch-block `rm(stagingDir)`, but the recovery-failure test fails during
+ * preflight before any staging dir exists, so there is no `.merge-tmp` for `afterEach` to race.
+ * Real timers stay in use — `vi.waitFor` and the awaited fs promises both need the real loop.
+ */
+async function waitForMergeSettled(emit: Mock): Promise<void> {
+  await vi.waitFor(
+    () => expect(emit).toHaveBeenCalledWith(expect.stringMatching(/^merge_(complete|failed)$/), expect.anything()),
+    { timeout: 5000, interval: 10 },
+  );
+}
 async function listFiles(dir: string): Promise<string[]> {
   return (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile()).map((e) => e.name).sort();
 }
@@ -106,7 +127,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await writeFile(join(bookPath, '02.mp3'), Buffer.alloc(300, 2));
 
     await buildService().enqueueMerge(42);
-    await settle();
+    await waitForMergeSettled(emit);
 
     expect(await listFiles(bookPath)).toEqual([OUTPUT]);
     expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
@@ -122,7 +143,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await armMarker(['orig.mp3']);
 
     await buildService().enqueueMerge(42);
-    await settle();
+    await waitForMergeSettled(emit);
 
     // Marker + backup were consumed before the output was written.
     expect(await pathExists(`${bookPath}.import-commit-pending`)).toBe(false);
@@ -144,7 +165,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await armMarker(['orig.mp3']);
 
     await buildService().enqueueMerge(42);
-    await settle();
+    await waitForMergeSettled(emit);
 
     // The recovery-restored original was merged in and deleted, not left behind as a stale file.
     expect(await listFiles(bookPath)).toEqual([OUTPUT]);
@@ -160,7 +181,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await mkdir(`${bookPath}.import-commit-pending`, { recursive: true });
 
     await buildService().enqueueMerge(42);
-    await settle();
+    await waitForMergeSettled(emit);
 
     // No ffmpeg work ran; no output committed; the originals + collision are untouched.
     expect(processAudioFiles).not.toHaveBeenCalled();
