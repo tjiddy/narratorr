@@ -303,8 +303,14 @@ export class ImportQueueWorker {
 
     const startTime = Date.now();
     this.currentJobPromise = this.processJob(job.id, job.bookId, adapter, job, ctx, phaseHistory, startTime);
-    await this.currentJobPromise;
-    this.currentJobPromise = null;
+    try {
+      await this.currentJobPromise;
+    } finally {
+      // Null on EVERY outcome — success and rejection. A rejected processJob
+      // (e.g. markJobFailed's transaction aborts) must not leave a parked
+      // rejected promise that stop() would later re-await and re-reject.
+      this.currentJobPromise = null;
+    }
 
     return true;
   }
