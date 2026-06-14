@@ -6,7 +6,6 @@ import {
   v1ListResponseSchema,
 } from './common.js';
 import * as barrel from '../../schemas.js';
-import { paginationParamsSchema } from '../common.js';
 
 describe('shared schemas barrel re-export', () => {
   // Guards the downstream consumer contract: the v1 building blocks must be
@@ -56,11 +55,11 @@ describe('v1ErrorEnvelopeSchema', () => {
 });
 
 describe('v1PaginationParamsSchema', () => {
-  it('is the same schema as the existing paginationParamsSchema (not a fork)', () => {
-    expect(v1PaginationParamsSchema).toBe(paginationParamsSchema);
-  });
-
-  it('honors limit min/max bounds', () => {
+  // Behavioral contract (not object identity): the building block enforces
+  // limit/offset bounds and, per the v1 ADR (common.ts:36-40), stays a
+  // NON-strict building block so it can be composed with filter/sort params
+  // before strictness is applied at the composed level.
+  it('honors limit min/max bounds (1–500)', () => {
     expect(v1PaginationParamsSchema.safeParse({ limit: 1 }).success).toBe(true);
     expect(v1PaginationParamsSchema.safeParse({ limit: 500 }).success).toBe(true);
     expect(v1PaginationParamsSchema.safeParse({ limit: 0 }).success).toBe(false);
@@ -74,6 +73,25 @@ describe('v1PaginationParamsSchema', () => {
 
   it('allows omitting both params', () => {
     expect(v1PaginationParamsSchema.safeParse({}).success).toBe(true);
+  });
+
+  it('is a NON-strict building block — strips unknown keys rather than rejecting (strictness belongs at the composed level)', () => {
+    const result = v1PaginationParamsSchema.safeParse({ limit: 10, unknown: 'x' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect('unknown' in result.data).toBe(false);
+    }
+  });
+
+  it('rejects unknown keys once composed-and-strict (the pattern v1 list validators use)', () => {
+    // Mirrors how `bookV1ListQuerySchema` is built: extend the non-strict
+    // pagination block with filter/sort params, then `.strict()` the union so
+    // unknown params (e.g. a snake_case `sort_by`) are rejected, not stripped.
+    const composed = v1PaginationParamsSchema
+      .extend({ author: z.string().optional() })
+      .strict();
+    expect(composed.safeParse({ limit: 10, author: 'a' }).success).toBe(true);
+    expect(composed.safeParse({ limit: 10, sort_by: 'title' }).success).toBe(false);
   });
 });
 
