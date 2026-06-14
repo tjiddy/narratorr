@@ -4,7 +4,7 @@ import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookListService } from './book-list.service.js';
 import type { Db } from '../../db/index.js';
-import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket } from '../../shared/schemas/book.js';
+import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket, type BookStatus } from '../../shared/schemas/book.js';
 
 // Serialize a Drizzle SQL expression to a raw SQL string + bound params so the
 // bucket-expansion predicate can be asserted against real SQL, not mock calls
@@ -425,6 +425,46 @@ describe('BookListService', () => {
       const { params } = await captureLibraryWhere('downloading');
       expect(params).toEqual(['searching', 'downloading']);
       expect(params).toHaveLength(2);
+    });
+  });
+
+  // #1449 (S3 / F1) — the native `/api/v1` boundary needs EXACT canonical-status
+  // semantics, not the library bucket expansion. The additive `exactStatus` option
+  // on getAll() forces `eq(books.status, status)` and skips BUCKET_EXPANSION, so a
+  // canonical `downloading`/`imported` filters to that exact state instead of
+  // silently widening to the bucket. Default (omitted/false) keeps legacy behavior.
+  describe('getAll exactStatus option — exact canonical match (#1449)', () => {
+    /** Capture the WHERE clause `getAll` passes to its count query. */
+    async function captureGetAllWhere(status: BookStatus, exactStatus: boolean) {
+      const countChain = mockDbChain([{ value: 0 }]);
+      const rowsChain = mockDbChain([]);
+      db.select.mockReturnValueOnce(countChain).mockReturnValueOnce(rowsChain);
+
+      await service.getAll(status, undefined, { exactStatus });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(whereArg).toBeDefined();
+      return compileWhere(whereArg);
+    }
+
+    it('forces an exact eq match for the overlapping bucket key "downloading"', async () => {
+      const { sql, params } = await captureGetAllWhere('downloading', true);
+      expect(sql.toLowerCase()).toContain('"status" = ');
+      expect(sql.toLowerCase()).not.toContain('"status" in (');
+      expect(params).toEqual(['downloading']);
+    });
+
+    it('forces an exact eq match for "imported" (no importing+imported expansion)', async () => {
+      const { sql, params } = await captureGetAllWhere('imported', true);
+      expect(sql.toLowerCase()).toContain('"status" = ');
+      expect(sql.toLowerCase()).not.toContain('"status" in (');
+      expect(params).toEqual(['imported']);
+    });
+
+    it('default (exactStatus false) still bucket-expands "downloading" → searching+downloading', async () => {
+      const { sql, params } = await captureGetAllWhere('downloading', false);
+      expect(sql.toLowerCase()).toContain('"status" in (');
+      expect(params).toEqual(['searching', 'downloading']);
     });
   });
 
