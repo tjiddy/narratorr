@@ -7,6 +7,37 @@ import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
 import { READARR_ECHO_ONLY_FIELDS } from '../utils/readarr-echo-fields.js';
 
+// ── Compat surface paths (single source of truth) ──
+
+/**
+ * The Prowlarr/Readarr compat-shim path surface — the documented contract
+ * *exception* under `/api/v1/*` that impersonates Readarr (NOT native v1, see
+ * `src/shared/schemas/v1/common.ts`). Both the route registrations below and the
+ * auth plugin's envelope discriminator (`isProwlarrCompatPath`) derive from this
+ * one place, so the two cannot drift: adding a compat route updates the predicate
+ * automatically. `systemStatus` is exact; every `indexer*` route shares the
+ * `indexerPrefix`.
+ */
+export const PROWLARR_COMPAT_PATHS = {
+  systemStatus: '/api/v1/system/status',
+  indexerPrefix: '/api/v1/indexer',
+} as const;
+
+/**
+ * Is `routePath` a Prowlarr/Readarr compat-shim path (vs a native v1 route)?
+ * `urlBase` is the active URL_BASE (`''` when unset) so this classifies
+ * correctly under `URL_BASE=/narratorr` — it is never a hardcoded `/api/`
+ * literal. Used by the auth plugin to keep compat auth failures on the legacy
+ * bare-string `{ error: 'Invalid API key' }` while native v1 auth failures get
+ * the `{ error: { code, message } }` envelope.
+ */
+export function isProwlarrCompatPath(routePath: string, urlBase: string): boolean {
+  return (
+    routePath === `${urlBase}${PROWLARR_COMPAT_PATHS.systemStatus}` ||
+    routePath.startsWith(`${urlBase}${PROWLARR_COMPAT_PATHS.indexerPrefix}`)
+  );
+}
+
 // ── Types ──
 
 interface ReadarrField {
@@ -269,7 +300,7 @@ function makeSchemaTemplate(impl: string) {
 // ── Routes ──
 
 function registerSystemRoutes(app: FastifyInstance) {
-  app.get('/api/v1/system/status', async () => ({
+  app.get(PROWLARR_COMPAT_PATHS.systemStatus, async () => ({
     appName: 'Narratorr',
     version: getVersion(),
     instanceName: 'Narratorr',
@@ -283,14 +314,15 @@ function registerSystemRoutes(app: FastifyInstance) {
 }
 
 function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerService) {
-  app.get('/api/v1/indexer/schema', async () => [makeSchemaTemplate('Torznab'), makeSchemaTemplate('Newznab')]);
+  const indexerBase = PROWLARR_COMPAT_PATHS.indexerPrefix;
+  app.get(`${indexerBase}/schema`, async () => [makeSchemaTemplate('Torznab'), makeSchemaTemplate('Newznab')]);
 
-  app.get('/api/v1/indexer', async () => {
+  app.get(indexerBase, async () => {
     const all = await indexerService.getAllProwlarrManaged();
     return all.map(row => toReadarrIndexer(row));
   });
 
-  app.get<{ Params: { id: string } }>('/api/v1/indexer/:id', async (request, reply) => {
+  app.get<{ Params: { id: string } }>(`${indexerBase}/:id`, async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
     const row = await indexerService.getByIdProwlarrManaged(id);
@@ -299,7 +331,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
   });
 
   app.post<{ Body: ReadarrBody; Querystring: { forceSave?: string } }>(
-    '/api/v1/indexer',
+    indexerBase,
     { schema: { body: readarrBodySchema } },
     async (request, reply) => {
       const body = request.body;
@@ -323,7 +355,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
   );
 
   app.put<{ Params: { id: string }; Body: ReadarrBody }>(
-    '/api/v1/indexer/:id',
+    `${indexerBase}/:id`,
     { schema: { body: readarrBodySchema } },
     async (request, reply) => {
       const id = parseInt(request.params.id, 10);
@@ -365,7 +397,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
     },
   );
 
-  app.delete<{ Params: { id: string } }>('/api/v1/indexer/:id', async (request, reply) => {
+  app.delete<{ Params: { id: string } }>(`${indexerBase}/:id`, async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
     // Source guard (#958): manual rows must be opaque to the Prowlarr-compat
@@ -380,7 +412,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
   });
 
   app.post<{ Body: ReadarrBody }>(
-    '/api/v1/indexer/test',
+    `${indexerBase}/test`,
     { schema: { body: readarrBodySchema } },
     async (request, reply) => {
       const body = request.body;
