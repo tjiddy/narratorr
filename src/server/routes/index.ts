@@ -73,6 +73,7 @@ import { ManualImportAdapter } from '../services/import-adapters/manual.js';
 import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
 import { importPreviewRoute } from './import-preview.js';
+import { v1BooksRoutes } from './v1/books.js';
 
 // The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
 // (the correct layer — routes depend on services, not the reverse). Imported for
@@ -245,6 +246,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
   (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
   (app) => importPreviewRoute(app),
+  (app, s, db) => v1BooksRoutes(app, { bookService: s.book, bookListService: s.bookList }, db),
 ];
 
 export { routeRegistry };

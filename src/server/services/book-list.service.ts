@@ -37,6 +37,15 @@ export interface BookListOptions {
   narrator?: string;
   sortField?: BookSortField;
   sortDirection?: BookSortDirection;
+  /**
+   * Filter `status` by EXACT canonical match instead of bucket-expanding the
+   * overlapping keys (`downloading`/`imported`) through `BUCKET_EXPANSION`.
+   * Default `false` preserves the legacy bucket-aware behavior for internal
+   * `/api/books` and library callers; the native public `/api/v1` boundary sets
+   * it `true` so `status=downloading` means exactly-`downloading`, not the
+   * library `searching+downloading` bucket (#1449).
+   */
+  exactStatus?: boolean;
 }
 
 /**
@@ -80,11 +89,11 @@ export class BookListService {
    *  title/series/genres + author name subquery, no narrator subquery.
    *  Author/series/narrator filters (#1143) are case-insensitive exact matches
    *  pushed to the DB so pagination operates on the filtered set. */
-  private buildListWhere(status?: BookStatus | LibraryFilterBucket, filters?: { search?: string; author?: string; series?: string; narrator?: string }): SQL | undefined {
+  private buildListWhere(status?: BookStatus | LibraryFilterBucket, filters?: { search?: string; author?: string; series?: string; narrator?: string }, exactStatus = false): SQL | undefined {
     const conditions: SQL[] = [];
 
     if (status) {
-      const bucket = BUCKET_EXPANSION[status];
+      const bucket = exactStatus ? undefined : BUCKET_EXPANSION[status];
       if (bucket) {
         conditions.push(inArray(books.status, [...bucket]));
       } else {
@@ -122,7 +131,10 @@ export class BookListService {
     pagination?: { limit?: number; offset?: number },
     options?: BookListOptions,
   ): Promise<{ data: BookWithAuthor[]; total: number }> {
-    const where = this.buildListWhere(status, pickFilters(options));
+    // Destructure once (single `?? {}` branch) instead of repeated `options?.`
+    // optional chains — keeps getAll under the cyclomatic-complexity cap.
+    const { slim, sortField, sortDirection, exactStatus } = options ?? {};
+    const where = this.buildListWhere(status, pickFilters(options), exactStatus);
 
     // Get total count (filters only, no pagination)
     const [{ value: total } = { value: 0 }] = await this.db
@@ -131,10 +143,10 @@ export class BookListService {
       .where(where);
 
     // Build select — slim mode excludes description, genres for list views
-    const bookFields = options?.slim ? getSlimBookColumns() : books;
+    const bookFields = slim ? getSlimBookColumns() : books;
 
     // Build ORDER BY — join position-0 author for author sort
-    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
+    const orderClauses = this.buildOrderBy(sortField, sortDirection);
 
     let query = this.db
       .select({ book: bookFields, importListName: importLists.name, primaryAuthorName: authors.name })
