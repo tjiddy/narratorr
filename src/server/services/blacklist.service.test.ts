@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { eq, or, gt, and, lte, inArray } from 'drizzle-orm';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { mkdtempSync, rmSync } from 'fs';
@@ -1037,7 +1038,7 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     const svcWithSettings = new BlacklistService(db, inject(log), settingsService);
 
     // Seed a book so the bookId FK in the first call is valid
-    const [seeded] = await db.insert(books).values({ title: 'Seed Book' }).returning();
+    const [seeded] = await db.insert(books).values({ publicId: generatePublicId('bk'), title: 'Seed Book' }).returning();
 
     await svcWithSettings.create({
       infoHash: 'abc',

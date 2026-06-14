@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -19,7 +20,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
   async function seedBook(overrides: { title?: string; status?: 'wanted' | 'importing' | 'failed' } = {}) {
     const [row] = await db
       .insert(books)
-      .values({ title: overrides.title ?? 'Seed', status: overrides.status ?? 'wanted' })
+      .values({ publicId: generatePublicId('bk'), title: overrides.title ?? 'Seed', status: overrides.status ?? 'wanted' })
       .returning();
     return row;
   }

@@ -42,6 +42,7 @@ function makeBookService(overrides: {
   const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue(null);
   const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
     id: 100,
+    publicId: 'bk_test000000000000000',
     title: data.title,
     description: null,
     coverUrl: null,
@@ -480,7 +481,7 @@ describe('ImportListService', () => {
      * Tests assert against this shape's id/title — other fields just satisfy types.
      */
     const createdBook = (id: number, title: string): BookWithAuthor => ({
-      id, title,
+      id, publicId: `bk_test`, title,
       description: null, coverUrl: null, goodreadsId: null, audibleId: null,
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,

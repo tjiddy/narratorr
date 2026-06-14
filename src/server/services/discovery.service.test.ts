@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -2418,11 +2419,11 @@ describe('DiscoveryService — refreshSuggestions upsert (real libsql)', () => {
     // (otherwise refreshSuggestions short-circuits before the upsert path).
     const [author] = await db
       .insert(authors)
-      .values({ name: 'Author A', slug: 'author-a' })
+      .values({ publicId: generatePublicId('au'), name: 'Author A', slug: 'author-a' })
       .returning();
     const [book] = await db
       .insert(books)
-      .values({
+      .values({ publicId: generatePublicId('bk'),
         title: 'Seed Book',
         asin: 'SEED1',
         status: 'imported',
@@ -2521,14 +2522,14 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
   });
 
   async function seedAuthor(name: string, slug: string) {
-    const [row] = await db.insert(authors).values({ name, slug }).returning();
+    const [row] = await db.insert(authors).values({ publicId: generatePublicId('au'), name, slug }).returning();
     return row!;
   }
 
   async function seedLibraryBook(values: { title: string; asin?: string | null; authorId: number }) {
     const [book] = await db
       .insert(books)
-      .values({ title: values.title, asin: values.asin ?? null, status: 'imported', enrichmentStatus: 'enriched' })
+      .values({ publicId: generatePublicId('bk'), title: values.title, asin: values.asin ?? null, status: 'imported', enrichmentStatus: 'enriched' })
       .returning();
     await db.insert(bookAuthors).values({ bookId: book!.id, authorId: values.authorId, position: 0 });
     return book!;

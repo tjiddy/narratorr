@@ -544,6 +544,21 @@ describe('BookService', () => {
       );
     });
 
+    it('writes a bk_-prefixed publicId to the books insert payload (#1443)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Opaque Id Book', authors: [] });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ publicId: expect.stringMatching(/^bk_/) }),
+      );
+    });
+
     it('omits importListId from values when not supplied (existing tests pass undefined)', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))

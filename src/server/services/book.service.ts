@@ -9,6 +9,7 @@ import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres,
 import { slugify, findUnmatchedGenres, normalizeGenres } from '../../core/index.js';
 import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
+import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
@@ -261,6 +262,7 @@ export class BookService {
       const result = await tx
         .insert(books)
         .values({
+          publicId: generatePublicId('bk'),
           title: data.title,
           description: data.description,
           coverUrl: data.coverUrl,

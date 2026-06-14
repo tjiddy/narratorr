@@ -9,6 +9,7 @@ import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
 import { relinkBookToBoundSeries } from './book-series-link.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { generatePublicId } from '../utils/public-id.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /** Scheduled sweep threshold — rows older than this are re-fetched. */
@@ -500,6 +501,7 @@ async function upsertHardcoverSeries(
   const inserted = await tx
     .insert(series)
     .values({
+      publicId: generatePublicId('sr'),
       hardcoverSeriesId: resolved.id,
       name: resolved.name,
       normalizedName: normalized,

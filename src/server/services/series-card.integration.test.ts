@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -25,7 +26,7 @@ async function seedBookWithSeries(db: Db, opts: {
   seriesPosition?: number | null;
   authorName?: string | null;
 }): Promise<number> {
-  const [book] = await db.insert(books).values({
+  const [book] = await db.insert(books).values({ publicId: generatePublicId('bk'),
     title: opts.title,
     seriesName: opts.seriesName,
     seriesPosition: opts.seriesPosition ?? null,
@@ -33,7 +34,7 @@ async function seedBookWithSeries(db: Db, opts: {
   if (opts.authorName) {
     const slug = opts.authorName.toLowerCase().replace(/\s+/g, '-');
     const existing = await db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
-    const authorId = existing[0]?.id ?? (await db.insert(authors).values({ name: opts.authorName, slug }).returning())[0]!.id;
+    const authorId = existing[0]?.id ?? (await db.insert(authors).values({ publicId: generatePublicId('au'), name: opts.authorName, slug }).returning())[0]!.id;
     await db.insert(bookAuthors).values({ bookId: book!.id, authorId, position: 0 });
   }
   return book!.id;
@@ -100,7 +101,7 @@ describe('SeriesCardService — integration', () => {
     it('key removed after Hardcover cache exists: subsequent GET bypasses series_members entirely', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
       // Pre-seed a Hardcover-shaped series row + non-library members
-      const [seedRow] = await db.insert(series).values({
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
         name: 'The Band',
         normalizedName: 'the band',
@@ -173,6 +174,8 @@ describe('SeriesCardService — integration', () => {
       const persisted = await db.select().from(series).where(eq(series.hardcoverSeriesId, 5523));
       expect(persisted).toHaveLength(1);
       expect(persisted[0]!.authorName).toBe('Nicholas Eames');
+      // #1443 — upsertHardcoverSeries creates the row with an opaque sr_ publicId.
+      expect(persisted[0]!.publicId).toMatch(/^sr_/);
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, persisted[0]!.id));
       expect(memberRows).toHaveLength(3);
       const kingsRow = memberRows.find((m) => m.title === 'Kings of the Wyld')!;
@@ -183,7 +186,7 @@ describe('SeriesCardService — integration', () => {
 
     it('cache-hit returns persisted seriesAuthor without re-fetching Hardcover', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Nicholas Eames', lastFetchedAt: new Date(),
       }).returning();
       await db.insert(seriesMembers).values({
@@ -212,7 +215,7 @@ describe('SeriesCardService — integration', () => {
 
     it('POST refresh on a cache-hit row uses GetSeriesMembersById and updates author_name', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'The Band', seriesPosition: 2, authorName: 'Nicholas Eames' });
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Old Name', lastFetchedAt: new Date(0),
       }).returning();
       await db.insert(seriesMembers).values({
@@ -251,7 +254,7 @@ describe('SeriesCardService — integration', () => {
       authorName: string | null;
     }) {
       const veryOld = new Date(Date.now() - 30 * 86_400_000);
-      const [row] = await db.insert(series).values({
+      const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: opts.name,
         normalizedName: opts.normalizedName,
         hardcoverSeriesId: opts.hardcoverSeriesId,
@@ -440,7 +443,7 @@ describe('SeriesCardService — integration', () => {
     it('stale-row selection: only rows with last_fetched_at older than STALE_AFTER_DAYS are picked', async () => {
       // One stale row, one fresh row (last_fetched_at = now)
       await seedStaleSeriesRow({ name: 'Stale', normalizedName: 'stale', hardcoverSeriesId: 9001, authorName: 'A' });
-      await db.insert(series).values({
+      await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Fresh', normalizedName: 'fresh', hardcoverSeriesId: 9002, authorName: 'A',
         lastFetchedAt: new Date(),
       });
@@ -470,7 +473,7 @@ describe('SeriesCardService — integration', () => {
      */
     it('AC1.4: upsertSeriesLink after Hardcover cache exists does not add a duplicate row', async () => {
       // Seed a Hardcover-cached series with one Hardcover member
-      const [seedRow] = await db.insert(series).values({
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
         name: 'The Band',
         normalizedName: 'the band',
@@ -566,7 +569,7 @@ describe('SeriesCardService — integration', () => {
         seriesPosition: 2,
         authorName: 'Nicholas Eames',
       });
-      const [seedRow] = await db.insert(series).values({
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band', authorName: 'Nicholas Eames', lastFetchedAt: new Date(),
       }).returning();
       // Two Hardcover rows at position 2 — only ONE should show inLibrary=true
@@ -588,7 +591,7 @@ describe('SeriesCardService — integration', () => {
      */
     it('AC3.1: cache mode renders [1, 2.5, 4, null] order regardless of insertion order', async () => {
       const bookId = await seedBookWithSeries(db, { title: 'Anchor Book', seriesName: 'Test Series', seriesPosition: 1, authorName: 'Some Author' });
-      const [seedRow] = await db.insert(series).values({
+      const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 9999, name: 'Test Series', normalizedName: 'test series', authorName: 'Some Author', lastFetchedAt: new Date(),
       }).returning();
       // Insert in mixed order including NULL position

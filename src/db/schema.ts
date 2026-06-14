@@ -15,6 +15,7 @@ import type { NotificationEvent } from '../shared/notification-events';
 
 export const authors = sqliteTable('authors', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  publicId: text('public_id').notNull().unique(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   asin: text('asin'),
@@ -28,6 +29,7 @@ export const authors = sqliteTable('authors', {
 
 export const narrators = sqliteTable('narrators', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  publicId: text('public_id').notNull().unique(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -37,6 +39,7 @@ export const narrators = sqliteTable('narrators', {
 
 export const books = sqliteTable('books', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  publicId: text('public_id').notNull().unique(),
   title: text('title').notNull(),
   description: text('description'),
   coverUrl: text('cover_url'),
@@ -111,6 +114,7 @@ export const bookNarrators = sqliteTable('book_narrators', {
 
 export const series = sqliteTable('series', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  publicId: text('public_id').notNull().unique(),
   hardcoverSeriesId: integer('hardcover_series_id'),
   name: text('name').notNull(),
   normalizedName: text('normalized_name').notNull(),
@@ -241,6 +245,7 @@ export const importLists = sqliteTable('import_lists', {
 
 export const downloads = sqliteTable('downloads', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  publicId: text('public_id').notNull().unique(),
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
   indexerId: integer('indexer_id').references(() => indexers.id, { onDelete: 'set null' }),
   downloadClientId: integer('download_client_id').references(() => downloadClients.id, { onDelete: 'set null' }),
