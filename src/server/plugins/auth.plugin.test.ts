@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import cookie from '@fastify/cookie';
 import authPlugin from './auth.js';
 import type { AuthService } from '../services/auth.service.js';
+import { v1ErrorEnvelopeSchema } from '../../shared/schemas/v1/common.js';
 
 // Mock config to control authBypass per test
 vi.mock('../config.js', () => ({
@@ -48,6 +49,12 @@ async function createApp(
   // Off-by-one guard: starts with `/api/v` but the char after `v` is not a digit,
   // so it must NOT be classified as in-scope.
   app.get('/api/version-history', async () => ({ ok: true }));
+
+  // Prowlarr/Readarr compat-shim routes (#1472): they live under `/api/v1/*` but
+  // are the documented contract *exception* — auth failures here keep the legacy
+  // bare-string body, NOT the native v1 envelope.
+  app.get('/api/v1/system/status', async () => ({ ok: true }));
+  app.get('/api/v1/indexer', async () => ({ ok: true }));
 
   // Non-API route (should not be intercepted)
   app.get('/healthcheck', async () => ({ ok: true }));
@@ -237,16 +244,59 @@ describe('auth middleware', () => {
       }
     });
 
-    it('invalid API key on /api/v* returns 401 { error: Invalid API key }', async () => {
+    it('invalid API key on a native /api/v1/* route returns the 401 v1 envelope (#1472)', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
+      // `/api/v1/test` is a generic in-scope route → classifies as native v1 under
+      // the compat-exception discriminator, so it gets the v1 error envelope.
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/test',
         headers: { 'x-api-key': 'bad-key' },
       });
       expect(res.statusCode).toBe(401);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ error: { code: 'INVALID_API_KEY', message: 'Invalid API key' } });
+      expect(v1ErrorEnvelopeSchema.safeParse(body).success).toBe(true);
+    });
+
+    it('invalid API key on the compat /api/v1/system/status keeps the bare-string body (#1472)', async () => {
+      (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/system/status',
+        headers: { 'x-api-key': 'bad-key' },
+      });
+      expect(res.statusCode).toBe(401);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
+    });
+
+    it('invalid API key on the compat /api/v1/indexer keeps the bare-string body (#1472)', async () => {
+      (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/indexer',
+        headers: { 'x-api-key': 'bad-key' },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
+    });
+
+    it('a thrown validateApiKey() on a native v1 route is NOT converted to the INVALID_API_KEY envelope (#1472)', async () => {
+      // Operational config faults (uninitialized/parse/decrypt) surface as a throw,
+      // which is a 500-class server fault — NOT "your key is invalid". The hook adds
+      // no try/catch, so it propagates to the app-level handler unchanged.
+      (authService.validateApiKey as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('auth config not initialized'));
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/test',
+        headers: { 'x-api-key': 'bad-key' },
+      });
+      expect(res.statusCode).not.toBe(401);
+      expect(JSON.parse(res.payload)).not.toEqual({ error: { code: 'INVALID_API_KEY', message: 'Invalid API key' } });
     });
   });
 
@@ -1110,6 +1160,30 @@ describe('auth middleware', () => {
         const outOfScope = await app.inject({ method: 'GET', url: '/narratorr/api/books', headers: { 'x-api-key': 'valid-key' } });
         expect(outOfScope.statusCode, 'key under {base}/api/books rejected').toBe(401);
         expect(JSON.parse(outOfScope.payload)).toEqual({ error: 'Invalid API key' });
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('invalid key on a native {base}/api/v1/* route returns the v1 envelope; compat shim stays bare-string (#1472)', async () => {
+      // Proves the envelope discriminator is URL_BASE-prefix-derived, not a hardcoded
+      // `/api/` literal: native vs compat must classify correctly under URL_BASE too.
+      const authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+        validateApiKey: vi.fn().mockResolvedValue(false),
+      });
+      const app = await createUrlBaseApp(authService, (a) => {
+        a.get('/narratorr/api/v1/foo', async () => ({ ok: true }));
+        a.get('/narratorr/api/v1/system/status', async () => ({ ok: true }));
+      });
+      try {
+        const native = await app.inject({ method: 'GET', url: '/narratorr/api/v1/foo', headers: { 'x-api-key': 'bad-key' } });
+        expect(native.statusCode).toBe(401);
+        expect(JSON.parse(native.payload)).toEqual({ error: { code: 'INVALID_API_KEY', message: 'Invalid API key' } });
+
+        const compat = await app.inject({ method: 'GET', url: '/narratorr/api/v1/system/status', headers: { 'x-api-key': 'bad-key' } });
+        expect(compat.statusCode).toBe(401);
+        expect(JSON.parse(compat.payload)).toEqual({ error: 'Invalid API key' });
       } finally {
         await app.close();
       }

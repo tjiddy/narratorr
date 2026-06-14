@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
 import { config } from '../config.js';
 import { sessionCookieOptions } from '../utils/cookie-options.js';
+import { isProwlarrCompatPath } from '../routes/prowlarr-compat.js';
 
 const SESSION_MAX_AGE_S = 7 * 24 * 60 * 60;
 
@@ -70,16 +71,24 @@ function extractApiKey(request: FastifyRequest): string | undefined {
 
 /**
  * Authenticate an in-scope (`/api/v*`) API key (#1453). On a valid key it sets
- * `request.user`; on an invalid key it sends the canonical 401
- * `{ error: 'Invalid API key' }`. The caller invokes this only for keys inside
- * `/api/v*`; out-of-scope keys are de-god-moded and handled by the ambient chain
- * (see `handleAmbientAuth`).
+ * `request.user`. On a rejected key (`validateApiKey()` resolves `false`) it
+ * sends a 401 whose body is surface-aware (#1472): native v1 routes get the
+ * canonical v1 envelope `{ error: { code: 'INVALID_API_KEY', message } }`
+ * (`v1ErrorEnvelopeSchema`), while the Prowlarr/Readarr compat shim and any
+ * non-envelope surface keep the legacy bare string `{ error: 'Invalid API key' }`.
+ * The caller invokes this only for keys inside `/api/v*`; out-of-scope keys are
+ * de-god-moded and handled by the ambient chain (see `handleAmbientAuth`).
+ *
+ * Scope (#1472): only the rejected-key branch is shaped here. A throw out of
+ * `validateApiKey()` (uninitialized/parse/decrypt config faults) is intentionally
+ * NOT caught — it stays a 500-class server fault, not a `INVALID_API_KEY` 401.
  */
 async function authenticateApiKey(
   request: FastifyRequest,
   reply: FastifyReply,
   authService: AuthService,
   apiKey: string,
+  useV1Envelope: boolean,
 ): Promise<void> {
   if (await authService.validateApiKey(apiKey)) {
     request.log.debug('Auth: API key validated');
@@ -87,6 +96,10 @@ async function authenticateApiKey(
     return;
   }
   request.log.debug('Auth: invalid API key');
+  if (useV1Envelope) {
+    reply.status(401).send({ error: { code: 'INVALID_API_KEY', message: 'Invalid API key' } });
+    return;
+  }
   reply.status(401).send({ error: 'Invalid API key' });
 }
 
@@ -307,10 +320,14 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
     if (STREAM_ROUTES.has(routePath) && await tryStreamToken(request, authService)) return;
 
     // API key auth — scoped to `/api/v*` only (#1453). In-scope: accept the
-    // valid key or reject with `{ error: 'Invalid API key' }`. Either way the
-    // api-key branch is terminal and CSRF is skipped (api-key clients are exempt).
+    // valid key or reject with a surface-aware 401 body (#1472). The native v1
+    // surface gets the `{ error: { code, message } }` envelope; the Prowlarr/
+    // Readarr compat shim (`/api/v1/system/status`, `/api/v1/indexer*`) stays on
+    // the legacy bare string. Either way the api-key branch is terminal and CSRF
+    // is skipped (api-key clients are exempt).
     if (apiKey && inVScope) {
-      await authenticateApiKey(request, reply, authService, apiKey);
+      const useV1Envelope = !isProwlarrCompatPath(routePath, urlBase);
+      await authenticateApiKey(request, reply, authService, apiKey, useV1Envelope);
       return;
     }
 

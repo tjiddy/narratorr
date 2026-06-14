@@ -211,15 +211,22 @@ describe('v1 books routes', () => {
   });
 
   describe('auth (real auth-plugin fixture, F3)', () => {
-    it('rejects a missing API key with 401 (status only — auth body exempt from v1 envelope)', async () => {
+    it('rejects a missing API key with 401 (status only — missing key → ambient auth body, not the v1 envelope)', async () => {
+      // A no-key request falls through to handleAmbientAuth, which returns the
+      // ambient body (not a v1 envelope), so this case is genuinely envelope-exempt.
       const res = await app.inject({ method: 'GET', url: '/api/v1/books' });
       expect(res.statusCode).toBe(401);
     });
 
-    it('rejects an invalid API key with 401', async () => {
+    it('rejects an invalid API key with the 401 v1 envelope (#1472)', async () => {
+      // An invalid (presented-but-rejected) key on a native v1 route now returns the
+      // canonical v1 envelope, built in the auth hook before this route's handler.
       (authService.validateApiKey as Mock).mockResolvedValue(false);
       const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: { 'x-api-key': 'wrong' } });
       expect(res.statusCode).toBe(401);
+      const body = res.json();
+      expect(body).toEqual({ error: { code: 'INVALID_API_KEY', message: 'Invalid API key' } });
+      expectV1Envelope(body);
     });
 
     it('accepts a valid API key with 200', async () => {

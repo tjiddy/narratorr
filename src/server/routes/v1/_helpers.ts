@@ -61,8 +61,11 @@ export async function fetchByPublicId<TRow, TDto>(
  * Registered inside the encapsulated v1 plugin via `setErrorHandler`, so it is
  * scoped to v1 routes ONLY — internal `/api/*` error shapes are unchanged.
  * Auth `401`s never reach here: the global `onRequest` auth hook replies
- * directly before any route handler runs (auth bodies are exempt from the v1
- * envelope by design — see #1449 AC / #1453).
+ * directly before any route handler runs. The hook now shapes its own envelope
+ * for native v1 rejected-key failures — a 401 there carries the v1 envelope
+ * `{ error: { code: 'INVALID_API_KEY', message } }` built inline in the auth
+ * plugin (#1472), matching `v1ErrorEnvelopeSchema` even though it bypasses this
+ * handler. The missing/absent-credential path stays ambient (not a v1 envelope).
  */
 export function v1ErrorHandler(
   error: FastifyError | Error,
