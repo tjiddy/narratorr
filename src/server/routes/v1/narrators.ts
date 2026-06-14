@@ -9,7 +9,7 @@ import {
   narratorV1ListQuerySchema,
   toNarratorV1,
 } from '../../../shared/schemas/v1/narrators.js';
-import { v1ListResponseSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1NarratorsRouteDeps {
@@ -38,7 +38,7 @@ export async function v1NarratorsRoutes(app: FastifyInstance, deps: V1NarratorsR
         {
           schema: {
             querystring: narratorV1ListQuerySchema,
-            response: { 200: v1ListResponseSchema(narratorV1Schema) },
+            response: { 200: v1ListResponseSchema(narratorV1Schema), 400: v1ErrorEnvelopeSchema },
           },
         },
         async (request) => {
@@ -57,7 +57,7 @@ export async function v1NarratorsRoutes(app: FastifyInstance, deps: V1NarratorsR
         {
           schema: {
             params: publicIdParamSchema,
-            response: { 200: narratorV1Schema },
+            response: { 200: narratorV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
         async (request) =>

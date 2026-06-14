@@ -9,7 +9,7 @@ import {
   downloadV1ListQuerySchema,
   toDownloadV1,
 } from '../../../shared/schemas/v1/downloads.js';
-import { v1ListResponseSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1DownloadsRouteDeps {
@@ -44,7 +44,7 @@ export async function v1DownloadsRoutes(app: FastifyInstance, deps: V1DownloadsR
         {
           schema: {
             querystring: downloadV1ListQuerySchema,
-            response: { 200: v1ListResponseSchema(downloadV1Schema) },
+            response: { 200: v1ListResponseSchema(downloadV1Schema), 400: v1ErrorEnvelopeSchema },
           },
         },
         async (request) => {
@@ -65,7 +65,7 @@ export async function v1DownloadsRoutes(app: FastifyInstance, deps: V1DownloadsR
         {
           schema: {
             params: publicIdParamSchema,
-            response: { 200: downloadV1Schema },
+            response: { 200: downloadV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
         async (request) =>

@@ -9,7 +9,7 @@ import {
   seriesV1ListQuerySchema,
   toSeriesV1,
 } from '../../../shared/schemas/v1/series.js';
-import { v1ListResponseSchema } from '../../../shared/schemas/v1/common.js';
+import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1SeriesRouteDeps {
@@ -39,7 +39,7 @@ export async function v1SeriesRoutes(app: FastifyInstance, deps: V1SeriesRouteDe
         {
           schema: {
             querystring: seriesV1ListQuerySchema,
-            response: { 200: v1ListResponseSchema(seriesV1Schema) },
+            response: { 200: v1ListResponseSchema(seriesV1Schema), 400: v1ErrorEnvelopeSchema },
           },
         },
         async (request) => {
@@ -58,7 +58,7 @@ export async function v1SeriesRoutes(app: FastifyInstance, deps: V1SeriesRouteDe
         {
           schema: {
             params: publicIdParamSchema,
-            response: { 200: seriesV1Schema },
+            response: { 200: seriesV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
         async (request) =>
