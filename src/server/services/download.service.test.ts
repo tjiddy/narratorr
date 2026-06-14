@@ -638,30 +638,6 @@ describe('DownloadService', () => {
     });
   });
 
-  describe('updateStatus', () => {
-    it('passes correct status value to set()', async () => {
-      const chain = mockDbChain();
-      db.update.mockReturnValue(chain);
-
-      await service.updateStatus(1, 'importing');
-
-      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'completed', pipelineStage: 'importing' });
-    });
-
-    it('logs at info level', async () => {
-      db.update.mockReturnValue(mockDbChain());
-      const log = createMockLogger();
-      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
-
-      await svc.updateStatus(1, 'completed');
-
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, status: 'completed' }),
-        expect.any(String),
-      );
-    });
-  });
-
   describe('setError', () => {
     it('writes the sanctioned failure tuple (failed, idle) with errorMessage', async () => {
       const chain = mockDbChain();

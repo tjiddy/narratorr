@@ -10,7 +10,6 @@ import {
   getClientPolledStatuses,
   getReplaceableStatuses,
   deriveDisplayStatus,
-  displayStatusToTuple,
   isInProgressState,
   isTerminalState,
   isReplaceableState,
@@ -193,26 +192,11 @@ describe('download-status-registry', () => {
   });
 
   // ── Two-axis derivation (#1445) ─────────────────────────────────────────
-  describe('deriveDisplayStatus / displayStatusToTuple', () => {
-    it('is a bijection: deriveDisplayStatus(displayStatusToTuple(s)) === s for every display status', () => {
-      for (const s of allStatuses) {
-        const { clientStatus, pipelineStage } = displayStatusToTuple(s);
-        expect(deriveDisplayStatus(clientStatus, pipelineStage)).toBe(s);
-      }
-    });
-
-    it('maps the overloaded pipeline values onto clientStatus=completed', () => {
-      for (const s of ['checking', 'pending_review', 'importing', 'imported'] as const) {
-        expect(displayStatusToTuple(s)).toEqual({ clientStatus: 'completed', pipelineStage: s });
-      }
-    });
-
-    it('maps client-only values onto pipelineStage=idle (including the failure tuple)', () => {
+  describe('deriveDisplayStatus', () => {
+    it('maps client-only tuples (pipelineStage=idle) onto the client status, including the failure tuple', () => {
       for (const s of ['queued', 'downloading', 'paused', 'completed', 'failed'] as const) {
-        expect(displayStatusToTuple(s)).toEqual({ clientStatus: s, pipelineStage: 'idle' });
+        expect(deriveDisplayStatus(s, 'idle')).toBe(s);
       }
-      // The canonical failure tuple resolves to display `failed`.
-      expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
     });
 
     it('pipeline stage wins over clientStatus whenever the stage is non-idle', () => {

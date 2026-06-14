@@ -44,7 +44,6 @@ function createMockDownloadService(overrides?: Partial<Record<string, unknown>>)
     cancel: vi.fn(),
     retry: vi.fn(),
     updateProgress: vi.fn(),
-    updateStatus: vi.fn(),
     setError: vi.fn(),
     getById: vi.fn(),
     getActiveByBookId: vi.fn(),
@@ -99,7 +98,6 @@ describe('DownloadOrchestrator', () => {
       cancel: vi.fn().mockResolvedValue(true),
       retry: vi.fn().mockResolvedValue({ status: 'retried', download: mockDownload }),
       updateProgress: vi.fn().mockResolvedValue(undefined),
-      updateStatus: vi.fn().mockResolvedValue(undefined),
       setError: vi.fn().mockResolvedValue(undefined),
       getById: vi.fn().mockResolvedValue(mockDownload),
     });
@@ -477,21 +475,6 @@ describe('DownloadOrchestrator', () => {
     it('skips SSE when bookId is not provided', async () => {
       await orchestrator.updateProgress(1, 0.5);
       expect(emitDownloadProgress).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('updateStatus', () => {
-    it('calls downloadService.updateStatus() then emits download_status_change SSE using meta', async () => {
-      await orchestrator.updateStatus(1, 'completed', { bookId: 2, oldStatus: 'downloading' });
-      expect(downloadService.updateStatus).toHaveBeenCalledWith(1, 'completed', { bookId: 2, oldStatus: 'downloading' });
-      expect(emitDownloadStatusChange).toHaveBeenCalledWith(expect.objectContaining({
-        downloadId: 1, bookId: 2, oldStatus: 'downloading', newStatus: 'completed',
-      }));
-    });
-
-    it('skips SSE when meta is missing or incomplete', async () => {
-      await orchestrator.updateStatus(1, 'completed');
-      expect(emitDownloadStatusChange).not.toHaveBeenCalled();
     });
   });
 
