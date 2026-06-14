@@ -81,6 +81,16 @@ export async function registerV1OpenApi(app: FastifyInstance, urlBase: string): 
         description: 'Public API v1 for Narratorr — the self-hosted audiobook manager.',
         version: getVersion(),
       },
+      // The prefix lives ONLY in `servers[].url`; it is NOT duplicated into the
+      // path keys. `@fastify/swagger` defaults `stripBasePath: true` (see
+      // `lib/mode/dynamic.js`), so its `normalizeUrl` strips the `servers[].url`
+      // base from every route url before emitting the spec: a route registered
+      // at `/narratorr/api/v1/books` becomes path key `/api/v1/books` with
+      // `servers[].url = '/narratorr'`, so the effective URL is exactly
+      // `/narratorr/api/v1/books` (NOT `/narratorr/narratorr/...`). The transform
+      // below therefore must NOT also strip the prefix — that would be redundant,
+      // and a no-op anyway since the stripped key no longer carries it. Pinned by
+      // the URL_BASE test in `openapi.test.ts`.
       servers: [{ url: urlBase || '/' }],
     },
     transform: createV1Transform(urlBase),

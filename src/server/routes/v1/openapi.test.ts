@@ -237,4 +237,18 @@ describe('v1 docs surface — URL_BASE honored', () => {
     expect(spec.servers).toEqual([{ url: URL_BASE }]);
     expect(spec.paths).toHaveProperty(['/api/v1/books']);
   });
+
+  it('does NOT duplicate URL_BASE — no path key carries the prefix, and the composed URL has it exactly once', () => {
+    // Pins the no-duplication contract: @fastify/swagger's stripBasePath:true
+    // strips servers[].url from every path key, so combining servers.url + key
+    // yields the prefix exactly once (`/narratorr/api/v1/books`), never twice.
+    const serverUrl = spec.servers[0].url;
+    expect(serverUrl).toBe(URL_BASE);
+    for (const pathKey of Object.keys(spec.paths)) {
+      expect(pathKey.startsWith(URL_BASE)).toBe(false);
+      const effectiveUrl = `${serverUrl}${pathKey}`;
+      expect(effectiveUrl.startsWith(`${URL_BASE}/api/v1/`)).toBe(true);
+      expect(effectiveUrl.startsWith(`${URL_BASE}${URL_BASE}`)).toBe(false);
+    }
+  });
 });
