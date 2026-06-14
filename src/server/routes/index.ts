@@ -78,6 +78,7 @@ import { v1BooksRoutes } from './v1/books.js';
 import { v1AuthorsRoutes } from './v1/authors.js';
 import { v1NarratorsRoutes } from './v1/narrators.js';
 import { v1SeriesRoutes } from './v1/series.js';
+import { v1DownloadsRoutes } from './v1/downloads.js';
 
 // The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
 // (the correct layer — routes depend on services, not the reverse). Imported for
@@ -255,6 +256,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s, db) => v1AuthorsRoutes(app, { referenceReadService: s.referenceRead }, db),
   (app, s, db) => v1NarratorsRoutes(app, { referenceReadService: s.referenceRead }, db),
   (app, s, db) => v1SeriesRoutes(app, { referenceReadService: s.referenceRead }, db),
+  (app, s, db) => v1DownloadsRoutes(app, { downloadService: s.download }, db),
 ];
 
 export { routeRegistry };
