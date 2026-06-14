@@ -24,3 +24,4 @@ export * from './schemas/v1/books.js';
 export * from './schemas/v1/authors.js';
 export * from './schemas/v1/narrators.js';
 export * from './schemas/v1/series.js';
+export * from './schemas/v1/downloads.js';
