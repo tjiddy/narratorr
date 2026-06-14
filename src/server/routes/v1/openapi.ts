@@ -50,6 +50,14 @@ export function isV1DocsPath(routePath: string, urlBase: string): boolean {
  * through to `jsonSchemaTransform`; for non-v1 routes we set `hide: true`, which
  * `jsonSchemaTransform` honors with an early return BEFORE touching the (possibly
  * non-Zod) schema, so internal routes are excluded without choking the transform.
+ *
+ * URL_BASE handling: routes are registered under `${urlBase}/api/v1/...`, so the
+ * url here carries the prefix. We strip it EXPLICITLY from the emitted path key
+ * so the prefix lives ONLY in `servers[].url` — the effective URL is then exactly
+ * `${urlBase}/api/v1/...`, never duplicated. Stripping here (paired with
+ * `stripBasePath: false` at registration) makes this the single, explicit
+ * normalization site rather than relying on `@fastify/swagger`'s implicit
+ * `stripBasePath` default.
  */
 function createV1Transform(urlBase: string): SwaggerTransform {
   const v1Prefix = `${urlBase}/api/v1`;
@@ -62,7 +70,11 @@ function createV1Transform(urlBase: string): SwaggerTransform {
     if (!isNativeV1) {
       return jsonSchemaTransform({ ...input, schema: { ...schema, hide: true } });
     }
-    return jsonSchemaTransform(input);
+    const transformed = jsonSchemaTransform(input);
+    if (urlBase && transformed.url.startsWith(urlBase)) {
+      return { ...transformed, url: transformed.url.slice(urlBase.length) };
+    }
+    return transformed;
   };
 }
 
@@ -82,17 +94,18 @@ export async function registerV1OpenApi(app: FastifyInstance, urlBase: string): 
         version: getVersion(),
       },
       // The prefix lives ONLY in `servers[].url`; it is NOT duplicated into the
-      // path keys. `@fastify/swagger` defaults `stripBasePath: true` (see
-      // `lib/mode/dynamic.js`), so its `normalizeUrl` strips the `servers[].url`
-      // base from every route url before emitting the spec: a route registered
-      // at `/narratorr/api/v1/books` becomes path key `/api/v1/books` with
-      // `servers[].url = '/narratorr'`, so the effective URL is exactly
-      // `/narratorr/api/v1/books` (NOT `/narratorr/narratorr/...`). The transform
-      // below therefore must NOT also strip the prefix — that would be redundant,
-      // and a no-op anyway since the stripped key no longer carries it. Pinned by
-      // the URL_BASE test in `openapi.test.ts`.
+      // path keys. The transform (`createV1Transform`) strips the URL_BASE prefix
+      // from each native route's path key, so e.g. a route registered at
+      // `/narratorr/api/v1/books` is emitted as path key `/api/v1/books` with
+      // `servers[].url = '/narratorr'` — effective URL exactly
+      // `/narratorr/api/v1/books`, never `/narratorr/narratorr/...`. Pinned by the
+      // URL_BASE no-duplication test in `openapi.test.ts`.
       servers: [{ url: urlBase || '/' }],
     },
+    // We strip the URL_BASE prefix ourselves in the transform, so disable
+    // @fastify/swagger's own basePath stripping — keeps a single, explicit
+    // normalization site instead of two overlapping mechanisms.
+    stripBasePath: false,
     transform: createV1Transform(urlBase),
   });
 
