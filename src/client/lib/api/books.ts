@@ -251,13 +251,7 @@ export interface LibraryBookListParams extends Omit<BookListParams, 'status'> {
 }
 
 export interface BookStats {
-  counts: {
-    wanted: number;
-    downloading: number;
-    imported: number;
-    failed: number;
-    missing: number;
-  };
+  counts: Record<LibraryFilterBucket, number>;
   authors: string[];
   series: string[];
   narrators: string[];
