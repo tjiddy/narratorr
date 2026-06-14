@@ -47,7 +47,12 @@ describe('resolveByPublicId()', () => {
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Windows: libsql file handles may linger briefly after close()
+    }
   });
 
   it('returns the rowid for a row inserted with a known publicId', async () => {
