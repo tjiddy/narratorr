@@ -86,6 +86,7 @@ import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-warnings.js';
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
+import { registerV1OpenApi } from './routes/v1/openapi.js';
 
 async function main() {
   const app = Fastify(buildFastifyOptions()).withTypeProvider<ZodTypeProvider>();
@@ -163,6 +164,11 @@ async function main() {
 
   // URL_BASE prefix — routes, static files, and SPA fallback are scoped under urlBase
   const urlBasePrefix = config.urlBase === '/' ? '' : config.urlBase;
+
+  // OpenAPI/Swagger for the native /api/v1 surface (#1454). MUST register before
+  // the routes so the swagger `onRoute` hook captures the v1 routes registered
+  // below. The docs subtree is public (exempted in the auth plugin).
+  await registerV1OpenApi(app, urlBasePrefix);
 
   // Register API routes under URL_BASE scope
   await app.register(async (scoped) => {
