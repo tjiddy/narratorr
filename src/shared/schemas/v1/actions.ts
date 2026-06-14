@@ -11,9 +11,16 @@ import { v1ListResponseSchema } from './common.js';
 // (`downloadUrl`, `infoHash`, raw `guid`, internal `indexerId`) behind an opaque,
 // STABLE `releaseId` token: search encodes the grab-relevant + identity fields
 // into it, grab decodes them back to reconstruct the `GrabParams` and the dedup
-// identity. The token is opacity, not security — the single-user trusted-key
-// model means signing is unnecessary; opacity keeps raw internals out of the
-// visible contract and removes any need for a server-side release cache.
+// identity. The token is opaque AND integrity-protected — it is HMAC-signed
+// server-side (`signReleaseId`/`verifyReleaseId` in
+// `src/server/services/grab-token.ts`), so a public key holder cannot forge a
+// `releaseId` carrying an attacker-chosen `downloadUrl`. This module only owns
+// the SECRET-FREE half: the canonical base64url body codec (`encodeReleaseId` /
+// `decodeReleaseId`) over which the server signs. The HMAC secret never reaches
+// this client-importable layer (#1488). The token stays STABLE (same release →
+// same body → same deterministic signature → same token), so grab's
+// idempotency/dedup keys still line up across repeated searches with no
+// server-side release cache.
 //
 // These are schemas narratorr OWNS, so they are `.strict()` — the OPPOSITE of
 // the prowlarr-compat surface (learning `compat-surface-zod-strip-not-strict`,
@@ -49,12 +56,15 @@ export const releaseTokenPayloadSchema = z
 export type ReleaseTokenPayload = z.infer<typeof releaseTokenPayloadSchema>;
 
 /**
- * Encode a release token payload into a stable, opaque base64url string. The key
+ * Encode a release token payload into the stable, opaque base64url *body* the
+ * server signs over (see `signReleaseId` in `src/server/services/grab-token.ts`).
+ * This is the SECRET-FREE half of the token — it carries no signature. The key
  * order is fixed (the object literal below), so the SAME release encodes to the
- * SAME token across repeated searches — which is what lets grab's dedup keys line
- * up between a search and a later retried grab. Undefined fields are omitted
- * (never serialized as `null`), so a release that lacks an `infoHash` produces a
- * shorter token without an `infoHash` key, not a `"infoHash":null` entry.
+ * SAME body across repeated searches; combined with the deterministic HMAC this
+ * is what lets grab's dedup keys line up between a search and a later retried
+ * grab. Undefined fields are omitted (never serialized as `null`), so a release
+ * that lacks an `infoHash` produces a shorter body without an `infoHash` key, not
+ * a `"infoHash":null` entry.
  */
 export function encodeReleaseId(payload: ReleaseTokenPayload): string {
   // Rebuild with a FIXED key order so the JSON (and thus the token) is stable;
@@ -74,14 +84,16 @@ export function encodeReleaseId(payload: ReleaseTokenPayload): string {
 }
 
 /**
- * Decode an opaque `releaseId` back into its payload, or `null` when the token is
- * malformed (not base64url JSON) or fails the strict payload schema. The grab
- * route maps a `null` here to a 400 v1 envelope. Decoding never throws.
+ * Decode the base64url token *body* back into its payload, or `null` when the
+ * body is malformed (not base64url JSON) or fails the strict payload schema.
+ * This runs AFTER the server has verified the HMAC (`verifyReleaseId`), so it
+ * sees only an integrity-checked body; on its own it performs no signature check.
+ * Decoding never throws.
  */
-export function decodeReleaseId(token: string): ReleaseTokenPayload | null {
+export function decodeReleaseId(body: string): ReleaseTokenPayload | null {
   let json: unknown;
   try {
-    json = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    json = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
   } catch {
     return null;
   }
@@ -166,14 +178,22 @@ export interface ReleaseV1Source {
 
 /**
  * Project a search result to the public `ReleaseV1` DTO. The identity + grab
- * fields are packed into the opaque `releaseId` (so they stay out of the visible
- * contract); the display fields are surfaced directly. A result with no
+ * fields are packed into the opaque, signed `releaseId` (so they stay out of the
+ * visible contract); the display fields are surfaced directly. A result with no
  * `downloadUrl` (parse normally drops these) encodes an empty string — such a
  * release is not grabbable, but real indexer results always carry a URL.
+ *
+ * `signReleaseId` is threaded in FROM THE SERVER (`src/server/services/grab-token.ts`)
+ * rather than imported here: this shared module must stay secret-free so the HMAC
+ * key is never bundled into the client (#1488). The route passes the real signer;
+ * the function it receives turns the canonical payload into the signed token.
  */
-export function toReleaseV1(r: ReleaseV1Source): ReleaseV1 {
+export function toReleaseV1(
+  r: ReleaseV1Source,
+  signReleaseId: (payload: ReleaseTokenPayload) => string,
+): ReleaseV1 {
   return {
-    releaseId: encodeReleaseId({
+    releaseId: signReleaseId({
       downloadUrl: r.downloadUrl ?? '',
       title: r.title,
       protocol: r.protocol,

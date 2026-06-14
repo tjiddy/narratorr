@@ -18,9 +18,9 @@ import {
   releaseV1Schema,
   grabV1RequestSchema,
   toReleaseV1,
-  decodeReleaseId,
   type ReleaseTokenPayload,
 } from '../../../shared/schemas/v1/actions.js';
+import { signReleaseId, verifyReleaseId } from '../../services/grab-token.js';
 import { V1NotFoundError, v1ErrorHandler } from './_helpers.js';
 
 // ============================================================================
@@ -224,7 +224,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
             title: book.title,
             ...(author !== undefined && { author }),
           });
-          return { data: results.map(toReleaseV1), total: results.length };
+          return { data: results.map((r) => toReleaseV1(r, signReleaseId)), total: results.length };
         },
       );
 
@@ -251,7 +251,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
         async (request, reply) => {
           const book = await resolveBookOr404(db, deps, request.params.publicId);
 
-          const payload = decodeReleaseId(request.body.releaseId);
+          const payload = verifyReleaseId(request.body.releaseId);
           if (!payload) {
             return reply.status(400).send(envelope('BAD_REQUEST', 'Invalid releaseId'));
           }
