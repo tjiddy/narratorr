@@ -119,8 +119,11 @@ export class ImportQueueWorker {
 
           if (orphan.bookId != null) {
             // Guarded book write in the SAME transaction as the job write (#1448):
-            // both rows commit together or neither does.
-            await transitionBookStatus(tx, orphan.bookId, { status: 'failed' });
+            // both rows commit together or neither does. The `importing` guard (#1470)
+            // settles the book to `failed` only when it's still mid-import (the normal
+            // interrupted-orphan case where no revert ran); a book already moved off
+            // `importing` by a revert is left untouched — the guard misses (no-op).
+            await transitionBookStatus(tx, orphan.bookId, { status: 'failed', expected: { status: 'importing' } });
           }
         });
         recovered++;
@@ -380,8 +383,12 @@ export class ImportQueueWorker {
 
       if (bookId != null) {
         // Guarded book write in the SAME transaction as the job write (#1448):
-        // both rows commit together or neither does.
-        await transitionBookStatus(tx, bookId, { status: 'failed' });
+        // both rows commit together or neither does. The `importing` guard (#1470)
+        // prevents this failure write from clobbering an earlier `bookStatusAtGrab`
+        // revert: `handleImportFailure`'s revert commits the book off `importing`
+        // before this catch-path runs, so the guard misses (no-op) and the reverted
+        // status survives. When no revert ran (book still `importing`) it settles to `failed`.
+        await transitionBookStatus(tx, bookId, { status: 'failed', expected: { status: 'importing' } });
       }
     });
 
