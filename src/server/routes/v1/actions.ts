@@ -73,9 +73,10 @@ function canonicalReleaseIdentity(payload: ReleaseTokenPayload): string {
  * Find an existing download for `bookId` that matches the decoded release token,
  * returning its rowid or `null`. Matches against the persisted `downloads`
  * columns in precedence order:
- *   1. `guid` (scoped to `indexerId` when both are present) — primary, reliable:
- *      `guid` is stored verbatim from the grab params and is available at search
- *      time.
+ *   1. `guid` (scoped to `indexerId` when the token carries one — strict equality,
+ *      so a persisted null/different indexerId does NOT match) — primary,
+ *      reliable: `guid` is stored verbatim from the grab params and is available
+ *      at search time.
  *   2. search-time `infoHash` (normalized lowercase) vs stored `info_hash` —
  *      secondary. The stored hash is computed late from the resolved artifact, so
  *      it only matches once that row's grab reached artifact resolution; it is a
@@ -95,8 +96,12 @@ async function findExistingDownloadId(db: Db, bookId: number, payload: ReleaseTo
     .where(eq(downloads.bookId, bookId));
 
   if (payload.guid) {
+    // Scope guid to indexerId when the token carries one: require strict
+    // equality, so a token with `{ guid, indexerId: 3 }` does NOT dedup against a
+    // persisted same-guid row whose indexerId is null or a different indexer. A
+    // token with no indexerId matches on guid alone.
     const match = rows.find(
-      (r) => r.guid === payload.guid && (payload.indexerId === undefined || r.indexerId === null || r.indexerId === payload.indexerId),
+      (r) => r.guid === payload.guid && (payload.indexerId === undefined || r.indexerId === payload.indexerId),
     );
     if (match) return match.id;
   }

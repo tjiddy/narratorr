@@ -358,6 +358,42 @@ describe('v1 action routes (search + grab)', () => {
         // guid-first precedence selects row 2, NOT the infoHash-matching row 1.
         expect(downloadService.getById as Mock).toHaveBeenCalledWith(2);
       });
+
+      it('(F1) a token carrying an indexerId does NOT match a same-guid row whose persisted indexerId is null → fresh grab', async () => {
+        // Guid is scoped to indexerId when the token carries one: a persisted
+        // null indexerId is NOT a wildcard, so dedup misses and a fresh grab runs.
+        downloadRows = [{ id: 50, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: null }];
+        const releaseId = encodeReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1', indexerId: 3 });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(201);
+        expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
+        expect(downloadService.getById as Mock).not.toHaveBeenCalled();
+      });
+
+      it('(F1) a token carrying an indexerId does NOT match a same-guid row from a DIFFERENT indexer → fresh grab', async () => {
+        downloadRows = [{ id: 51, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 5 }];
+        const releaseId = encodeReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1', indexerId: 3 });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(201);
+        expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
+        expect(downloadService.getById as Mock).not.toHaveBeenCalled();
+      });
+
+      it('(F1) a token with NO indexerId still matches a same-guid row on guid alone', async () => {
+        downloadRows = [{ id: 52, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 5 }];
+        (downloadService.getById as Mock).mockResolvedValue(hydratedDownload({ id: 52 }));
+        const releaseId = encodeReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1' });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(200);
+        expect(downloadOrchestrator.grab as Mock).not.toHaveBeenCalled();
+        expect(downloadService.getById as Mock).toHaveBeenCalledWith(52);
+      });
     });
   });
 
