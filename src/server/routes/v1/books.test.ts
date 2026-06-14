@@ -99,6 +99,28 @@ describe('v1 books routes', () => {
       expect(options).toMatchObject({ exactStatus: true });
     });
 
+    it('forwards documented filter/sort params (author, series, narrator, sortField, sortDirection) and pagination into getAll', async () => {
+      await app.inject({
+        method: 'GET',
+        url: '/api/v1/books?author=Hugh+Howey&series=Silo&narrator=Minnie+Goode&sortField=title&sortDirection=asc&limit=25&offset=50',
+        headers: keyHeaders,
+      });
+
+      expect(bookListService.getAll as Mock).toHaveBeenCalledTimes(1);
+      const [, pagination, options] = (bookListService.getAll as Mock).mock.calls[0]!;
+      // Every documented filter/sort param must reach the service — deleting any
+      // conditional spread in the route would drop it here while the request still 200s.
+      expect(options).toMatchObject({
+        author: 'Hugh Howey',
+        series: 'Silo',
+        narrator: 'Minnie Goode',
+        sortField: 'title',
+        sortDirection: 'asc',
+        exactStatus: true,
+      });
+      expect(pagination).toEqual({ limit: 25, offset: 50 });
+    });
+
     it('returns empty data with the correct total when offset is past the end', async () => {
       (bookListService.getAll as Mock).mockResolvedValue({ data: [], total: 5 });
 
@@ -162,6 +184,18 @@ describe('v1 books routes', () => {
 
       expect(res.statusCode).toBe(404);
       expectV1Envelope(res.json());
+    });
+
+    it('returns a 404 v1 envelope when the publicId resolves but the row is gone (stale/deleted race)', async () => {
+      db.select.mockReturnValue(mockDbChain([{ id: 5 }])); // resolveByPublicId → rowid
+      (bookService.getById as Mock).mockResolvedValue(null); // ...but the row is gone
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/books/bk_test000000000000000', headers: keyHeaders });
+
+      // The row-null guard must produce the required v1 404 envelope, not a projection 500.
+      expect(res.statusCode).toBe(404);
+      expectV1Envelope(res.json());
+      expect(bookService.getById as Mock).toHaveBeenCalledWith(5);
     });
 
     it('returns a 404 v1 envelope for a numeric rowid (opaque-key only)', async () => {
