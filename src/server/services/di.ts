@@ -41,6 +41,7 @@ import type {
   BookRejectionService,
   BookDeletionService,
   SeriesCardService,
+  ReferenceReadService,
   RetrySearchDeps,
 } from './index.js';
 import type { MergeService } from './merge.service.js';
@@ -86,6 +87,7 @@ export interface Services {
   importQueueWorker: ImportQueueWorker;
   retrySearchDeps: RetrySearchDeps;
   seriesCard: SeriesCardService;
+  referenceRead: ReferenceReadService;
 }
 
 /**
@@ -131,4 +133,5 @@ export const SERVICE_KEYS = Object.keys({
   importQueueWorker: true,
   retrySearchDeps: true,
   seriesCard: true,
+  referenceRead: true,
 } satisfies Record<keyof Services, true>) as (keyof Services)[];

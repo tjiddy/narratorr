@@ -22,6 +22,7 @@ import {
   RetryBudget,
   DiscoveryService,
   SeriesCardService,
+  ReferenceReadService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { ImportOrchestrator } from '../services/import-orchestrator.js';
@@ -74,6 +75,9 @@ import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
 import { importPreviewRoute } from './import-preview.js';
 import { v1BooksRoutes } from './v1/books.js';
+import { v1AuthorsRoutes } from './v1/authors.js';
+import { v1NarratorsRoutes } from './v1/narrators.js';
+import { v1SeriesRoutes } from './v1/series.js';
 
 // The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
 // (the correct layer — routes depend on services, not the reverse). Imported for
@@ -103,6 +107,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const book = new BookService(db, log, metadata);
   const bookImport = new BookImportService(db, log);
   const bookList = new BookListService(db);
+  const referenceRead = new ReferenceReadService(db);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
   const download = new DownloadService(db, downloadClient, log);
@@ -191,7 +196,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard, referenceRead };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -247,6 +252,9 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
   (app) => importPreviewRoute(app),
   (app, s, db) => v1BooksRoutes(app, { bookService: s.book, bookListService: s.bookList }, db),
+  (app, s, db) => v1AuthorsRoutes(app, { referenceReadService: s.referenceRead }, db),
+  (app, s, db) => v1NarratorsRoutes(app, { referenceReadService: s.referenceRead }, db),
+  (app, s, db) => v1SeriesRoutes(app, { referenceReadService: s.referenceRead }, db),
 ];
 
 export { routeRegistry };
