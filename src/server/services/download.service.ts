@@ -347,9 +347,10 @@ export class DownloadService {
   }
 
   async setError(id: number, errorMessage: string, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
-    // Client-side failure: `clientStatus`-only write to the canonical failure
-    // tuple's client axis (the row's `pipelineStage` is already 'idle').
-    await transitionDownloadState(this.db, id, { clientStatus: 'failed', errorMessage });
+    // Failure: write the sanctioned failure tuple atomically so the row derives
+    // as `failed` even if the pipeline stage was non-idle (correct by
+    // construction regardless of caller). See `download-state.ts` contract.
+    await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage });
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
@@ -369,8 +370,11 @@ export class DownloadService {
       }
     }
 
-    // Client-side cancellation → canonical failure tuple's client axis only.
-    await transitionDownloadState(this.db, id, { clientStatus: 'failed', errorMessage: reason });
+    // Cancellation → write the sanctioned failure tuple atomically. Resetting
+    // `pipelineStage` to 'idle' is required so a row cancelled mid-pipeline
+    // (checking/pending_review/importing) derives as `failed`, not its stale
+    // stage (see `download-state.ts` contract).
+    await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage: reason });
 
     this.log.info({ id }, 'Download cancelled');
     return true;
