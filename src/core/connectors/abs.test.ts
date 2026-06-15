@@ -143,6 +143,12 @@ describe('AudiobookshelfConnector', () => {
       expect(count).toBe(1);
     });
 
+    it('estimateRequestCount is always 1 — single-request adapter, batch-independent (#1506 AC3)', () => {
+      // ABS issues one full library scan per call regardless of how many items the
+      // batch carries, so its scaled flush-timeout budget never grows.
+      expect(makeConnector().estimateRequestCount()).toBe(1);
+    });
+
     it('classifies 401 as retryable:false with apiKey field error', async () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.json({}, { status: 401 })));
       await expect(makeConnector().refreshImport(BATCH, SIGNAL)).rejects.toMatchObject({

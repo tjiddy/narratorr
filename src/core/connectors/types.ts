@@ -68,4 +68,16 @@ export interface ConnectorAdapter {
   // resolved { success: false } is reserved for a completed-but-rejected provider
   // response (definitively NON-retryable) — transport/HTTP failures THROW.
   refreshImport(batch: ConnectorImportBatch, signal: AbortSignal): Promise<ConnectorRefreshResult>;
+  /**
+   * How many SEQUENTIAL outbound requests refreshImport() will make for this
+   * batch. The service scales its outer flush-timeout watchdog by this count so a
+   * multi-request provider is not aborted mid-batch when the cumulative — but
+   * individually in-budget — request time exceeds a single-request budget. A
+   * single-request provider (ABS: one library scan regardless of batch contents)
+   * returns 1; a path-scoped provider (Plex: one targeted refresh per distinct
+   * derivable server path, plus an optional section-wide fallback) returns its
+   * derivable request count. Must mirror the request plan refreshImport() actually
+   * executes, and must NOT perform I/O (pure, synchronous estimate).
+   */
+  estimateRequestCount(batch: ConnectorImportBatch): number;
 }

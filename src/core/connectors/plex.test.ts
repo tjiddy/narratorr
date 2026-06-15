@@ -211,6 +211,31 @@ describe('PlexConnector', () => {
     });
   });
 
+  // estimateRequestCount feeds the service's scaled flush-timeout watchdog (#1506
+  // AC1); it MUST mirror the request plan refreshImport actually executes.
+  describe('estimateRequestCount() — request plan for the scaled flush timeout', () => {
+    it('counts distinct derivable server paths (deduped), no I/O', () => {
+      // Two distinct paths + a duplicate of the first → 2 requests.
+      expect(makeConnector().estimateRequestCount(batchFor('/lib/A', '/lib/B', '/lib/A'))).toBe(2);
+    });
+
+    it('excludes no-derivable-path items when the fallback is OFF', () => {
+      expect(makeConnector().estimateRequestCount(batchFor('/lib/A', '   '))).toBe(1);
+    });
+
+    it('adds one for the section-wide fallback when skipped items exist and fallback is ON', () => {
+      expect(makeConnector({ fallbackToFullRefresh: true }).estimateRequestCount(batchFor('/lib/A', '  '))).toBe(2);
+    });
+
+    it('does not add the fallback request when nothing is skipped', () => {
+      expect(makeConnector({ fallbackToFullRefresh: true }).estimateRequestCount(batchFor('/lib/A', '/lib/B'))).toBe(2);
+    });
+
+    it('returns 0 for an all-skipped batch with fallback OFF', () => {
+      expect(makeConnector().estimateRequestCount(batchFor('   ', ''))).toBe(0);
+    });
+  });
+
   describe('refreshImport() — status taxonomy (F13)', () => {
     it('401/403 → throws non-retryable with fieldErrors.token', async () => {
       server.use(http.get(REFRESH_URL, () => HttpResponse.json({}, { status: 401 })));
