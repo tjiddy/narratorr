@@ -9,6 +9,7 @@ import {
   type ConnectorAdapter,
   type ConnectorImportItem,
   type ConnectorReason,
+  type ConnectorRefreshResult,
   type ConnectorTarget,
   type ConnectorTestResult,
 } from '../../core/connectors/index.js';
@@ -341,7 +342,9 @@ export class ConnectorService {
 
       const adapter = this.getAdapter(connector);
       const batch = { reason: entry.reason, items: entry.items };
-      const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length };
+      // The redacted host disambiguates same-type connectors at 3am — carry it on
+      // every success branch (dispatched/rejected), not just the catch path.
+      const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length, url: redactBaseUrl(connector.settings) };
       // Scale the outer watchdog to how many sequential requests this batch will
       // make so a multi-request provider (Plex) is not aborted mid-flush.
       const requestCount = Math.max(1, adapter.estimateRequestCount(batch));
@@ -356,13 +359,7 @@ export class ConnectorService {
           shouldRetry: (e) => e instanceof ConnectorRequestError && e.retryable,
         },
       );
-      if (!result.success) {
-        this.log.warn({ ...logCtx, message: result.message }, 'Connector refresh rejected');
-      } else if (result.message) {
-        this.log.info({ ...logCtx, message: result.message }, 'Connector refresh dispatched');
-      } else {
-        this.log.debug(logCtx, 'Connector refresh dispatched');
-      }
+      this.logFlushResult(logCtx, result);
     } catch (error: unknown) {
       // `connector` may still be null when the failure originated in getById /
       // getAdapter — degrade to the queue entry's connectorId rather than
@@ -402,6 +399,31 @@ export class ConnectorService {
    * inside the adapter; this watchdog only fires if a whole attempt hangs past its
    * scaled budget.
    */
+  /**
+   * Log a completed flush at the level dictated by its STRUCTURED result fields —
+   * never by parsing `message`. `skipped`/`passthrough` are silently-ineffective
+   * outcomes (no-derivable items left unrefreshed; paths sent unchanged against a
+   * remapped server) the operator must see → warn. `fallbackRefreshed` does NOT
+   * warn — those items were rescued by the section refresh. `?? 0` guards the
+   * falsy-coercion trap: a present 0 must not read as "warn". The resolved server
+   * paths are emitted at debug as the explicit replay handoff — no re-derivation.
+   */
+  private logFlushResult(logCtx: Record<string, unknown>, result: ConnectorRefreshResult): void {
+    const ineffective = (result.skipped ?? 0) > 0 || (result.passthrough ?? 0) > 0;
+    if (!result.success) {
+      this.log.warn({ ...logCtx, message: result.message }, 'Connector refresh rejected');
+    } else if (ineffective) {
+      this.log.warn({ ...logCtx, message: result.message }, 'Connector refresh ineffective');
+    } else if (result.message) {
+      this.log.info({ ...logCtx, message: result.message }, 'Connector refresh dispatched');
+    } else {
+      this.log.debug(logCtx, 'Connector refresh dispatched');
+    }
+    if (result.resolvedServerPaths?.length) {
+      this.log.debug({ ...logCtx, resolvedServerPaths: result.resolvedServerPaths }, 'Connector resolved server paths');
+    }
+  }
+
   private async withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, requestCount: number): Promise<T> {
     const controller = new AbortController();
     if (this.flushTimeoutMs <= 0) return fn(controller.signal);

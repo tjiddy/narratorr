@@ -77,18 +77,34 @@ function normalizePrefix(p: string): string {
 }
 
 /**
- * Resolve a narratorr `libraryPath` to a Plex server path via longest-prefix
- * path mapping. Returns the resolved server path, or an empty string for the
- * **no-derivable-path** case (caller treats empty as skip/fallback):
- *  - `libraryPath` is itself empty/whitespace, or
- *  - a mapping matched but its `serverPath` rewrite is empty/whitespace.
- * No mapping match → PASSTHROUGH: the (non-empty) `libraryPath` unchanged.
+ * How a `libraryPath` resolved against the configured path mappings:
+ *  - `mapped` — a mapping matched and rewrote the path (INCLUDING an identity
+ *    rewrite where `serverPath === localPath`; it still counts as mapped).
+ *  - `passthrough` — NO mapping matched; the (non-empty) path is sent unchanged.
+ *  - `skip` — no derivable server path (empty/whitespace input, or a matched
+ *    mapping whose `serverPath` rewrite is empty/whitespace).
+ *
+ * The KIND is the source of truth for passthrough/skip accounting — callers must
+ * NOT re-derive it by comparing the resolved string to the input (an identity
+ * mapping yields `output === input` yet is `mapped`, not `passthrough`; see F3).
+ */
+export type ResolvedPathKind = 'mapped' | 'passthrough' | 'skip';
+
+export interface ResolvedServerPath {
+  kind: ResolvedPathKind;
+  /** The resolved server path; '' for the `skip` case. */
+  path: string;
+}
+
+/**
+ * Classify a narratorr `libraryPath` against the longest-matching path mapping,
+ * returning both the resolved server path AND the match KIND (see ResolvedPathKind).
  *
  * Connector-scoped (narratorr local → Plex server) and intentionally separate
  * from the download-client remote-path mapping, which maps the other direction.
  */
-export function resolveServerPath(libraryPath: string, mappings: PlexPathMapping[]): string {
-  if (!libraryPath || !libraryPath.trim()) return '';
+export function classifyServerPath(libraryPath: string, mappings: PlexPathMapping[]): ResolvedServerPath {
+  if (!libraryPath || !libraryPath.trim()) return { kind: 'skip', path: '' };
   const normalizedPath = libraryPath.replace(/\\/g, '/');
 
   let bestMatch: PlexPathMapping | null = null;
@@ -103,13 +119,23 @@ export function resolveServerPath(libraryPath: string, mappings: PlexPathMapping
     }
   }
 
-  if (!bestMatch) return normalizedPath; // passthrough (non-empty)
-  if (!bestMatch.serverPath || !bestMatch.serverPath.trim()) return ''; // no-derivable-path
+  if (!bestMatch) return { kind: 'passthrough', path: normalizedPath }; // passthrough (non-empty)
+  if (!bestMatch.serverPath || !bestMatch.serverPath.trim()) return { kind: 'skip', path: '' }; // no-derivable-path
 
   const normalizedLocal = normalizePrefix(bestMatch.localPath);
   const normalizedServer = normalizePrefix(bestMatch.serverPath);
   const remainder = normalizedPath.slice(normalizedLocal.length - 1); // keep the leading /
-  return normalizedServer.slice(0, -1) + remainder; // drop server trailing /, append remainder
+  return { kind: 'mapped', path: normalizedServer.slice(0, -1) + remainder }; // drop server trailing /, append remainder
+}
+
+/**
+ * Resolve a narratorr `libraryPath` to a Plex server path via longest-prefix
+ * path mapping. Returns the resolved server path, or an empty string for the
+ * **no-derivable-path** (skip) case. Thin wrapper over {@link classifyServerPath}
+ * for callers that only need the string (passthrough returns the unchanged path).
+ */
+export function resolveServerPath(libraryPath: string, mappings: PlexPathMapping[]): string {
+  return classifyServerPath(libraryPath, mappings).path;
 }
 
 export class PlexConnector implements ConnectorAdapter {
@@ -204,21 +230,37 @@ export class PlexConnector implements ConnectorAdapter {
    * no-derivable-path items ride the success message (never success:false/throw).
    */
   async refreshImport(batch: ConnectorImportBatch, signal: AbortSignal): Promise<ConnectorRefreshResult> {
-    const { distinctPaths, skipped } = this.planRequests(batch);
+    const { distinctPaths, skipped, passthrough, resolvedServerPaths } = this.planRequests(batch);
 
     for (const serverPath of distinctPaths) {
       await this.issueRefresh(this.targetedRefreshUrl(serverPath), signal);
     }
 
+    const refreshed = distinctPaths.length;
+    const passthroughNote = passthrough > 0 ? ` (${passthrough} passthrough — no mapping matched)` : '';
+
     if (skipped > 0 && this.fallbackToFullRefresh) {
+      // The no-derivable items are RESCUED by the section-wide refresh → they
+      // report as fallbackRefreshed (not skipped), so the service does NOT warn.
       await this.issueRefresh(this.sectionRefreshUrl(), signal);
-      return { success: true, message: `refreshed ${distinctPaths.length} paths, ${skipped} no-derivable-path items via full section refresh` };
+      return {
+        success: true,
+        message: `refreshed ${refreshed} paths${passthroughNote}, ${skipped} no-derivable-path items via full section refresh`,
+        skipped: 0,
+        passthrough,
+        fallbackRefreshed: skipped,
+        resolvedServerPaths,
+      };
     }
 
-    const message = skipped > 0
-      ? `refreshed ${distinctPaths.length} paths, skipped ${skipped} items`
-      : `refreshed ${distinctPaths.length} paths`;
-    return { success: true, message };
+    const skippedNote = skipped > 0 ? `, skipped ${skipped} items` : '';
+    return {
+      success: true,
+      message: `refreshed ${refreshed} paths${passthroughNote}${skippedNote}`,
+      skipped,
+      passthrough,
+      resolvedServerPaths,
+    };
   }
 
   /**
@@ -233,22 +275,32 @@ export class PlexConnector implements ConnectorAdapter {
   }
 
   /**
-   * Resolve a batch to its request plan: the distinct derivable Plex server paths
-   * (each becomes one targeted refresh) and the count of no-derivable-path items
-   * (skipped, or collapsed to a single section-wide refresh when the fallback is on).
+   * Resolve a batch to its request plan in ONE place (the single source of both
+   * the counts and the paths):
+   *  - `distinctPaths` — the distinct derivable server paths (mapped + passthrough),
+   *    each becoming one targeted refresh;
+   *  - `skipped` — no-derivable-path items (skipped, or collapsed to a single
+   *    section-wide refresh when the fallback is on);
+   *  - `passthrough` — items sent UNCHANGED because no mapping matched (counted
+   *    from the classification KIND, never by comparing output to input — F3);
+   *  - `resolvedServerPaths` — the distinct paths actually requested this flush
+   *    (identical to `distinctPaths`; named for the result handoff).
    */
-  private planRequests(batch: ConnectorImportBatch): { distinctPaths: string[]; skipped: number } {
+  private planRequests(batch: ConnectorImportBatch): { distinctPaths: string[]; skipped: number; passthrough: number; resolvedServerPaths: string[] } {
     const distinctPaths = new Set<string>();
     let skipped = 0;
+    let passthrough = 0;
     for (const item of batch.items) {
-      const serverPath = resolveServerPath(item.libraryPath, this.pathMappings);
-      if (!serverPath || !serverPath.trim()) {
+      const resolved = classifyServerPath(item.libraryPath, this.pathMappings);
+      if (resolved.kind === 'skip') {
         skipped++;
         continue;
       }
-      distinctPaths.add(serverPath);
+      if (resolved.kind === 'passthrough') passthrough++;
+      distinctPaths.add(resolved.path);
     }
-    return { distinctPaths: [...distinctPaths], skipped };
+    const paths = [...distinctPaths];
+    return { distinctPaths: paths, skipped, passthrough, resolvedServerPaths: paths };
   }
 
   private targetedRefreshUrl(serverPath: string): string {

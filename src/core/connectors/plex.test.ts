@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse, delay } from 'msw';
-import { PlexConnector, resolveServerPath, type PlexConnectorConfig } from './plex.js';
+import { PlexConnector, resolveServerPath, classifyServerPath, type PlexConnectorConfig } from './plex.js';
 import { ConnectorRequestError } from './errors.js';
 import type { ConnectorImportBatch } from './types.js';
 
@@ -186,7 +186,7 @@ describe('PlexConnector', () => {
       server.use(http.get(REFRESH_URL, () => { count++; return HttpResponse.json({}); }));
       const result = await makeConnector().refreshImport(batchFor('   '), SIGNAL);
       expect(count).toBe(0);
-      expect(result).toEqual({ success: true, message: expect.stringContaining('skipped 1') });
+      expect(result).toMatchObject({ success: true, skipped: 1, passthrough: 0, resolvedServerPaths: [], message: expect.stringContaining('skipped 1') });
     });
 
     it('no-derivable-path item with fallback ON → exactly one section-wide refresh (no path param)', async () => {
@@ -208,6 +208,80 @@ describe('PlexConnector', () => {
       const result = await makeConnector().refreshImport(batchFor('/lib/A', '/lib/B'), SIGNAL);
       expect(result.success).toBe(true);
       expect(result.message).toContain('2 paths');
+    });
+  });
+
+  // Structured outcome fields (#1505): the adapter must hand the service the
+  // counts + resolved paths so the service logs the right LEVEL without parsing
+  // the message string. passthrough/skip are classified from the mapping match
+  // state, not by comparing the resolved string to the input (F3).
+  describe('refreshImport() — structured outcome fields (#1505)', () => {
+    function countingRefresh() {
+      const requests: (string | null)[] = [];
+      server.use(http.get(REFRESH_URL, ({ request }) => {
+        requests.push(new URL(request.url).searchParams.get('path'));
+        return HttpResponse.json({});
+      }));
+      return requests;
+    }
+
+    it('mapping-only batch → passthrough:0, skipped:0; resolvedServerPaths holds the distinct mapped serverPaths', async () => {
+      countingRefresh();
+      const connector = makeConnector({ pathMappings: [{ localPath: '/lib', serverPath: '/srv' }] });
+      const result = await connector.refreshImport(batchFor('/lib/A', '/lib/B'), SIGNAL);
+      expect(result.passthrough).toBe(0);
+      expect(result.skipped).toBe(0);
+      expect(result.fallbackRefreshed).toBeUndefined();
+      expect([...result.resolvedServerPaths!].sort()).toEqual(['/srv/A', '/srv/B']);
+    });
+
+    it('identity mapping (serverPath === localPath) → passthrough:0 (it matched), path in resolvedServerPaths (F3)', async () => {
+      countingRefresh();
+      const connector = makeConnector({ pathMappings: [{ localPath: '/lib', serverPath: '/lib' }] });
+      const result = await connector.refreshImport(batchFor('/lib/Dune'), SIGNAL);
+      // Resolves to the same string as the input, yet a mapping MATCHED → not passthrough.
+      expect(result.passthrough).toBe(0);
+      expect(result.skipped).toBe(0);
+      expect(result.resolvedServerPaths).toEqual(['/lib/Dune']);
+    });
+
+    it('pure-passthrough batch (no mappings) → passthrough:N, skipped:0; unchanged paths in resolvedServerPaths', async () => {
+      countingRefresh();
+      const result = await makeConnector({ pathMappings: [] }).refreshImport(batchFor('/lib/A', '/lib/B'), SIGNAL);
+      expect(result.passthrough).toBe(2);
+      expect(result.skipped).toBe(0);
+      expect([...result.resolvedServerPaths!].sort()).toEqual(['/lib/A', '/lib/B']);
+    });
+
+    it('all-skipped, fallback OFF → skipped:N, passthrough:0, resolvedServerPaths:[], zero requests, no full refresh', async () => {
+      const requests = countingRefresh();
+      const result = await makeConnector().refreshImport(batchFor('   ', ''), SIGNAL);
+      expect(requests).toHaveLength(0);
+      expect(result.skipped).toBe(2);
+      expect(result.passthrough).toBe(0);
+      expect(result.fallbackRefreshed).toBeUndefined();
+      expect(result.resolvedServerPaths).toEqual([]);
+    });
+
+    it('all-skipped, fallback ON → fallbackRefreshed:N, skipped:0; one section refresh; message notes the rescue', async () => {
+      const requests = countingRefresh();
+      const result = await makeConnector({ fallbackToFullRefresh: true }).refreshImport(batchFor('  ', ''), SIGNAL);
+      expect(requests).toEqual([null]); // exactly one section-wide refresh, no path param
+      expect(result.fallbackRefreshed).toBe(2);
+      expect(result.skipped).toBe(0);
+      expect(result.passthrough).toBe(0);
+      expect(result.message).toContain('full section refresh');
+    });
+
+    it('mixed batch (mapped + passthrough + skip), fallback OFF → skipped:1, passthrough:1, two targeted requests; message notes passthrough', async () => {
+      const requests = countingRefresh();
+      const connector = makeConnector({ pathMappings: [{ localPath: '/map', serverPath: '/srv' }] });
+      const result = await connector.refreshImport(batchFor('/map/X', '/other/Y', '   '), SIGNAL);
+      expect(requests.filter((p) => p !== null)).toHaveLength(2); // two targeted, no fallback
+      expect(result.skipped).toBe(1);
+      expect(result.passthrough).toBe(1);
+      expect(result.message).toContain('passthrough');
+      expect([...result.resolvedServerPaths!].sort()).toEqual(['/other/Y', '/srv/X']);
     });
   });
 
@@ -317,5 +391,28 @@ describe('resolveServerPath', () => {
 
   it('matched mapping with empty/whitespace serverPath → no-derivable-path (empty string), NOT passthrough', () => {
     expect(resolveServerPath('/lib/Dune', [{ localPath: '/lib', serverPath: '   ' }])).toBe('');
+  });
+});
+
+describe('classifyServerPath — match KIND (drives passthrough/skip accounting, F3)', () => {
+  it('mapping match → kind: mapped', () => {
+    expect(classifyServerPath('/lib/Dune', [{ localPath: '/lib', serverPath: '/srv' }])).toEqual({ kind: 'mapped', path: '/srv/Dune' });
+  });
+
+  it('identity mapping (serverPath === localPath) → kind: mapped even though output === input', () => {
+    // The crux of F3: do NOT infer passthrough from output === input.
+    expect(classifyServerPath('/lib/Dune', [{ localPath: '/lib', serverPath: '/lib' }])).toEqual({ kind: 'mapped', path: '/lib/Dune' });
+  });
+
+  it('no mapping match → kind: passthrough (path unchanged)', () => {
+    expect(classifyServerPath('/lib/Dune', [{ localPath: '/other', serverPath: '/srv' }])).toEqual({ kind: 'passthrough', path: '/lib/Dune' });
+  });
+
+  it('empty/whitespace input → kind: skip', () => {
+    expect(classifyServerPath('   ', [])).toEqual({ kind: 'skip', path: '' });
+  });
+
+  it('matched mapping with empty serverPath → kind: skip', () => {
+    expect(classifyServerPath('/lib/Dune', [{ localPath: '/lib', serverPath: '  ' }])).toEqual({ kind: 'skip', path: '' });
   });
 });
