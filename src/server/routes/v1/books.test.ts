@@ -49,8 +49,10 @@ function metaBook(overrides?: Record<string, unknown>) {
     narrators: ['Michael Kramer', 'Kate Reading'],
     description: 'An epic fantasy',
     coverUrl: 'https://example.test/cover.jpg',
+    isbn: '9780765326355',
     seriesPrimary: { name: 'Stormlight', position: 1, asin: 'B0SERIES000' },
     duration: 2734,
+    publishedDate: '2010-08-31',
     genres: ['Fantasy'],
     providerId: 'audible:B0ASIN12345',
     ...overrides,
@@ -310,20 +312,68 @@ describe('v1 books routes', () => {
       expect(payload.asin).toBe(ASIN);
     });
 
-    it('maps the metadata record onto the create payload (series from seriesPrimary)', async () => {
+    it('maps the FULL metadata record onto the create payload (series from seriesPrimary, F2)', async () => {
       await post({ asin: ASIN });
 
       const [payload] = (bookService.create as Mock).mock.calls[0]!;
-      expect(payload).toMatchObject({
+      // Every mapped field is asserted by value — deleting any single mapping
+      // (description/coverUrl/isbn/duration/publishedDate/genres/series*) would
+      // fail here, not silently survive.
+      expect(payload).toEqual({
         title: 'The Way of Kings',
         authors: [{ name: 'Brandon Sanderson' }],
         narrators: ['Michael Kramer', 'Kate Reading'],
+        description: 'An epic fantasy',
+        coverUrl: 'https://example.test/cover.jpg',
+        asin: ASIN, // provider asin present → persisted as-is
+        isbn: '9780765326355',
         seriesName: 'Stormlight',
         seriesPosition: 1,
         seriesAsin: 'B0SERIES000',
         seriesProvider: 'audible',
+        duration: 2734,
+        publishedDate: '2010-08-31',
+        genres: ['Fantasy'],
         providerId: 'audible:B0ASIN12345',
       });
+    });
+
+    it('falls back to series[0] for series name/position when seriesPrimary is absent (F2)', async () => {
+      // No seriesPrimary, but a series array → primarySeries = series[0]; seriesAsin
+      // is sourced ONLY from seriesPrimary, so it must be absent in the fallback case.
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
+        kind: 'ok',
+        book: metaBook({ seriesPrimary: undefined, series: [{ name: 'Mistborn', position: 3 }] }),
+      });
+
+      await post({ asin: ASIN });
+
+      const [payload] = (bookService.create as Mock).mock.calls[0]!;
+      expect(payload.seriesName).toBe('Mistborn');
+      expect(payload.seriesPosition).toBe(3);
+      expect(payload).not.toHaveProperty('seriesAsin');
+    });
+
+    it('omits create fields the provider record does not supply (no explicit undefined, F2)', async () => {
+      // A minimal ok record: only the required title/authors plus the requested ASIN.
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
+        kind: 'ok',
+        book: { title: 'Bare', authors: [{ name: 'Solo' }] },
+      });
+
+      await post({ asin: ASIN });
+
+      const [payload] = (bookService.create as Mock).mock.calls[0]!;
+      expect(payload).toEqual({
+        title: 'Bare',
+        authors: [{ name: 'Solo' }],
+        asin: ASIN, // provider omitted asin → requested ASIN fallback
+        seriesProvider: 'audible',
+      });
+      // Unsupplied optional fields must be ABSENT, not present-as-undefined.
+      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'seriesAsin', 'providerId']) {
+        expect(payload).not.toHaveProperty(key);
+      }
     });
 
     it('records a manual book_added event', async () => {
@@ -347,6 +397,28 @@ describe('v1 books routes', () => {
       expect(bookService.findDuplicate as Mock).toHaveBeenCalledWith('', undefined, ASIN);
       expect(bookService.create as Mock).not.toHaveBeenCalled();
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+    });
+
+    it('retry-safe: first POST creates, a second POST of the same ASIN returns 409 + the created existingId (F1)', async () => {
+      // The created book carries the requested ASIN, so the next find-by-ASIN
+      // resolves to it. findDuplicate base (beforeEach) is null → first POST creates.
+      const created = hydratedRow({ publicId: 'bk_created00000000000', status: 'wanted', asin: ASIN });
+      (bookService.create as Mock).mockResolvedValue(created);
+
+      const first = await post({ asin: ASIN });
+      expect(first.statusCode).toBe(201);
+      expect(first.json().id).toBe('bk_created00000000000');
+
+      // Lost-response retry: the same ASIN now finds the created row → 409, no second create.
+      (bookService.findDuplicate as Mock).mockResolvedValueOnce(created);
+      const second = await post({ asin: ASIN });
+
+      expect(second.statusCode).toBe(409);
+      const body = second.json();
+      expect(body.error.code).toBe('book_exists');
+      expect(body.existingId).toBe('bk_created00000000000');
+      // The retry produced no second book.
+      expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
     });
 
     it.each([['not_found'], ['invalid_record']])(
