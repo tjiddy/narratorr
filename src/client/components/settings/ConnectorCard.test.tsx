@@ -251,6 +251,51 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('prunes a whitespace-only path-mapping row before validation, reaching onSubmit with pathMappings: [] (#1507, F1)', async () => {
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(<ConnectorCard mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />);
+
+    await user.selectOptions(screen.getByLabelText('Type'), 'plex');
+    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
+    await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
+    await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
+    // Append a row and fill BOTH fields with whitespace only — the prune trims
+    // before comparing, so this row is treated as blank (kills a mutant that drops
+    // the .trim() in pruneBlankPathMappings).
+    await user.click(screen.getByText('Add Mapping'));
+    await user.type(screen.getByPlaceholderText('/library/audiobooks'), '   ');
+    await user.type(screen.getByPlaceholderText('/data/audiobooks'), '   ');
+    await user.click(screen.getByText('Add Connector'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0]![0].settings.pathMappings).toEqual([]);
+    expect(screen.queryByText('Local path is required')).not.toBeInTheDocument();
+    expect(screen.queryByText('Server path is required')).not.toBeInTheDocument();
+  });
+
+  it('prunes a blank path-mapping row before validation on the Test path, reaching onFormTest with pathMappings: [] (#1507, F2)', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(<ConnectorCard mode="create" onSubmit={vi.fn()} onFormTest={onFormTest} />);
+
+    await user.selectOptions(screen.getByLabelText('Type'), 'plex');
+    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
+    await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
+    await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
+    // Append a fully-blank row, then click Test — the Test path must apply the same
+    // prune before the resolver so it reaches onFormTest instead of being blocked.
+    await user.click(screen.getByText('Add Mapping'));
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => expect(onFormTest).toHaveBeenCalled());
+    expect(onFormTest.mock.calls[0]![0].settings.pathMappings).toEqual([]);
+    expect(screen.queryByText('Local path is required')).not.toBeInTheDocument();
+    expect(screen.queryByText('Server path is required')).not.toBeInTheDocument();
+  });
+
   it('populates the section dropdown from listTargets', async () => {
     const user = userEvent.setup();
     vi.mocked(api.fetchConnectorTargets).mockResolvedValue([{ id: '1', name: 'Audiobooks' }, { id: '2', name: 'Music' }]);
