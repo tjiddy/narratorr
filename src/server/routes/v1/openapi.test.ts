@@ -17,6 +17,7 @@ import { v1NarratorsRoutes } from './narrators.js';
 import { v1SeriesRoutes } from './series.js';
 import { v1DownloadsRoutes } from './downloads.js';
 import { v1ActionsRoutes } from './actions.js';
+import { v1MetadataRoutes } from './metadata.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -49,6 +50,7 @@ const bookListService = { getAll: vi.fn().mockResolvedValue({ data: [], total: 0
 const downloadService = { getAll: vi.fn().mockResolvedValue({ data: [], total: 0 }), getById: vi.fn() };
 const indexerSearchService = { searchAll: vi.fn().mockResolvedValue([]) };
 const downloadOrchestrator = { grab: vi.fn() };
+const metadataService = { search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }) };
 
 /**
  * Build a Fastify app mirroring `src/server/index.ts` composition: swagger is
@@ -78,6 +80,7 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       downloadOrchestrator: downloadOrchestrator as never,
       downloadService: downloadService as never,
     }, db);
+    await v1MetadataRoutes(scoped, { metadataService: metadataService as never });
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));
     scoped.get('/api/v1/system/status', async () => ({ ok: true })); // Prowlarr-compat shim
@@ -167,6 +170,18 @@ describe('v1 OpenAPI spec generation', () => {
   it('documents the action endpoints with their declared response codes', () => {
     const grab = spec.paths['/api/v1/books/{publicId}/grab'].post.responses;
     expect(Object.keys(grab)).toEqual(expect.arrayContaining(['200', '201', '400', '404', '409']));
+  });
+
+  it('documents the metadata search endpoint at the relative path key with 200/400', () => {
+    // Relative path key (NOT URL_BASE-prefixed) — @fastify/swagger strips the base
+    // into servers[].url (learning fastify-swagger-servers-strips-path-prefix).
+    expect(spec.paths).toHaveProperty(['/api/v1/metadata/search']);
+    const responses = spec.paths['/api/v1/metadata/search'].get.responses;
+    expect(Object.keys(responses)).toEqual(expect.arrayContaining(['200', '400']));
+    const schema = responses['200'].content['application/json'].schema;
+    expect(schema.properties).toHaveProperty('data');
+    expect(schema.properties).toHaveProperty('total');
+    expect(schema.properties.data.type).toBe('array');
   });
 });
 
