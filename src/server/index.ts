@@ -87,6 +87,7 @@ import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-wa
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
 import { registerV1OpenApi } from './routes/v1/openapi.js';
+import { gracefulShutdown } from './shutdown.js';
 
 async function main() {
   const app = Fastify(buildFastifyOptions()).withTypeProvider<ZodTypeProvider>();
@@ -186,15 +187,11 @@ async function main() {
   // Start background jobs (includes download startup recovery which may re-enqueue downloads)
   startJobs(db, services, app.log);
 
-  // Graceful shutdown — ensures port is released on tsx watch restarts
+  // Graceful shutdown — ensures port is released on tsx watch restarts. The
+  // ordered teardown (import worker → connector queue drain → app.close) lives in
+  // gracefulShutdown() so its contract is unit-tested without booting the server.
   const shutdown = async () => {
-    app.log.info('Shutting down server…');
-    await services.importQueueWorker.stop();
-    // Drain the best-effort connector refresh queue BEFORE app.close(): clears
-    // pending debounce/deadline timers (warn-logging dropped batches) and awaits
-    // any in-flight flush so a refresh mid-request/retry isn't silently lost.
-    await services.connector.stop();
-    await app.close();
+    await gracefulShutdown(app, services);
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
