@@ -6,6 +6,7 @@ export * from './schemas/search.js';
 export * from './schemas/settings/index.js';
 export * from './schemas/auth.js';
 export * from './schemas/notifier.js';
+export * from './schemas/connector.js';
 export * from './schemas/metadata.js';
 export * from './schemas/activity.js';
 export * from './schemas/discovery.js';

@@ -121,6 +121,7 @@ describe('ManualImportAdapter', () => {
   let mockDb: ReturnType<typeof createMockDb>;
   let mockEventHistory: { create: ReturnType<typeof vi.fn> };
   let mockBroadcaster: { emit: ReturnType<typeof vi.fn> };
+  let mockConnectorService: { notifyRefresh: ReturnType<typeof vi.fn> };
   let setPhase: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -149,6 +150,7 @@ describe('ManualImportAdapter', () => {
     mockDb = createMockDb();
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
     mockBroadcaster = { emit: vi.fn() };
+    mockConnectorService = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
     const log = createMockLogger();
     const mockSettingsService = createMockSettingsService({ library: { path: '/library', fileFormat: '' } });
 
@@ -167,6 +169,7 @@ describe('ManualImportAdapter', () => {
         metadataService: { searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() } as never,
       } satisfies EnrichmentDeps,
       broadcaster: mockBroadcaster as unknown as EventBroadcasterService,
+      connectorService: inject<never>(mockConnectorService),
     };
 
     setPhase = vi.fn().mockResolvedValue(undefined);
@@ -203,6 +206,26 @@ describe('ManualImportAdapter', () => {
       expect(statusCall, 'expected a db.update(books).set({ status: "imported" }) write').toBeDefined();
 
       expect(mockEventHistory.create).toHaveBeenCalled();
+    });
+
+    // ── #1491 connector refresh hook ───────────────────────────────────────
+    it('mode=copy: enqueues a connector refresh with reason "import"', async () => {
+      const job = makeJob();
+      await adapter.process(job, ctx);
+
+      expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('import', [
+        expect.objectContaining({ bookId: 42, title: 'Test Book', libraryPath: TARGET_PATH }),
+      ]);
+    });
+
+    it('pointer mode (in-place adopt, no mode): enqueues a connector refresh with reason "adopt"', async () => {
+      // No `mode` key → pointer/adopt path; finalPath stays the source path.
+      const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
+      await adapter.process(job, ctx);
+
+      expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('adopt', [
+        expect.objectContaining({ bookId: 42, title: 'Test Book', libraryPath: '/audiobooks/Author/Title' }),
+      ]);
     });
 
     it('mode=copy: calls fs.mkdir(target, { recursive: true }) before streamCopyWithProgress', async () => {

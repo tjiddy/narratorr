@@ -13,6 +13,7 @@ import {
   DownloadService,
   MetadataService,
   NotifierService,
+  ConnectorService,
   BlacklistService,
   RemotePathMappingService,
   RenameService,
@@ -52,6 +53,7 @@ import { systemRoutes } from './system.js';
 import { metadataRoutes } from './metadata.js';
 import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
+import { connectorsRoutes } from './connectors.js';
 import { blacklistRoutes } from './blacklist.js';
 import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
@@ -102,6 +104,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   }, settings);
 
   const notifier = new NotifierService(db, log);
+  const connector = new ConnectorService(db, log);
   const blacklistService = new BlacklistService(db, log, settings);
 
   // EventBroadcaster and EventHistoryService created early so they can be injected into lifecycle services
@@ -117,13 +120,13 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
-  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
+  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster, connector);
   const seriesCard = new SeriesCardService(db, log, settings);
-  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster);
+  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster, connector);
   const matchJob = new MatchJobService(metadata, log, settings);
 
   const qualityGateService = new QualityGateService(db, log);
-  const renameService = new RenameService(db, book, settings, log, eventHistory);
+  const renameService = new RenameService(db, book, settings, log, eventHistory, connector);
   const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
@@ -198,7 +201,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard, referenceRead };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard, referenceRead };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -236,6 +239,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob, s.book, s.metadata),
   (app, s, db) => systemRoutes(app, s, db),
   (app, s) => notifiersRoutes(app, s.notifier),
+  (app, s) => connectorsRoutes(app, s.connector),
   (app, s) => blacklistRoutes(app, s.blacklist),
   (app, s) => authRoutes(app, s.auth),
   (app, s) => remotePathMappingRoutes(app, s.remotePathMapping),

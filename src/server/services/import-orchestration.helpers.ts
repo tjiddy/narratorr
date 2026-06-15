@@ -18,6 +18,7 @@ import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { ConnectorService } from './connector.service.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -33,6 +34,7 @@ export interface ImportPipelineDeps {
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
   broadcaster?: EventBroadcasterService | undefined;
+  connectorService?: ConnectorService | undefined;
 }
 
 /**

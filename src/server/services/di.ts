@@ -25,6 +25,7 @@ import type {
   LibraryScanService,
   MatchJobService,
   NotifierService,
+  ConnectorService,
   BlacklistService,
   RemotePathMappingService,
   RenameService,
@@ -66,6 +67,7 @@ export interface Services {
   libraryScan: LibraryScanService;
   matchJob: MatchJobService;
   notifier: NotifierService;
+  connector: ConnectorService;
   blacklist: BlacklistService;
   remotePathMapping: RemotePathMappingService;
   rename: RenameService;
@@ -112,6 +114,7 @@ export const SERVICE_KEYS = Object.keys({
   libraryScan: true,
   matchJob: true,
   notifier: true,
+  connector: true,
   blacklist: true,
   remotePathMapping: true,
   rename: true,

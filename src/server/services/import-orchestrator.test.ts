@@ -95,6 +95,7 @@ describe('ImportOrchestrator', () => {
   let tagging: TaggingService;
   let eventHistory: EventHistoryService;
   let broadcaster: EventBroadcasterService;
+  let connector: { notifyRefresh: ReturnType<typeof vi.fn> };
   let orchestrator: ImportOrchestrator;
 
   beforeEach(() => {
@@ -110,8 +111,9 @@ describe('ImportOrchestrator', () => {
     tagging = inject<TaggingService>({ tagBook: vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 }) });
     eventHistory = inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({ id: 1 }) });
     broadcaster = inject<EventBroadcasterService>({ emit: vi.fn() });
+    connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
 
-    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
+    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector));
 
     // Default wire — most tests need wired deps. Tests that exercise the unwired
     // contract construct their own orchestrator and skip the wire() call.
@@ -211,6 +213,21 @@ describe('ImportOrchestrator', () => {
     it('returns ImportResult from importService', async () => {
       const result = await orchestrator.importDownload(1);
       expect(result).toEqual(mockResult);
+    });
+
+    // #1491 — connector refresh fires fire-and-forget after the DB commit, with
+    // reason 'import' and the final target path.
+    it('enqueues a connector refresh on import success', async () => {
+      await orchestrator.importDownload(1);
+
+      expect(connector.notifyRefresh).toHaveBeenCalledWith('import', [
+        expect.objectContaining({
+          bookId: 1,
+          title: 'The Way of Kings',
+          authorName: 'Brandon Sanderson',
+          libraryPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
+        }),
+      ]);
     });
 
     it('forwards optional callbacks bag to importService.importDownload (#681)', async () => {

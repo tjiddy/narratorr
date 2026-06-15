@@ -7,6 +7,7 @@ import { indexerSettingsSchemas } from '../../shared/schemas/indexer.js';
 import { downloadClientSettingsSchemas } from '../../shared/schemas/download-client.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 import { importListSettingsSchemas } from '../../shared/schemas/import-list.js';
+import { connectorSettingsSchemas } from '../../shared/schemas/connector.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -28,7 +29,8 @@ export type SecretEntity =
   | 'network'
   | 'metadata'
   | 'importList'
-  | 'notifier';
+  | 'notifier'
+  | 'connector';
 
 // Notifier secret fields are flat across all subtypes (encryptFields skips
 // missing fields harmlessly). When adding a new notifier subtype with a secret
@@ -50,6 +52,7 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
   notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'],
+  connector: ['apiKey'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────
@@ -136,6 +139,7 @@ const PER_TYPE_SETTINGS_MAPS: Partial<Record<SecretEntity, Record<string, z.ZodT
   downloadClient: downloadClientSettingsSchemas,
   notifier: notifierSettingsSchemas,
   importList: importListSettingsSchemas,
+  connector: connectorSettingsSchemas,
 };
 
 function loosenSettingsSchema(

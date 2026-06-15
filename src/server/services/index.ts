@@ -12,6 +12,7 @@ export { MetadataService } from './metadata.service.js';
 export { ImportService } from './import.service.js';
 export { ImportOrchestrator } from './import-orchestrator.js';
 export { NotifierService } from './notifier.service.js';
+export { ConnectorService } from './connector.service.js';
 export { BlacklistService } from './blacklist.service.js';
 export { RemotePathMappingService } from './remote-path-mapping.service.js';
 export { RenameService, RenameError, type RenameResult } from './rename.service.js';

@@ -16,6 +16,7 @@ import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
 import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
+import { fireAndForget } from '../../utils/fire-and-forget.js';
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
   let parsedJson: unknown;
@@ -125,6 +126,16 @@ export class ManualImportAdapter implements ImportAdapter {
 
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
+
+      // Fire-and-forget: connector refresh. Pointer-mode (in-place adopt, !mode)
+      // notifies too, with reason 'adopt'; copy/move mode uses 'import'.
+      if (this.deps.connectorService) {
+        fireAndForget(
+          this.deps.connectorService.notifyRefresh(mode ? 'import' : 'adopt', [{ bookId, title: payload.title, authorName: payload.authorName ?? null, libraryPath: finalPath }]),
+          log,
+          'Failed to enqueue connector refresh on manual import',
+        );
+      }
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;

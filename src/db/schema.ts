@@ -8,6 +8,7 @@ import { INDEXER_TYPES } from '../shared/indexer-registry';
 import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
 import { NOTIFIER_TYPES } from '../shared/notifier-registry';
 import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
+import { CONNECTOR_TYPES } from '../shared/connector-registry';
 import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '../shared/schemas/import-job';
 import type { NotificationEvent } from '../shared/notification-events';
 
@@ -239,6 +240,22 @@ export const importLists = sqliteTable('import_lists', {
     .default(sql`(unixepoch())`),
 }, (table) => [
   index('idx_import_lists_enabled').on(table.enabled),
+]);
+
+export const connectors = sqliteTable('connectors', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  type: text('type', { enum: CONNECTOR_TYPES }).notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_connectors_enabled').on(table.enabled),
 ]);
 
 // ============ ACTIVITY ============

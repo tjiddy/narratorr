@@ -1,0 +1,62 @@
+import { type FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { type ConnectorService } from '../services';
+import { createConnectorSchema, updateConnectorSchema, connectorTypeSchema } from '../../shared/schemas.js';
+import { idParamSchema } from '../../shared/schemas.js';
+import { makeTestSchema } from '../utils/secret-codec.js';
+import { registerCrudRoutes } from './crud-routes.js';
+
+type IdParam = z.infer<typeof idParamSchema>;
+
+// Targets validate an arbitrary connector config (no name required, unlike the
+// CRUD create schema). Sentinel-aware so the masked apiKey resolves against the
+// saved row when an `id` is supplied.
+const connectorConfigSchema = z.object({
+  type: connectorTypeSchema,
+  settings: z.record(z.string(), z.unknown()),
+});
+
+export async function connectorsRoutes(app: FastifyInstance, connectorService: ConnectorService) {
+  await registerCrudRoutes(app, {
+    basePath: '/api/connectors',
+    entityName: 'Connector',
+    service: connectorService,
+    createSchema: createConnectorSchema,
+    updateSchema: updateConnectorSchema,
+    secretEntity: 'connector',
+  });
+
+  // POST /api/connectors/targets — populate the dropdown from an UNSAVED config.
+  // Sentinel-aware schema (with optional id) so masked secrets resolve against the saved row.
+  const targetsSchema = makeTestSchema(connectorConfigSchema, 'connector');
+  app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
+    '/api/connectors/targets',
+    { schema: { body: targetsSchema } },
+    async (request) => {
+      const data = request.body;
+      const payload: { type: string; settings: Record<string, unknown>; id?: number } = {
+        type: data.type,
+        settings: data.settings,
+      };
+      if (data.id != null) payload.id = data.id;
+      const result = await connectorService.listTargetsConfig(payload);
+      // Success → bare ConnectorTarget[]; failure → field-scoped envelope.
+      return result.success ? result.targets : result;
+    },
+  );
+
+  // GET /api/connectors/:id/targets — populate the dropdown from a SAVED connector.
+  app.get<{ Params: IdParam }>(
+    '/api/connectors/:id/targets',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const existing = await connectorService.getById(id);
+      if (!existing) {
+        return reply.status(404).send({ error: 'Connector not found' });
+      }
+      const result = await connectorService.listTargets(id);
+      return result.success ? result.targets : result;
+    },
+  );
+}

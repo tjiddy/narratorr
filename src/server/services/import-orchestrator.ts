@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { ImportService, ImportResult, ImportContext, ImportProgressCallbacks } from './import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
+import type { ConnectorService } from './connector.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -17,6 +18,7 @@ import {
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 import { REVERT_FALLBACK_STATUS } from '../utils/book-status.js';
 import type { BookImportService } from './book-import.service.js';
 import { WireOnce } from './wire-helpers.js';
@@ -40,6 +42,7 @@ export class ImportOrchestrator {
     private taggingService?: TaggingService,
     private eventHistory?: EventHistoryService,
     private broadcaster?: EventBroadcasterService,
+    private connectorService?: ConnectorService,
   ) {}
 
   /** Wire cyclic / late-bound deps after construction. Call once during composition. */
@@ -149,6 +152,16 @@ export class ImportOrchestrator {
 
     // Fire-and-forget: event recording
     recordImportEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: result.downloadId, bookPath: ctx.bookPath, targetPath: result.targetPath, fileCount: result.fileCount, totalSize: result.totalSize, log: this.log });
+
+    // Fire-and-forget: connector refresh (media-server scan). Fires only after the
+    // DB commit and once the final target path exists — never awaited.
+    if (this.connectorService) {
+      fireAndForget(
+        this.connectorService.notifyRefresh('import', [{ bookId: ctx.bookId, title: ctx.bookTitle, authorName: ctx.authorName, libraryPath: result.targetPath }]),
+        this.log,
+        'Failed to enqueue connector refresh on auto-import',
+      );
+    }
   }
 
   private dispatchFailureSideEffects(error: unknown, ctx: ImportContext): void {
