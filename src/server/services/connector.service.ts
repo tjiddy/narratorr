@@ -65,7 +65,11 @@ const DEFAULT_MAX_BATCH_WAIT_MS = 30_000;
 
 interface PendingFlush {
   connectorId: number;
-  reason: ConnectorReason;
+  // Every reason coalesced into this entry, deduplicated and first-seen order-stable.
+  // The pending key is the connector id alone, so a mixed-reason burst (import +
+  // restored during a bulk run) accumulates here as ONE entry → one provider refresh,
+  // instead of splitting into a separate single-reason flush per reason.
+  reasons: ConnectorReason[];
   items: ConnectorImportItem[];
   // Trailing quiet-period timer, reset on each enqueue.
   timer: ReturnType<typeof setTimeout>;
@@ -97,9 +101,9 @@ export class ConnectorService {
   private stopping = false;
   // Per-connector-id tail of the in-flight flush chain. Serializes flushes for
   // the SAME connector (a cap-triggered flush chains behind any in-flight one)
-  // while keeping DIFFERENT connector ids fully parallel. Keyed by connectorId,
-  // NOT by the `${connectorId}:${reason}` pending key, so mixed-reason flushes
-  // for one connector (e.g. import + restored) also serialize.
+  // while keeping DIFFERENT connector ids fully parallel. Keyed by connectorId —
+  // the same dimension the pending queue now debounces on, so a connector's
+  // coalesced mixed-reason batch serializes against its own follow-up flushes.
   private draining = new Map<number, Promise<void>>();
   // Aborted by stop() when the shutdown drain budget expires. Composed into every
   // in-flight attempt's signal (see withTimeout) and threaded into requestWithRetry
@@ -274,8 +278,9 @@ export class ConnectorService {
 
   /**
    * Fan out a refresh to every enabled connector. Synchronously enumerates
-   * connectors (the pre-flight), then enqueues per (connector, reason). Caller
-   * should invoke fire-and-forget — never await it in the import/rename/scan path.
+   * connectors (the pre-flight), then enqueues each item under its connector's
+   * single debounce window. Caller should invoke fire-and-forget — never await it
+   * in the import/rename/scan path.
    */
   async notifyRefresh(reason: ConnectorReason, items: ConnectorImportItem[]): Promise<void> {
     if (items.length === 0) return;
@@ -288,8 +293,12 @@ export class ConnectorService {
   }
 
   /**
-   * Add one item to the debounced batch for (connectorId, reason). Each distinct
-   * reason has its own debounce window and produces its own single-reason batch.
+   * Add one item to the debounced batch for `connectorId`. The debounce key is the
+   * connector id ALONE — distinct reasons for the same connector coalesce into one
+   * window and flush as a single batch carrying the union of items and the set of
+   * reasons. ABS issues one full-library scan regardless of reason, so this collapses
+   * what used to be one redundant scan per reason during mixed bursts (import +
+   * rename/restored) into one.
    *
    * Upper bounds pre-empt the trailing debounce flush: reaching `maxBatchItems`
    * flushes immediately, and a `maxBatchWaitMs` deadline (set once at first
@@ -300,10 +309,12 @@ export class ConnectorService {
     // Post-stop enqueues are dropped: shutdown is in progress and there is no
     // future flush to schedule. Best-effort semantics — see the `pending` comment.
     if (this.stopping) return;
-    const key = `${connectorId}:${reason}`;
+    const key = String(connectorId);
     const existing = this.pending.get(key);
     if (existing) {
       existing.items.push(item);
+      // Track the reason on the coalesced entry — deduplicated, first-seen order-stable.
+      if (!existing.reasons.includes(reason)) existing.reasons.push(reason);
       if (existing.items.length >= this.maxBatchItems) {
         // Cap reached: flush now (flush() clears both timers), do NOT reset debounce.
         void this.flush(key);
@@ -315,7 +326,7 @@ export class ConnectorService {
     }
     const entry: PendingFlush = {
       connectorId,
-      reason,
+      reasons: [reason],
       items: [item],
       timer: this.armTimer(() => { void this.flush(key); }, this.debounceMs),
       deadlineTimer: this.armTimer(() => { void this.flush(key); }, this.maxBatchWaitMs),
@@ -371,7 +382,7 @@ export class ConnectorService {
       clearTimeout(entry.timer);
       clearTimeout(entry.deadlineTimer);
       this.log.warn(
-        { connectorId: entry.connectorId, reason: entry.reason, count: entry.items.length },
+        { connectorId: entry.connectorId, reasons: entry.reasons, count: entry.items.length },
         'Connector refresh dropped on shutdown',
       );
     }
@@ -453,7 +464,7 @@ export class ConnectorService {
     // the drop. The chain's `.finally` still cleans the draining entry.
     if (this.stopping) {
       this.log.warn(
-        { connectorId: entry.connectorId, reason: entry.reason, count: entry.items.length },
+        { connectorId: entry.connectorId, reasons: entry.reasons, count: entry.items.length },
         'Connector refresh dropped on shutdown',
       );
       return;
@@ -468,10 +479,12 @@ export class ConnectorService {
       if (!connector || !connector.enabled) return;
 
       const adapter = this.getAdapter(connector);
-      const batch = { reason: entry.reason, items: entry.items };
+      const batch = { reasons: entry.reasons, items: entry.items };
       // The redacted host disambiguates same-type connectors at 3am — carry it on
-      // every success branch (dispatched/rejected), not just the catch path.
-      const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length, url: redactBaseUrl(connector.settings) };
+      // every success branch (dispatched/rejected), not just the catch path. `reasons`
+      // carries the full coalesced set so dispatch/rejected/ineffective logs never
+      // imply a single reason that hides what was merged into this batch.
+      const logCtx = { connectorId: connector.id, connectorType: connector.type, reasons: entry.reasons, count: entry.items.length, url: redactBaseUrl(connector.settings) };
       // Scale the outer watchdog to how many sequential requests this batch will
       // make so a multi-request provider (Plex) is not aborted mid-flush.
       const requestCount = Math.max(1, adapter.estimateRequestCount(batch));
@@ -504,7 +517,7 @@ export class ConnectorService {
           connectorId: connector?.id ?? entry.connectorId,
           connectorType: connector?.type,
           connectorName: connector?.name,
-          reason: entry.reason,
+          reasons: entry.reasons,
           count: entry.items.length,
           url: connector ? redactBaseUrl(connector.settings) : undefined,
           error: serializeError(error),
