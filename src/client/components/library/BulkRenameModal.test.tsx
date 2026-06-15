@@ -27,7 +27,9 @@ const basePreview: BulkRenamePreview = {
     { bookId: 2, title: 'Book Two', from: 'Author/Old Two', to: 'Author/Book Two' },
   ],
   mismatchedTotal: 2,
-  alreadyMatching: 10,
+  folderMatching: 10,
+  importedTotal: 12,
+  jobTotal: 12,
 };
 
 const bookPlan: RenamePreviewResult = {
@@ -57,7 +59,21 @@ describe('BulkRenameModal', () => {
     vi.mocked(api.getBookRenamePreview).mockResolvedValue(bookPlan);
   });
 
-  it('renders the folder summary referencing "folder format" and the skipped count', async () => {
+  it('renders the imported-book denominator and folder-move count when a fileFormat rule is set', async () => {
+    renderModal();
+    expect(
+      await screen.findByText(/Check 12 imported books\. 2 need folder moves\./i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/File-level renames are checked per book during the run\./i)).toBeInTheDocument();
+  });
+
+  it('renders the folder-format summary with skipped count when no fileFormat rule is set', async () => {
+    vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
+      ...basePreview,
+      fileFormat: '',
+      importedTotal: 12,
+      jobTotal: 2,
+    });
     renderModal();
     expect(await screen.findByText(/Rename 2 books to match the current folder format\./i)).toBeInTheDocument();
     expect(screen.getByText(/10 books already match and will be skipped\./i)).toBeInTheDocument();
@@ -175,19 +191,21 @@ describe('BulkRenameModal', () => {
     expect(api.getBulkRenamePreview).not.toHaveBeenCalled();
   });
 
-  describe('0-mismatch empty state (AC #5)', () => {
-    beforeEach(() => {
+  // AC #4 (#1493): zero folder mismatches is only "nothing to rename" when no fileFormat
+  // rule exists. With a file rule, file-level renames may still apply, so the run stays
+  // available even when every folder already matches.
+  describe('0-mismatch empty state', () => {
+    it('fileFormat empty: shows "nothing to rename" with no list rows and no Rename All button', async () => {
       vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
         libraryRoot: '/library',
         folderFormat: '{author}/{title}',
-        fileFormat: '{author} - {title}',
+        fileFormat: '',
         items: [],
         mismatchedTotal: 0,
-        alreadyMatching: 8,
+        folderMatching: 8,
+        importedTotal: 8,
+        jobTotal: 0,
       });
-    });
-
-    it('shows the "nothing to rename" summary with no list rows and no Rename All button', async () => {
       renderModal();
       expect(
         await screen.findByText(/All 8 books already match the current folder format — nothing to rename\./i),
@@ -196,11 +214,40 @@ describe('BulkRenameModal', () => {
       expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
     });
 
-    it('cannot confirm — onConfirm is never reachable', async () => {
+    it('fileFormat empty: cannot confirm — onConfirm is never reachable', async () => {
+      vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
+        libraryRoot: '/library',
+        folderFormat: '{author}/{title}',
+        fileFormat: '',
+        items: [],
+        mismatchedTotal: 0,
+        folderMatching: 8,
+        importedTotal: 8,
+        jobTotal: 0,
+      });
       const { onConfirm } = renderModal();
       await screen.findByText(/nothing to rename/i);
       expect(screen.queryByRole('button', { name: /^rename all$/i })).not.toBeInTheDocument();
       expect(onConfirm).not.toHaveBeenCalled();
+    });
+
+    it('fileFormat set + importedTotal > 0: stays enabled with zero folder mismatches (no "nothing to rename")', async () => {
+      vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
+        libraryRoot: '/library',
+        folderFormat: '{author}/{title}',
+        fileFormat: '{author} - {title}',
+        items: [],
+        mismatchedTotal: 0,
+        folderMatching: 8,
+        importedTotal: 8,
+        jobTotal: 8,
+      });
+      renderModal();
+      expect(
+        await screen.findByText(/Check 8 imported books\. 0 need folder moves\./i),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/nothing to rename/i)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^rename all$/i })).toBeInTheDocument();
     });
   });
 });

@@ -30,7 +30,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
   return {
     ...actual,
     api: {
-      getBulkRenameCount: vi.fn(),
       getBulkRenamePreview: vi.fn(),
       getBookRenamePreview: vi.fn(),
       getBulkRetagCount: vi.fn(),
@@ -71,7 +70,6 @@ function setup(overrides?: SetupOpts) {
     },
     startJob: mockStartJob,
   });
-  (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockResolvedValue({ mismatched: 5, alreadyMatching: 10 });
   (api.getBulkRenamePreview as ReturnType<typeof vi.fn>).mockResolvedValue({
     libraryRoot: '/library',
     folderFormat: '{author}/{title}',
@@ -80,7 +78,9 @@ function setup(overrides?: SetupOpts) {
       { bookId: 1, title: 'Book One', from: 'Author/Old One', to: 'Author/Book One' },
     ],
     mismatchedTotal: 5,
-    alreadyMatching: 10,
+    folderMatching: 10,
+    importedTotal: 15,
+    jobTotal: 15,
   });
   (api.getBookRenamePreview as ReturnType<typeof vi.fn>).mockResolvedValue({
     libraryRoot: '/library',
@@ -125,8 +125,7 @@ describe('BulkOperationsSection', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
     const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText(/Rename 5 books to match the current folder format\./i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/10 books already match and will be skipped\./i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Check 15 imported books\. 5 need folder moves\./i)).toBeInTheDocument();
     expect(api.getBulkRenamePreview).toHaveBeenCalled();
   });
 
@@ -157,7 +156,7 @@ describe('BulkOperationsSection', () => {
     setup();
     await user.click(screen.getByRole('button', { name: /rename all books/i }));
     const dialog = await screen.findByRole('dialog');
-    await within(dialog).findByText(/Rename 5 books to match the current folder format\./i);
+    await within(dialog).findByText(/Check 15 imported books\. 5 need folder moves\./i);
     await user.click(within(dialog).getByRole('button', { name: /^rename all$/i }));
     expect(mockStartJob).toHaveBeenCalledWith('rename');
   });
