@@ -252,6 +252,7 @@ describe('LibraryScanService', () => {
   let log: ReturnType<typeof createMockLogger>;
   let mockEventHistoryService: { create: ReturnType<typeof vi.fn> };
   let mockBookImportService: { enqueue: ReturnType<typeof vi.fn> };
+  let mockConnectorService: { notifyRefresh: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -289,6 +290,9 @@ describe('LibraryScanService', () => {
     mockEventHistoryService = {
       create: vi.fn().mockResolvedValue({}),
     };
+    mockConnectorService = {
+      notifyRefresh: vi.fn().mockResolvedValue(undefined),
+    };
     let nextJobId = 100;
     mockBookImportService = {
       enqueue: vi.fn().mockImplementation(async () => ({ jobId: nextJobId++ })),
@@ -305,6 +309,8 @@ describe('LibraryScanService', () => {
       inject<SettingsService>(mockSettingsService),
       log,
       inject<EventHistoryService>(mockEventHistoryService),
+      undefined,
+      inject<never>(mockConnectorService),
     );
     // Wire the required-wiring nudgeImportWorker dep so confirmImport doesn't
     // throw ServiceWireError. Tests that exercise the unwired contract
@@ -1169,6 +1175,31 @@ describe('LibraryScanService', () => {
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([]);
       const result = await service.rescanLibrary();
       expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    // ── #1491 connector refresh hook ───────────────────────────────────────
+    it('enqueues a connector refresh with exact item payload for a restored row', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
+        { id: 2, path: '/library/Author/Book', status: 'missing', title: 'The Restored Book' },
+      ]);
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      await service.rescanLibrary();
+
+      expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('restored', [
+        { bookId: 2, title: 'The Restored Book', libraryPath: '/library/Author/Book' },
+      ]);
+    });
+
+    it('does NOT enqueue a connector refresh when there are zero restorations', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
+        { id: 5, path: '/library/Author/Book', status: 'imported', title: 'Still Here' },
+      ]);
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      await service.rescanLibrary();
+
+      expect(mockConnectorService.notifyRefresh).not.toHaveBeenCalled();
     });
 
     it('throws when library path is not configured', async () => {

@@ -7,6 +7,7 @@ export type { Download, ActivityCounts, QualityGateData, ActivityListParams } fr
 export type { Indexer } from './indexers.js';
 export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
+export type { Connector, ConnectorTarget, ConnectorTestResult, ConnectorTargetsResponse } from './connectors.js';
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult, HardcoverTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig, StreamToken } from './auth.js';
@@ -31,6 +32,7 @@ import { activityApi } from './activity.js';
 import { indexersApi } from './indexers.js';
 import { downloadClientsApi } from './download-clients.js';
 import { notifiersApi } from './notifiers.js';
+import { connectorsApi } from './connectors.js';
 import { blacklistApi } from './blacklist.js';
 import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
@@ -60,6 +62,7 @@ export const apiModules = [
   { name: 'indexersApi', api: indexersApi },
   { name: 'downloadClientsApi', api: downloadClientsApi },
   { name: 'notifiersApi', api: notifiersApi },
+  { name: 'connectorsApi', api: connectorsApi },
   { name: 'blacklistApi', api: blacklistApi },
   { name: 'settingsApi', api: settingsApi },
   { name: 'libraryScanApi', api: libraryScanApi },

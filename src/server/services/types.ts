@@ -4,6 +4,7 @@ import type {
   books,
   downloadClients,
   downloads,
+  connectors,
   importJobs,
   importLists,
   indexers,
@@ -24,6 +25,7 @@ import type {
   ImportJobType,
 } from '../../shared/schemas/import-job.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
+import type { ConnectorType } from '../../shared/connector-registry.js';
 import type { IndexerType } from '../../shared/indexer-registry.js';
 import type { NotifierType } from '../../shared/notifier-registry.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
@@ -61,6 +63,10 @@ export type NotifierRow = Omit<typeof notifiers.$inferSelect, 'type'> & {
 
 export type ImportListRow = Omit<typeof importLists.$inferSelect, 'type'> & {
   type: ImportListType;
+};
+
+export type ConnectorRow = Omit<typeof connectors.$inferSelect, 'type'> & {
+  type: ConnectorType;
 };
 
 export type BookEventRow = Omit<typeof bookEvents.$inferSelect, 'eventType' | 'source'> & {

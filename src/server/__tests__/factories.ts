@@ -141,3 +141,16 @@ export function createMockDbNotifier(overrides?: Record<string, unknown>) {
     ...overrides,
   };
 }
+
+export function createMockDbConnector(overrides?: Record<string, unknown>) {
+  return {
+    id: 1,
+    name: 'Test ABS',
+    type: 'audiobookshelf' as const,
+    enabled: true,
+    settings: { baseUrl: 'http://abs.local:13378', apiKey: 'secret-key', libraryId: 'lib-1' },
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}

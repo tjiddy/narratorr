@@ -7,6 +7,8 @@ import { books } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { ConnectorService } from './connector.service.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
@@ -37,7 +39,18 @@ export class RenameService {
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
     private eventHistory?: EventHistoryService,
+    private connectorService?: ConnectorService,
   ) {}
+
+  /** Fire-and-forget connector refresh after a real path/file change. */
+  private enqueueConnectorRefresh(bookId: number, title: string, authorName: string | null, libraryPath: string): void {
+    if (!this.connectorService) return;
+    fireAndForget(
+      this.connectorService.notifyRefresh('rename', [{ bookId, title, authorName, libraryPath }]),
+      this.log,
+      'Failed to enqueue connector refresh on rename',
+    );
+  }
 
   /** Fire-and-forget event recording. */
   private emitEvent(bookId: number, book: { title: string; authors?: Array<{ name: string }> }, oldPath: string, newPath: string, filesRenamed: number): void {
@@ -192,6 +205,10 @@ export class RenameService {
     this.log.info({ bookId, oldPath, newPath: currentPath, filesRenamed }, 'Book renamed');
 
     this.emitEvent(bookId, book, oldPath, currentPath, filesRenamed);
+
+    // Fire-and-forget: connector refresh — only reached when path changed or files
+    // were renamed (the "already organized" early-return above skips this).
+    this.enqueueConnectorRefresh(bookId, book.title, authorName, currentPath);
 
     return {
       oldPath,

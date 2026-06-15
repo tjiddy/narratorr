@@ -30,6 +30,7 @@ export const queryKeys = {
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,
+  connectors: () => ['connectors'] as const,
   importLists: () => ['importLists'] as const,
   blacklist: (params?: BlacklistListParams) => params ? ['blacklist', params] as const : ['blacklist'] as const,
   remotePathMappings: (clientId?: number) =>

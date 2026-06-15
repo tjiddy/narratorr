@@ -3,6 +3,7 @@ import type { Download } from '../lib/api/activity.js';
 import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
+import type { Connector } from '../lib/api/connectors.js';
 import type { Settings } from '../lib/api/settings.js';
 import { createMockSettings as _createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { RemotePathMapping } from '../lib/api/remote-path-mappings.js';
@@ -147,6 +148,21 @@ export function createMockNotifier(overrides?: Partial<Notifier>): Notifier {
     events: ['on_grab', 'on_import'],
     settings: { url: 'https://example.com/hook', method: 'POST' },
     createdAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function createMockConnector(overrides?: Partial<Connector>): Connector {
+  const id = overrides?.id ?? nextId++;
+  return {
+    id,
+    name: 'My ABS',
+    type: 'audiobookshelf',
+    enabled: true,
+    // baseUrl and apiKey are registered connector secrets — the API masks both in responses (#1491).
+    settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,
   };
 }

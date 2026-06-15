@@ -10,6 +10,7 @@ import {
   HardDriveIcon,
   ListIcon,
   ZapIcon,
+  RefreshIcon,
 } from '@/components/icons';
 import { GeneralSettings } from './GeneralSettings.js';
 import { PostProcessingSettings } from './PostProcessingSettings.js';
@@ -17,6 +18,7 @@ import { IndexersSettings } from './IndexersSettings.js';
 import { DownloadClientsSettings } from './DownloadClientsSettings.js';
 import { SearchSettingsPage } from './SearchSettingsPage.js';
 import { NotificationsSettings } from './NotificationsSettings.js';
+import { ConnectorsSettings } from './ConnectorsSettings.js';
 import { BlacklistSettings } from './BlacklistSettings.js';
 import { SecuritySettings } from './SecuritySettings.js';
 import { ImportListsSettings } from './ImportListsSettings.js';
@@ -39,6 +41,7 @@ export const settingsPageRegistry: readonly SettingsPageEntry[] = [
   { path: 'download-clients', label: 'Download Clients', icon: ServerIcon, component: DownloadClientsSettings },
   { path: 'search', label: 'Search', icon: CompassIcon, component: SearchSettingsPage },
   { path: 'notifications', label: 'Notifications', icon: BellIcon, component: NotificationsSettings },
+  { path: 'connectors', label: 'Connectors', icon: RefreshIcon, component: ConnectorsSettings },
   { path: 'blacklist', label: 'Blacklist', icon: ShieldBanIcon, component: BlacklistSettings },
   { path: 'security', label: 'Security', icon: ShieldIcon, component: SecuritySettings },
   { path: 'import-lists', label: 'Import Lists', icon: ListIcon, component: ImportListsSettings },

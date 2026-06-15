@@ -24,3 +24,6 @@ export const HTTP_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 /** Request timeout for Hardcover series-card GraphQL requests (ms). */
 export const HARDCOVER_TIMEOUT_MS = 15_000;
+
+/** Request timeout for a single connector HTTP request (ms). */
+export const CONNECTOR_TIMEOUT_MS = 15_000;

@@ -61,15 +61,18 @@ function createService() {
   };
   const settingsService = createMockSettingsService(libraryOverrides);
   const log = createMockLogger();
+  const connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
 
   const service = new RenameService(
     inject<Db>(db),
     inject<BookService>(bookService),
     inject<SettingsService>(settingsService),
     inject<FastifyBaseLogger>(log),
+    undefined,
+    inject<never>(connector),
   );
 
-  return { service, db, bookService, settingsService, log };
+  return { service, db, bookService, settingsService, log, connector };
 }
 
 describe('RenameService', () => {
@@ -1000,6 +1003,34 @@ describe('RenameService', () => {
         expect.objectContaining({ bookId: 1 }),
         'Book already organized — skipping rename',
       );
+    });
+  });
+
+  // ── #1491 connector refresh hook ─────────────────────────────────────────
+  describe('connector refresh hook', () => {
+    it('enqueues a rename refresh when files were renamed (no path change)', async () => {
+      const { service, bookService, connector } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([{ name: 'a.m4b', isFile: () => true }]);
+
+      await service.renameBook(1);
+
+      expect(connector.notifyRefresh).toHaveBeenCalledWith('rename', [
+        expect.objectContaining({ bookId: 1, title: book.title, libraryPath: book.path }),
+      ]);
+    });
+
+    it('does NOT enqueue for a metadata-only edit (already organized, no path/file change)', async () => {
+      const { service, bookService, settingsService, connector } = createService();
+      (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '' });
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+
+      await service.renameBook(1);
+
+      expect(connector.notifyRefresh).not.toHaveBeenCalled();
     });
   });
 });
