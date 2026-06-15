@@ -9,6 +9,16 @@ import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch
 import { CONNECTOR_TIMEOUT_MS } from '../../core/utils/constants.js';
 import type { ConnectorRow } from './types.js';
 
+// Mock the network boundary only (the adapters' single transport call) so the
+// REAL ADAPTER_FACTORIES -> createAdapter -> parseEntitySettings construction
+// path runs in the listTargetsConfig regression test below (#1523 F1). The
+// adapters are the only callers of fetchWithTimeout in this file's scope, so a
+// module-level mock here doesn't touch the stubbed-adapter queue tests.
+vi.mock('../../core/utils/network-service.js', () => ({
+  fetchWithTimeout: vi.fn(),
+}));
+import { fetchWithTimeout } from '../../core/utils/network-service.js';
+
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
 function stubAdapter(refresh: ConnectorAdapter['refreshImport'], requestCount = 1): ConnectorAdapter {
@@ -201,6 +211,40 @@ describe('ConnectorService', () => {
         expect(spy).toHaveBeenCalledWith({ type, settings }, connectorTargetsSettingsSchemas);
       },
     );
+
+    // #1523 F1 — exercise the REAL adapter-construction path (no adapterForConfig
+    // mock): a new connector with an empty/missing selector must parse through the
+    // targets-scoped schema, build the adapter, and reach listTargets() instead of
+    // throwing at parseEntitySettings before the network call (the original bug).
+    it.each([
+      {
+        type: 'audiobookshelf' as const,
+        // libraryId omitted entirely — the regressed field.
+        settings: { baseUrl: 'http://abs.local:13378', apiKey: 'real-key' },
+        targetsUrl: 'http://abs.local:13378/api/libraries',
+        body: { libraries: [{ id: 'lib-1', name: 'Audiobooks' }] },
+      },
+      {
+        type: 'plex' as const,
+        // sectionId omitted entirely — the regressed field.
+        settings: { baseUrl: 'http://plex.local:32400', token: 'real-token' },
+        targetsUrl: 'http://plex.local:32400/library/sections',
+        body: { MediaContainer: { Directory: [{ key: 'lib-1', title: 'Audiobooks' }] } },
+      },
+    ])('listTargetsConfig builds the real $type adapter and reaches listTargets() with a missing selector', async ({ type, settings, targetsUrl, body }) => {
+      const service = new ConnectorService(db as never, log as never);
+      vi.mocked(fetchWithTimeout).mockResolvedValue({
+        ok: true,
+        json: async () => body,
+      } as unknown as Response);
+
+      const result = await service.listTargetsConfig({ type, settings });
+
+      expect(result).toEqual({ success: true, targets: [{ id: 'lib-1', name: 'Audiobooks' }] });
+      // The real adapter actually issued its single list-targets request — proves
+      // construction did not throw on the absent selector before the network call.
+      expect(fetchWithTimeout).toHaveBeenCalledWith(targetsUrl, expect.anything(), CONNECTOR_TIMEOUT_MS);
+    });
 
     it('listTargetsConfig translates a thrown ConnectorRequestError into a field-scoped envelope', async () => {
       const service = new ConnectorService(db as never, log as never);
