@@ -52,7 +52,10 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
   notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'],
-  connector: ['apiKey'],
+  // baseUrl is registered alongside apiKey per the issue spec: connector
+  // apiKey/token/baseUrl are encrypted at rest and masked in responses,
+  // consistent with operator-configured integrations like indexer apiUrl (#1491).
+  connector: ['baseUrl', 'apiKey'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────

@@ -24,10 +24,13 @@ beforeEach(() => {
 });
 
 describe('ConnectorCard — view mode', () => {
-  it('displays name and type/host subtitle', () => {
+  it('displays name and type subtitle (masked baseUrl degrades to the type fallback, never leaks the sentinel)', () => {
     renderWithProviders(<ConnectorCard connector={mockConnector} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />);
     expect(screen.getByText('My ABS')).toBeInTheDocument();
-    expect(screen.getByText(/Audiobookshelf — abs\.local/)).toBeInTheDocument();
+    // baseUrl is a masked secret from the API; extractHostname can't parse '********'
+    // so the subtitle degrades to the type label fallback rather than leaking the sentinel.
+    expect(screen.getByText(/Audiobookshelf — Audiobookshelf/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*{8}/)).not.toBeInTheDocument();
   });
 
   it('calls onEdit / onDelete / onTest', async () => {

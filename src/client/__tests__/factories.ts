@@ -159,7 +159,8 @@ export function createMockConnector(overrides?: Partial<Connector>): Connector {
     name: 'My ABS',
     type: 'audiobookshelf',
     enabled: true,
-    settings: { baseUrl: 'http://abs.local:13378', apiKey: '********', libraryId: 'lib-1' },
+    // baseUrl and apiKey are registered connector secrets — the API masks both in responses (#1491).
+    settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,

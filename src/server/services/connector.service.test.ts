@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConnectorService } from './connector.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
-import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-codec.js';
+import { initializeKey, _resetKey, encrypt, isEncrypted, maskFields } from '../utils/secret-codec.js';
 import { createMockDbConnector } from '../__tests__/factories.js';
 import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch } from '../../core/connectors/index.js';
 import type { ConnectorRow } from './types.js';
@@ -37,7 +37,7 @@ describe('ConnectorService', () => {
       return new ConnectorService(db as never, log as never);
     }
 
-    it('create encrypts apiKey before insert', async () => {
+    it('create encrypts both baseUrl and apiKey before insert', async () => {
       const insertChain = mockDbChain([createMockDbConnector()]);
       db.insert.mockReturnValue(insertChain);
 
@@ -47,27 +47,41 @@ describe('ConnectorService', () => {
       });
 
       const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
+      // baseUrl is a registered connector secret (#1491) — encrypted alongside apiKey.
+      expect(isEncrypted(valuesArg.settings.baseUrl as string)).toBe(true);
       expect(isEncrypted(valuesArg.settings.apiKey as string)).toBe(true);
-      expect(valuesArg.settings.baseUrl).toBe('http://abs.local');
+      // libraryId is not a secret — stays plaintext.
+      expect(valuesArg.settings.libraryId).toBe('lib-1');
     });
 
-    it('getById decrypts the apiKey', async () => {
-      const enc = encrypt('real-key', TEST_KEY);
-      db.select.mockReturnValue(mockDbChain([createMockDbConnector({ settings: { baseUrl: 'http://abs.local', apiKey: enc, libraryId: 'lib-1' } })]));
+    it('getById decrypts both baseUrl and apiKey', async () => {
+      const encUrl = encrypt('http://abs.local', TEST_KEY);
+      const encKey = encrypt('real-key', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([createMockDbConnector({ settings: { baseUrl: encUrl, apiKey: encKey, libraryId: 'lib-1' } })]));
       const row = await makeService().getById(1);
-      expect(row?.settings).toMatchObject({ apiKey: 'real-key' });
+      expect(row?.settings).toMatchObject({ baseUrl: 'http://abs.local', apiKey: 'real-key' });
     });
 
-    it('update with ******** sentinel preserves stored ciphertext and bumps updatedAt', async () => {
+    it('API responses mask both baseUrl and apiKey (not libraryId)', () => {
+      const masked = maskFields('connector', { baseUrl: 'http://abs.local', apiKey: 'real-key', libraryId: 'lib-1' });
+      expect(masked.baseUrl).toBe('********');
+      expect(masked.apiKey).toBe('********');
+      expect(masked.libraryId).toBe('lib-1');
+    });
+
+    it('update with ******** sentinel preserves stored baseUrl + apiKey ciphertext and bumps updatedAt', async () => {
+      const encryptedUrl = encrypt('http://saved.local', TEST_KEY);
       const encryptedKey = encrypt('saved-key', TEST_KEY);
-      const existing = createMockDbConnector({ settings: { baseUrl: 'http://abs.local', apiKey: encryptedKey, libraryId: 'lib-1' } });
+      const existing = createMockDbConnector({ settings: { baseUrl: encryptedUrl, apiKey: encryptedKey, libraryId: 'lib-1' } });
       db.select.mockReturnValue(mockDbChain([existing]));
       const updateChain = mockDbChain([existing]);
       db.update.mockReturnValue(updateChain);
 
-      await makeService().update(1, { type: 'audiobookshelf', settings: { baseUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-2' } });
+      await makeService().update(1, { type: 'audiobookshelf', settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-2' } });
 
       const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown>; updatedAt: Date };
+      // Sentinels resolve against RAW (encrypted) stored values — byte-for-byte preserved.
+      expect(setArg.settings.baseUrl).toBe(encryptedUrl);
       expect(setArg.settings.apiKey).toBe(encryptedKey);
       expect(setArg.settings.libraryId).toBe('lib-2');
       expect(setArg.updatedAt).toBeInstanceOf(Date);
