@@ -69,7 +69,17 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
 
   const db = inject<Db>(createMockDb());
   await app.register(async (scoped) => {
-    await v1BooksRoutes(scoped, { bookService: bookService as never, bookListService: bookListService as never }, db);
+    await v1BooksRoutes(scoped, {
+      bookService: bookService as never,
+      bookListService: bookListService as never,
+      metadataService: metadataService as never,
+      downloadOrchestrator: downloadOrchestrator as never,
+      indexerSearchService: indexerSearchService as never,
+      indexerService: {} as never,
+      blacklistService: {} as never,
+      settingsService: {} as never,
+      eventHistory: {} as never,
+    }, db);
     await v1AuthorsRoutes(scoped, { referenceReadService: refRead as never }, db);
     await v1NarratorsRoutes(scoped, { referenceReadService: refRead as never }, db);
     await v1SeriesRoutes(scoped, { referenceReadService: refRead as never }, db);
@@ -170,6 +180,20 @@ describe('v1 OpenAPI spec generation', () => {
   it('documents the action endpoints with their declared response codes', () => {
     const grab = spec.paths['/api/v1/books/{publicId}/grab'].post.responses;
     expect(Object.keys(grab)).toEqual(expect.arrayContaining(['200', '201', '400', '404', '409']));
+  });
+
+  it('documents POST /api/v1/books with a request body and its declared response codes (#1520)', () => {
+    // Relative path key, NOT URL_BASE-prefixed (swagger strips the base into
+    // servers[].url — learning fastify-swagger-servers-strips-path-prefix).
+    expect(spec.paths).toHaveProperty(['/api/v1/books']);
+    const post = spec.paths['/api/v1/books'].post;
+    expect(post).toBeTruthy();
+    expect(post.requestBody).toBeTruthy();
+    const bodySchema = post.requestBody.content['application/json'].schema;
+    expect(bodySchema.properties).toHaveProperty('asin');
+    expect(Object.keys(post.responses)).toEqual(
+      expect.arrayContaining(['201', '400', '409', '422', '429', '502']),
+    );
   });
 
   it('documents the metadata search endpoint at the relative path key with 200/400', () => {

@@ -5,7 +5,7 @@ import {
   bookSortDirectionSchema,
   type BookStatus,
 } from '../book.js';
-import { v1PaginationParamsSchema } from './common.js';
+import { v1PaginationParamsSchema, v1ErrorEnvelopeSchema } from './common.js';
 
 // ============================================================================
 // Public API v1 — Books (S3 — #1449)
@@ -96,6 +96,45 @@ export const bookV1ListQuerySchema = v1PaginationParamsSchema
   .strict();
 
 export type BookV1ListQuery = z.infer<typeof bookV1ListQuerySchema>;
+
+// ----------------------------------------------------------------------------
+// Create request validator + the 409 conflict response (S — #1520)
+// ----------------------------------------------------------------------------
+
+/**
+ * Validator for `POST /api/v1/books`. The public add-by-ASIN contract is
+ * ASIN-ONLY: the server hydrates the full record itself (`MetadataService`),
+ * so the client never supplies title/author/etc. `.trim().min(1)` (mirroring
+ * `fixMatchRequestSchema`) rejects `''`/`'   '` BEFORE any lookup — a bare
+ * `z.string()` would let a blank ASIN skip `findDuplicate`'s ASIN branch and
+ * reach the provider. `.strict()` per the v1 owned-schema convention: an extra
+ * key beyond `{ asin }` is a `400`, not silently stripped.
+ */
+export const createBookV1RequestSchema = z
+  .object({
+    asin: z.string().trim().min(1, 'ASIN is required'),
+  })
+  .strict();
+
+export type CreateBookV1Request = z.infer<typeof createBookV1RequestSchema>;
+
+/**
+ * The `409 Conflict` body for an already-present ASIN. It is NOT the bare
+ * `v1ErrorEnvelopeSchema`: it carries `existingId` (the existing book's opaque
+ * `publicId`) at the TOP LEVEL alongside `error`. `existingId` makes a
+ * lost-response retry safe — a retry of a successful create re-resolves to this
+ * 409 and can still find/poll the book it created — and doubles as the
+ * link-to-existing signal. Declared as a dedicated response schema so the
+ * `reply.status(409).send(...)` typechecks under `fastify-type-provider-zod`'s
+ * send-union narrowing (learning `zod-type-provider-send-union-narrowing`).
+ */
+export const bookExistsV1Schema = v1ErrorEnvelopeSchema
+  .extend({
+    existingId: z.string(),
+  })
+  .strict();
+
+export type BookExistsV1 = z.infer<typeof bookExistsV1Schema>;
 
 // ----------------------------------------------------------------------------
 // Projector — hydrated row -> public DTO
