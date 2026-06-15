@@ -409,6 +409,102 @@ describe('ConnectorService', () => {
       expect(getByIdSpy).toHaveBeenCalledWith(1);
       expect(refresh).toHaveBeenCalledTimes(1);
     });
+
+    // ── crash-path isolation: getById/getAdapter failures must NOT escape the
+    //    detached flush as an unhandled rejection (#1497) ──────────────────────
+    it('catches a getAdapter ZodError (drifted settings) — warn-logs, no crash, no refresh', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const refresh = vi.fn();
+        // Adapter construction throws on a settings-shape drift (strict schema parse).
+        vi.spyOn(service, 'getAdapter').mockImplementation(() => {
+          throw new z.ZodError([]);
+        });
+
+        service.enqueue(1, 'import', ITEM(1));
+        await vi.advanceTimersByTimeAsync(DEBOUNCE);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(refresh).not.toHaveBeenCalled();
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ connectorId: 1, reason: 'import', count: 1, error: expect.anything() }),
+          'Connector refresh failed',
+        );
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('catches a getById rejection (DB error) — warn-logs connectorId without dereferencing the undefined connector', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        vi.spyOn(service, 'getById').mockRejectedValue(new Error('db is down'));
+        const adapterSpy = vi.spyOn(service, 'getAdapter');
+
+        service.enqueue(7, 'import', ITEM(1));
+        await vi.advanceTimersByTimeAsync(DEBOUNCE);
+        await vi.advanceTimersByTimeAsync(0);
+
+        // The catch must degrade to the queue entry's connectorId — connector is undefined.
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ connectorId: 7, reason: 'import', count: 1, error: expect.anything() }),
+          'Connector refresh failed',
+        );
+        // No adapter built, no second throw inside the catch, no unhandled rejection.
+        expect(adapterSpy).not.toHaveBeenCalled();
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('catches an unknown-connector-type error from getAdapter — warn-logs, no crash', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        vi.spyOn(service, 'getAdapter').mockImplementation((c: ConnectorRow) => {
+          throw new Error(`Unknown connector type: ${c.type}`);
+        });
+
+        service.enqueue(1, 'import', ITEM(1));
+        await vi.advanceTimersByTimeAsync(DEBOUNCE);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ connectorId: 1, error: expect.anything() }),
+          'Connector refresh failed',
+        );
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('removes the pending key after a failing flush so a later enqueue schedules a fresh flush', async () => {
+      // First flush fails in getAdapter.
+      const failing = vi.spyOn(service, 'getAdapter').mockImplementation(() => {
+        throw new z.ZodError([]);
+      });
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(log.warn).toHaveBeenCalledTimes(1);
+
+      // The key is gone (no stuck entry): a fresh enqueue + debounce flushes again.
+      const refresh = vi.fn().mockResolvedValue({ success: true });
+      failing.mockReturnValue(stubAdapter(refresh));
+      service.enqueue(1, 'import', ITEM(2));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items.map((i) => i.bookId)).toEqual([2]);
+    });
   });
 
   // ── fan-out ──────────────────────────────────────────────────────────────────

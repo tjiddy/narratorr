@@ -298,13 +298,18 @@ export class ConnectorService {
     clearTimeout(entry.deadlineTimer);
     this.pending.delete(key);
 
-    const connector = await this.getById(entry.connectorId);
-    if (!connector || !connector.enabled) return;
-
-    const adapter = this.getAdapter(connector);
-    const batch = { reason: entry.reason, items: entry.items };
-    const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length };
+    // The connector resolve + adapter build live INSIDE the try so a drifted
+    // settings row (ZodError), an unknown connector type, or a getById DB error
+    // folds into the warn-log path instead of escaping this detached flush as an
+    // unhandled rejection (which the global handler turns into process.exit(1)).
+    let connector: ConnectorRow | null = null;
     try {
+      connector = await this.getById(entry.connectorId);
+      if (!connector || !connector.enabled) return;
+
+      const adapter = this.getAdapter(connector);
+      const batch = { reason: entry.reason, items: entry.items };
+      const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length };
       // Capture the result: a resolved { success: false } is a completed-but-
       // rejected provider response (non-retryable) and must NOT read as a
       // successful dispatch; a success message (e.g. Plex skip counts) is logged.
@@ -324,12 +329,17 @@ export class ConnectorService {
         this.log.debug(logCtx, 'Connector refresh dispatched');
       }
     } catch (error: unknown) {
+      // `connector` may still be null when the failure originated in getById /
+      // getAdapter — degrade to the queue entry's connectorId rather than
+      // dereferencing it and throwing a second time inside the catch.
       this.log.warn(
         {
-          connectorId: connector.id,
-          connectorType: connector.type,
-          connectorName: connector.name,
-          url: redactBaseUrl(connector.settings),
+          connectorId: connector?.id ?? entry.connectorId,
+          connectorType: connector?.type,
+          connectorName: connector?.name,
+          reason: entry.reason,
+          count: entry.items.length,
+          url: connector ? redactBaseUrl(connector.settings) : undefined,
           error: serializeError(error),
         },
         'Connector refresh failed',
