@@ -54,7 +54,7 @@ export const CONNECTOR_REGISTRY = {
       { key: 'token', label: 'Plex Token', type: 'password', secret: true, placeholder: 'X-Plex-Token' },
       { key: 'sectionId', label: 'Library Section', type: 'select' },
       { key: 'pathMappings', label: 'Path Mappings (local → Plex server)', type: 'path-mappings' },
-      { key: 'fallbackToFullRefresh', label: 'Fall back to full section refresh for unmapped paths', type: 'toggle' },
+      { key: 'fallbackToFullRefresh', label: 'Fall back to full section refresh when a path cannot be derived', type: 'toggle' },
     ],
     viewSubtitle: (s) => extractHostname(s.baseUrl as string, 'Plex'),
   },

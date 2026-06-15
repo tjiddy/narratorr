@@ -160,7 +160,10 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     expect(screen.getByText('Plex Token')).toBeInTheDocument();
     expect(screen.getByText('Library Section')).toBeInTheDocument();
     expect(screen.getByText(/Path Mappings/)).toBeInTheDocument();
-    expect(screen.getByText(/Fall back to full section refresh/)).toBeInTheDocument();
+    // Copy must match the adapter contract: fallback fires for no-derivable-path
+    // items, NOT for unmapped paths (those are passthrough). See F2 (#1502).
+    expect(screen.getByText('Fall back to full section refresh when a path cannot be derived')).toBeInTheDocument();
+    expect(screen.queryByText(/unmapped paths/)).not.toBeInTheDocument();
     expect(screen.getByText('Add Mapping')).toBeInTheDocument();
     // ABS-only field is gone.
     expect(screen.queryByText('API Key')).not.toBeInTheDocument();
