@@ -35,6 +35,17 @@ export interface ConnectorRefreshResult {
   // completed-but-rejected provider response (definitively NON-retryable).
   success: boolean;
   message?: string;
+  // Structured outcome counts for path-scoped providers (Plex). All optional so
+  // single-request adapters (ABS) need no change. The service decides the log
+  // LEVEL from these counts — never by parsing `message`.
+  /** No-derivable-path items left UNREFRESHED (fallback OFF). A silent no-op the operator must see → warn. */
+  skipped?: number;
+  /** Items sent to the server UNCHANGED because no mapping matched. Effective no-op against a remapped server → warn. */
+  passthrough?: number;
+  /** No-derivable-path items RESCUED by the section-wide full refresh (fallback ON). Does NOT warn — they were refreshed. */
+  fallbackRefreshed?: number;
+  /** The distinct server paths the adapter actually requested this flush — the explicit handoff the service debug-logs. */
+  resolvedServerPaths?: string[];
 }
 
 /** Why a refresh was enqueued. Exactly one reason per batch (see queue grouping). */

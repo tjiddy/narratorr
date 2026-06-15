@@ -313,6 +313,124 @@ describe('ConnectorService', () => {
       );
     });
 
+    // ── structured-outcome log levels + redacted host (#1505) ────────────────
+    it('warns (NOT info-dispatch) when the result reports skipped items — fallback OFF', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, message: 'refreshed 0 paths, skipped 2 items', skipped: 2, passthrough: 0, resolvedServerPaths: [] });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, message: 'refreshed 0 paths, skipped 2 items' }),
+        'Connector refresh ineffective',
+      );
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Connector refresh dispatched');
+    });
+
+    it('warns when the result reports passthrough items (silent no-op against a remapped server)', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, message: 'refreshed 1 paths (1 passthrough — no mapping matched)', skipped: 0, passthrough: 1, resolvedServerPaths: ['/lib/A'] });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, message: expect.stringContaining('passthrough') }),
+        'Connector refresh ineffective',
+      );
+    });
+
+    it('does NOT warn for a fallback-ON rescued batch (fallbackRefreshed>0, skipped:0, passthrough:0) → info dispatched', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, message: 'refreshed 0 paths, 2 no-derivable-path items via full section refresh', skipped: 0, passthrough: 0, fallbackRefreshed: 2, resolvedServerPaths: [] });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.warn).not.toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, message: expect.stringContaining('full section refresh') }),
+        'Connector refresh dispatched',
+      );
+    });
+
+    it('does NOT warn when skipped:0, passthrough:0, message undefined — 0 must not coerce to "present" (falsy guard)', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, skipped: 0, passthrough: 0, message: undefined });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.warn).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1 }),
+        'Connector refresh dispatched',
+      );
+    });
+
+    it('emits resolvedServerPaths at debug for a successful flush', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, message: 'refreshed 2 paths', skipped: 0, passthrough: 0, resolvedServerPaths: ['/srv/A', '/srv/B'] });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, resolvedServerPaths: ['/srv/A', '/srv/B'] }),
+        'Connector resolved server paths',
+      );
+    });
+
+    it('carries the redacted host on dispatched, rejected, AND failed branches — two same-type connectors disambiguate', async () => {
+      vi.spyOn(service, 'getById').mockImplementation(async (id: number) =>
+        createMockDbConnector({
+          id,
+          settings: { baseUrl: `http://plex-${id}.local:32400`, apiKey: 'k', libraryId: 'lib' },
+        }) as unknown as ConnectorRow);
+      const refresh = vi.fn().mockImplementation(async (batch: ConnectorImportBatch) => {
+        const which = batch.items[0]!.bookId;
+        if (which === 1) return { success: true, message: 'refreshed 1 paths', resolvedServerPaths: ['/x'] };
+        if (which === 2) return { success: false, message: 'rejected' };
+        throw new ConnectorRequestError('boom', { retryable: false });
+      });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      service.enqueue(2, 'import', ITEM(2));
+      service.enqueue(3, 'import', ITEM(3));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, url: 'http://plex-1.local:32400' }),
+        'Connector refresh dispatched',
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 2, url: 'http://plex-2.local:32400' }),
+        'Connector refresh rejected',
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 3, url: 'http://plex-3.local:32400' }),
+        'Connector refresh failed',
+      );
+    });
+
+    it('redactBaseUrl robustness: null settings → [unknown], unparseable URL → [unparseable]', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, message: 'ok' });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      vi.spyOn(service, 'getById').mockResolvedValueOnce(createMockDbConnector({ id: 1, settings: null }) as unknown as ConnectorRow);
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      vi.spyOn(service, 'getById').mockResolvedValueOnce(createMockDbConnector({ id: 2, settings: { baseUrl: 'not a url', apiKey: 'k' } }) as unknown as ConnectorRow);
+      service.enqueue(2, 'import', ITEM(2));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ connectorId: 1, url: '[unknown]' }), 'Connector refresh dispatched');
+      expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ connectorId: 2, url: '[unparseable]' }), 'Connector refresh dispatched');
+    });
+
     it('flushes immediately at maxBatchItems without waiting for the debounce timer (F8)', async () => {
       const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 3 });
       vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
