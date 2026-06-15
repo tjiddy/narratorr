@@ -143,43 +143,6 @@ describe('BulkOperationService — countRetagEligible', () => {
   });
 });
 
-describe('BulkOperationService — countRenameEligible', () => {
-  beforeEach(() => { vi.resetAllMocks(); });
-
-  it('counts books with path not matching the template as mismatched', async () => {
-    const { service, db } = createService();
-    // Book1 path matches template, Book2 does not
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
-      { id: 2, path: '/library/Author Name/OldName', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
-    ]));
-    const result = await service.countRenameEligible();
-    expect(result.mismatched).toBe(1);
-    expect(result.alreadyMatching).toBe(1);
-  });
-
-  it('returns 0 mismatched when all books already match template', async () => {
-    const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
-    ]));
-    const result = await service.countRenameEligible();
-    expect(result.mismatched).toBe(0);
-    expect(result.alreadyMatching).toBe(1);
-  });
-
-  it('normalizes backslash separators in book.path before comparing', async () => {
-    const { service, db } = createService();
-    // Same path but with backslashes — should still match
-    db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1'.split('/').join('\\'), title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
-    ]));
-    const result = await service.countRenameEligible();
-    expect(result.alreadyMatching).toBe(1);
-    expect(result.mismatched).toBe(0);
-  });
-});
-
 describe('BulkOperationService — previewRenameEligible', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
@@ -199,7 +162,10 @@ describe('BulkOperationService — previewRenameEligible', () => {
     ]));
     const result = await service.previewRenameEligible();
     expect(result.mismatchedTotal).toBe(1);
-    expect(result.alreadyMatching).toBe(1);
+    expect(result.folderMatching).toBe(1);
+    expect(result.importedTotal).toBe(2);
+    // fileFormat is empty in the default settings, so the job only visits mismatches.
+    expect(result.jobTotal).toBe(1);
     expect(result.items).toEqual([
       { bookId: 2, title: 'Book2', from: 'Author Name/OldName', to: 'Author Name/Book2' },
     ]);
@@ -239,13 +205,13 @@ describe('BulkOperationService — previewRenameEligible', () => {
     expect(result.items.map(i => i.bookId)).toEqual([2]);
   });
 
-  it('counts a backslash-stored path that resolves to the same target as alreadyMatching', async () => {
+  it('counts a backslash-stored path that resolves to the same target as folderMatching', async () => {
     const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([
       bookRow({ id: 1, path: '/library/Author Name/Book1'.split('/').join('\\'), title: 'Book1' }),
     ]));
     const result = await service.previewRenameEligible();
-    expect(result.alreadyMatching).toBe(1);
+    expect(result.folderMatching).toBe(1);
     expect(result.mismatchedTotal).toBe(0);
   });
 
@@ -287,7 +253,7 @@ describe('BulkOperationService — previewRenameEligible', () => {
     const result = await service.previewRenameEligible();
     // Path already matches the narrator-based target → no rename needed. Without the
     // narrator projection the target would render with an empty {narrator} and mismatch.
-    expect(result.alreadyMatching).toBe(1);
+    expect(result.folderMatching).toBe(1);
     expect(result.mismatchedTotal).toBe(0);
   });
 
@@ -312,6 +278,103 @@ describe('BulkOperationService — previewRenameEligible', () => {
     await waitForJob(service, id);
     expect(renameService.renameBook).toHaveBeenCalledTimes(1);
     expect(renameService.renameBook).toHaveBeenCalledWith(2);
+  });
+});
+
+// ===== File-format eligibility (#1493) =====
+// When a `fileFormat` rule exists the bulk op must visit ALL imported books, not just
+// folder mismatches — a folder-matching book can still have file-level renames.
+
+describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  const FILE_FORMAT_SETTINGS = {
+    settingsOverrides: {
+      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    },
+  };
+
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/Book1', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('preview: a folder-matching book is still part of the job set when fileFormat is set', async () => {
+    const { service, db } = createService(FILE_FORMAT_SETTINGS);
+    // Folder already matches the target → zero folder mismatches.
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(0);
+    expect(result.folderMatching).toBe(1);
+    expect(result.importedTotal).toBe(1);
+    // jobTotal tracks importedTotal because file-level work is possible on every book.
+    expect(result.jobTotal).toBe(1);
+  });
+
+  it('preview: fileFormat-only change is NOT "nothing to rename" (jobTotal === importedTotal)', async () => {
+    const { service, db } = createService(FILE_FORMAT_SETTINGS);
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+      bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(0);
+    expect(result.importedTotal).toBe(2);
+    expect(result.jobTotal).toBe(2);
+  });
+
+  it('preview: fileFormat empty keeps the folder-mismatch-only filter (jobTotal === mismatchedTotal)', async () => {
+    const { service, db } = createService(); // default fileFormat is ''
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(0);
+    expect(result.importedTotal).toBe(1);
+    expect(result.jobTotal).toBe(0);
+  });
+
+  it('job: visits every imported book and sets total to importedTotal when fileFormat is set', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    const rows = [
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // folder mismatch
+    ];
+    db.select
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    // Both books visited — the folder-matching one is no longer pre-filtered out.
+    expect(renameService.renameBook).toHaveBeenCalledTimes(2);
+    expect(renameService.renameBook).toHaveBeenCalledWith(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(2);
+    expect(service.getJob(id)?.total).toBe(2);
+  });
+
+  it('job: an "Already organized" book ticks as a silent skip, not a failure', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder + file match
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    // renameBook returns the idempotent "Already organized" result for a fully-organized book.
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '/library/Author Name/Book1', newPath: '/library/Author Name/Book1', message: 'Already organized', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    const status = service.getJob(id);
+    expect(status?.total).toBe(1);
+    expect(status?.completed).toBe(1);
+    expect(status?.failures).toBe(0);
   });
 });
 
@@ -534,7 +597,7 @@ describe('BulkOperationService — rename naming options wiring', () => {
 
   it('non-default namingSeparator/namingCase affect rename path comparison', async () => {
     // With separator=period, case=upper: buildTargetPath produces /library/AUTHOR.NAME/BOOK1
-    // A book whose current path already matches this should be "alreadyMatching"
+    // A book whose current path already matches this should be "folderMatching"
     const { service, db } = createService({
       settingsOverrides: {
         library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period' as const, namingCase: 'upper' as const },
@@ -544,11 +607,11 @@ describe('BulkOperationService — rename naming options wiring', () => {
       { id: 1, path: '/library/AUTHOR.NAME/BOOK1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
       { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
     ]));
-    const result = await service.countRenameEligible();
-    // Book1 path matches the transformed target — already matching
-    expect(result.alreadyMatching).toBe(1);
+    const result = await service.previewRenameEligible();
+    // Book1 path matches the transformed target — folder matching
+    expect(result.folderMatching).toBe(1);
     // Book2 path uses default spacing/casing — mismatched under new settings
-    expect(result.mismatched).toBe(1);
+    expect(result.mismatchedTotal).toBe(1);
   });
 
   it('startRenameJob only renames books whose path does not match the transformed target', async () => {

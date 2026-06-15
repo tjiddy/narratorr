@@ -125,7 +125,12 @@ export function BulkRenameModal({ isOpen, onClose, onConfirm }: BulkRenameModalP
 
   if (!isOpen) return null;
 
-  const isEmpty = data !== undefined && data.mismatchedTotal === 0;
+  const hasFileRule = data !== undefined && Boolean(data.fileFormat);
+  // Empty only when the run would visit nothing. `jobTotal` already encodes both
+  // cases (= importedTotal with a file rule, else the folder-mismatch count), so a
+  // file-format-only change — zero folder mismatches but importedTotal > 0 — keeps
+  // the button enabled instead of falsely reporting "nothing to rename".
+  const isEmpty = data !== undefined && data.jobTotal === 0;
   const canRename = data !== undefined && !isEmpty;
   const remaining = data ? data.mismatchedTotal - data.items.length : 0;
 
@@ -168,16 +173,24 @@ export function BulkRenameModal({ isOpen, onClose, onConfirm }: BulkRenameModalP
 
               {isEmpty ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                  All {data.alreadyMatching} {pluralBooks(data.alreadyMatching)} already match the current
-                  folder format — nothing to rename.
+                  {hasFileRule
+                    ? 'No imported books to rename.'
+                    : `All ${data.folderMatching} ${pluralBooks(data.folderMatching)} already match the current folder format — nothing to rename.`}
                 </p>
               ) : (
                 <>
-                  <p className="text-sm text-muted-foreground">
-                    Rename {data.mismatchedTotal} {pluralBooks(data.mismatchedTotal)} to match the current
-                    folder format. {data.alreadyMatching} {pluralBooks(data.alreadyMatching)} already match and
-                    will be skipped.
-                  </p>
+                  {hasFileRule ? (
+                    <p className="text-sm text-muted-foreground">
+                      Check {data.importedTotal} imported {pluralBooks(data.importedTotal)}. {data.mismatchedTotal}{' '}
+                      need folder moves. File-level renames are checked per book during the run.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Rename {data.mismatchedTotal} {pluralBooks(data.mismatchedTotal)} to match the current
+                      folder format. {data.folderMatching} {pluralBooks(data.folderMatching)} already match and
+                      will be skipped.
+                    </p>
+                  )}
 
                   <ul className="space-y-2">
                     {data.items.map((item) => (
@@ -189,10 +202,17 @@ export function BulkRenameModal({ isOpen, onClose, onConfirm }: BulkRenameModalP
                     <p className="text-sm text-muted-foreground text-center">…and {remaining} more</p>
                   )}
 
-                  <p className="text-xs text-muted-foreground">
-                    Only books whose folder doesn&apos;t match are shown. Changing only the file format
-                    isn&apos;t covered here — rename those books individually to apply file-format-only changes.
-                  </p>
+                  {hasFileRule ? (
+                    <p className="text-xs text-muted-foreground">
+                      Books whose folder already matches are still visited to apply file-format-only renames;
+                      those needing no change are skipped during the run.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Only books whose folder doesn&apos;t match are shown. No file format is configured, so no
+                      file-level renames will be applied.
+                    </p>
+                  )}
                 </>
               )}
             </>

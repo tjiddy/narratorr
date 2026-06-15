@@ -44,14 +44,25 @@ export interface BulkRenamePreviewItem {
   to: string;
 }
 
-/** Capped mismatch list + global patterns + true totals for the Rename All preview. */
+/**
+ * Capped mismatch list + global patterns + true totals for the Rename All preview.
+ *
+ * `folderMatching` means "folder already matches the format" — NOT "book is fully
+ * organized". A folder-matching book can still have file-level work when `fileFormat`
+ * is set, which is why the job visits all imported books in that case. `importedTotal`
+ * is the full imported-book set; `jobTotal` is how many books the run will actually
+ * call `renameBook` on (= `importedTotal` when `fileFormat` is set, else the folder
+ * mismatch count) — it's the honest progress denominator the modal shows up front.
+ */
 export interface BulkRenamePreview {
   libraryRoot: string;
   folderFormat: string;
   fileFormat: string;
   items: BulkRenamePreviewItem[];
   mismatchedTotal: number;
-  alreadyMatching: number;
+  folderMatching: number;
+  importedTotal: number;
+  jobTotal: number;
 }
 
 /** Max preview rows returned by `previewRenameEligible` — totals still reflect the full count. */
@@ -96,26 +107,30 @@ export class BulkOperationService {
     private log: FastifyBaseLogger,
   ) {}
 
-  async countRenameEligible(): Promise<{ mismatched: number; alreadyMatching: number }> {
-    const { mismatchedTotal, alreadyMatching } = await this.previewRenameEligible();
-    return { mismatched: mismatchedTotal, alreadyMatching };
-  }
-
   /**
-   * Folder-only rename preview: the capped from→to mismatch list plus true totals.
+   * Rename preview: the capped from→to folder-mismatch list plus true totals.
    * Pure DB + string work — never touches the filesystem (per-book file diffs and
    * conflict checks stay on the lazy `GET /api/books/:id/rename/preview` path).
+   *
+   * `jobTotal` is the honest progress denominator: when `fileFormat` is set the job
+   * visits every imported book (file-level renames can apply even to folder-matching
+   * books), so `jobTotal === importedTotal`; otherwise only folder mismatches are
+   * visited and `jobTotal === mismatchedTotal`. Kept in lockstep with the job's
+   * `setTotal` in `startRenameJob`.
    */
   async previewRenameEligible(cap = BULK_RENAME_PREVIEW_CAP): Promise<BulkRenamePreview> {
     const librarySettings = await this.settingsService.get('library');
     const namingOptions = toNamingOptions(librarySettings);
     const rows = await this.loadRenameRows();
+    const hasFileRule = Boolean(librarySettings.fileFormat);
 
     const items: BulkRenamePreviewItem[] = [];
+    let importedTotal = 0;
     let mismatchedTotal = 0;
-    let alreadyMatching = 0;
+    let folderMatching = 0;
     for (const row of rows) {
-      if (!row.path) continue; // mirror count/job NO_PATH skip — never a broken row
+      if (!row.path) continue; // mirror job NO_PATH skip — never a broken row
+      importedTotal++;
       const { targetPath, changed } = computeFolderTarget(
         { ...row, path: row.path },
         row.authorName ?? null,
@@ -123,7 +138,7 @@ export class BulkOperationService {
         namingOptions,
       );
       if (!changed) {
-        alreadyMatching++;
+        folderMatching++;
         continue;
       }
       mismatchedTotal++;
@@ -143,15 +158,17 @@ export class BulkOperationService {
       fileFormat: librarySettings.fileFormat,
       items,
       mismatchedTotal,
-      alreadyMatching,
+      folderMatching,
+      importedTotal,
+      jobTotal: hasFileRule ? importedTotal : mismatchedTotal,
     };
   }
 
   /**
    * Load imported books (deduped by bookId, first author) enriched with ordered
    * narrators — the exact metadata `buildTargetPath` needs to render every allowed
-   * folder token. Shared by the rename count, preview, and job so all three compute
-   * targets from the same inputs as `planRename`.
+   * folder token. Shared by the rename preview and job so both compute targets from
+   * the same inputs as `planRename`.
    */
   private async loadRenameRows(): Promise<RenameEligibleRow[]> {
     const rows = await this.db
@@ -222,25 +239,34 @@ export class BulkOperationService {
       throw new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED');
     }
     const id = randomUUID();
+    const hasFileRule = Boolean(librarySettings.fileFormat);
     const job = new BulkJob(id, 'rename', this.log, async (setTotal, tick) => {
-      // Same rows/dedup/target math as the count + preview — the shared helper keeps
-      // the job's eligibility decision in lockstep with what the modal previewed.
+      // Same rows/dedup/target math as the preview — keeps the job's eligibility
+      // decision in lockstep with what the modal showed. When a `fileFormat` rule
+      // exists, visit EVERY imported book: a folder-matching book can still have
+      // file-level renames, and `renameBook` is idempotent ("Already organized"
+      // ticks as a silent skip). Without a file rule, file work is impossible, so
+      // fall back to the folder-mismatch-only filter.
       const rows = await this.loadRenameRows();
-      const mismatchedIds: number[] = [];
+      const targetIds: number[] = [];
       for (const row of rows) {
         if (!row.path) continue;
+        if (hasFileRule) {
+          targetIds.push(row.id);
+          continue;
+        }
         const { changed } = computeFolderTarget(
           { ...row, path: row.path },
           row.authorName ?? null,
           librarySettings,
           renameNamingOptions,
         );
-        if (changed) mismatchedIds.push(row.id);
+        if (changed) targetIds.push(row.id);
       }
 
-      setTotal(mismatchedIds.length);
+      setTotal(targetIds.length);
 
-      for (const bookId of mismatchedIds) {
+      for (const bookId of targetIds) {
         try {
           await this.renameService.renameBook(bookId);
         } catch (error: unknown) {
