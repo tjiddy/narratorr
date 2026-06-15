@@ -221,11 +221,11 @@ describe('ConnectorService', () => {
 
       expect(refresh).toHaveBeenCalledTimes(1);
       const batch = refresh.mock.calls[0]![0] as ConnectorImportBatch;
-      expect(batch.reason).toBe('import');
+      expect(batch.reasons).toEqual(['import']);
       expect(batch.items.map((i) => i.bookId)).toEqual([1, 2]);
     });
 
-    it('mixed reasons for one connector flush separately (one batch per reason)', async () => {
+    it('coalesces mixed reasons for one connector into ONE flush carrying both reasons and all items (AC3)', async () => {
       const refresh = vi.fn().mockResolvedValue({ success: true });
       vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
 
@@ -233,10 +233,13 @@ describe('ConnectorService', () => {
       service.enqueue(1, 'restored', ITEM(2));
       await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
-      expect(refresh).toHaveBeenCalledTimes(2);
-      const batches = refresh.mock.calls.map((c) => c[0] as ConnectorImportBatch);
-      expect(batches).toContainEqual(expect.objectContaining({ reason: 'import', items: [ITEM(1)] }));
-      expect(batches).toContainEqual(expect.objectContaining({ reason: 'restored', items: [ITEM(2)] }));
+      // Debounce key is the connector id alone → one window, one provider refresh.
+      expect(refresh).toHaveBeenCalledTimes(1);
+      const batch = refresh.mock.calls[0]![0] as ConnectorImportBatch;
+      // Both reasons surface on the batch, deduplicated + first-seen order-stable (AC4).
+      expect(batch.reasons).toEqual(['import', 'restored']);
+      // The union of items from every coalesced reason — nothing dropped (AC7).
+      expect(batch.items.map((i) => i.bookId)).toEqual([1, 2]);
     });
 
     it('debounces per connector-id, not per host (two ids → two flushes)', async () => {
@@ -544,18 +547,20 @@ describe('ConnectorService', () => {
       return { refresh, gates, batches, get maxInFlight() { return maxInFlight; } };
     }
 
-    it('cap-triggered flushes for one connector serialize — refreshImport never overlaps (AC2)', async () => {
+    it('the cap counts items coalesced ACROSS reasons; cap-triggered flushes for one connector serialize (AC2, mixed reasons)', async () => {
       const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 2 });
       vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
       const g = gatedRefresh();
       vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(g.refresh as unknown as ConnectorAdapter['refreshImport']));
 
-      // Synchronous >maxBatchItems burst: the cap fires mid-flush, creating a fresh
-      // pending entry for the SAME connector while the first flush is in flight.
+      // Synchronous >maxBatchItems burst of MIXED reasons: every reason coalesces into
+      // one pending entry per connector, so the cap is evaluated against the COMBINED
+      // item count — the 2nd item (a different reason) trips the cap and flushes mid-burst,
+      // creating a fresh pending entry while the first flush is still in flight.
       svc.enqueue(1, 'import', ITEM(1));
-      svc.enqueue(1, 'import', ITEM(2)); // cap → flush #1
-      svc.enqueue(1, 'import', ITEM(3));
-      svc.enqueue(1, 'import', ITEM(4)); // cap → flush #2 (chained behind #1)
+      svc.enqueue(1, 'restored', ITEM(2)); // coalesced → cap(2) → flush #1
+      svc.enqueue(1, 'rename', ITEM(3));
+      svc.enqueue(1, 'import', ITEM(4));   // coalesced → cap(2) → flush #2 (chained behind #1)
       await vi.advanceTimersByTimeAsync(0);
 
       expect(g.refresh).toHaveBeenCalledTimes(1); // only #1 entered; #2 is chained
@@ -566,31 +571,31 @@ describe('ConnectorService', () => {
 
       expect(g.refresh).toHaveBeenCalledTimes(2); // #2 now runs — still serial
       expect(g.maxInFlight).toBe(1);
+      // Each cap-triggered flush carries the union of reasons coalesced into it.
+      expect(g.batches.map((b) => b.reasons)).toEqual([['import', 'restored'], ['rename', 'import']]);
+      expect(g.batches.map((b) => b.items.map((i) => i.bookId))).toEqual([[1, 2], [3, 4]]);
       g.gates[1]!();
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    it('mixed-reason flushes for one connector serialize per connector id, not per (id, reason) key (F1)', async () => {
+    it('a mixed-reason burst for one connector produces ONE serialized flush, not one per (id, reason) (F1)', async () => {
       const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0 });
       vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
       const g = gatedRefresh();
       vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(g.refresh as unknown as ConnectorAdapter['refreshImport']));
 
-      // Two distinct reasons (separate pending keys) for the SAME connector id.
+      // Two distinct reasons for the SAME connector id — previously two pending keys
+      // (`1:import`, `1:restored`) and thus two chained flushes. Keyed by id alone they
+      // collapse into one debounce window → exactly one provider refresh.
       svc.enqueue(1, 'import', ITEM(1));
       svc.enqueue(1, 'restored', ITEM(2));
-      await vi.advanceTimersByTimeAsync(DEBOUNCE); // both debounce timers fire → two flushes
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
-      expect(g.refresh).toHaveBeenCalledTimes(1); // second reason chained behind the first
+      expect(g.refresh).toHaveBeenCalledTimes(1); // ONE flush, not two
       expect(g.maxInFlight).toBe(1);
-
+      expect(g.batches[0]!.reasons).toEqual(['import', 'restored']);
+      expect(g.batches[0]!.items.map((i) => i.bookId)).toEqual([1, 2]);
       g.gates[0]!();
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(g.refresh).toHaveBeenCalledTimes(2);
-      expect(g.maxInFlight).toBe(1);
-      expect(new Set(g.batches.map((b) => b.reason))).toEqual(new Set(['import', 'restored']));
-      g.gates[1]!();
       await vi.advanceTimersByTimeAsync(0);
     });
 
@@ -652,6 +657,28 @@ describe('ConnectorService', () => {
       expect(JSON.stringify(payload)).not.toContain('secret-key');
     });
 
+    it('retries the SINGLE coalesced mixed-reason batch (not one per reason) and surfaces all reasons on the failed-flush warn (AC5)', async () => {
+      const batches: ConnectorImportBatch[] = [];
+      const refresh = vi.fn((batch: ConnectorImportBatch) => {
+        batches.push(batch);
+        return Promise.reject(new ConnectorRequestError('still 5xx', { retryable: true }));
+      });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      service.enqueue(1, 'import', ITEM(1));
+      service.enqueue(1, 'restored', ITEM(2));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      // One coalesced batch, attempted twice (initial + single retry) — never split per reason.
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(batches.map((b) => b.reasons)).toEqual([['import', 'restored'], ['import', 'restored']]);
+      // Terminal failure warn reflects every coalesced reason, not a scalar.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, reasons: ['import', 'restored'], count: 2 }),
+        'Connector refresh failed',
+      );
+    });
+
     it('skips the flush when the connector is disabled at flush time', async () => {
       const refresh = vi.fn().mockResolvedValue({ success: true });
       vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
@@ -701,7 +728,7 @@ describe('ConnectorService', () => {
 
         expect(refresh).not.toHaveBeenCalled();
         expect(log.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ connectorId: 1, reason: 'import', count: 1, error: expect.anything() }),
+          expect.objectContaining({ connectorId: 1, reasons: ['import'], count: 1, error: expect.anything() }),
           'Connector refresh failed',
         );
         expect(unhandled).toEqual([]);
@@ -724,7 +751,7 @@ describe('ConnectorService', () => {
 
         // The catch must degrade to the queue entry's connectorId — connector is undefined.
         expect(log.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ connectorId: 7, reason: 'import', count: 1, error: expect.anything() }),
+          expect.objectContaining({ connectorId: 7, reasons: ['import'], count: 1, error: expect.anything() }),
           'Connector refresh failed',
         );
         // No adapter built, no second throw inside the catch, no unhandled rejection.
@@ -798,7 +825,7 @@ describe('ConnectorService', () => {
 
       expect(refresh).not.toHaveBeenCalled();
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ connectorId: 1, reason: 'import', count: 1 }),
+        expect.objectContaining({ connectorId: 1, reasons: ['import'], count: 1 }),
         'Connector refresh dropped on shutdown',
       );
     });
@@ -886,24 +913,25 @@ describe('ConnectorService', () => {
       }
     });
 
-    it('warn-logs each dropped pending entry on stop() with connector id + item count', async () => {
+    it('warn-logs each dropped pending entry on stop() with connector id, ALL coalesced reasons + item count (AC5)', async () => {
       const refresh = vi.fn().mockResolvedValue({ success: true });
       vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
 
       service.enqueue(1, 'import', ITEM(1));
-      service.enqueue(1, 'import', ITEM(2)); // same (id, reason) entry → count 2
-      service.enqueue(2, 'import', ITEM(3)); // distinct connector → its own entry
+      service.enqueue(1, 'restored', ITEM(2)); // coalesced into connector 1's entry → count 2, two reasons
+      service.enqueue(2, 'import', ITEM(3));    // distinct connector → its own entry
 
       await service.stop();
       await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
       expect(refresh).not.toHaveBeenCalled();
+      // The drop warn surfaces EVERY reason merged into the dropped entry, not a scalar.
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ connectorId: 1, reason: 'import', count: 2 }),
+        expect.objectContaining({ connectorId: 1, reasons: ['import', 'restored'], count: 2 }),
         'Connector refresh dropped on shutdown',
       );
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ connectorId: 2, reason: 'import', count: 1 }),
+        expect.objectContaining({ connectorId: 2, reasons: ['import'], count: 1 }),
         'Connector refresh dropped on shutdown',
       );
     });
@@ -1012,7 +1040,7 @@ describe('ConnectorService', () => {
       // The tail must never enter refreshImport, even after the active attempt unwound.
       expect(a.refresh).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ connectorId: 1, reason: 'import', count: 2 }),
+        expect.objectContaining({ connectorId: 1, reasons: ['import'], count: 2 }),
         'Connector refresh dropped on shutdown',
       );
     });

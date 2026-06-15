@@ -27,7 +27,7 @@ function makeConnector(libraryId = 'lib-1') {
 }
 
 const BATCH: ConnectorImportBatch = {
-  reason: 'import',
+  reasons: ['import'],
   items: [{ bookId: 1, title: 'Dune', libraryPath: '/lib/Dune' }],
 };
 
@@ -124,7 +124,7 @@ describe('AudiobookshelfConnector', () => {
       server.use(http.post(SCAN_URL, () => { count++; return HttpResponse.json({}); }));
 
       const batch: ConnectorImportBatch = {
-        reason: 'rename',
+        reasons: ['rename'],
         items: [
           { bookId: 1, title: 'A', libraryPath: '/x/a', serverPath: '/srv/a' },
           { bookId: 2, title: 'B', libraryPath: '/x/b' },

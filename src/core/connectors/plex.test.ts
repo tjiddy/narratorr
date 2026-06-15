@@ -32,7 +32,7 @@ function makeConnector(overrides: Partial<PlexConnectorConfig> = {}) {
 const SIGNAL = new AbortController().signal;
 
 function batchFor(...libraryPaths: string[]): ConnectorImportBatch {
-  return { reason: 'import', items: libraryPaths.map((p, i) => ({ bookId: i + 1, title: `Book ${i + 1}`, libraryPath: p })) };
+  return { reasons: ['import'], items: libraryPaths.map((p, i) => ({ bookId: i + 1, title: `Book ${i + 1}`, libraryPath: p })) };
 }
 
 describe('PlexConnector', () => {

@@ -48,7 +48,7 @@ export interface ConnectorRefreshResult {
   resolvedServerPaths?: string[];
 }
 
-/** Why a refresh was enqueued. Exactly one reason per batch (see queue grouping). */
+/** Why a refresh was enqueued. A coalesced batch may carry several (see queue grouping). */
 export type ConnectorReason = 'import' | 'adopt' | 'rename' | 'restored';
 
 export interface ConnectorImportItem {
@@ -60,7 +60,12 @@ export interface ConnectorImportItem {
 }
 
 export interface ConnectorImportBatch {
-  reason: ConnectorReason;
+  // All reasons coalesced into this batch, deduplicated and first-seen order-stable.
+  // The queue debounces per connector id (NOT per reason), so a single window can
+  // merge e.g. an `import` and a `restored`; every contributing reason is preserved
+  // here rather than collapsed to a scalar that would hide what was merged. No shipped
+  // adapter inspects it (ABS does a full-library scan; Plex derives paths from `items`).
+  reasons: ConnectorReason[];
   items: ConnectorImportItem[];
 }
 
