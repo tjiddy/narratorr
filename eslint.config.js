@@ -199,5 +199,15 @@ export default tseslint.config(
         { prefer: 'type-imports', fixStyle: 'inline-type-imports', disallowTypeAnnotations: false },
       ],
     },
+  },
+
+  // src/db/schema.ts is a declarative Drizzle table catalog — its length scales
+  // linearly with the data model, so the generic max-lines cap adds no value and
+  // would force an arbitrary split of co-located table definitions.
+  {
+    files: ['src/db/schema.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
   }
 );

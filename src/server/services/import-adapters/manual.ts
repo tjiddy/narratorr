@@ -129,17 +129,25 @@ export class ManualImportAdapter implements ImportAdapter {
 
       // Fire-and-forget: connector refresh. Pointer-mode (in-place adopt, !mode)
       // notifies too, with reason 'adopt'; copy/move mode uses 'import'.
-      if (this.deps.connectorService) {
-        fireAndForget(
-          this.deps.connectorService.notifyRefresh(mode ? 'import' : 'adopt', [{ bookId, title: payload.title, authorName: payload.authorName ?? null, libraryPath: finalPath }]),
-          log,
-          'Failed to enqueue connector refresh on manual import',
-        );
-      }
+      this.enqueueConnectorRefresh(bookId, payload, finalPath, mode, log);
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;
     }
+  }
+
+  private enqueueConnectorRefresh(
+    bookId: number, payload: ManualImportJobPayload, finalPath: string,
+    mode: ManualImportJobPayload['mode'], log: ImportAdapterContext['log'],
+  ): void {
+    if (!this.deps.connectorService) return;
+    fireAndForget(
+      this.deps.connectorService.notifyRefresh(mode ? 'import' : 'adopt', [
+        { bookId, title: payload.title, authorName: payload.authorName ?? null, libraryPath: finalPath },
+      ]),
+      log,
+      'Failed to enqueue connector refresh on manual import',
+    );
   }
 
   private dispatchFailureSideEffects(

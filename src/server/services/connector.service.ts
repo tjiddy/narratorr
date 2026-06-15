@@ -180,7 +180,7 @@ export class ConnectorService {
   async listTargets(id: number): Promise<ConnectorTargetsResult> {
     const connector = await this.getById(id);
     if (!connector) return { success: false, message: 'Connector not found' };
-    return await this.runTargets(() => this.getAdapter(connector).listTargets());
+    return this.runTargets(() => this.getAdapter(connector).listTargets());
   }
 
   async listTargetsConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<ConnectorTargetsResult> {
@@ -190,7 +190,7 @@ export class ConnectorService {
     } catch (error: unknown) {
       return { success: false, message: getErrorMessage(error) };
     }
-    return await this.runTargets(() => adapter.listTargets());
+    return this.runTargets(() => adapter.listTargets());
   }
 
   private async runTargets(fn: () => Promise<ConnectorTarget[]>): Promise<ConnectorTargetsResult> {
@@ -291,7 +291,7 @@ export class ConnectorService {
   }
 
   private async withTimeout<T>(promise: Promise<T>): Promise<T> {
-    if (this.flushTimeoutMs <= 0) return await promise;
+    if (this.flushTimeoutMs <= 0) return promise;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(

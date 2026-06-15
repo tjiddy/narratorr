@@ -42,6 +42,16 @@ export class RenameService {
     private connectorService?: ConnectorService,
   ) {}
 
+  /** Fire-and-forget connector refresh after a real path/file change. */
+  private enqueueConnectorRefresh(bookId: number, title: string, authorName: string | null, libraryPath: string): void {
+    if (!this.connectorService) return;
+    fireAndForget(
+      this.connectorService.notifyRefresh('rename', [{ bookId, title, authorName, libraryPath }]),
+      this.log,
+      'Failed to enqueue connector refresh on rename',
+    );
+  }
+
   /** Fire-and-forget event recording. */
   private emitEvent(bookId: number, book: { title: string; authors?: Array<{ name: string }> }, oldPath: string, newPath: string, filesRenamed: number): void {
     this.eventHistory?.create({
@@ -198,13 +208,7 @@ export class RenameService {
 
     // Fire-and-forget: connector refresh — only reached when path changed or files
     // were renamed (the "already organized" early-return above skips this).
-    if (this.connectorService) {
-      fireAndForget(
-        this.connectorService.notifyRefresh('rename', [{ bookId, title: book.title, authorName: authorName, libraryPath: currentPath }]),
-        this.log,
-        'Failed to enqueue connector refresh on rename',
-      );
-    }
+    this.enqueueConnectorRefresh(bookId, book.title, authorName, currentPath);
 
     return {
       oldPath,
