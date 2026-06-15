@@ -1,4 +1,4 @@
-import type { ConnectorField } from './types.js';
+import type { ConnectorFieldErrors } from './types.js';
 
 /**
  * Thrown by `listTargets()` and `refreshImport()` on any HTTP/transport failure.
@@ -9,9 +9,9 @@ import type { ConnectorField } from './types.js';
  */
 export class ConnectorRequestError extends Error {
   readonly retryable: boolean;
-  readonly fieldErrors?: Partial<Record<ConnectorField, string>>;
+  readonly fieldErrors?: ConnectorFieldErrors;
 
-  constructor(message: string, opts: { retryable: boolean; fieldErrors?: Partial<Record<ConnectorField, string>> }) {
+  constructor(message: string, opts: { retryable: boolean; fieldErrors?: ConnectorFieldErrors }) {
     super(message);
     this.name = 'ConnectorRequestError';
     this.retryable = opts.retryable;

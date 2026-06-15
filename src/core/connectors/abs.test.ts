@@ -31,6 +31,8 @@ const BATCH: ConnectorImportBatch = {
   items: [{ bookId: 1, title: 'Dune', libraryPath: '/lib/Dune' }],
 };
 
+const SIGNAL = new AbortController().signal;
+
 describe('AudiobookshelfConnector', () => {
   describe('test()', () => {
     it('returns { success: true } and sends a Bearer token', async () => {
@@ -111,7 +113,7 @@ describe('AudiobookshelfConnector', () => {
         return HttpResponse.json({});
       }));
 
-      const result = await makeConnector().refreshImport(BATCH);
+      const result = await makeConnector().refreshImport(BATCH, SIGNAL);
 
       expect(result).toEqual({ success: true });
       expect(body).toEqual({});
@@ -128,7 +130,7 @@ describe('AudiobookshelfConnector', () => {
           { bookId: 2, title: 'B', libraryPath: '/x/b' },
         ],
       };
-      const result = await makeConnector().refreshImport(batch);
+      const result = await makeConnector().refreshImport(batch, SIGNAL);
       expect(result.success).toBe(true);
       expect(count).toBe(1);
     });
@@ -137,13 +139,13 @@ describe('AudiobookshelfConnector', () => {
       let count = 0;
       server.use(http.post(SCAN_URL, () => { count++; return HttpResponse.json({}, { status: 500 }); }));
 
-      await expect(makeConnector().refreshImport(BATCH)).rejects.toBeInstanceOf(ConnectorRequestError);
+      await expect(makeConnector().refreshImport(BATCH, SIGNAL)).rejects.toBeInstanceOf(ConnectorRequestError);
       expect(count).toBe(1);
     });
 
     it('classifies 401 as retryable:false with apiKey field error', async () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.json({}, { status: 401 })));
-      await expect(makeConnector().refreshImport(BATCH)).rejects.toMatchObject({
+      await expect(makeConnector().refreshImport(BATCH, SIGNAL)).rejects.toMatchObject({
         retryable: false,
         fieldErrors: { apiKey: expect.any(String) },
       });
@@ -151,7 +153,7 @@ describe('AudiobookshelfConnector', () => {
 
     it('classifies 404 as retryable:false with libraryId field error', async () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.json({}, { status: 404 })));
-      await expect(makeConnector().refreshImport(BATCH)).rejects.toMatchObject({
+      await expect(makeConnector().refreshImport(BATCH, SIGNAL)).rejects.toMatchObject({
         retryable: false,
         fieldErrors: { libraryId: expect.any(String) },
       });
@@ -159,12 +161,12 @@ describe('AudiobookshelfConnector', () => {
 
     it('classifies 5xx as retryable:true', async () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.json({}, { status: 503 })));
-      await expect(makeConnector().refreshImport(BATCH)).rejects.toMatchObject({ retryable: true });
+      await expect(makeConnector().refreshImport(BATCH, SIGNAL)).rejects.toMatchObject({ retryable: true });
     });
 
     it('classifies connection failure as retryable:true with baseUrl field error', async () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.error()));
-      await expect(makeConnector().refreshImport(BATCH)).rejects.toMatchObject({
+      await expect(makeConnector().refreshImport(BATCH, SIGNAL)).rejects.toMatchObject({
         retryable: true,
         fieldErrors: { baseUrl: expect.any(String) },
       });
@@ -172,7 +174,7 @@ describe('AudiobookshelfConnector', () => {
 
     it('resolves { success: true } on 2xx', async () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.json({}, { status: 200 })));
-      await expect(makeConnector().refreshImport(BATCH)).resolves.toEqual({ success: true });
+      await expect(makeConnector().refreshImport(BATCH, SIGNAL)).resolves.toEqual({ success: true });
     });
   });
 });

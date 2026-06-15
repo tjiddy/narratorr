@@ -1,22 +1,19 @@
 import { useEffect, useState } from 'react';
-import type { UseFormReturn } from 'react-hook-form';
+import type { Path, UseFormReturn } from 'react-hook-form';
 import { api, type TestResult, type ConnectorTarget } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
 import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { SelectWithChevron } from './SelectWithChevron';
-import { btnSecondary } from './formStyles';
+import { ConnectorFields } from './ConnectorFields';
 import { CONNECTOR_REGISTRY, type ConnectorType } from '../../../shared/connector-registry.js';
 import {
   connectorTypeSchema,
   type CreateConnectorFormData,
 } from '../../../shared/schemas.js';
 
-const CONNECTOR_FIELDS = ['baseUrl', 'apiKey', 'libraryId'] as const;
-type ConnectorField = typeof CONNECTOR_FIELDS[number];
-
 /** A test/targets failure envelope carries field-scoped errors at runtime. */
-type FieldErrorResult = TestResult & { fieldErrors?: Partial<Record<ConnectorField, string>> };
+type FieldErrorResult = TestResult & { fieldErrors?: Record<string, string> };
 
 interface ConnectorCardFormProps {
   form: UseFormReturn<CreateConnectorFormData>;
@@ -42,13 +39,17 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');
 
-  // Map a field-scoped envelope onto the NESTED RHF paths (settings.*). A flat
-  // setError('apiKey') would NOT highlight the rendered settings.apiKey input.
-  function applyFieldErrors(fieldErrors?: Partial<Record<ConnectorField, string>>) {
+  // Map a field-scoped envelope onto the NESTED RHF paths (settings.*), routed by
+  // the registry's declared settings keys. A flat setError('token') would NOT
+  // highlight the rendered settings.token input; unknown keys fall back to the
+  // form-level test message (already rendered via TestResultMessage).
+  function applyFieldErrors(fieldErrors?: Record<string, string>) {
     if (!fieldErrors) return;
-    for (const field of CONNECTOR_FIELDS) {
-      const message = fieldErrors[field];
-      if (message) setError(`settings.${field}`, { message });
+    const known = new Set(CONNECTOR_REGISTRY[selectedType]?.settingsFields.map((f) => f.key) ?? []);
+    for (const [key, message] of Object.entries(fieldErrors)) {
+      if (message && known.has(key)) {
+        setError(`settings.${key}` as Path<CreateConnectorFormData>, { message });
+      }
     }
   }
 
@@ -58,7 +59,14 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formTestResult]);
 
-  async function handleFetchLibraries() {
+  // Reset fetched targets when the type changes so a stale dropdown from one
+  // provider can't leak into another.
+  useEffect(() => {
+    setTargets([]);
+    setFetchError('');
+  }, [selectedType]);
+
+  async function handleFetchTargets() {
     setFetching(true);
     setFetchError('');
     try {
@@ -70,13 +78,13 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
       });
       if (Array.isArray(result)) {
         setTargets(result);
-        if (result.length === 0) setFetchError('No libraries found');
+        if (result.length === 0) setFetchError('No options found');
       } else {
-        setFetchError(result.message || 'Failed to fetch libraries');
+        setFetchError(result.message || 'Failed to fetch options');
         applyFieldErrors((result as FieldErrorResult).fieldErrors);
       }
     } catch {
-      setFetchError('Failed to fetch libraries');
+      setFetchError('Failed to fetch options');
     } finally {
       setFetching(false);
     }
@@ -112,56 +120,14 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
           </div>
         )}
 
-        <FormField
-          id="connectorBaseUrl"
-          label="Server URL"
-          type="text"
-          className="sm:col-span-2"
-          registration={register('settings.baseUrl')}
-          error={errors.settings?.baseUrl}
-          placeholder="http://audiobookshelf.local:13378"
+        <ConnectorFields
+          form={form}
+          selectedType={selectedType}
+          targets={targets}
+          fetching={fetching}
+          fetchError={fetchError}
+          onFetchTargets={handleFetchTargets}
         />
-
-        <FormField
-          id="connectorApiKey"
-          label="API Key"
-          type="password"
-          registration={register('settings.apiKey')}
-          error={errors.settings?.apiKey}
-          placeholder="API key is required"
-        />
-
-        <div>
-          <label htmlFor="connectorLibraryId" className="block text-sm font-medium mb-2">Library</label>
-          <div className="flex gap-2">
-            {targets.length > 0 ? (
-              <SelectWithChevron id="connectorLibraryId" {...register('settings.libraryId')} error={!!errors.settings?.libraryId}>
-                <option value="">Select a library...</option>
-                {targets.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </SelectWithChevron>
-            ) : (
-              <input
-                id="connectorLibraryId"
-                type="text"
-                {...register('settings.libraryId')}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-                placeholder="Library ID (or fetch libraries)"
-              />
-            )}
-            <button
-              type="button"
-              onClick={handleFetchLibraries}
-              disabled={fetching}
-              className={`${btnSecondary} bg-muted hover:bg-muted/80 whitespace-nowrap`}
-            >
-              {fetching ? 'Fetching...' : 'Fetch Libraries'}
-            </button>
-          </div>
-          {errors.settings?.libraryId && <p className="text-sm text-destructive mt-1">{errors.settings.libraryId.message}</p>}
-          {fetchError && <p className="text-sm text-destructive mt-1">{fetchError}</p>}
-        </div>
       </div>
 
       <div className="min-h-5">

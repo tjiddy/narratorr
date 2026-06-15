@@ -35,6 +35,17 @@ export interface ConnectorServiceOptions {
   backoffMs?: number;
   /** Outer per-attempt guard around refreshImport (ms). 0 disables the outer guard. */
   flushTimeoutMs?: number;
+  /**
+   * Hard cap on items in a pending batch. Reaching it flushes IMMEDIATELY
+   * (without resetting the debounce timer) — bounds memory for path-scoped
+   * providers (e.g. Plex) that consume every item.
+   */
+  maxBatchItems?: number;
+  /**
+   * Hard max-wait ceiling measured from the batch's FIRST enqueue. The per-item
+   * debounce reset cannot push past it — a sustained burst still flushes here.
+   */
+  maxBatchWaitMs?: number;
 }
 
 const DEFAULT_DEBOUNCE_MS = 2_000;
@@ -42,12 +53,17 @@ const DEFAULT_BACKOFF_MS = 1_000;
 // Outer service guard, longer than the adapter request timeout (F9 layering):
 // fetchWithTimeout bounds each HTTP request; this only fires if an attempt hangs.
 const DEFAULT_FLUSH_TIMEOUT_MS = CONNECTOR_TIMEOUT_MS + 5_000;
+const DEFAULT_MAX_BATCH_ITEMS = 500;
+const DEFAULT_MAX_BATCH_WAIT_MS = 30_000;
 
 interface PendingFlush {
   connectorId: number;
   reason: ConnectorReason;
   items: ConnectorImportItem[];
+  // Trailing quiet-period timer, reset on each enqueue.
   timer: ReturnType<typeof setTimeout>;
+  // Non-resetting max-wait deadline timer, set once at first enqueue.
+  deadlineTimer: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -65,11 +81,15 @@ export class ConnectorService {
   private readonly debounceMs: number;
   private readonly backoffMs: number;
   private readonly flushTimeoutMs: number;
+  private readonly maxBatchItems: number;
+  private readonly maxBatchWaitMs: number;
 
   constructor(private db: Db, private log: FastifyBaseLogger, opts: ConnectorServiceOptions = {}) {
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
     this.flushTimeoutMs = opts.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
+    this.maxBatchItems = opts.maxBatchItems ?? DEFAULT_MAX_BATCH_ITEMS;
+    this.maxBatchWaitMs = opts.maxBatchWaitMs ?? DEFAULT_MAX_BATCH_WAIT_MS;
   }
 
   // ─── CRUD ──────────────────────────────────────────────────────────────────
@@ -237,12 +257,22 @@ export class ConnectorService {
   /**
    * Add one item to the debounced batch for (connectorId, reason). Each distinct
    * reason has its own debounce window and produces its own single-reason batch.
+   *
+   * Upper bounds pre-empt the trailing debounce flush: reaching `maxBatchItems`
+   * flushes immediately, and a `maxBatchWaitMs` deadline (set once at first
+   * enqueue, never reset) caps how long a sustained burst can defer the flush.
+   * Whichever condition fires first flushes the batch.
    */
   enqueue(connectorId: number, reason: ConnectorReason, item: ConnectorImportItem): void {
     const key = `${connectorId}:${reason}`;
     const existing = this.pending.get(key);
     if (existing) {
       existing.items.push(item);
+      if (existing.items.length >= this.maxBatchItems) {
+        // Cap reached: flush now (flush() clears both timers), do NOT reset debounce.
+        void this.flush(key);
+        return;
+      }
       clearTimeout(existing.timer);
       existing.timer = setTimeout(() => { void this.flush(key); }, this.debounceMs);
       return;
@@ -252,13 +282,20 @@ export class ConnectorService {
       reason,
       items: [item],
       timer: setTimeout(() => { void this.flush(key); }, this.debounceMs),
+      deadlineTimer: setTimeout(() => { void this.flush(key); }, this.maxBatchWaitMs),
     };
     this.pending.set(key, entry);
+    // Edge: maxBatchItems === 1 means the first item already hits the cap.
+    if (entry.items.length >= this.maxBatchItems) void this.flush(key);
   }
 
   private async flush(key: string): Promise<void> {
     const entry = this.pending.get(key);
     if (!entry) return;
+    // Clear BOTH timers so the surviving one (the bound that didn't fire) can't
+    // re-flush an already-deleted entry.
+    clearTimeout(entry.timer);
+    clearTimeout(entry.deadlineTimer);
     this.pending.delete(key);
 
     const connector = await this.getById(entry.connectorId);
@@ -266,16 +303,26 @@ export class ConnectorService {
 
     const adapter = this.getAdapter(connector);
     const batch = { reason: entry.reason, items: entry.items };
+    const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length };
     try {
-      await requestWithRetry(
-        () => this.withTimeout(adapter.refreshImport(batch)),
+      // Capture the result: a resolved { success: false } is a completed-but-
+      // rejected provider response (non-retryable) and must NOT read as a
+      // successful dispatch; a success message (e.g. Plex skip counts) is logged.
+      const result = await requestWithRetry(
+        () => this.withTimeout((signal) => adapter.refreshImport(batch, signal)),
         {
           maxRetries: 1,
           delayMs: this.backoffMs,
           shouldRetry: (e) => e instanceof ConnectorRequestError && e.retryable,
         },
       );
-      this.log.debug({ connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length }, 'Connector refresh dispatched');
+      if (!result.success) {
+        this.log.warn({ ...logCtx, message: result.message }, 'Connector refresh rejected');
+      } else if (result.message) {
+        this.log.info({ ...logCtx, message: result.message }, 'Connector refresh dispatched');
+      } else {
+        this.log.debug(logCtx, 'Connector refresh dispatched');
+      }
     } catch (error: unknown) {
       this.log.warn(
         {
@@ -290,17 +337,25 @@ export class ConnectorService {
     }
   }
 
-  private async withTimeout<T>(promise: Promise<T>): Promise<T> {
-    if (this.flushTimeoutMs <= 0) return promise;
+  /**
+   * Run `fn` under an outer per-attempt guard. Threads a real AbortSignal into
+   * `fn` and ABORTS it when the timeout fires — so an adapter that fans out
+   * fetches (Plex) actually cancels in-flight work rather than leaving it racing
+   * (the prior Promise.race could not stop already-started work). 0 disables the
+   * timeout; the signal is still passed (never aborts).
+   */
+  private async withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    if (this.flushTimeoutMs <= 0) return fn(controller.signal);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new ConnectorRequestError('Connector refresh timed out', { retryable: true })),
-        this.flushTimeoutMs,
-      );
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new ConnectorRequestError('Connector refresh timed out', { retryable: true }));
+      }, this.flushTimeoutMs);
     });
     try {
-      return await Promise.race([promise, timeout]);
+      return await Promise.race([fn(controller.signal), timeout]);
     } finally {
       if (timer) clearTimeout(timer);
     }

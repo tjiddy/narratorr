@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type {
   ConnectorAdapter,
-  ConnectorField,
   ConnectorImportBatch,
   ConnectorRefreshResult,
   ConnectorTarget,
@@ -26,7 +25,7 @@ const absLibrariesResponseSchema = z.object({
 }).passthrough();
 
 /** Map a non-ok HTTP status to a typed connector error with the right retry/field classification. */
-function classifyStatus(status: number, notFoundField: ConnectorField | null): ConnectorRequestError {
+function classifyStatus(status: number, notFoundField: string | null): ConnectorRequestError {
   if (status === 401 || status === 403) {
     return new ConnectorRequestError(`Authentication failed (HTTP ${status})`, {
       retryable: false,
@@ -117,8 +116,12 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
    * POST /api/libraries/{libraryId}/scan with an empty body — a full library scan.
    * Issues EXACTLY one request per call. ABS ignores item paths, so the batch
    * contents do not affect the request. Throws ConnectorRequestError on failure.
+   *
+   * Accepts (and forwards) the service `AbortSignal` so an outer flush timeout
+   * cancels the in-flight scan request — same cancellation contract as Plex,
+   * even though ABS issues only one request.
    */
-  async refreshImport(_batch: ConnectorImportBatch): Promise<ConnectorRefreshResult> {
+  async refreshImport(_batch: ConnectorImportBatch, signal: AbortSignal): Promise<ConnectorRefreshResult> {
     const url = `${this.baseUrl}/api/libraries/${encodeURIComponent(this.libraryId)}/scan`;
     let res: Response;
     try {
@@ -126,7 +129,7 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
         method: 'POST',
         headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
         body: '{}',
-      }, CONNECTOR_TIMEOUT_MS);
+      }, CONNECTOR_TIMEOUT_MS, signal);
     } catch (error: unknown) {
       throw connectionError(error);
     }
