@@ -376,6 +376,73 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     expect(status?.completed).toBe(1);
     expect(status?.failures).toBe(0);
   });
+
+  it('job: a renameBook failure plus an idempotent skip tick correctly (completed=2, failures=1)', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    // Visit order is targetIds order [1, 2]: book 1 fails (tick(true)), book 2 is the
+    // idempotent "Already organized" skip (tick(false)). Both still increment completed.
+    (renameService.renameBook as Mock)
+      .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
+      .mockResolvedValueOnce({ oldPath: '/library/Author Name/Book2', newPath: '/library/Author Name/Book2', message: 'Already organized', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    const status = service.getJob(id);
+    expect(status?.total).toBe(2);
+    expect(status?.completed).toBe(2);
+    expect(status?.failures).toBe(1);
+  });
+
+  it('job: duplicate author-join rows for one book call renameBook exactly once (dedup holds on visit-all)', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    // Same bookId joined to two authors yields two rows; the loadRenameRows `seen`
+    // Set must collapse them so the file-rule visit-all branch still acts once per book.
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 7, path: '/library/Author Name/Book7', title: 'Book7', authorName: 'Author Name' }),
+        bookRow({ id: 7, path: '/library/Author Name/Book7', title: 'Book7', authorName: 'Second Author' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    expect(renameService.renameBook).toHaveBeenCalledTimes(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(7);
+    expect(service.getJob(id)?.total).toBe(1);
+  });
+
+  it('file-rule lockstep: preview.jobTotal === job total === renameBook call count', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    const rows = [
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // folder mismatch
+    ];
+    // previewRenameEligible (2 selects: books, narrators) then the job (2 more).
+    db.select
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]))
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]));
+    const preview = await service.previewRenameEligible();
+    // With a file rule, the denominator is every imported book regardless of folder match.
+    expect(preview.jobTotal).toBe(preview.importedTotal);
+    expect(preview.jobTotal).toBe(2);
+
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    // Lockstep invariant: preview denominator === job setTotal === actual renameBook calls.
+    expect(service.getJob(id)?.total).toBe(preview.jobTotal);
+    expect((renameService.renameBook as Mock).mock.calls).toHaveLength(preview.jobTotal);
+  });
 });
 
 // ===== Job lifecycle tests =====

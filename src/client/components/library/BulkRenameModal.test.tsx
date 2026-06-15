@@ -231,6 +231,26 @@ describe('BulkRenameModal', () => {
       expect(onConfirm).not.toHaveBeenCalled();
     });
 
+    it('fileFormat set + importedTotal === 0: shows "No imported books to rename." with no Rename All button', async () => {
+      vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
+        libraryRoot: '/library',
+        folderFormat: '{author}/{title}',
+        fileFormat: '{author} - {title}',
+        items: [],
+        mismatchedTotal: 0,
+        folderMatching: 0,
+        importedTotal: 0,
+        jobTotal: 0,
+      });
+      renderModal();
+      // hasFileRule === true branch of the empty-state copy (BulkRenameModal.tsx:176-178).
+      expect(await screen.findByText(/^No imported books to rename\.$/i)).toBeInTheDocument();
+      // The folder-format empty-state copy must NOT render under a file rule.
+      expect(screen.queryByText(/nothing to rename/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^rename all$/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    });
+
     it('fileFormat set + importedTotal > 0: stays enabled with zero folder mismatches (no "nothing to rename")', async () => {
       vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
         libraryRoot: '/library',
