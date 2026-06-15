@@ -1,9 +1,9 @@
 import { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { type ConnectorService } from '../services';
-import { createConnectorSchema, updateConnectorSchema, connectorTypeSchema } from '../../shared/schemas.js';
+import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTypeSchema } from '../../shared/schemas.js';
 import { idParamSchema } from '../../shared/schemas.js';
-import { makeTestSchema } from '../utils/secret-codec.js';
+import { makeTestSchema, loosenSettingsSchemas } from '../utils/secret-codec.js';
 import { registerCrudRoutes } from './crud-routes.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -16,13 +16,23 @@ const connectorConfigSchema = z.object({
   settings: z.record(z.string(), z.unknown()),
 });
 
+// Sentinel-aware update schema: the strict per-type schemas now reject the
+// masked '********' on baseUrl (it is not a valid URL), so a masked baseUrl /
+// apiKey / token edit must round-trip through the sentinel-loosened settings
+// map. Real (non-sentinel) values are still validated strictly. Built here on
+// the server because the loosening machinery (loosenSettingsSchemas) lives with
+// the secret-field registry, not in the shared schema layer.
+const sentinelAwareUpdateSchema = makeUpdateConnectorSchema(
+  loosenSettingsSchemas(connectorSettingsSchemas, 'connector'),
+);
+
 export async function connectorsRoutes(app: FastifyInstance, connectorService: ConnectorService) {
   await registerCrudRoutes(app, {
     basePath: '/api/connectors',
     entityName: 'Connector',
     service: connectorService,
     createSchema: createConnectorSchema,
-    updateSchema: updateConnectorSchema,
+    updateSchema: sentinelAwareUpdateSchema,
     secretEntity: 'connector',
   });
 

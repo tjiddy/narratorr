@@ -162,10 +162,28 @@ function loosenSettingsSchema(
   }
   if (Object.keys(overrides).length === 0) return schema;
   // safeExtend is the public API for overriding keys on objects that may carry
-  // chained refinements (e.g. Hardcover's listType/shelfId rule). It preserves
-  // strict mode and refinement checks; .extend() throws when overwriting keys
-  // on schemas with refinements.
+  // chained refinements (e.g. Hardcover's listType/shelfId rule, connector's
+  // baseUrl URL refinement). It preserves strict mode and refinement checks;
+  // .extend() throws when overwriting keys on schemas with refinements.
   return obj.safeExtend(overrides);
+}
+
+/**
+ * Loosen every per-type settings schema in a map so each registered secret
+ * field accepts the masked `'********'` sentinel OR its original validator. Used
+ * to build sentinel-aware update schemas for routes that pass the per-type map
+ * directly (e.g. the connector PUT route). Returns a new map; inputs untouched.
+ */
+export function loosenSettingsSchemas(
+  settingsMap: Record<string, z.ZodTypeAny>,
+  secretEntity: SecretEntity,
+): Record<string, z.ZodTypeAny> {
+  const secretFields = getSecretFieldNames(secretEntity);
+  const out: Record<string, z.ZodTypeAny> = {};
+  for (const [type, schema] of Object.entries(settingsMap)) {
+    out[type] = secretFields.length === 0 ? schema : loosenSettingsSchema(schema, secretFields);
+  }
+  return out;
 }
 
 /**
@@ -187,7 +205,12 @@ export function makeTestSchema<S extends z.ZodTypeAny>(
 ): z.ZodTypeAny {
   if (!(createSchema instanceof z.ZodObject)) return createSchema;
   const outer = createSchema as z.ZodObject<z.ZodRawShape>;
-  const withId = outer.extend({ id: z.number().int().positive().optional() });
+  // Rebuild the outer object from its shape so the create schema's own per-type
+  // `superRefine` (strict `validateSettingsPerType`) is dropped — this function
+  // re-derives per-type validation from the loosened settings map below, and
+  // re-running the strict refinement would reject a sentinel on any secret field
+  // that carries a format refinement (e.g. connector `baseUrl`'s URL check).
+  const withId = z.object(outer.shape).extend({ id: z.number().int().positive().optional() });
 
   const settingsMap = PER_TYPE_SETTINGS_MAPS[secretEntity];
   const secretFields = getSecretFieldNames(secretEntity);
