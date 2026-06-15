@@ -22,7 +22,7 @@ export function ConnectorsSettings() {
       }}
       icon={<RefreshIcon className="w-5 h-5 text-primary" />}
       title="Connectors"
-      subtitle="Refresh your media server (Audiobookshelf) when the library changes"
+      subtitle="Refresh your media server (Audiobookshelf, Plex) when the library changes"
       addLabel="Add Connector"
       emptyIcon={<RefreshIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />}
       emptyTitle="No connectors configured"

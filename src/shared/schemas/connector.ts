@@ -19,18 +19,38 @@ export const audiobookshelfSettingsSchema = z.object({
   libraryId: z.string().trim().min(1),
 }).strict();
 
+export const plexPathMappingSchema = z.object({
+  localPath: z.string().trim().min(1),
+  serverPath: z.string().trim().min(1),
+}).strict();
+
+export const plexSettingsSchema = z.object({
+  baseUrl: z.string().trim().min(1),
+  // token is a registered connector secret — bare `.trim().min(1)` admits the
+  // masked '********' sentinel on create/update (same rationale as apiKey above).
+  token: z.string().trim().min(1),
+  sectionId: z.string().trim().min(1),
+  // Connector-scoped path mapping (narratorr local → Plex server). Default [] so
+  // a passthrough-only connector validates; longest-prefix resolution at runtime.
+  pathMappings: z.array(plexPathMappingSchema).default([]),
+  fallbackToFullRefresh: z.boolean().default(false),
+}).strict();
+
 // ── Settings types and dispatch map ─────────────────────────────────────────
 
 export type AudiobookshelfSettings = z.infer<typeof audiobookshelfSettingsSchema>;
+export type PlexSettings = z.infer<typeof plexSettingsSchema>;
 
 export type ConnectorSettingsMap = {
   audiobookshelf: AudiobookshelfSettings;
+  plex: PlexSettings;
 };
 
 export type ConnectorSettings = ConnectorSettingsMap[ConnectorType];
 
 export const connectorSettingsSchemas: Record<ConnectorType, z.ZodTypeAny> = {
   audiobookshelf: audiobookshelfSettingsSchema,
+  plex: plexSettingsSchema,
 };
 
 // ── Server-side schemas ─────────────────────────────────────────────────────
@@ -87,6 +107,14 @@ export const createConnectorFormSchema = z.object({
     baseUrl: z.string().trim().optional(),
     apiKey: z.string().trim().optional(),
     libraryId: z.string().trim().optional(),
+    // Plex
+    token: z.string().trim().optional(),
+    sectionId: z.string().trim().optional(),
+    pathMappings: z.array(z.object({
+      localPath: z.string(),
+      serverPath: z.string(),
+    })).optional(),
+    fallbackToFullRefresh: z.boolean().optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = CONNECTOR_REGISTRY[data.type];

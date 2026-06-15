@@ -52,10 +52,12 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
   notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'],
-  // baseUrl is registered alongside apiKey per the issue spec: connector
+  // baseUrl is registered alongside apiKey/token per the issue spec: connector
   // apiKey/token/baseUrl are encrypted at rest and masked in responses,
   // consistent with operator-configured integrations like indexer apiUrl (#1491).
-  connector: ['baseUrl', 'apiKey'],
+  // token is the Plex secret (#1492); flat across subtypes (encryptFields skips
+  // fields not present in a given connector's settings).
+  connector: ['baseUrl', 'apiKey', 'token'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────

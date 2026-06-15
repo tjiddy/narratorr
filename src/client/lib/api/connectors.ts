@@ -23,7 +23,9 @@ export interface ConnectorTestResult {
   success: boolean;
   message?: string;
   warning?: string;
-  fieldErrors?: Partial<Record<'baseUrl' | 'apiKey' | 'libraryId', string>>;
+  // Registry-driven, open map keyed by a provider settings key (e.g. baseUrl,
+  // apiKey, token, libraryId, sectionId) — routed to inputs via settingsFields[].key.
+  fieldErrors?: Record<string, string>;
 }
 
 type ConnectorInput = Omit<Connector, 'id' | 'createdAt' | 'updatedAt'>;

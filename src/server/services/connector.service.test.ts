@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { z } from 'zod';
 import { ConnectorService } from './connector.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
-import { initializeKey, _resetKey, encrypt, isEncrypted, maskFields } from '../utils/secret-codec.js';
+import { initializeKey, _resetKey, encrypt, isEncrypted, maskFields, makeTestSchema } from '../utils/secret-codec.js';
 import { createMockDbConnector } from '../__tests__/factories.js';
+import { connectorTypeSchema } from '../../shared/schemas/connector.js';
 import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch } from '../../core/connectors/index.js';
 import type { ConnectorRow } from './types.js';
 
@@ -85,6 +87,52 @@ describe('ConnectorService', () => {
       expect(setArg.settings.apiKey).toBe(encryptedKey);
       expect(setArg.settings.libraryId).toBe('lib-2');
       expect(setArg.updatedAt).toBeInstanceOf(Date);
+    });
+
+    it('create encrypts the Plex token before insert', async () => {
+      const insertChain = mockDbChain([createMockDbConnector()]);
+      db.insert.mockReturnValue(insertChain);
+
+      await makeService().create({
+        name: 'Plex', type: 'plex', enabled: true,
+        settings: { baseUrl: 'http://plex.local', token: 'plain-token', sectionId: '1' },
+      });
+
+      const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
+      expect(isEncrypted(valuesArg.settings.token as string)).toBe(true);
+      // sectionId is not a secret — stays plaintext.
+      expect(valuesArg.settings.sectionId).toBe('1');
+    });
+
+    it('API responses mask the Plex token (not sectionId)', () => {
+      const masked = maskFields('connector', { baseUrl: 'http://plex.local', token: 'real-token', sectionId: '1' });
+      expect(masked.token).toBe('********');
+      expect(masked.sectionId).toBe('1');
+    });
+
+    it('update with ******** sentinel preserves the stored Plex token ciphertext', async () => {
+      const encryptedUrl = encrypt('http://plex.saved', TEST_KEY);
+      const encryptedToken = encrypt('saved-token', TEST_KEY);
+      const existing = createMockDbConnector({ type: 'plex', settings: { baseUrl: encryptedUrl, token: encryptedToken, sectionId: '1' } });
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const updateChain = mockDbChain([existing]);
+      db.update.mockReturnValue(updateChain);
+
+      await makeService().update(1, { type: 'plex', settings: { baseUrl: '********', token: '********', sectionId: '2' } });
+
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
+      expect(setArg.settings.token).toBe(encryptedToken);
+      expect(setArg.settings.sectionId).toBe('2');
+    });
+
+    it('makeTestSchema(connector) accepts the Plex token sentinel', () => {
+      const cfg = z.object({ type: connectorTypeSchema, settings: z.record(z.string(), z.unknown()) });
+      const schema = makeTestSchema(cfg, 'connector');
+      const result = schema.safeParse({
+        type: 'plex', id: 1,
+        settings: { baseUrl: 'http://plex.local', token: '********', sectionId: '1' },
+      });
+      expect(result.success).toBe(true);
     });
 
     it('update invalidates the cached adapter', async () => {
@@ -233,6 +281,85 @@ describe('ConnectorService', () => {
       service.enqueue(1, 'import', ITEM(1));
       await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs the returned success message (skip counts) instead of a bare debug dispatch (F7)', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true, message: 'refreshed 2 paths, skipped 1' });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, message: 'refreshed 2 paths, skipped 1' }),
+        'Connector refresh dispatched',
+      );
+    });
+
+    it('logs a warning (not a successful dispatch) when refreshImport resolves { success: false } (F7)', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: false, message: 'provider rejected the scan' });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, message: 'provider rejected the scan' }),
+        'Connector refresh rejected',
+      );
+    });
+
+    it('flushes immediately at maxBatchItems without waiting for the debounce timer (F8)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 3 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const refresh = vi.fn().mockResolvedValue({ success: true });
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      svc.enqueue(1, 'import', ITEM(2));
+      svc.enqueue(1, 'import', ITEM(3)); // hits the cap → immediate flush
+      // Advance LESS than the debounce window: the flush must already have run.
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items).toHaveLength(3);
+    });
+
+    it('flushes at the maxBatchWaitMs deadline despite continuous debounce resets (F8)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: 1000, backoffMs: 0, flushTimeoutMs: 0, maxBatchWaitMs: 2500 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const refresh = vi.fn().mockResolvedValue({ success: true });
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      svc.enqueue(1, 'import', ITEM(1));        // t=0, deadline at 2500
+      await vi.advanceTimersByTimeAsync(900);   // t=900
+      svc.enqueue(1, 'import', ITEM(2));        // resets debounce (would fire ~1900)
+      await vi.advanceTimersByTimeAsync(900);   // t=1800
+      svc.enqueue(1, 'import', ITEM(3));        // resets debounce (would fire ~2800)
+      expect(refresh).not.toHaveBeenCalled();   // neither bound has fired yet
+      await vi.advanceTimersByTimeAsync(700);   // t=2500 → deadline pre-empts debounce
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items).toHaveLength(3);
+    });
+
+    it('aborts the signal passed into refreshImport when the outer flush timeout fires (F10)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 500 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      let captured: AbortSignal | undefined;
+      const refresh = vi.fn((_batch: ConnectorImportBatch, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        captured = signal;
+        signal.addEventListener('abort', () => reject(new ConnectorRequestError('aborted', { retryable: false })));
+      }));
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts refreshImport
+      await vi.advanceTimersByTimeAsync(500);      // outer timeout fires → signal aborts
+
+      expect(captured?.aborted).toBe(true);
       expect(refresh).toHaveBeenCalledTimes(1);
     });
 

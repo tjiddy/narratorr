@@ -93,18 +93,26 @@ export async function fetchWithOptionalDispatcher(
  *
  * Network-level errors (ECONNREFUSED, ENOTFOUND, timeouts) are mapped to
  * actionable messages via mapNetworkError.
+ *
+ * An optional caller `signal` is composed with the internal timeout signal via
+ * `AbortSignal.any`, so the request aborts when EITHER the per-request timeout
+ * elapses OR the caller aborts (e.g. the connector flush's outer timeout). The
+ * caller signal does not replace the timeout — both stay in force.
  */
 export async function fetchWithTimeout(
   url: string | URL,
   options: RequestInit,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const combinedSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
   let response: Response;
   try {
     response = await fetch(url, {
       ...options,
       redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: combinedSignal,
     });
   } catch (error: unknown) {
     throw mapNetworkError(error);

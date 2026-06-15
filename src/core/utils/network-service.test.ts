@@ -96,6 +96,22 @@ describe('fetchWithTimeout', () => {
     expect(calledOptions.signal).toBeDefined();
   });
 
+  it('composes a caller signal with the timeout: aborting the caller aborts the request (F16)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('ok', { status: 200 }),
+    );
+    const controller = new AbortController();
+
+    await fetchWithTimeout('https://example.com', {}, 5000, controller.signal);
+
+    const calledOptions = fetchSpy.mock.calls[0]![1] as RequestInit;
+    expect(calledOptions.signal).toBeDefined();
+    // The composed signal reflects the caller aborting (without replacing the timeout).
+    expect(calledOptions.signal!.aborted).toBe(false);
+    controller.abort();
+    expect(calledOptions.signal!.aborted).toBe(true);
+  });
+
   describe('redirect detection', () => {
     it('throws descriptive error on 302 response with Location header', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(

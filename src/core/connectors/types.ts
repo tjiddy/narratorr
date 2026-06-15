@@ -2,8 +2,15 @@ import type { ConnectorType } from '../../shared/connector-registry.js';
 
 export type { ConnectorType };
 
-/** Settings field a connector failure can be attributed to (for field-scoped UI errors). */
-export type ConnectorField = 'baseUrl' | 'apiKey' | 'libraryId';
+/**
+ * Field-scoped error map keyed by a provider settings key (e.g. `baseUrl`,
+ * `apiKey`, `token`, `libraryId`, `sectionId`). Registry-driven: each connector
+ * declares its own settings keys (`settingsFields`), so the map is an open
+ * `Record<string, string>` rather than a closed ABS-only union — the form routes
+ * an error to the matching input by `settingsFields[].key`, and unknown keys fall
+ * back to a form-level error.
+ */
+export type ConnectorFieldErrors = Record<string, string>;
 
 /**
  * test() / target-route failure envelope — superset of the existing test-result
@@ -13,8 +20,8 @@ export interface ConnectorTestResult {
   success: boolean;
   message?: string;
   warning?: string;
-  // 401 -> apiKey, conn error -> baseUrl, bad libraryId -> libraryId
-  fieldErrors?: Partial<Record<ConnectorField, string>>;
+  // e.g. 401 -> token/apiKey, conn error -> baseUrl, bad section -> sectionId
+  fieldErrors?: ConnectorFieldErrors;
 }
 
 /** A provider-side library/section the connector can target. */
@@ -55,6 +62,10 @@ export interface ConnectorAdapter {
   // on auth/connection failure.
   listTargets(): Promise<ConnectorTarget[]>;
   // Returns { success: true } on a completed scan; THROWS ConnectorRequestError
-  // on transport/HTTP failure; NO internal retry.
-  refreshImport(batch: ConnectorImportBatch): Promise<ConnectorRefreshResult>;
+  // on transport/HTTP failure; NO internal retry. The service threads a real
+  // AbortSignal (fired by the outer flush timeout) so providers that fan out
+  // per-path fetches (e.g. Plex) can abort in-flight requests on timeout. A
+  // resolved { success: false } is reserved for a completed-but-rejected provider
+  // response (definitively NON-retryable) — transport/HTTP failures THROW.
+  refreshImport(batch: ConnectorImportBatch, signal: AbortSignal): Promise<ConnectorRefreshResult>;
 }
