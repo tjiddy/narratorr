@@ -19,6 +19,7 @@ import {
   loadEncryptionKey,
   getSecretFieldNames,
   makeTestSchema,
+  loosenSettingsSchemas,
 } from './secret-codec.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 
@@ -70,6 +71,7 @@ import { createIndexerSchema } from '../../shared/schemas/indexer.js';
 import { createNotifierSchema } from '../../shared/schemas/notifier.js';
 import { createDownloadClientSchema } from '../../shared/schemas/download-client.js';
 import { createImportListSchema } from '../../shared/schemas/import-list.js';
+import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTypeSchema } from '../../shared/schemas/connector.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -893,6 +895,101 @@ describe('makeTestSchema', () => {
       });
       expect(r.success).toBe(false);
     });
+  });
+
+  // #1499 — baseUrl gained a strict http(s) URL refinement, which rejects the
+  // masked sentinel. The /test and /targets paths must still admit it via the
+  // sentinel union (and the strict create superRefine must NOT re-run here).
+  describe('connector — sentinel-aware baseUrl', () => {
+    const testSchema = makeTestSchema(createConnectorSchema, 'connector');
+    // Mirrors the /targets schema built in connectors.ts (no name required).
+    const targetsSchema = makeTestSchema(
+      z.object({ type: connectorTypeSchema, settings: z.record(z.string(), z.unknown()) }),
+      'connector',
+    );
+
+    it('/test accepts sentinel baseUrl/apiKey for audiobookshelf', () => {
+      const r = testSchema.safeParse({
+        name: 'abs', type: 'audiobookshelf', enabled: true,
+        settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('/test accepts sentinel baseUrl/token for plex', () => {
+      const r = testSchema.safeParse({
+        name: 'plex', type: 'plex', enabled: true,
+        settings: { baseUrl: '********', token: '********', sectionId: '1' },
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('/test still rejects a real malformed baseUrl (loosening keeps the refinement)', () => {
+      const r = testSchema.safeParse({
+        name: 'abs', type: 'audiobookshelf', enabled: true,
+        settings: { baseUrl: 'not a url', apiKey: '********', libraryId: 'lib-1' },
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('/targets accepts sentinel baseUrl', () => {
+      const r = targetsSchema.safeParse({
+        type: 'audiobookshelf',
+        settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('/targets still rejects a real schemeless baseUrl', () => {
+      const r = targetsSchema.safeParse({
+        type: 'audiobookshelf',
+        settings: { baseUrl: 'localhost:13378', apiKey: '********', libraryId: 'lib-1' },
+      });
+      expect(r.success).toBe(false);
+    });
+  });
+});
+
+// #1499 — the connector PUT route wires this exact schema (see connectors.ts).
+// Build it the same way to assert the wired update path, not just the service.
+describe('connector update schema (sentinel-aware PUT path)', () => {
+  const updateSchema = makeUpdateConnectorSchema(
+    loosenSettingsSchemas(connectorSettingsSchemas, 'connector'),
+  );
+
+  it('accepts masked baseUrl + apiKey edits for audiobookshelf', () => {
+    const r = updateSchema.safeParse({
+      type: 'audiobookshelf',
+      settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts masked baseUrl + token edits for plex', () => {
+    const r = updateSchema.safeParse({
+      type: 'plex',
+      settings: { baseUrl: '********', token: '********', sectionId: '1' },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('still rejects a real malformed baseUrl on update', () => {
+    const r = updateSchema.safeParse({
+      type: 'audiobookshelf',
+      settings: { baseUrl: 'not a url', apiKey: '********', libraryId: 'lib-1' },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('normalizes a real baseUrl on update (trailing slash stripped)', () => {
+    const r = updateSchema.safeParse({
+      type: 'audiobookshelf',
+      settings: { baseUrl: 'http://example.com/', apiKey: '********', libraryId: 'lib-1' },
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect((r.data.settings as { baseUrl: string }).baseUrl).toBe('http://example.com');
+    }
   });
 });
 
