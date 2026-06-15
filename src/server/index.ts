@@ -190,6 +190,10 @@ async function main() {
   const shutdown = async () => {
     app.log.info('Shutting down server…');
     await services.importQueueWorker.stop();
+    // Drain the best-effort connector refresh queue BEFORE app.close(): clears
+    // pending debounce/deadline timers (warn-logging dropped batches) and awaits
+    // any in-flight flush so a refresh mid-request/retry isn't silently lost.
+    await services.connector.stop();
     await app.close();
     process.exit(0);
   };

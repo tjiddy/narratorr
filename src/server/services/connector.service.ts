@@ -78,7 +78,17 @@ interface PendingFlush {
  */
 export class ConnectorService {
   private adapters = new AdapterCache<ConnectorAdapter>();
+  // BEST-EFFORT, IN-MEMORY refresh queue. Pending work lives only as setTimeout
+  // timers in this Map — there is no durable/persistent backing. `stop()` drains
+  // in-flight flushes on graceful shutdown, but a hard crash (SIGKILL/OOM) or a
+  // refresh still inside its debounce window is dropped by design. The downstream
+  // media server (ABS/Plex) reconciles on its own next library change or periodic
+  // scan, so a lost refresh is self-healing — a durable queue would be
+  // over-engineering for a self-hosted single-process app (see #769/#877/#885).
   private pending = new Map<string, PendingFlush>();
+  // Set by stop() so any post-shutdown enqueue() is a no-op (mirrors
+  // ImportQueueWorker's `stopping` flag).
+  private stopping = false;
   // Per-connector-id tail of the in-flight flush chain. Serializes flushes for
   // the SAME connector (a cap-triggered flush chains behind any in-flight one)
   // while keeping DIFFERENT connector ids fully parallel. Keyed by connectorId,
@@ -271,6 +281,9 @@ export class ConnectorService {
    * Whichever condition fires first flushes the batch.
    */
   enqueue(connectorId: number, reason: ConnectorReason, item: ConnectorImportItem): void {
+    // Post-stop enqueues are dropped: shutdown is in progress and there is no
+    // future flush to schedule. Best-effort semantics — see the `pending` comment.
+    if (this.stopping) return;
     const key = `${connectorId}:${reason}`;
     const existing = this.pending.get(key);
     if (existing) {
@@ -281,19 +294,65 @@ export class ConnectorService {
         return;
       }
       clearTimeout(existing.timer);
-      existing.timer = setTimeout(() => { void this.flush(key); }, this.debounceMs);
+      existing.timer = this.armTimer(() => { void this.flush(key); }, this.debounceMs);
       return;
     }
     const entry: PendingFlush = {
       connectorId,
       reason,
       items: [item],
-      timer: setTimeout(() => { void this.flush(key); }, this.debounceMs),
-      deadlineTimer: setTimeout(() => { void this.flush(key); }, this.maxBatchWaitMs),
+      timer: this.armTimer(() => { void this.flush(key); }, this.debounceMs),
+      deadlineTimer: this.armTimer(() => { void this.flush(key); }, this.maxBatchWaitMs),
     };
     this.pending.set(key, entry);
     // Edge: maxBatchItems === 1 means the first item already hits the cap.
     if (entry.items.length >= this.maxBatchItems) void this.flush(key);
+  }
+
+  /**
+   * Create a queue timer that does NOT keep the event loop alive. Every
+   * refresh-queue `setTimeout` (debounce, deadline, and the request-timeout
+   * watchdog in `withTimeout`) is armed through here so a pending timer can't
+   * delay graceful shutdown past SIGTERM — `stop()` clears or awaits the work,
+   * the timer itself must never be the thing holding the process open.
+   */
+  private armTimer(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
+    const t = setTimeout(fn, ms);
+    t.unref();
+    return t;
+  }
+
+  /**
+   * Graceful drain for shutdown (mirrors `ImportQueueWorker.stop()`):
+   *  1. set the stopping flag so any further `enqueue()` is a no-op,
+   *  2. clear all pending debounce + deadline timers and DROP their batches —
+   *     warn-logging each so a lost refresh is visible (connector id + count),
+   *  3. await any in-flight flush promises held in `draining` so a flush that is
+   *     mid-request OR mid-retry-backoff settles before shutdown continues (the
+   *     backoff sleep lives inside `executeFlush`, so it's covered by this await).
+   *
+   * Never throws: `executeFlush` already absorbs its own errors, and the in-flight
+   * await uses `Promise.allSettled` so a failing flush can't reject shutdown.
+   * Idempotent — a second call finds empty maps and is a no-op.
+   */
+  async stop(): Promise<void> {
+    this.stopping = true;
+
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      clearTimeout(entry.deadlineTimer);
+      this.log.warn(
+        { connectorId: entry.connectorId, reason: entry.reason, count: entry.items.length },
+        'Connector refresh dropped on shutdown',
+      );
+    }
+    this.pending.clear();
+
+    const inFlight = [...this.draining.values()];
+    if (inFlight.length > 0) {
+      this.log.info({ count: inFlight.length }, 'Awaiting in-flight connector refreshes before shutdown…');
+      await Promise.allSettled(inFlight);
+    }
   }
 
   /**
@@ -430,7 +489,7 @@ export class ConnectorService {
     const budgetMs = this.flushTimeoutMs + Math.max(0, requestCount - 1) * CONNECTOR_TIMEOUT_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
+      timer = this.armTimer(() => {
         controller.abort();
         reject(new ConnectorRequestError('Connector refresh timed out', { retryable: true }));
       }, budgetMs);

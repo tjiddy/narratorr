@@ -195,6 +195,14 @@ Three outbound code paths follow attacker-influenced URLs and route through the 
 
 **Coverage scope:** SSRF address-blocking is intentionally scoped to attacker-influenced URLs. Operator-configured fetch destinations — indexer apiUrl, download-client host, notifier webhook URL, import-list source, metadata provider — are NOT address-blocked, by design. Self-hosted *arr deployments legitimately point at private-IP services (Prowlarr in Docker compose, qBittorrent on LAN, self-hosted Apprise instance). The trust boundary for those paths is "the operator configured this URL"; extending the block policy would break legitimate setups. See `CLAUDE.md` security section and closed issues #769 / #877 / #885 for the design rationale.
 
+## Connector refresh (best-effort)
+
+After an import/rename/scan changes the library, `ConnectorService` notifies the configured media-server connectors (Audiobookshelf, Plex) to refresh. This queue is **best-effort and in-memory by design** — pending work is held only as debounced `setTimeout` timers, with no durable/persistent backing.
+
+- On graceful shutdown, `ConnectorService.stop()` (wired into the server's `shutdown()` handler before `app.close()`) clears pending timers, warn-logs any dropped batches with the connector id and item count, and awaits any in-flight flush (including one mid-retry-backoff) so it isn't cut off.
+- All queue timers are `unref()`'d so a pending refresh can never delay graceful shutdown past SIGTERM.
+- A hard crash (SIGKILL/OOM) or a refresh still inside its debounce window **is dropped** — accepted because the downstream media server reconciles on its own next library change or periodic scan. A durable/DB-backed queue is intentionally out of scope for this single-process self-hosted app (consistent with the no-over-engineering posture in #769/#877/#885).
+
 ## Input Validation
 
 - All API inputs are validated with **Zod schemas** before processing — including persisted JSON columns (`phaseHistory`, manual-import metadata) on read, and external API responses from download clients, metadata providers, and import-list sources

@@ -777,6 +777,152 @@ describe('ConnectorService', () => {
       expect(refresh).toHaveBeenCalledTimes(1);
       expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items.map((i) => i.bookId)).toEqual([2]);
     });
+
+    // ── shutdown drain: stop() (#1498) ──────────────────────────────────────────
+    // A manually-gated refreshImport: each call parks until its gate is released.
+    function deferredRefresh() {
+      const gates: Array<() => void> = [];
+      const refresh = vi.fn(() => new Promise<{ success: true }>((resolve) => {
+        gates.push(() => resolve({ success: true }));
+      }));
+      return { refresh, gates };
+    }
+
+    it('stop() before the debounce window drops the pending batch (clear path): no flush, warn logged, no throw', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await expect(service.stop()).resolves.toBeUndefined();
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // the cleared timers must NOT fire a flush
+
+      expect(refresh).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, reason: 'import', count: 1 }),
+        'Connector refresh dropped on shutdown',
+      );
+    });
+
+    it('stop() awaits an in-flight flush — does not resolve until refreshImport settles', async () => {
+      const { refresh, gates } = deferredRefresh();
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts; refreshImport in flight (gated)
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      let stopped = false;
+      const stopPromise = service.stop().then(() => { stopped = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false); // still awaiting the in-flight draining chain
+
+      gates[0]!(); // settle refreshImport
+      await stopPromise;
+      expect(stopped).toBe(true);
+    });
+
+    it('stop() waits out an in-flight retry backoff (shutdown landing mid-backoff)', async () => {
+      const BACKOFF = 500;
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: BACKOFF, flushTimeoutMs: 0 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const refresh = vi.fn()
+        .mockRejectedValueOnce(new ConnectorRequestError('5xx', { retryable: true }))
+        .mockResolvedValueOnce({ success: true });
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts; first attempt rejects → enters backoff sleep
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      let stopped = false;
+      const stopPromise = svc.stop().then(() => { stopped = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false); // mid-backoff: the in-flight flush (in draining) hasn't settled
+
+      await vi.advanceTimersByTimeAsync(BACKOFF * 1.3); // backoff (+ max jitter) elapses → retry runs & succeeds
+      await stopPromise;
+      expect(stopped).toBe(true);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(log.warn).not.toHaveBeenCalled();
+    });
+
+    it('enqueue() after stop() is a no-op — no flush scheduled or executed', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      await service.stop();
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('unref()s the debounce, deadline, and request-timeout queue timers so none pins the event loop (AC3)', async () => {
+      const unrefs: Array<ReturnType<typeof vi.fn>> = [];
+      const realSetTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+        const handle = realSetTimeout(fn, ms) as ReturnType<typeof setTimeout>;
+        const origUnref = handle.unref.bind(handle);
+        const u = vi.fn(() => origUnref());
+        handle.unref = u as unknown as typeof handle.unref;
+        unrefs.push(u);
+        return handle;
+      }) as unknown as typeof setTimeout);
+      try {
+        const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 1000 });
+        vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+        const refresh = vi.fn().mockResolvedValue({ success: true });
+        vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+        svc.enqueue(1, 'import', ITEM(1));       // arms debounce + deadline timers
+        await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush → withTimeout arms the request-timeout timer
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+        // debounce + deadline + request-timeout = 3 queue timers, every one unref()'d.
+        expect(unrefs.length).toBeGreaterThanOrEqual(3);
+        for (const u of unrefs) expect(u).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.mocked(globalThis.setTimeout).mockRestore();
+      }
+    });
+
+    it('warn-logs each dropped pending entry on stop() with connector id + item count', async () => {
+      const refresh = vi.fn().mockResolvedValue({ success: true });
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh));
+
+      service.enqueue(1, 'import', ITEM(1));
+      service.enqueue(1, 'import', ITEM(2)); // same (id, reason) entry → count 2
+      service.enqueue(2, 'import', ITEM(3)); // distinct connector → its own entry
+
+      await service.stop();
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(refresh).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, reason: 'import', count: 2 }),
+        'Connector refresh dropped on shutdown',
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 2, reason: 'import', count: 1 }),
+        'Connector refresh dropped on shutdown',
+      );
+    });
+
+    it('stop() is idempotent — a second call does not throw or re-flush', async () => {
+      const { refresh, gates } = deferredRefresh();
+      vi.spyOn(service, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      service.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      const first = service.stop();
+      const second = service.stop();
+      gates[0]!();
+      await expect(first).resolves.toBeUndefined();
+      await expect(second).resolves.toBeUndefined();
+      expect(refresh).toHaveBeenCalledTimes(1); // no duplicate flush
+    });
   });
 
   // ── fan-out ──────────────────────────────────────────────────────────────────

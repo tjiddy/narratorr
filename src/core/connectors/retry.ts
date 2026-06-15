@@ -22,7 +22,15 @@ export async function requestWithRetry<T>(fn: () => Promise<T>, config: Connecto
       lastError = error;
       if (attempt < maxRetries && shouldRetry(error)) {
         // Jitter prevents synchronized retry storms across concurrent flushes.
-        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs + Math.random() * delayMs * 0.3));
+        // unref() the backoff timer so a shutdown landing mid-backoff isn't held
+        // open by this sleep — the in-flight retry is still awaited by the caller
+        // (ConnectorService's `draining` chain), it just no longer pins the loop.
+        if (delayMs > 0) {
+          await new Promise((resolve) => {
+            const t = setTimeout(resolve, delayMs + Math.random() * delayMs * 0.3);
+            t.unref();
+          });
+        }
         continue;
       }
       break;
