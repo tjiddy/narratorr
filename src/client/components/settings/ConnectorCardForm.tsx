@@ -102,7 +102,7 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
         setFetchError(result.message || 'Failed to fetch options');
         applyFieldErrors((result as FieldErrorResult).fieldErrors);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       // Surface the real reason (e.g. ApiError's "Authentication failed (HTTP 401)"
       // / "Connection failed: …") instead of masking every failure as the generic
       // string — the adapter produces specific, useful messages (#1523).
