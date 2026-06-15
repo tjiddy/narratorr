@@ -19,7 +19,7 @@ import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { CONNECTOR_TIMEOUT_MS } from '../../core/utils/constants.js';
+import { CONNECTOR_TIMEOUT_MS, CONNECTOR_SHUTDOWN_DRAIN_MS } from '../../core/utils/constants.js';
 import type { ConnectorRow } from './types.js';
 
 type NewConnector = typeof connectors.$inferInsert;
@@ -47,6 +47,12 @@ export interface ConnectorServiceOptions {
    * debounce reset cannot push past it — a sustained burst still flushes here.
    */
   maxBatchWaitMs?: number;
+  /**
+   * Hard cap on how long `stop()` waits for in-flight flushes to drain on
+   * shutdown (ms). Defaults to `CONNECTOR_SHUTDOWN_DRAIN_MS`. Injectable so tests
+   * can use a tiny budget; production always uses the constant.
+   */
+  shutdownDrainMs?: number;
 }
 
 const DEFAULT_DEBOUNCE_MS = 2_000;
@@ -95,11 +101,20 @@ export class ConnectorService {
   // NOT by the `${connectorId}:${reason}` pending key, so mixed-reason flushes
   // for one connector (e.g. import + restored) also serialize.
   private draining = new Map<number, Promise<void>>();
+  // Aborted by stop() when the shutdown drain budget expires. Composed into every
+  // in-flight attempt's signal (see withTimeout) and threaded into requestWithRetry
+  // so the awaiting request AND any pending retry/backoff unwind at the deadline —
+  // a deadline abort is terminal (non-retryable), unlike a scaled-timeout abort.
+  private readonly shutdownSignal = new AbortController();
+  // Memoizes the stop() drain so a second call is a true no-op (returns the same
+  // promise) and never re-runs the pending-drop / deadline-warn path.
+  private stopPromise?: Promise<void>;
   private readonly debounceMs: number;
   private readonly backoffMs: number;
   private readonly flushTimeoutMs: number;
   private readonly maxBatchItems: number;
   private readonly maxBatchWaitMs: number;
+  private readonly shutdownDrainMs: number;
 
   constructor(private db: Db, private log: FastifyBaseLogger, opts: ConnectorServiceOptions = {}) {
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
@@ -107,6 +122,7 @@ export class ConnectorService {
     this.flushTimeoutMs = opts.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
     this.maxBatchItems = opts.maxBatchItems ?? DEFAULT_MAX_BATCH_ITEMS;
     this.maxBatchWaitMs = opts.maxBatchWaitMs ?? DEFAULT_MAX_BATCH_WAIT_MS;
+    this.shutdownDrainMs = opts.shutdownDrainMs ?? CONNECTOR_SHUTDOWN_DRAIN_MS;
   }
 
   // ─── CRUD ──────────────────────────────────────────────────────────────────
@@ -323,19 +339,32 @@ export class ConnectorService {
   }
 
   /**
-   * Graceful drain for shutdown (mirrors `ImportQueueWorker.stop()`):
-   *  1. set the stopping flag so any further `enqueue()` is a no-op,
+   * BOUNDED graceful drain for shutdown (mirrors `ImportQueueWorker.stop()`):
+   *  1. set the stopping flag so any further `enqueue()` is a no-op AND any
+   *     chained (not-yet-started) draining tail short-circuits in `executeFlush`,
    *  2. clear all pending debounce + deadline timers and DROP their batches —
    *     warn-logging each so a lost refresh is visible (connector id + count),
-   *  3. await any in-flight flush promises held in `draining` so a flush that is
-   *     mid-request OR mid-retry-backoff settles before shutdown continues (the
-   *     backoff sleep lives inside `executeFlush`, so it's covered by this await).
+   *  3. race the in-flight `draining` flushes against `shutdownDrainMs`: a flush
+   *     mid-request OR mid-retry-backoff that settles inside the budget drains
+   *     normally; at the deadline the shutdown signal is aborted (cancelling the
+   *     awaiting request + any pending backoff) and the still-draining connectors
+   *     are warn-logged as dropped.
+   *
+   * This bounds stop() — and therefore the whole graceful-shutdown sequence — to
+   * `shutdownDrainMs` regardless of the scaled per-attempt `withTimeout` budget,
+   * which can otherwise run to minutes for a large multi-path Plex batch (#1512).
    *
    * Never throws: `executeFlush` already absorbs its own errors, and the in-flight
    * await uses `Promise.allSettled` so a failing flush can't reject shutdown.
-   * Idempotent — a second call finds empty maps and is a no-op.
+   * Idempotent — memoized, so a second call returns the same promise and never
+   * re-drops pending or re-warns the deadline.
    */
   async stop(): Promise<void> {
+    this.stopPromise ??= this.runStop();
+    return this.stopPromise;
+  }
+
+  private async runStop(): Promise<void> {
     this.stopping = true;
 
     for (const entry of this.pending.values()) {
@@ -349,10 +378,36 @@ export class ConnectorService {
     this.pending.clear();
 
     const inFlight = [...this.draining.values()];
-    if (inFlight.length > 0) {
-      this.log.info({ count: inFlight.length }, 'Awaiting in-flight connector refreshes before shutdown…');
-      await Promise.allSettled(inFlight);
-    }
+    if (inFlight.length === 0) return;
+
+    this.log.info({ count: inFlight.length }, 'Awaiting in-flight connector refreshes before shutdown…');
+    await this.drainInFlight(inFlight);
+  }
+
+  /**
+   * Race the in-flight flushes against the shutdown drain budget. On a clean drain
+   * (all settle first) returns quietly; on deadline expiry it aborts in-flight
+   * attempts (so the awaiting requests + backoff sleeps unwind promptly) and warns
+   * about whatever connector ids are still draining. `draining` self-prunes via
+   * each flush's `.finally`, so its remaining keys at the deadline ARE the set
+   * that failed to drain in time.
+   */
+  private async drainInFlight(inFlight: Promise<void>[]): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<'deadline'>((resolve) => {
+      timer = this.armTimer(() => resolve('deadline'), this.shutdownDrainMs);
+    });
+    const drained = Promise.allSettled(inFlight).then(() => 'drained' as const);
+    const outcome = await Promise.race([drained, deadline]);
+    if (timer) clearTimeout(timer);
+    if (outcome === 'drained') return;
+
+    this.shutdownSignal.abort();
+    const dropped = [...this.draining.keys()];
+    this.log.warn(
+      { connectorIds: dropped, count: dropped.length },
+      'Connector refreshes dropped at shutdown drain deadline',
+    );
   }
 
   /**
@@ -390,6 +445,19 @@ export class ConnectorService {
   }
 
   private async executeFlush(entry: PendingFlush): Promise<void> {
+    // A chained tail (queued behind an active flush via flush()'s
+    // `prior.then(() => executeFlush(entry))`) must NOT start fresh connector work
+    // once shutdown has begun: when the active attempt unwinds, this continuation
+    // would otherwise call getById + refreshImport and begin a brand-new request
+    // after stop() has resolved. Short-circuit BEFORE any adapter call and warn-log
+    // the drop. The chain's `.finally` still cleans the draining entry.
+    if (this.stopping) {
+      this.log.warn(
+        { connectorId: entry.connectorId, reason: entry.reason, count: entry.items.length },
+        'Connector refresh dropped on shutdown',
+      );
+      return;
+    }
     // The connector resolve + adapter build live INSIDE the try so a drifted
     // settings row (ZodError), an unknown connector type, or a getById DB error
     // folds into the warn-log path instead of escaping this detached flush as an
@@ -416,10 +484,18 @@ export class ConnectorService {
           maxRetries: 1,
           delayMs: this.backoffMs,
           shouldRetry: (e) => e instanceof ConnectorRequestError && e.retryable,
+          // The shutdown deadline aborts this signal; requestWithRetry then refuses
+          // a second attempt and interrupts any pending backoff (a deadline abort
+          // is terminal, NOT a retryable timeout).
+          signal: this.shutdownSignal.signal,
         },
       );
       this.logFlushResult(logCtx, result);
     } catch (error: unknown) {
+      // A shutdown-deadline abort already warn-logs the dropped connector set in
+      // drainInFlight(); don't double-log the resulting rejection as a generic
+      // failure (it's an intentional cancellation, not a provider error).
+      if (this.shutdownSignal.signal.aborted) return;
       // `connector` may still be null when the failure originated in getById /
       // getAdapter — degrade to the queue entry's connectorId rather than
       // dereferencing it and throwing a second time inside the catch.
@@ -485,7 +561,12 @@ export class ConnectorService {
 
   private async withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, requestCount: number): Promise<T> {
     const controller = new AbortController();
-    if (this.flushTimeoutMs <= 0) return fn(controller.signal);
+    // Compose the per-attempt timeout controller with the service shutdown signal:
+    // EITHER the scaled-budget timeout OR a shutdown-drain-deadline abort cancels
+    // the in-flight adapter request. Composed even when the outer timeout is
+    // disabled so a shutdown abort still reaches the request.
+    const signal = AbortSignal.any([controller.signal, this.shutdownSignal.signal]);
+    if (this.flushTimeoutMs <= 0) return fn(signal);
     const budgetMs = this.flushTimeoutMs + Math.max(0, requestCount - 1) * CONNECTOR_TIMEOUT_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -495,7 +576,7 @@ export class ConnectorService {
       }, budgetMs);
     });
     try {
-      return await Promise.race([fn(controller.signal), timeout]);
+      return await Promise.race([fn(signal), timeout]);
     } finally {
       if (timer) clearTimeout(timer);
     }

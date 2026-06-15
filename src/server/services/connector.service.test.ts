@@ -923,6 +923,159 @@ describe('ConnectorService', () => {
       await expect(second).resolves.toBeUndefined();
       expect(refresh).toHaveBeenCalledTimes(1); // no duplicate flush
     });
+
+    // ── bounded shutdown drain (#1512) ─────────────────────────────────────────
+    const DRAIN = 5_000;
+
+    // A refresh that records its AbortSignal and rejects when it fires — so the
+    // in-flight attempt actually unwinds at the drain deadline.
+    function abortAwareRefresh(retryable = false) {
+      let captured: AbortSignal | undefined;
+      const refresh = vi.fn((_batch: ConnectorImportBatch, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        captured = signal;
+        signal.addEventListener('abort', () => reject(new ConnectorRequestError('aborted', { retryable })));
+      }));
+      return { refresh, get signal() { return captured; } };
+    }
+
+    it('stop() resolves within the shutdown drain budget even with a large in-flight Plex batch — bounded by shutdownDrainMs, NOT the scaled withTimeout budget (AC1)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: CONNECTOR_TIMEOUT_MS + 5_000, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const { refresh } = deferredRefresh(); // 500-path batch in flight, never settles on its own
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport'], 500));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts; in-flight in `draining`
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      let stopped = false;
+      const stopPromise = svc.stop().then(() => { stopped = true; });
+      await vi.advanceTimersByTimeAsync(DRAIN - 1);
+      expect(stopped).toBe(false); // still draining just under the budget
+      await vi.advanceTimersByTimeAsync(1); // budget elapses → bounded resolve (NOT the ~7.5M ms scaled budget)
+      await stopPromise;
+      expect(stopped).toBe(true);
+    });
+
+    it('aborts the in-flight refresh signal when the drain budget elapses (AC2)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const a = abortAwareRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(a.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      expect(a.signal?.aborted).toBe(false);
+
+      const stopPromise = svc.stop();
+      await vi.advanceTimersByTimeAsync(DRAIN);
+      await stopPromise;
+      expect(a.signal?.aborted).toBe(true);
+    });
+
+    it('a deadline abort does NOT burn a retry — even when the abort error is retryable (AC3)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 1_000, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      // retryable:true proves it's the ABORT, not retryability, that stops the retry.
+      const a = abortAwareRefresh(true);
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(a.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      const stopPromise = svc.stop();
+      await vi.advanceTimersByTimeAsync(DRAIN);
+      await stopPromise;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(a.refresh).toHaveBeenCalledTimes(1); // aborted attempt not retried
+    });
+
+    it('a chained draining tail does NOT start connector work after shutdown — dropped + warn-logged (AC4)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 2, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const a = abortAwareRefresh(); // active attempt rejects on abort so the chain unwinds
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(a.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      // Cap-triggered chain for ONE connector: #1 active, #2 queued behind it.
+      svc.enqueue(1, 'import', ITEM(1));
+      svc.enqueue(1, 'import', ITEM(2)); // cap → flush #1 (active)
+      svc.enqueue(1, 'import', ITEM(3));
+      svc.enqueue(1, 'import', ITEM(4)); // cap → flush #2 (chained tail)
+      await vi.advanceTimersByTimeAsync(0);
+      expect(a.refresh).toHaveBeenCalledTimes(1); // only #1 entered; #2 chained
+
+      const stopPromise = svc.stop();
+      await vi.advanceTimersByTimeAsync(DRAIN);
+      await stopPromise;
+      await vi.advanceTimersByTimeAsync(0); // let the active unwind + the tail short-circuit
+
+      // The tail must never enter refreshImport, even after the active attempt unwound.
+      expect(a.refresh).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorId: 1, reason: 'import', count: 2 }),
+        'Connector refresh dropped on shutdown',
+      );
+    });
+
+    it('warn-logs still-in-flight connectors as dropped at the drain deadline (AC5)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const { refresh } = deferredRefresh(); // never settles, ignores abort → still in flight at deadline
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      const stopPromise = svc.stop();
+      await vi.advanceTimersByTimeAsync(DRAIN);
+      await stopPromise;
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ connectorIds: [1], count: 1 }),
+        'Connector refreshes dropped at shutdown drain deadline',
+      );
+    });
+
+    it('a small batch that settles before the deadline drains fully — no premature abort, no dropped warn (regression)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const { refresh, gates } = deferredRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      let stopped = false;
+      const stopPromise = svc.stop().then(() => { stopped = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stopped).toBe(false);
+
+      gates[0]!(); // genuine completion well inside the budget
+      await stopPromise;
+      expect(stopped).toBe(true);
+      expect(log.warn).not.toHaveBeenCalled(); // no premature deadline abort / dropped warn
+    });
+
+    it('a second stop() after the first bounded stop returned is a no-op — does not re-warn the deadline (F7)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const { refresh } = deferredRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      const first = svc.stop();
+      await vi.advanceTimersByTimeAsync(DRAIN); // first resolves at the deadline (drops + warns once)
+      await first;
+
+      const warnMock = log.warn as unknown as ReturnType<typeof vi.fn>;
+      const deadlineWarns = () => warnMock.mock.calls.filter((c: unknown[]) => c[1] === 'Connector refreshes dropped at shutdown drain deadline');
+      expect(deadlineWarns()).toHaveLength(1);
+
+      await svc.stop(); // second call in the post-deadline window
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deadlineWarns()).toHaveLength(1); // not re-warned
+    });
   });
 
   // ── fan-out ──────────────────────────────────────────────────────────────────
