@@ -1,7 +1,7 @@
 import { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { type ConnectorService } from '../services';
-import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTypeSchema } from '../../shared/schemas.js';
+import { createConnectorSchema, makeUpdateConnectorSchema, connectorSettingsSchemas, connectorTargetsSettingsSchemas, connectorTypeSchema } from '../../shared/schemas.js';
 import { idParamSchema } from '../../shared/schemas.js';
 import { makeTestSchema, loosenSettingsSchemas } from '../utils/secret-codec.js';
 import { registerCrudRoutes } from './crud-routes.js';
@@ -37,8 +37,11 @@ export async function connectorsRoutes(app: FastifyInstance, connectorService: C
   });
 
   // POST /api/connectors/targets — populate the dropdown from an UNSAVED config.
-  // Sentinel-aware schema (with optional id) so masked secrets resolve against the saved row.
-  const targetsSchema = makeTestSchema(connectorConfigSchema, 'connector');
+  // Sentinel-aware schema (with optional id) so masked secrets resolve against the
+  // saved row. Uses the targets-scoped settings map so the selector field
+  // (libraryId/sectionId) — the very thing this fetch populates — is NOT required
+  // on a brand-new connector (#1523). Real connect fields are still validated.
+  const targetsSchema = makeTestSchema(connectorConfigSchema, 'connector', connectorTargetsSettingsSchemas);
   app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     '/api/connectors/targets',
     { schema: { body: targetsSchema } },
