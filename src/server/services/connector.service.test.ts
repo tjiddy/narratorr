@@ -4,7 +4,7 @@ import { ConnectorService } from './connector.service.js';
 import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 import { initializeKey, _resetKey, encrypt, isEncrypted, maskFields, makeTestSchema } from '../utils/secret-codec.js';
 import { createMockDbConnector } from '../__tests__/factories.js';
-import { connectorTypeSchema } from '../../shared/schemas/connector.js';
+import { connectorTypeSchema, connectorTargetsSettingsSchemas } from '../../shared/schemas/connector.js';
 import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch } from '../../core/connectors/index.js';
 import { CONNECTOR_TIMEOUT_MS } from '../../core/utils/constants.js';
 import type { ConnectorRow } from './types.js';
@@ -174,6 +174,33 @@ describe('ConnectorService', () => {
       const result = await service.listTargetsConfig({ type: 'audiobookshelf', settings: { baseUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib-1' } });
       expect(result).toEqual({ success: true, targets: [{ id: 'lib-1', name: 'Audiobooks' }] });
     });
+
+    // #1523 — a new connector fetches its dropdown before the selector is known.
+    // listTargetsConfig must build the adapter through the targets-scoped schema
+    // (selector optional), NOT the strict schema (which would throw on an empty
+    // libraryId/sectionId before the adapter is ever built).
+    it.each(['audiobookshelf', 'plex'] as const)(
+      'listTargetsConfig builds the %s adapter via the targets-scoped schema (empty selector)',
+      async (type) => {
+        const service = new ConnectorService(db as never, log as never);
+        const spy = vi
+          .spyOn(service as unknown as { adapterForConfig: (...a: unknown[]) => Promise<unknown> }, 'adapterForConfig')
+          .mockResolvedValue({
+            type,
+            test: vi.fn(),
+            listTargets: vi.fn().mockResolvedValue([{ id: 'sel-1', name: 'First' }]),
+            refreshImport: vi.fn(),
+          } as never);
+
+        const settings = type === 'audiobookshelf'
+          ? { baseUrl: 'http://abs.local', apiKey: 'k' }
+          : { baseUrl: 'http://plex.local', token: 't' };
+        const result = await service.listTargetsConfig({ type, settings });
+
+        expect(result).toEqual({ success: true, targets: [{ id: 'sel-1', name: 'First' }] });
+        expect(spy).toHaveBeenCalledWith({ type, settings }, connectorTargetsSettingsSchemas);
+      },
+    );
 
     it('listTargetsConfig translates a thrown ConnectorRequestError into a field-scoped envelope', async () => {
       const service = new ConnectorService(db as never, log as never);
