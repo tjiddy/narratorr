@@ -36,8 +36,15 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
   const { register, handleSubmit, setError, getValues, formState: { errors } } = form;
 
   const [targets, setTargets] = useState<ConnectorTarget[]>([]);
+  const [fetchedType, setFetchedType] = useState<ConnectorType | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');
+
+  // Gate fetched targets/errors to the type they were fetched for so a stale
+  // dropdown from one provider can't leak into another after a type switch
+  // (derived state — no reset effect needed).
+  const visibleTargets = fetchedType === selectedType ? targets : [];
+  const visibleFetchError = fetchedType === selectedType ? fetchError : '';
 
   // Map a field-scoped envelope onto the NESTED RHF paths (settings.*), routed by
   // the registry's declared settings keys. A flat setError('token') would NOT
@@ -59,16 +66,10 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formTestResult]);
 
-  // Reset fetched targets when the type changes so a stale dropdown from one
-  // provider can't leak into another.
-  useEffect(() => {
-    setTargets([]);
-    setFetchError('');
-  }, [selectedType]);
-
   async function handleFetchTargets() {
     setFetching(true);
     setFetchError('');
+    setFetchedType(selectedType);
     try {
       const settings = getValues('settings') as Record<string, unknown>;
       const result = await api.fetchConnectorTargets({
@@ -123,9 +124,9 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
         <ConnectorFields
           form={form}
           selectedType={selectedType}
-          targets={targets}
+          targets={visibleTargets}
           fetching={fetching}
-          fetchError={fetchError}
+          fetchError={visibleFetchError}
           onFetchTargets={handleFetchTargets}
         />
       </div>
