@@ -6,16 +6,18 @@ import { initializeKey, _resetKey, encrypt, isEncrypted, maskFields, makeTestSch
 import { createMockDbConnector } from '../__tests__/factories.js';
 import { connectorTypeSchema } from '../../shared/schemas/connector.js';
 import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch } from '../../core/connectors/index.js';
+import { CONNECTOR_TIMEOUT_MS } from '../../core/utils/constants.js';
 import type { ConnectorRow } from './types.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
-function stubAdapter(refresh: ConnectorAdapter['refreshImport']): ConnectorAdapter {
+function stubAdapter(refresh: ConnectorAdapter['refreshImport'], requestCount = 1): ConnectorAdapter {
   return {
     type: 'audiobookshelf',
     test: vi.fn().mockResolvedValue({ success: true }),
     listTargets: vi.fn().mockResolvedValue([]),
     refreshImport: refresh,
+    estimateRequestCount: vi.fn().mockReturnValue(requestCount),
   };
 }
 
@@ -361,6 +363,158 @@ describe('ConnectorService', () => {
 
       expect(captured?.aborted).toBe(true);
       expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
+    // ── multi-request-aware timeout (#1506 AC1): the outer watchdog scales with
+    //    the adapter's reported request count so a healthy multi-path Plex batch
+    //    is not aborted mid-flush ────────────────────────────────────────────────
+    it('scales the outer flush timeout by the adapter request count so a healthy multi-path batch is NOT aborted (AC1)', async () => {
+      const BASE = CONNECTOR_TIMEOUT_MS + 5_000;       // single-request budget + margin
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: BASE });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      // Reports 3 sequential requests; takes 2.5 per-request timeouts total — over
+      // the base budget but under the scaled budget (BASE + 2 * CONNECTOR_TIMEOUT_MS).
+      const work = 2.5 * CONNECTOR_TIMEOUT_MS;
+      const refresh = vi.fn((_b: ConnectorImportBatch, signal: AbortSignal) => new Promise((resolve, reject) => {
+        const t = setTimeout(() => resolve({ success: true }), work);
+        signal.addEventListener('abort', () => { clearTimeout(t); reject(new ConnectorRequestError('aborted', { retryable: false })); });
+      }));
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport'], 3));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts refreshImport
+      await vi.advanceTimersByTimeAsync(work);     // request completes before the scaled budget fires
+
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(log.warn).not.toHaveBeenCalled(); // not aborted, not logged as failed
+    });
+
+    it('control: the SAME long work aborts at the base budget when the adapter reports a single request (AC1)', async () => {
+      const BASE = CONNECTOR_TIMEOUT_MS + 5_000;
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: BASE });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      let captured: AbortSignal | undefined;
+      const refresh = vi.fn((_b: ConnectorImportBatch, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        captured = signal;
+        // Non-retryable so the abort doesn't trigger the retry path — keeps timing simple.
+        signal.addEventListener('abort', () => reject(new ConnectorRequestError('aborted', { retryable: false })));
+      }));
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(refresh as unknown as ConnectorAdapter['refreshImport'], 1));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+      await vi.advanceTimersByTimeAsync(BASE); // base single-request budget elapses → abort
+
+      expect(captured?.aborted).toBe(true);
+    });
+
+    // ── per-connector in-flight serialization (#1506 AC2) ───────────────────────
+    // A gated refreshImport that records peak concurrency per connector id.
+    function gatedRefresh() {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const gates: Array<() => void> = [];
+      const batches: ConnectorImportBatch[] = [];
+      const refresh = vi.fn((batch: ConnectorImportBatch) => {
+        batches.push(batch);
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return new Promise<{ success: true }>((resolve) => {
+          gates.push(() => { inFlight--; resolve({ success: true }); });
+        });
+      });
+      return { refresh, gates, batches, get maxInFlight() { return maxInFlight; } };
+    }
+
+    it('cap-triggered flushes for one connector serialize — refreshImport never overlaps (AC2)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 2 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const g = gatedRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(g.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      // Synchronous >maxBatchItems burst: the cap fires mid-flush, creating a fresh
+      // pending entry for the SAME connector while the first flush is in flight.
+      svc.enqueue(1, 'import', ITEM(1));
+      svc.enqueue(1, 'import', ITEM(2)); // cap → flush #1
+      svc.enqueue(1, 'import', ITEM(3));
+      svc.enqueue(1, 'import', ITEM(4)); // cap → flush #2 (chained behind #1)
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(g.refresh).toHaveBeenCalledTimes(1); // only #1 entered; #2 is chained
+      expect(g.maxInFlight).toBe(1);
+
+      g.gates[0]!();                          // release #1
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(g.refresh).toHaveBeenCalledTimes(2); // #2 now runs — still serial
+      expect(g.maxInFlight).toBe(1);
+      g.gates[1]!();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it('mixed-reason flushes for one connector serialize per connector id, not per (id, reason) key (F1)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const g = gatedRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(g.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      // Two distinct reasons (separate pending keys) for the SAME connector id.
+      svc.enqueue(1, 'import', ITEM(1));
+      svc.enqueue(1, 'restored', ITEM(2));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE); // both debounce timers fire → two flushes
+
+      expect(g.refresh).toHaveBeenCalledTimes(1); // second reason chained behind the first
+      expect(g.maxInFlight).toBe(1);
+
+      g.gates[0]!();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(g.refresh).toHaveBeenCalledTimes(2);
+      expect(g.maxInFlight).toBe(1);
+      expect(new Set(g.batches.map((b) => b.reason))).toEqual(new Set(['import', 'restored']));
+      g.gates[1]!();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it('different connector ids flush concurrently — serialization is per connector, not a global lock (AC2)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const g = gatedRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(g.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1));
+      svc.enqueue(2, 'import', ITEM(2));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
+
+      expect(g.refresh).toHaveBeenCalledTimes(2); // both connectors run in parallel
+      expect(g.maxInFlight).toBe(2);
+      g.gates.forEach((release) => release());
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    it('an item enqueued while a flush is in flight is re-coalesced into a fresh batch, never dropped (AC2 boundary)', async () => {
+      const svc = new ConnectorService(db as never, log as never, { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 1 });
+      vi.spyOn(svc, 'getById').mockImplementation(async (id: number) => connectorRow(id));
+      const g = gatedRefresh();
+      vi.spyOn(svc, 'getAdapter').mockReturnValue(stubAdapter(g.refresh as unknown as ConnectorAdapter['refreshImport']));
+
+      svc.enqueue(1, 'import', ITEM(1)); // maxBatchItems=1 → immediate flush #1
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.refresh).toHaveBeenCalledTimes(1); // #1 in flight (gated)
+
+      // New item arrives during the in-flight window → fresh pending entry, immediate
+      // flush (cap=1), chained behind the in-flight #1 rather than lost.
+      svc.enqueue(1, 'import', ITEM(2));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(g.refresh).toHaveBeenCalledTimes(1); // still serialized — #2 chained, not entered
+
+      g.gates[0]!();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(g.refresh).toHaveBeenCalledTimes(2);
+      expect(g.batches.map((b) => b.items.map((i) => i.bookId))).toEqual([[1], [2]]); // item 2 NOT dropped
+      g.gates[1]!();
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     it('logs a redacted URL (no apiKey) and does not throw when retries are exhausted', async () => {

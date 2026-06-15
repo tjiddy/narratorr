@@ -78,6 +78,12 @@ interface PendingFlush {
 export class ConnectorService {
   private adapters = new AdapterCache<ConnectorAdapter>();
   private pending = new Map<string, PendingFlush>();
+  // Per-connector-id tail of the in-flight flush chain. Serializes flushes for
+  // the SAME connector (a cap-triggered flush chains behind any in-flight one)
+  // while keeping DIFFERENT connector ids fully parallel. Keyed by connectorId,
+  // NOT by the `${connectorId}:${reason}` pending key, so mixed-reason flushes
+  // for one connector (e.g. import + restored) also serialize.
+  private draining = new Map<number, Promise<void>>();
   private readonly debounceMs: number;
   private readonly backoffMs: number;
   private readonly flushTimeoutMs: number;
@@ -289,7 +295,19 @@ export class ConnectorService {
     if (entry.items.length >= this.maxBatchItems) void this.flush(key);
   }
 
-  private async flush(key: string): Promise<void> {
+  /**
+   * Dequeue the pending batch for `key` and run it — but SERIALIZED per connector
+   * id. `flush()` itself is synchronous: it detaches the batch (clears timers,
+   * deletes the pending entry) and chains the actual adapter work behind any
+   * in-flight flush for the SAME connector. This closes the cap-burst race: a
+   * cap-triggered flush deletes its pending entry BEFORE awaiting adapter work, so
+   * a synchronous >maxBatchItems burst can create a fresh pending entry for the
+   * same connector while the first flush is still running — without this chain the
+   * two flushes would run concurrent `refreshImport` calls (and concurrent
+   * sequential path loops) against one provider. Chaining (not a global lock)
+   * leaves DIFFERENT connector ids fully parallel.
+   */
+  private flush(key: string): void {
     const entry = this.pending.get(key);
     if (!entry) return;
     // Clear BOTH timers so the surviving one (the bound that didn't fire) can't
@@ -298,6 +316,20 @@ export class ConnectorService {
     clearTimeout(entry.deadlineTimer);
     this.pending.delete(key);
 
+    // executeFlush() never rejects (full try/catch), so the chain stays resolved
+    // and a failing flush can't break serialization for the next batch.
+    const prior = this.draining.get(entry.connectorId) ?? Promise.resolve();
+    const next = prior.then(() => this.executeFlush(entry));
+    this.draining.set(entry.connectorId, next);
+    // Drop the chain tail once it settles — but only if a later flush hasn't
+    // already extended it (else we'd delete a still-pending tail and lose
+    // serialization for the rest of the burst).
+    void next.finally(() => {
+      if (this.draining.get(entry.connectorId) === next) this.draining.delete(entry.connectorId);
+    });
+  }
+
+  private async executeFlush(entry: PendingFlush): Promise<void> {
     // The connector resolve + adapter build live INSIDE the try so a drifted
     // settings row (ZodError), an unknown connector type, or a getById DB error
     // folds into the warn-log path instead of escaping this detached flush as an
@@ -310,11 +342,14 @@ export class ConnectorService {
       const adapter = this.getAdapter(connector);
       const batch = { reason: entry.reason, items: entry.items };
       const logCtx = { connectorId: connector.id, connectorType: connector.type, reason: entry.reason, count: entry.items.length };
+      // Scale the outer watchdog to how many sequential requests this batch will
+      // make so a multi-request provider (Plex) is not aborted mid-flush.
+      const requestCount = Math.max(1, adapter.estimateRequestCount(batch));
       // Capture the result: a resolved { success: false } is a completed-but-
       // rejected provider response (non-retryable) and must NOT read as a
       // successful dispatch; a success message (e.g. Plex skip counts) is logged.
       const result = await requestWithRetry(
-        () => this.withTimeout((signal) => adapter.refreshImport(batch, signal)),
+        () => this.withTimeout((signal) => adapter.refreshImport(batch, signal), requestCount),
         {
           maxRetries: 1,
           delayMs: this.backoffMs,
@@ -353,16 +388,30 @@ export class ConnectorService {
    * fetches (Plex) actually cancels in-flight work rather than leaving it racing
    * (the prior Promise.race could not stop already-started work). 0 disables the
    * timeout; the signal is still passed (never aborts).
+   *
+   * The budget is MULTI-REQUEST-AWARE: `flushTimeoutMs` budgets ONE request plus
+   * margin (the historical default is `CONNECTOR_TIMEOUT_MS + 5s`), and each
+   * ADDITIONAL sequential request the adapter reports via `requestCount` (Plex
+   * issues one per distinct server path, sequentially) adds a full
+   * `CONNECTOR_TIMEOUT_MS`. Prior reviewers rated the flat single-request budget
+   * "correct" — and it IS, but only for single-request adapters: at
+   * requestCount === 1 the budget is identical to before, so ABS is unchanged.
+   * Without this scaling a healthy Plex batch whose cumulative (yet individually
+   * in-budget) request time exceeds ~20s tripped the outer abort and logged a
+   * spurious failure. `fetchWithTimeout` still bounds each individual HTTP request
+   * inside the adapter; this watchdog only fires if a whole attempt hangs past its
+   * scaled budget.
    */
-  private async withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, requestCount: number): Promise<T> {
     const controller = new AbortController();
     if (this.flushTimeoutMs <= 0) return fn(controller.signal);
+    const budgetMs = this.flushTimeoutMs + Math.max(0, requestCount - 1) * CONNECTOR_TIMEOUT_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         controller.abort();
         reject(new ConnectorRequestError('Connector refresh timed out', { retryable: true }));
-      }, this.flushTimeoutMs);
+      }, budgetMs);
     });
     try {
       return await Promise.race([fn(controller.signal), timeout]);

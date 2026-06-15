@@ -204,6 +204,40 @@ export class PlexConnector implements ConnectorAdapter {
    * no-derivable-path items ride the success message (never success:false/throw).
    */
   async refreshImport(batch: ConnectorImportBatch, signal: AbortSignal): Promise<ConnectorRefreshResult> {
+    const { distinctPaths, skipped } = this.planRequests(batch);
+
+    for (const serverPath of distinctPaths) {
+      await this.issueRefresh(this.targetedRefreshUrl(serverPath), signal);
+    }
+
+    if (skipped > 0 && this.fallbackToFullRefresh) {
+      await this.issueRefresh(this.sectionRefreshUrl(), signal);
+      return { success: true, message: `refreshed ${distinctPaths.length} paths, ${skipped} no-derivable-path items via full section refresh` };
+    }
+
+    const message = skipped > 0
+      ? `refreshed ${distinctPaths.length} paths, skipped ${skipped} items`
+      : `refreshed ${distinctPaths.length} paths`;
+    return { success: true, message };
+  }
+
+  /**
+   * One request per distinct derivable server path, plus one more when skipped
+   * (no-derivable-path) items trigger the section-wide fallback. Mirrors
+   * planRequests / refreshImport exactly so the service's scaled flush-timeout
+   * budget matches the work this batch will actually do. Pure: no I/O.
+   */
+  estimateRequestCount(batch: ConnectorImportBatch): number {
+    const { distinctPaths, skipped } = this.planRequests(batch);
+    return distinctPaths.length + (skipped > 0 && this.fallbackToFullRefresh ? 1 : 0);
+  }
+
+  /**
+   * Resolve a batch to its request plan: the distinct derivable Plex server paths
+   * (each becomes one targeted refresh) and the count of no-derivable-path items
+   * (skipped, or collapsed to a single section-wide refresh when the fallback is on).
+   */
+  private planRequests(batch: ConnectorImportBatch): { distinctPaths: string[]; skipped: number } {
     const distinctPaths = new Set<string>();
     let skipped = 0;
     for (const item of batch.items) {
@@ -214,20 +248,7 @@ export class PlexConnector implements ConnectorAdapter {
       }
       distinctPaths.add(serverPath);
     }
-
-    for (const serverPath of distinctPaths) {
-      await this.issueRefresh(this.targetedRefreshUrl(serverPath), signal);
-    }
-
-    if (skipped > 0 && this.fallbackToFullRefresh) {
-      await this.issueRefresh(this.sectionRefreshUrl(), signal);
-      return { success: true, message: `refreshed ${distinctPaths.size} paths, ${skipped} no-derivable-path items via full section refresh` };
-    }
-
-    const message = skipped > 0
-      ? `refreshed ${distinctPaths.size} paths, skipped ${skipped} items`
-      : `refreshed ${distinctPaths.size} paths`;
-    return { success: true, message };
+    return { distinctPaths: [...distinctPaths], skipped };
   }
 
   private targetedRefreshUrl(serverPath: string): string {

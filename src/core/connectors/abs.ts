@@ -136,4 +136,9 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
     if (!res.ok) throw classifyStatus(res.status, 'libraryId');
     return { success: true };
   }
+
+  /** Always one request — a single full library scan, regardless of batch size (ABS ignores item paths). */
+  estimateRequestCount(): number {
+    return 1;
+  }
 }
