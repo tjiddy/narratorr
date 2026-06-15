@@ -185,13 +185,15 @@ async function main() {
   await services.importQueueWorker.start();
 
   // Start background jobs (includes download startup recovery which may re-enqueue downloads)
-  startJobs(db, services, app.log);
+  const jobScheduler = startJobs(db, services, app.log);
 
   // Graceful shutdown — ensures port is released on tsx watch restarts. The
-  // ordered teardown (import worker → connector queue drain → app.close) lives in
-  // gracefulShutdown() so its contract is unit-tested without booting the server.
+  // ordered teardown (job scheduler stop → import worker → connector queue drain →
+  // app.close) lives in gracefulShutdown() so its contract is unit-tested without
+  // booting the server. The scheduler stop runs first so no cron/timeout callback
+  // can enqueue work into the queues being drained (#1515).
   const shutdown = async () => {
-    await gracefulShutdown(app, services);
+    await gracefulShutdown(app, services, jobScheduler);
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

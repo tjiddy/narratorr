@@ -36,7 +36,26 @@ interface TimeoutJob {
 
 type JobEntry = CronJob | TimeoutJob;
 
-export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
+/** Stoppable handle for a single timeout-loop job (see `scheduleTimeoutLoop`). */
+interface TimeoutLoopHandle {
+  stop(): void;
+}
+
+/**
+ * Handle returned by `startJobs` so the graceful-shutdown path can halt the
+ * scheduler. BEST-EFFORT / GRACEFUL-ONLY: `stopAll` stops clean firing during a
+ * graceful shutdown — it has no durable backing and makes no guarantee against a
+ * hard crash (SIGKILL/OOM), mirroring the connector refresh queue's contract
+ * (see CLAUDE.md "Connector refresh queue is best-effort, in-memory", #769/#877/
+ * #885). It does NOT drain in-flight work; it just guarantees no scheduled job
+ * fires again once invoked.
+ */
+export interface JobScheduler {
+  /** Stop every cron + timeout-loop job. Idempotent — a second call is a no-op. */
+  stopAll(): void;
+}
+
+export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): JobScheduler {
   // RetrySearchDeps is constructed once in createServices() and exposed on the
   // Services bag so jobs and the composition root share the same instance.
   const retryDeps = {
@@ -97,14 +116,19 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
 
   const reg = services.taskRegistry;
 
+  // Capture every scheduler handle so `stopAll` can halt them on shutdown. Both
+  // collections are append-only here and only read by `stopAll`.
+  const cronHandles: Cron[] = [];
+  const timeoutHandles: TimeoutLoopHandle[] = [];
+
   for (const job of jobRegistry) {
     const fn = job.callback as () => Promise<unknown>;
     if (job.type === 'cron') {
       reg.register(job.name, 'cron', fn, job.schedule);
-      scheduleCron(reg, job.name, job.schedule, log);
+      cronHandles.push(scheduleCron(reg, job.name, job.schedule, log));
     } else {
       reg.register(job.name, 'timeout', fn);
-      scheduleTimeoutLoop(reg, job.name, job.getIntervalMinutes, log);
+      timeoutHandles.push(scheduleTimeoutLoop(reg, job.name, job.getIntervalMinutes, log));
     }
   }
 
@@ -127,6 +151,21 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   reg.runTask('version-check').catch((error: unknown) => {
     log.error({ error: serializeError(error) }, 'Startup version check failed — jobs continue normally');
   });
+
+  // Best-effort, graceful-only scheduler stop (see JobScheduler doc). Memoized via
+  // `stopped` so a second call is a true no-op: it never re-invokes `Cron.stop()`
+  // or a timeout handle's stop. `gracefulShutdown` calls this FIRST — before the
+  // import-worker / connector drains — so no cron or timeout callback can enqueue
+  // new import jobs or connector refreshes while those drains are awaiting.
+  let stopped = false;
+  const stopAll = (): void => {
+    if (stopped) return;
+    stopped = true;
+    for (const cron of cronHandles) cron.stop();
+    for (const handle of timeoutHandles) handle.stop();
+  };
+
+  return { stopAll };
 }
 
 async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLogger): Promise<void> {
@@ -179,19 +218,42 @@ export function scheduleCron(reg: TaskRegistry, name: string, expression: string
   return job;
 }
 
+/**
+ * Schedule a self-re-arming `setTimeout` loop and return a stoppable handle.
+ *
+ * `stop()` clears the pending timer AND sets a `stopped` flag closed over by
+ * `scheduleNext`, so once stopped the loop never schedules another tick or fires
+ * its callback again — even if a timer was already pending or a tick's macrotask
+ * was already queued at the moment of stop (the callback short-circuits on the
+ * flag). Both `setTimeout` sites (the main interval and the retry-on-error timer)
+ * are captured and `unref()`'d so a pending tick can't pin the event loop past
+ * SIGTERM, mirroring the connector refresh queue's timers (#1498/#1512).
+ */
 function scheduleTimeoutLoop(
   reg: TaskRegistry,
   name: string,
   getIntervalMinutes: () => Promise<number>,
   log: FastifyBaseLogger,
-): void {
+): TimeoutLoopHandle {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+
+  // Arm a timer that does not keep the event loop alive (see doc above).
+  const arm = (fn: () => void, ms: number): void => {
+    timer = setTimeout(fn, ms);
+    timer.unref();
+  };
+
   async function scheduleNext() {
+    if (stopped) return;
     try {
       const intervalMinutes = await getIntervalMinutes();
       const intervalMs = intervalMinutes * 60 * 1000;
+      if (stopped) return; // could have stopped while awaiting the interval read
       reg.setNextRun(name, new Date(Date.now() + intervalMs));
 
-      setTimeout(async () => {
+      arm(async () => {
+        if (stopped) return; // a queued tick must not fire after stop
         try {
           await reg.executeTracked(name);
         } catch (error: unknown) {
@@ -201,9 +263,17 @@ function scheduleTimeoutLoop(
       }, intervalMs);
     } catch (error: unknown) {
       log.error({ error: serializeError(error) }, `Failed to read ${name} interval, retrying in 5 minutes`);
-      setTimeout(scheduleNext, 5 * 60 * 1000);
+      if (stopped) return;
+      arm(scheduleNext, 5 * 60 * 1000);
     }
   }
 
   scheduleNext();
+
+  return {
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
 }

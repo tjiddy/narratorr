@@ -1102,4 +1102,137 @@ describe('startJobs', () => {
       expect(task!.nextRun).toBe(prior.toISOString());
     });
   });
+
+  // #1515 — startJobs returns a best-effort, graceful-only `stopAll` so the
+  // shutdown path can halt every cron + timeout-loop before the awaited drains.
+  describe('scheduler stop (#1515)', () => {
+    /** Wait until the timeout-loop with the (unique) backup interval has armed `n` timers. */
+    async function waitForBackupTimers(spy: ReturnType<typeof vi.spyOn>, n: number, ms: number): Promise<void> {
+      await vi.waitFor(() => {
+        const calls = (spy.mock.calls as Array<[unknown, number]>).filter(([, d]) => d === ms);
+        expect(calls.length).toBe(n);
+      });
+    }
+
+    const BACKUP_MS = 60 * 60 * 1000; // backup is the only 60-minute timeout-loop job
+
+    it('stopAll() calls Cron.stop() exactly once on every constructed cron', async () => {
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      // Crons are constructed synchronously in the registration loop.
+      const stopSpies = cronInstances.map((c) => vi.spyOn(c, 'stop'));
+      expect(stopSpies.length).toBeGreaterThan(0);
+
+      scheduler.stopAll();
+
+      for (const s of stopSpies) expect(s).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopAll() is idempotent — a second call does not re-stop the crons and does not throw', async () => {
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      const stopSpies = cronInstances.map((c) => vi.spyOn(c, 'stop'));
+
+      scheduler.stopAll();
+      expect(() => scheduler.stopAll()).not.toThrow();
+
+      for (const s of stopSpies) expect(s).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopAll() cancels a pending timeout-loop tick — its callback does not fire and does not re-arm', async () => {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const execSpy = vi.spyOn(services.taskRegistry, 'executeTracked');
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await waitForBackupTimers(setTimeoutSpy, 1, BACKUP_MS);
+      const tick = setTimeoutSpy.mock.calls.find(([, d]) => d === BACKUP_MS)![0] as () => Promise<void>;
+
+      scheduler.stopAll();
+      const execCallsBefore = execSpy.mock.calls.length;
+      const setTimeoutCallsBefore = setTimeoutSpy.mock.calls.length;
+
+      // Simulate the already-pending timer firing after stop: it must short-circuit.
+      await tick();
+
+      expect(execSpy.mock.calls.length).toBe(execCallsBefore); // executeTracked never ran
+      expect(setTimeoutSpy.mock.calls.length).toBe(setTimeoutCallsBefore); // scheduleNext did not re-arm
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('a tick that fired before stopAll re-armed, but stopAll halts that re-armed tick', async () => {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const execSpy = vi.spyOn(services.taskRegistry, 'executeTracked').mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await waitForBackupTimers(setTimeoutSpy, 1, BACKUP_MS);
+      const firstTick = setTimeoutSpy.mock.calls.find(([, d]) => d === BACKUP_MS)![0] as () => Promise<void>;
+
+      // Let one tick fire: executeTracked('backup') runs and scheduleNext re-arms.
+      await firstTick();
+      expect(execSpy).toHaveBeenCalledWith('backup');
+      await waitForBackupTimers(setTimeoutSpy, 2, BACKUP_MS);
+      const secondTick = (setTimeoutSpy.mock.calls.filter(([, d]) => d === BACKUP_MS)[1]![0]) as () => Promise<void>;
+
+      // Stop, then the re-armed tick fires — it must short-circuit (no further run).
+      scheduler.stopAll();
+      const backupCallsBefore = execSpy.mock.calls.filter((c) => c[0] === 'backup').length;
+      await secondTick();
+      expect(execSpy.mock.calls.filter((c) => c[0] === 'backup').length).toBe(backupCallsBefore);
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('unref()s the timeout-loop timers so a pending tick does not pin the event loop past SIGTERM', async () => {
+      const unrefs: Array<ReturnType<typeof vi.fn>> = [];
+      const realSetTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+        const handle = realSetTimeout(fn, ms) as ReturnType<typeof setTimeout>;
+        const origUnref = handle.unref.bind(handle);
+        const u = vi.fn(() => origUnref());
+        handle.unref = u as unknown as typeof handle.unref;
+        unrefs.push(u);
+        return handle;
+      }) as unknown as typeof setTimeout);
+      try {
+        const { startJobs } = await import('./index.js');
+        startJobs(injectHelper<Db>(db), services, log);
+
+        // Four timeout-loop jobs (search, rss, backup, discovery) each arm + unref()
+        // their initial timer. Wait until at least that many unref()'d timers exist.
+        await vi.waitFor(() => {
+          const unreffed = unrefs.filter((u) => u.mock.calls.length === 1);
+          expect(unreffed.length).toBeGreaterThanOrEqual(4);
+        });
+      } finally {
+        vi.mocked(globalThis.setTimeout).mockRestore();
+      }
+    });
+
+    it('no timeout-loop job fires its service work after stopAll', async () => {
+      const { runBackupJob } = await import('./backup.js');
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await waitForBackupTimers(setTimeoutSpy, 1, BACKUP_MS);
+      const tick = setTimeoutSpy.mock.calls.find(([, d]) => d === BACKUP_MS)![0] as () => Promise<void>;
+
+      scheduler.stopAll();
+      await tick();
+
+      // executeTracked never ran the registered backup callback, so the service
+      // work (runBackupJob) was never invoked post-shutdown.
+      expect(runBackupJob).not.toHaveBeenCalled();
+
+      setTimeoutSpy.mockRestore();
+    });
+  });
 });
