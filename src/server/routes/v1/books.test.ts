@@ -16,9 +16,14 @@ import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.
 import { v1BooksRoutes } from './books.js';
 import { bookV1Schema } from '../../../shared/schemas/v1/books.js';
 import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors auth.plugin.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
+
+// The immediate-search trigger is fire-and-forget; mock it so we can assert
+// whether the operator-gated branch invoked it without touching real services.
+vi.mock('../../services/trigger-immediate-search.js', () => ({ triggerImmediateSearch: vi.fn() }));
 
 const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
@@ -35,6 +40,23 @@ function hydratedRow(overrides?: Record<string, unknown>) {
   };
 }
 
+/** An ok `BookMetadata` record as `lookupForFixMatch` returns it. */
+function metaBook(overrides?: Record<string, unknown>) {
+  return {
+    asin: 'B0ASIN12345',
+    title: 'The Way of Kings',
+    authors: [{ name: 'Brandon Sanderson' }],
+    narrators: ['Michael Kramer', 'Kate Reading'],
+    description: 'An epic fantasy',
+    coverUrl: 'https://example.test/cover.jpg',
+    seriesPrimary: { name: 'Stormlight', position: 1, asin: 'B0SERIES000' },
+    duration: 2734,
+    genres: ['Fantasy'],
+    providerId: 'audible:B0ASIN12345',
+    ...overrides,
+  };
+}
+
 const authService = {
   validateApiKey: vi.fn().mockResolvedValue(true),
   getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
@@ -47,8 +69,27 @@ const authService = {
 } as unknown as AuthService;
 
 const bookListService = { getAll: vi.fn() } as unknown as BookListService;
-const bookService = { getById: vi.fn() } as unknown as BookService;
+const bookService = { getById: vi.fn(), findDuplicate: vi.fn(), create: vi.fn() } as unknown as BookService;
+const metadataService = { lookupForFixMatch: vi.fn() };
+const settingsService = { get: vi.fn() };
+const eventHistory = { create: vi.fn() };
 const db = createMockDb();
+
+/** The full POST dep set. Search-path services are unused stubs because the
+ *  immediate-search trigger itself is mocked at the module boundary. */
+function postDeps() {
+  return {
+    bookService,
+    bookListService,
+    metadataService: metadataService as never,
+    settingsService: settingsService as never,
+    eventHistory: eventHistory as never,
+    downloadOrchestrator: {} as never,
+    indexerSearchService: {} as never,
+    indexerService: {} as never,
+    blacklistService: {} as never,
+  };
+}
 
 describe('v1 books routes', () => {
   let app: FastifyInstance;
@@ -59,7 +100,7 @@ describe('v1 books routes', () => {
     app.setSerializerCompiler(serializerCompiler);
     await app.register(cookie);
     await app.register(authPlugin, { authService });
-    await v1BooksRoutes(app, { bookService, bookListService }, inject<Db>(db));
+    await v1BooksRoutes(app, postDeps(), inject<Db>(db));
     await app.ready();
   });
 
@@ -71,6 +112,11 @@ describe('v1 books routes', () => {
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (bookListService.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
     (bookService.getById as Mock).mockResolvedValue(null);
+    (bookService.findDuplicate as Mock).mockResolvedValue(null);
+    (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
+    (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'ok', book: metaBook() });
+    (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false });
+    (eventHistory.create as Mock).mockResolvedValue(undefined);
     db.select.mockReturnValue(mockDbChain([]));
   });
 
@@ -207,6 +253,161 @@ describe('v1 books routes', () => {
       expectV1Envelope(res.json());
       // The numeric value never reached getById — resolution failed first.
       expect(bookService.getById as Mock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/v1/books (add-by-ASIN, #1520)', () => {
+    const ASIN = 'B0ASIN12345';
+    const post = async (body: object) =>
+      app.inject({ method: 'POST', url: '/api/v1/books', headers: keyHeaders, payload: body });
+
+    it('201: creates the book and returns a strict BookV1 (search OFF)', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false });
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(bookV1Schema.parse(body)).toBeTruthy();
+      // DTO no-leak: exactly the BookV1 keys, nothing internal.
+      expect(Object.keys(body).sort()).toEqual(['authors', 'id', 'narrators', 'series', 'status', 'title']);
+      expect(body).not.toHaveProperty('asin');
+      expect(body).not.toHaveProperty('lastGrabInfoHash');
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+      expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('201: fires the immediate search when searchImmediately AND status==wanted', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: true });
+      const created = hydratedRow({ status: 'wanted' });
+      (bookService.create as Mock).mockResolvedValue(created);
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      expect(triggerImmediateSearch as Mock).toHaveBeenCalledTimes(1);
+      const [bookArg] = (triggerImmediateSearch as Mock).mock.calls[0]!;
+      expect(bookArg).toBe(created);
+    });
+
+    it('does NOT fire the immediate search when status != wanted (gate respects status)', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: true });
+      (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'imported' }));
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+    });
+
+    it('persists the requested ASIN even when the provider record omits asin (retry safety)', async () => {
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'ok', book: metaBook({ asin: undefined }) });
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      const [payload] = (bookService.create as Mock).mock.calls[0]!;
+      expect(payload.asin).toBe(ASIN);
+    });
+
+    it('maps the metadata record onto the create payload (series from seriesPrimary)', async () => {
+      await post({ asin: ASIN });
+
+      const [payload] = (bookService.create as Mock).mock.calls[0]!;
+      expect(payload).toMatchObject({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: ['Michael Kramer', 'Kate Reading'],
+        seriesName: 'Stormlight',
+        seriesPosition: 1,
+        seriesAsin: 'B0SERIES000',
+        seriesProvider: 'audible',
+        providerId: 'audible:B0ASIN12345',
+      });
+    });
+
+    it('records a manual book_added event', async () => {
+      await post({ asin: ASIN });
+
+      expect(eventHistory.create as Mock).toHaveBeenCalledTimes(1);
+      const [event] = (eventHistory.create as Mock).mock.calls[0]!;
+      expect(event).toMatchObject({ eventType: 'book_added', source: 'manual' });
+    });
+
+    it('409: an existing ASIN returns book_exists + existingId, no create/search', async () => {
+      (bookService.findDuplicate as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_existing0000000000' }));
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(409);
+      const body = res.json();
+      expect(body.error.code).toBe('book_exists');
+      expect(typeof body.error.message).toBe('string');
+      expect(body.existingId).toBe('bk_existing0000000000');
+      expect(bookService.findDuplicate as Mock).toHaveBeenCalledWith('', undefined, ASIN);
+      expect(bookService.create as Mock).not.toHaveBeenCalled();
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+    });
+
+    it.each([['not_found'], ['invalid_record']])(
+      '422: provider %s maps to the v1 envelope, no create',
+      async (kind) => {
+        (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(422);
+        expectV1Envelope(res.json());
+        expect(bookService.create as Mock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('429: provider rate_limited maps to the v1 envelope with Retry-After', async () => {
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 5000 });
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(429);
+      expectV1Envelope(res.json());
+      expect(res.headers['retry-after']).toBe('5');
+      expect(bookService.create as Mock).not.toHaveBeenCalled();
+    });
+
+    it('502: provider transient_failure maps to a 5xx v1 envelope', async () => {
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'transient_failure', message: 'boom' });
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(502);
+      expectV1Envelope(res.json());
+      expect(bookService.create as Mock).not.toHaveBeenCalled();
+    });
+
+    it('400: rejects an extra key beyond { asin } (strict request)', async () => {
+      const res = await post({ asin: ASIN, title: 'sneaky' });
+
+      expect(res.statusCode).toBe(400);
+      expectV1Envelope(res.json());
+      expect(metadataService.lookupForFixMatch as Mock).not.toHaveBeenCalled();
+    });
+
+    it.each([[''], ['   ']])(
+      '400: rejects a blank/whitespace ASIN (%j) before any lookup',
+      async (asin) => {
+        const res = await post({ asin });
+
+        expect(res.statusCode).toBe(400);
+        expectV1Envelope(res.json());
+        expect(metadataService.lookupForFixMatch as Mock).not.toHaveBeenCalled();
+        expect(bookService.findDuplicate as Mock).not.toHaveBeenCalled();
+        expect(bookService.create as Mock).not.toHaveBeenCalled();
+      },
+    );
+
+    it('400: rejects a missing asin', async () => {
+      const res = await post({});
+      expect(res.statusCode).toBe(400);
+      expectV1Envelope(res.json());
     });
   });
 
