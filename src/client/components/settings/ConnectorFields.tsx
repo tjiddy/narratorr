@@ -137,8 +137,14 @@ function SelectField({ field, form, error, targets, fetching, fetchError, onFetc
   );
 }
 
+type PathMappingRowError = { localPath?: FieldError; serverPath?: FieldError };
+
 function PathMappingsField({ form, field }: { form: ConnectorForm; field: ConnectorSettingsField }) {
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'settings.pathMappings' });
+  // zodResolver reports partial-row violations at settings.pathMappings.${i}.*;
+  // surface them inline beside the offending input (CreateConnectorFormData's
+  // nested shape isn't reflected in the bare RHF error type, hence the cast).
+  const rowErrors = (form.formState.errors.settings as { pathMappings?: PathMappingRowError[] } | undefined)?.pathMappings;
   return (
     <div className="sm:col-span-2">
       <label className="block text-sm font-medium mb-2">{field.label}</label>
@@ -146,31 +152,44 @@ function PathMappingsField({ form, field }: { form: ConnectorForm; field: Connec
         Map narratorr library paths to the path the media server sees. Docker/LAN servers usually need an explicit mapping.
       </p>
       <div className="space-y-2">
-        {fields.map((row, index) => (
-          <div key={row.id} className="flex gap-2 items-center">
-            <input
-              type="text"
-              {...form.register(`settings.pathMappings.${index}.localPath`)}
-              className={inputClass}
-              placeholder="/library/audiobooks"
-            />
-            <span className="text-muted-foreground">→</span>
-            <input
-              type="text"
-              {...form.register(`settings.pathMappings.${index}.serverPath`)}
-              className={inputClass}
-              placeholder="/data/audiobooks"
-            />
-            <button
-              type="button"
-              onClick={() => remove(index)}
-              className={`${btnSecondary} bg-muted hover:bg-muted/80 whitespace-nowrap`}
-              aria-label="Remove path mapping"
-            >
-              Remove
-            </button>
-          </div>
-        ))}
+        {fields.map((row, index) => {
+          const rowError = rowErrors?.[index];
+          return (
+            <div key={row.id}>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  {...form.register(`settings.pathMappings.${index}.localPath`)}
+                  className={inputClass}
+                  aria-invalid={rowError?.localPath ? true : undefined}
+                  placeholder="/library/audiobooks"
+                />
+                <span className="text-muted-foreground">→</span>
+                <input
+                  type="text"
+                  {...form.register(`settings.pathMappings.${index}.serverPath`)}
+                  className={inputClass}
+                  aria-invalid={rowError?.serverPath ? true : undefined}
+                  placeholder="/data/audiobooks"
+                />
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  className={`${btnSecondary} bg-muted hover:bg-muted/80 whitespace-nowrap`}
+                  aria-label="Remove path mapping"
+                >
+                  Remove
+                </button>
+              </div>
+              {(rowError?.localPath || rowError?.serverPath) && (
+                <div className="flex gap-2 mt-1">
+                  <p className="flex-1 text-sm text-destructive">{rowError?.localPath?.message}</p>
+                  <p className="flex-1 text-sm text-destructive">{rowError?.serverPath?.message}</p>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <button
         type="button"

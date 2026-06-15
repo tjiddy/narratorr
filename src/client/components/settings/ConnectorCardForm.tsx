@@ -33,7 +33,24 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
     form, isEdit, selectedType, editingId,
     onSubmit, onFormTest, onCancel, isPending, testingForm, formTestResult,
   } = props;
-  const { register, handleSubmit, setError, getValues, formState: { errors } } = form;
+  const { register, handleSubmit, setError, getValues, setValue, formState: { errors } } = form;
+
+  // Drop fully-blank path-mapping rows BEFORE zodResolver runs. RHF invokes the
+  // resolver inside handleSubmit (before onSubmit), and the form schema now
+  // enforces .trim().min(1) on both row fields — so an all-blank appended row
+  // would otherwise fail validation and block the submit. Pruning here turns an
+  // all-blank set into [] (passthrough-only) while leaving partial rows (one side
+  // filled) in place for zodResolver to flag inline beside the missing field.
+  function pruneBlankPathMappings() {
+    const rows = getValues('settings.pathMappings');
+    if (!Array.isArray(rows)) return;
+    const pruned = rows.filter(
+      (r) => (r?.localPath ?? '').trim() !== '' || (r?.serverPath ?? '').trim() !== '',
+    );
+    if (pruned.length !== rows.length) {
+      setValue('settings.pathMappings', pruned, { shouldValidate: false });
+    }
+  }
 
   const [targets, setTargets] = useState<ConnectorTarget[]>([]);
   const [fetchedType, setFetchedType] = useState<ConnectorType | null>(null);
@@ -92,7 +109,14 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        pruneBlankPathMappings();
+        void handleSubmit(onSubmit)(e);
+      }}
+      className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5"
+    >
       <h3 className="font-display text-lg font-semibold">
         {isEdit ? 'Edit Connector' : 'Add New Connector'}
       </h3>
@@ -141,7 +165,10 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
         isEdit={isEdit}
         isPending={isPending}
         testingForm={testingForm}
-        onFormTest={handleSubmit((data) => onFormTest(data))}
+        onFormTest={() => {
+          pruneBlankPathMappings();
+          void handleSubmit((data) => onFormTest(data))();
+        }}
         onCancel={onCancel}
         entityLabel="Connector"
       />

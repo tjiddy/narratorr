@@ -3,6 +3,8 @@ import {
   audiobookshelfSettingsSchema,
   plexSettingsSchema,
   createConnectorSchema,
+  createConnectorFormSchema,
+  plexPathMappingSchema,
 } from './connector.js';
 
 // #1499 — connector baseUrl gained a shared http(s) URL refinement applied to
@@ -102,5 +104,64 @@ describe('createConnectorSchema baseUrl wiring (#1499)', () => {
       settings: absSettings('********'),
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// #1507 — the client form schema now enforces .trim().min(1) on path-mapping
+// fields so zodResolver produces per-row errors that map to
+// settings.pathMappings.${i}.{localPath,serverPath}, matching the server's
+// plexPathMappingSchema. Fully-blank rows are pruned before the resolver runs
+// (ConnectorCardForm); partial/whitespace-only rows are rejected here.
+describe('createConnectorFormSchema path-mapping validation (#1507)', () => {
+  const plexForm = (pathMappings: Array<{ localPath: string; serverPath: string }>) => ({
+    name: 'My Plex',
+    type: 'plex' as const,
+    enabled: true,
+    settings: { baseUrl: 'http://plex.local', token: 'tok', sectionId: '1', pathMappings, fallbackToFullRefresh: false },
+  });
+
+  const findRowIssue = (result: ReturnType<typeof createConnectorFormSchema.safeParse>, leaf: string) => {
+    if (result.success) return undefined;
+    return result.error.issues.find(
+      (i) => i.path[0] === 'settings' && i.path[1] === 'pathMappings' && i.path[2] === 0 && i.path[3] === leaf,
+    );
+  };
+
+  it('rejects an empty localPath with an error scoped to that nested field', () => {
+    const result = createConnectorFormSchema.safeParse(plexForm([{ localPath: '', serverPath: '/data' }]));
+    expect(result.success).toBe(false);
+    expect(findRowIssue(result, 'localPath')).toBeDefined();
+  });
+
+  it('rejects an empty serverPath with an error scoped to that nested field', () => {
+    const result = createConnectorFormSchema.safeParse(plexForm([{ localPath: '/lib', serverPath: '' }]));
+    expect(result.success).toBe(false);
+    expect(findRowIssue(result, 'serverPath')).toBeDefined();
+  });
+
+  it('rejects a whitespace-only field (confirms .trim().min(1), not bare .min(1))', () => {
+    const result = createConnectorFormSchema.safeParse(plexForm([{ localPath: '   ', serverPath: '/data' }]));
+    expect(result.success).toBe(false);
+    expect(findRowIssue(result, 'localPath')).toBeDefined();
+  });
+
+  it('accepts an empty pathMappings array (passthrough-only connector)', () => {
+    expect(createConnectorFormSchema.safeParse(plexForm([])).success).toBe(true);
+  });
+
+  it('accepts fully-filled rows', () => {
+    const result = createConnectorFormSchema.safeParse(
+      plexForm([{ localPath: '/lib', serverPath: '/data' }, { localPath: '/books', serverPath: '/srv' }]),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it('agrees with the server plexPathMappingSchema on min-length semantics', () => {
+    // Both reject an empty / whitespace-only field; both accept a filled row.
+    for (const bad of [{ localPath: '', serverPath: '/data' }, { localPath: '   ', serverPath: '/data' }]) {
+      expect(plexPathMappingSchema.safeParse(bad).success).toBe(false);
+      expect(findRowIssue(createConnectorFormSchema.safeParse(plexForm([bad])), 'localPath')).toBeDefined();
+    }
+    expect(plexPathMappingSchema.safeParse({ localPath: '/lib', serverPath: '/data' }).success).toBe(true);
   });
 });

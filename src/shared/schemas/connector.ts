@@ -172,9 +172,14 @@ export const createConnectorFormSchema = z.object({
     // Plex
     token: z.string().trim().optional(),
     sectionId: z.string().trim().optional(),
+    // `.trim().min(1)` mirrors the server's plexPathMappingSchema so zodResolver
+    // produces per-row field errors at settings.pathMappings.${i}.{localPath,serverPath}
+    // for partial rows (one side filled). Fully-blank rows are pruned before the
+    // resolver runs (see ConnectorCardForm), so they never reach this check.
+    // (CLAUDE.md gotcha: bare .min(1) accepts whitespace — use .trim().min(1).)
     pathMappings: z.array(z.object({
-      localPath: z.string(),
-      serverPath: z.string(),
+      localPath: z.string().trim().min(1, 'Local path is required'),
+      serverPath: z.string().trim().min(1, 'Server path is required'),
     })).optional(),
     fallbackToFullRefresh: z.boolean().optional(),
   }),
