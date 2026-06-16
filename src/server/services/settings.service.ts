@@ -23,6 +23,7 @@ export type { AppSettings };
 const SECRET_CATEGORIES: Partial<Record<SettingsCategory, SecretEntity>> = {
   network: 'network',
   metadata: 'metadata',
+  earwitness: 'earwitness',
 };
 
 function parseCategory<K extends SettingsCategory>(

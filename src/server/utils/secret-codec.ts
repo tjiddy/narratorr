@@ -30,7 +30,8 @@ export type SecretEntity =
   | 'metadata'
   | 'importList'
   | 'notifier'
-  | 'connector';
+  | 'connector'
+  | 'earwitness';
 
 // Notifier secret fields are flat across all subtypes (encryptFields skips
 // missing fields harmlessly). When adding a new notifier subtype with a secret
@@ -58,6 +59,11 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   // token is the Plex secret (#1492); flat across subtypes (encryptFields skips
   // fields not present in a given connector's settings).
   connector: ['baseUrl', 'apiKey', 'token'],
+  // earwitness authenticates via X-Api-Key only, so baseUrl is NOT a secret here
+  // (unlike connector, whose baseUrl can carry embedded credentials — #1491).
+  // Keeping baseUrl in plaintext lets the operator verify the configured host and
+  // spares the Test-Connection route from resolving a sentinel base URL.
+  earwitness: ['apiKey'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────

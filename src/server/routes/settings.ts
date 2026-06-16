@@ -9,6 +9,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
+import { fetchWithTimeout } from '../../core/utils/network-service.js';
 
 
 function redactProxyUrl(proxyUrl: string): string {
@@ -30,6 +31,7 @@ const SETTINGS_SECRET_MAP: [string, SecretEntity][] = [
   ['auth', 'auth'],
   ['network', 'network'],
   ['metadata', 'metadata'],
+  ['earwitness', 'earwitness'],
 ];
 
 function maskSettingsResponse(all: AppSettings): AppSettings {
@@ -60,6 +62,24 @@ const testProxySchema = z.object({
 });
 
 const testHardcoverSchema = z.object({
+  apiKey: z.string().optional(),
+});
+
+// earwitness Test-Connection probe contract (see issue #1526):
+// GET <baseUrl>/api/v1/health with `X-Api-Key`, 5s timeout. baseUrl is NOT a
+// secret, so the body must carry a real URL (the sentinel '********' fails URL
+// validation → 400); apiKey is optional and resolves against the stored value.
+const EARWITNESS_HEALTH_PATH = '/api/v1/health';
+const EARWITNESS_PROBE_TIMEOUT_MS = 5000;
+
+const testEarwitnessSchema = z.object({
+  baseUrl: z.string().trim().min(1, 'Base URL is required').refine((val) => {
+    try {
+      return ['http:', 'https:'].includes(new URL(val).protocol);
+    } catch {
+      return false;
+    }
+  }, { message: 'Must be a valid http(s) URL' }),
   apiKey: z.string().optional(),
 });
 
@@ -216,6 +236,64 @@ export async function settingsRoutes(
         const message = mapHardcoverError(error);
         request.log.warn({ error: serializeError(error) }, 'Hardcover API key test failed');
         return reply.status(200).send({ success: false, message });
+      }
+    }
+  );
+
+  // POST /api/settings/earwitness/test
+  // Probes GET <baseUrl>/api/v1/health with the X-Api-Key header per the
+  // Test-Connection probe contract. Always returns an HTTP 200 envelope:
+  // expected failures (bad key, unreachable host) are { success: false, message }
+  // rather than 4xx/5xx, mirroring the proxy/Hardcover test handlers.
+  app.post<{ Body: z.infer<typeof testEarwitnessSchema> }>(
+    '/api/settings/earwitness/test',
+    {
+      schema: {
+        body: testEarwitnessSchema,
+      },
+    },
+    async (request, reply) => {
+      const inputKey = request.body.apiKey;
+      const useFallback =
+        inputKey === undefined ||
+        inputKey.trim().length === 0 ||
+        isSentinel(inputKey);
+
+      let resolvedKey: string;
+      if (useFallback) {
+        const earwitness = await settingsService.get('earwitness');
+        const stored = earwitness && typeof earwitness === 'object'
+          ? (earwitness as { apiKey?: string | null }).apiKey ?? ''
+          : '';
+        if (stored.trim().length === 0) {
+          return reply.status(400).send({ success: false, message: 'No earwitness API key configured.' });
+        }
+        resolvedKey = stored;
+      } else {
+        resolvedKey = inputKey;
+      }
+
+      // String join (not new URL(path, base)) so a pathful baseUrl like
+      // https://host/earwitness/ keeps its prefix → .../earwitness/api/v1/health.
+      const url = request.body.baseUrl.replace(/\/+$/, '') + EARWITNESS_HEALTH_PATH;
+      try {
+        const res = await fetchWithTimeout(
+          url,
+          { headers: { 'X-Api-Key': resolvedKey } },
+          EARWITNESS_PROBE_TIMEOUT_MS,
+        );
+        if (res.status >= 200 && res.status < 300) {
+          request.log.info('earwitness connection test successful');
+          return { success: true };
+        }
+        if (res.status === 401 || res.status === 403) {
+          return reply.status(200).send({ success: false, message: 'Invalid API key' });
+        }
+        request.log.debug({ status: res.status }, 'earwitness health probe returned non-2xx');
+        return reply.status(200).send({ success: false, message: 'Unable to reach server' });
+      } catch (error: unknown) {
+        request.log.debug({ error: serializeError(error) }, 'earwitness health probe failed');
+        return reply.status(200).send({ success: false, message: 'Unable to reach server' });
       }
     }
   );
