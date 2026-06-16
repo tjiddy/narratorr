@@ -51,6 +51,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       deleteBook: vi.fn(),
       uploadBookCover: vi.fn(),
       refreshScanBook: vi.fn(),
+      analyseBookAttribution: vi.fn(),
       getSettings: vi.fn(),
       retryBookImport: vi.fn(),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
@@ -377,6 +378,39 @@ describe('BookDetails', () => {
 
       await openOverflowMenu(user);
       expect(screen.queryByRole('menuitem', { name: /Analyse with earwitness/i })).not.toBeInTheDocument();
+    });
+
+    it('fires analyseBookAttribution when "Analyse with earwitness" is clicked', async () => {
+      (api.getSettings as Mock).mockResolvedValue({ earwitness: { enabled: true, baseUrl: 'http://ew', apiKey: 'k' } });
+      (api.analyseBookAttribution as Mock).mockResolvedValue({ bookId: 1, outcome: 'ok', eventId: 9 });
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await openOverflowMenu(user);
+      await user.click(await screen.findByRole('menuitem', { name: /Analyse with earwitness/i }));
+
+      await waitFor(() => {
+        expect(api.analyseBookAttribution).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('disables the menu item and shows "Analysing..." while the mutation is pending', async () => {
+      (api.getSettings as Mock).mockResolvedValue({ earwitness: { enabled: true, baseUrl: 'http://ew', apiKey: 'k' } });
+      // Keep the request in-flight so the pending branch stays rendered.
+      let resolve!: (v: unknown) => void;
+      (api.analyseBookAttribution as Mock).mockReturnValue(new Promise((r) => { resolve = r; }));
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await openOverflowMenu(user);
+      await user.click(await screen.findByRole('menuitem', { name: /Analyse with earwitness/i }));
+
+      // Menu stays open during the run; the item flips to a disabled "Analysing..." state.
+      const pendingItem = await screen.findByRole('menuitem', { name: /Analysing\.\.\./i });
+      expect(pendingItem).toBeDisabled();
+      expect(screen.queryByRole('menuitem', { name: /^Analyse with earwitness$/i })).not.toBeInTheDocument();
+
+      resolve({ bookId: 1, outcome: 'ok', eventId: 9 });
     });
 
     it('calls renameBook API when Rename button is clicked and confirmed', async () => {

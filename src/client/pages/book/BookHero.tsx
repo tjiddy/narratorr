@@ -290,7 +290,7 @@ export function BookHero({
                     </button>
                   )}
                   {showAnalyseAttribution && onAnalyseAttributionClick && (
-                    <button role="menuitem" type="button" onClick={() => { if (!isAnalysingAttribution) handleMenuAction(onAnalyseAttributionClick); }} disabled={isAnalysingAttribution} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                    <button role="menuitem" type="button" onClick={() => { if (!isAnalysingAttribution) onAnalyseAttributionClick(); }} disabled={isAnalysingAttribution} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
                       <HeadphonesIcon className={`w-3.5 h-3.5 ${isAnalysingAttribution ? 'animate-spin' : ''}`} />
                       {isAnalysingAttribution ? 'Analysing...' : 'Analyse with earwitness'}
                     </button>
