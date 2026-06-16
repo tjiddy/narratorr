@@ -15,6 +15,7 @@ import {
   ClockIcon,
   AlertTriangleIcon,
   BookOpenIcon,
+  HeadphonesIcon,
 } from '@/components/icons';
 
 const ACTIONABLE_TYPES = ['grabbed', 'download_completed', 'download_failed', 'imported', 'import_failed'];
@@ -43,6 +44,7 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   book_added: { icon: BookOpenIcon, label: 'Book Added', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10' },
   metadata_fixed: { icon: AlertTriangleIcon, label: 'Metadata Fixed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
   grab_failed: { icon: XCircleIcon, label: 'Grab Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
+  attribution_analysis: { icon: HeadphonesIcon, label: 'Earwitness Analysis', color: 'text-violet-400', bgColor: 'bg-violet-500/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };

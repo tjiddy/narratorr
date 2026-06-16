@@ -331,10 +331,11 @@ export const bookEvents = sqliteTable('book_events', {
       'book_added',
       'metadata_fixed',
       'grab_failed',
+      'attribution_analysis',
     ],
   }).notNull(),
   source: text('source', {
-    enum: ['manual', 'rss', 'scheduled', 'auto', 'import_list'],
+    enum: ['manual', 'rss', 'scheduled', 'auto', 'import_list', 'earwitness'],
   }).notNull().default('auto'),
   reason: text('reason', { mode: 'json' }).$type<Record<string, unknown>>(),
   createdAt: integer('created_at', { mode: 'timestamp' })
