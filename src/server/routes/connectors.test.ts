@@ -69,6 +69,34 @@ describe('connectors targets routes', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+
+    // #1523 — Fetch on a brand-new connector must not require the selector field
+    // (libraryId / sectionId) the fetch exists to populate.
+    it('accepts an EMPTY libraryId on a new ABS connector (targets-scoped schema)', async () => {
+      (services.connector.listTargetsConfig as Mock).mockResolvedValue({ success: true, targets: TARGETS });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/targets',
+        payload: { type: 'audiobookshelf', settings: { baseUrl: 'http://abs.local', apiKey: 'secret-key', libraryId: '' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(TARGETS);
+    });
+
+    it('accepts an ABSENT sectionId on a new Plex connector (targets-scoped schema)', async () => {
+      (services.connector.listTargetsConfig as Mock).mockResolvedValue({ success: true, targets: TARGETS });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/targets',
+        payload: { type: 'plex', settings: { baseUrl: 'http://plex.local:32400', token: 'plex-tok' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual(TARGETS);
+    });
   });
 
   describe('GET /api/connectors/:id/targets', () => {

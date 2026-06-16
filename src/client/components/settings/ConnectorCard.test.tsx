@@ -140,6 +140,21 @@ describe('ConnectorCard — fetch libraries', () => {
 
     expect(await screen.findByText('Key invalid')).toBeInTheDocument();
   });
+
+  // #1523 (Bug 2) — a THROWN error (e.g. ApiError from a non-2xx HTTP) must show
+  // its real reason, not the generic 'Failed to fetch options' fallback that
+  // previously masked every adapter error.
+  it('surfaces the real message when the targets fetch throws', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchConnectorTargets).mockRejectedValue(new Error('Authentication failed (HTTP 401)'));
+
+    renderWithProviders(<ConnectorCard connector={mockConnector} mode="edit" onSubmit={vi.fn()} onFormTest={vi.fn()} />);
+
+    await user.click(screen.getByText('Fetch'));
+
+    expect(await screen.findByText('Authentication failed (HTTP 401)')).toBeInTheDocument();
+    expect(screen.queryByText('Failed to fetch options')).not.toBeInTheDocument();
+  });
 });
 
 describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
@@ -169,13 +184,28 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     expect(screen.queryByText('API Key')).not.toBeInTheDocument();
   });
 
+  // #1523 (Bug 3) — the Name placeholder reflects the selected type's registry
+  // label instead of a hardcoded 'My Audiobookshelf'.
+  it('derives the Name placeholder from the selected connector type', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ConnectorCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />);
+
+    // ABS is the default.
+    expect(screen.getByPlaceholderText('My Audiobookshelf')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('Type'), 'plex');
+
+    expect(screen.getByPlaceholderText('My Plex')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('My Audiobookshelf')).not.toBeInTheDocument();
+  });
+
   it('submits a path-mapping row in the correct shape', async () => {
     const onSubmit = vi.fn();
     const user = userEvent.setup();
     renderWithProviders(<ConnectorCard mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
-    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('My Plex'), 'Home Plex');
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
@@ -198,7 +228,7 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     renderWithProviders(<ConnectorCard mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
-    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('My Plex'), 'Home Plex');
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
@@ -219,7 +249,7 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     renderWithProviders(<ConnectorCard mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
-    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('My Plex'), 'Home Plex');
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
@@ -238,7 +268,7 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     renderWithProviders(<ConnectorCard mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
-    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('My Plex'), 'Home Plex');
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
@@ -257,7 +287,7 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     renderWithProviders(<ConnectorCard mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />);
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
-    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('My Plex'), 'Home Plex');
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
@@ -281,7 +311,7 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     renderWithProviders(<ConnectorCard mode="create" onSubmit={vi.fn()} onFormTest={onFormTest} />);
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
-    await user.type(screen.getByPlaceholderText('My Audiobookshelf'), 'Home Plex');
+    await user.type(screen.getByPlaceholderText('My Plex'), 'Home Plex');
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');

@@ -7,6 +7,7 @@ import { SettingsFormActions } from './SettingsFormActions';
 import { SelectWithChevron } from './SelectWithChevron';
 import { ConnectorFields } from './ConnectorFields';
 import { CONNECTOR_REGISTRY, type ConnectorType } from '../../../shared/connector-registry.js';
+import { getErrorMessage } from '../../../shared/error-message.js';
 import {
   connectorTypeSchema,
   type CreateConnectorFormData,
@@ -101,8 +102,11 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
         setFetchError(result.message || 'Failed to fetch options');
         applyFieldErrors((result as FieldErrorResult).fieldErrors);
       }
-    } catch {
-      setFetchError('Failed to fetch options');
+    } catch (error: unknown) {
+      // Surface the real reason (e.g. ApiError's "Authentication failed (HTTP 401)"
+      // / "Connection failed: …") instead of masking every failure as the generic
+      // string — the adapter produces specific, useful messages (#1523).
+      setFetchError(getErrorMessage(error) || 'Failed to fetch options');
     } finally {
       setFetching(false);
     }
@@ -122,7 +126,7 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
       </h3>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <FormField id="connectorName" label="Name" registration={register('name')} error={errors.name} placeholder="My Audiobookshelf" />
+        <FormField id="connectorName" label="Name" registration={register('name')} error={errors.name} placeholder={`My ${CONNECTOR_REGISTRY[selectedType]?.label ?? 'Connector'}`} />
 
         <SelectWithChevron id="connectorType" label="Type" {...(isEdit ? { value: selectedType, disabled: true } : register('type'))} error={!!errors.type}>
           {connectorTypeSchema.options.map((t) => (

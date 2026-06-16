@@ -14,7 +14,8 @@ import {
   type ConnectorTestResult,
 } from '../../core/connectors/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { connectorSettingsSchemas, type ConnectorSettings } from '../../shared/schemas/connector.js';
+import type { z } from 'zod';
+import { connectorSettingsSchemas, connectorTargetsSettingsSchemas, type ConnectorSettings } from '../../shared/schemas/connector.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
@@ -198,11 +199,14 @@ export class ConnectorService {
     return adapter;
   }
 
-  private createAdapter(connector: ConnectorRow): ConnectorAdapter {
+  private createAdapter(
+    connector: ConnectorRow,
+    schemas: Record<string, z.ZodTypeAny> = connectorSettingsSchemas,
+  ): ConnectorAdapter {
     const factory = ADAPTER_FACTORIES[connector.type];
     if (!factory) throw new Error(`Unknown connector type: ${connector.type}`);
     const settings = parseEntitySettings<ConnectorSettings>(
-      connectorSettingsSchemas,
+      schemas,
       connector.type,
       connector.settings as Record<string, unknown>,
     );
@@ -243,7 +247,10 @@ export class ConnectorService {
   async listTargetsConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<ConnectorTargetsResult> {
     let adapter: ConnectorAdapter;
     try {
-      adapter = await this.adapterForConfig(data);
+      // Targets-scoped schema: the selector field this fetch populates
+      // (libraryId/sectionId) is optional, so a brand-new connector resolves an
+      // adapter from connect fields alone (#1523).
+      adapter = await this.adapterForConfig(data, connectorTargetsSettingsSchemas);
     } catch (error: unknown) {
       return { success: false, message: getErrorMessage(error) };
     }
@@ -261,8 +268,16 @@ export class ConnectorService {
     }
   }
 
-  /** Build an adapter from an unsaved config, resolving secret sentinels against the saved row when an id is supplied. */
-  private async adapterForConfig(data: { type: string; settings: Record<string, unknown>; id?: number }): Promise<ConnectorAdapter> {
+  /**
+   * Build an adapter from an unsaved config, resolving secret sentinels against the
+   * saved row when an id is supplied. `schemas` selects which per-type settings map
+   * validates the config — the strict map (default) for test-with-selection, the
+   * targets-scoped map (selector optional) for the fetch-the-dropdown path.
+   */
+  private async adapterForConfig(
+    data: { type: string; settings: Record<string, unknown>; id?: number },
+    schemas: Record<string, z.ZodTypeAny> = connectorSettingsSchemas,
+  ): Promise<ConnectorAdapter> {
     let resolvedSettings = data.settings;
     if (data.id != null) {
       const existing = await this.getById(data.id);
@@ -271,7 +286,7 @@ export class ConnectorService {
       resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('connector'));
     }
     const fakeRow = { id: 0, name: '', type: data.type, enabled: true, settings: resolvedSettings, createdAt: new Date(), updatedAt: new Date() } as ConnectorRow;
-    return this.createAdapter(fakeRow);
+    return this.createAdapter(fakeRow, schemas);
   }
 
   // ─── Refresh queue ───────────────────────────────────────────────────────────

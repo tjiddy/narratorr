@@ -5,6 +5,9 @@ import {
   createConnectorSchema,
   createConnectorFormSchema,
   plexPathMappingSchema,
+  connectorSettingsSchemas,
+  connectorTargetsSettingsSchemas,
+  CONNECTOR_SELECTOR_FIELDS,
 } from './connector.js';
 
 // #1499 — connector baseUrl gained a shared http(s) URL refinement applied to
@@ -104,6 +107,52 @@ describe('createConnectorSchema baseUrl wiring (#1499)', () => {
       settings: absSettings('********'),
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// #1523 — the targets-fetch path validates connect fields only. The selector
+// field (ABS libraryId / Plex sectionId) is the very thing Fetch populates, so
+// the targets-scoped settings schema makes it optional (defaulting to '') while
+// the strict create/update/test schema still requires it.
+describe('connectorTargetsSettingsSchemas selector optionality (#1523)', () => {
+  const connectFields = {
+    audiobookshelf: { baseUrl: 'http://abs.local', apiKey: 'key' },
+    plex: { baseUrl: 'http://plex.local', token: 'tok' },
+  } as const;
+
+  describe.each(['audiobookshelf', 'plex'] as const)('%s', (type) => {
+    const selector = CONNECTOR_SELECTOR_FIELDS[type];
+    const connect = connectFields[type];
+
+    it('accepts an ABSENT selector field (defaults to "")', () => {
+      const result = connectorTargetsSettingsSchemas[type].safeParse({ ...connect });
+      expect(result.success).toBe(true);
+      if (result.success) expect((result.data as Record<string, unknown>)[selector]).toBe('');
+    });
+
+    it('accepts an EMPTY selector field', () => {
+      const result = connectorTargetsSettingsSchemas[type].safeParse({ ...connect, [selector]: '' });
+      expect(result.success).toBe(true);
+    });
+
+    it('still preserves a provided selector value', () => {
+      const result = connectorTargetsSettingsSchemas[type].safeParse({ ...connect, [selector]: 'sel-1' });
+      expect(result.success).toBe(true);
+      if (result.success) expect((result.data as Record<string, unknown>)[selector]).toBe('sel-1');
+    });
+
+    it('still requires baseUrl (connect field)', () => {
+      const { baseUrl: _omit, ...noBaseUrl } = connect;
+      expect(connectorTargetsSettingsSchemas[type].safeParse(noBaseUrl).success).toBe(false);
+    });
+
+    it('stays strict — rejects an unknown key', () => {
+      expect(connectorTargetsSettingsSchemas[type].safeParse({ ...connect, bogus: 'x' }).success).toBe(false);
+    });
+
+    it('the STRICT schema still rejects an empty selector (create/update/test unchanged)', () => {
+      expect(connectorSettingsSchemas[type].safeParse({ ...connect, [selector]: '' }).success).toBe(false);
+    });
   });
 });
 

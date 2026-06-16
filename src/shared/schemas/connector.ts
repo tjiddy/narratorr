@@ -100,6 +100,48 @@ export const connectorSettingsSchemas: Record<ConnectorType, z.ZodTypeAny> = {
   plex: plexSettingsSchema,
 };
 
+// ── Targets-scoped settings schemas (selector field optional) ───────────────
+
+/**
+ * The per-type "selector" field — the dropdown the targets-fetch exists to
+ * populate (ABS Library, Plex Library Section). Listing targets needs only the
+ * connect fields (baseUrl + secret); the selector is genuinely not read by
+ * `listTargets()`, so requiring it makes adding a NEW connector impossible (you
+ * can't pick a Library before fetching the list). Strict create/update/test
+ * still require it — see `connectorSettingsSchemas` (#1523).
+ */
+export const CONNECTOR_SELECTOR_FIELDS: Record<ConnectorType, string> = {
+  audiobookshelf: 'libraryId',
+  plex: 'sectionId',
+};
+
+/**
+ * Derive a targets-scoped settings schema from a strict per-type schema by making
+ * the selector field optional (defaulting to ''). Generalized across connector
+ * types — no special-casing one. `safeExtend` preserves `.strict()` mode and the
+ * `baseUrl` URL refinement; the empty-string default is a harmless placeholder
+ * the adapter factory accepts but `listTargets()` never reads.
+ */
+function makeTargetsSettingsSchema(schema: z.ZodTypeAny, selectorField: string): z.ZodTypeAny {
+  if (!(schema instanceof z.ZodObject)) return schema;
+  const obj = schema as z.ZodObject<z.ZodRawShape>;
+  if (!(obj.shape as Record<string, z.ZodTypeAny>)[selectorField]) return schema;
+  return obj.safeExtend({ [selectorField]: z.string().trim().default('') });
+}
+
+/**
+ * Per-type settings schemas for the targets-fetch path: identical to the strict
+ * schemas except the selector field is optional. Used by `adapterForConfig` /
+ * the `/targets` route so a brand-new connector can fetch its dropdown before the
+ * selector is known.
+ */
+export const connectorTargetsSettingsSchemas: Record<ConnectorType, z.ZodTypeAny> = Object.fromEntries(
+  CONNECTOR_TYPES.map((type) => [
+    type,
+    makeTargetsSettingsSchema(connectorSettingsSchemas[type], CONNECTOR_SELECTOR_FIELDS[type]),
+  ]),
+) as Record<ConnectorType, z.ZodTypeAny>;
+
 // ── Server-side schemas ─────────────────────────────────────────────────────
 
 function validateSettingsPerType(

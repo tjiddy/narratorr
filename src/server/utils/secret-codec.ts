@@ -198,10 +198,17 @@ export function loosenSettingsSchemas(
  * introspected from the create schema's superRefine), so adapter-specific
  * validators like Hardcover's listType/shelfId rule are preserved on the
  * loosened secret field.
+ *
+ * `settingsMapOverride` swaps in a different per-type settings map than the
+ * entity default — e.g. the connector `/targets` route passes the
+ * targets-scoped map (selector field optional) so a new connector can fetch its
+ * dropdown before the selector is known, while the strict map governs
+ * create/update/test (#1523).
  */
 export function makeTestSchema<S extends z.ZodTypeAny>(
   createSchema: S,
   secretEntity: SecretEntity,
+  settingsMapOverride?: Record<string, z.ZodTypeAny>,
 ): z.ZodTypeAny {
   if (!(createSchema instanceof z.ZodObject)) return createSchema;
   const outer = createSchema as z.ZodObject<z.ZodRawShape>;
@@ -212,7 +219,7 @@ export function makeTestSchema<S extends z.ZodTypeAny>(
   // that carries a format refinement (e.g. connector `baseUrl`'s URL check).
   const withId = z.object(outer.shape).extend({ id: z.number().int().positive().optional() });
 
-  const settingsMap = PER_TYPE_SETTINGS_MAPS[secretEntity];
+  const settingsMap = settingsMapOverride ?? PER_TYPE_SETTINGS_MAPS[secretEntity];
   const secretFields = getSecretFieldNames(secretEntity);
   if (!settingsMap) return withId;
 
