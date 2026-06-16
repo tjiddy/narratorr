@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { type FastifyInstance } from 'fastify';
+import { type FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import { type SettingsService, type AppSettings } from '../services';
 import { updateSettingsSchema, type UpdateSettingsInput } from '../../shared/schemas.js';
 import type { IndexerService } from '../services/indexer.service.js';
@@ -82,6 +82,87 @@ const testEarwitnessSchema = z.object({
   }, { message: 'Must be a valid http(s) URL' }),
   apiKey: z.string().optional(),
 });
+
+interface EarwitnessProbeResult {
+  success: boolean;
+  message?: string;
+}
+
+/**
+ * Probe GET <baseUrl>/api/v1/health with the X-Api-Key header per the #1526
+ * Test-Connection contract. Returns a plain result object (the route maps it to
+ * the HTTP 200 envelope) so all expected failures stay non-throwing.
+ */
+async function probeEarwitness(
+  baseUrl: string,
+  apiKey: string,
+  log: FastifyBaseLogger,
+): Promise<EarwitnessProbeResult> {
+  // String join (not new URL(path, base)) so a pathful baseUrl like
+  // https://host/earwitness/ keeps its prefix → .../earwitness/api/v1/health.
+  const url = baseUrl.replace(/\/+$/, '') + EARWITNESS_HEALTH_PATH;
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      { headers: { 'X-Api-Key': apiKey } },
+      EARWITNESS_PROBE_TIMEOUT_MS,
+    );
+    if (res.status >= 200 && res.status < 300) {
+      return { success: true };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { success: false, message: 'Invalid API key' };
+    }
+    log.debug({ status: res.status }, 'earwitness health probe returned non-2xx');
+    return { success: false, message: 'Unable to reach server' };
+  } catch (error: unknown) {
+    log.debug({ error: serializeError(error) }, 'earwitness health probe failed');
+    return { success: false, message: 'Unable to reach server' };
+  }
+}
+
+/**
+ * Resolve the apiKey to probe with: a real input key is used as-is; an omitted,
+ * empty, or sentinel key falls back to the stored (decrypted) earwitness key so
+ * Test works without re-entering the masked credential. Returns null when no
+ * usable key exists (the route maps that to HTTP 400).
+ */
+async function resolveEarwitnessApiKey(
+  settingsService: SettingsService,
+  inputKey: string | undefined,
+): Promise<string | null> {
+  const useFallback =
+    inputKey === undefined || inputKey.trim().length === 0 || isSentinel(inputKey);
+  if (!useFallback) return inputKey;
+  const earwitness = await settingsService.get('earwitness');
+  const stored = earwitness && typeof earwitness === 'object'
+    ? (earwitness as { apiKey?: string | null }).apiKey ?? ''
+    : '';
+  return stored.trim().length === 0 ? null : stored;
+}
+
+// POST /api/settings/earwitness/test
+// Probes GET <baseUrl>/api/v1/health with the X-Api-Key header per the
+// Test-Connection probe contract. Always returns an HTTP 200 envelope:
+// expected failures (bad key, unreachable host) are { success: false, message }
+// rather than 4xx/5xx, mirroring the proxy/Hardcover test handlers.
+function registerEarwitnessTestRoute(app: FastifyInstance, settingsService: SettingsService): void {
+  app.post<{ Body: z.infer<typeof testEarwitnessSchema> }>(
+    '/api/settings/earwitness/test',
+    { schema: { body: testEarwitnessSchema } },
+    async (request, reply) => {
+      const resolvedKey = await resolveEarwitnessApiKey(settingsService, request.body.apiKey);
+      if (resolvedKey === null) {
+        return reply.status(400).send({ success: false, message: 'No earwitness API key configured.' });
+      }
+      const result = await probeEarwitness(request.body.baseUrl, resolvedKey, request.log);
+      if (result.success) {
+        request.log.info('earwitness connection test successful');
+      }
+      return result;
+    },
+  );
+}
 
 export async function settingsRoutes(
   app: FastifyInstance,
@@ -240,61 +321,5 @@ export async function settingsRoutes(
     }
   );
 
-  // POST /api/settings/earwitness/test
-  // Probes GET <baseUrl>/api/v1/health with the X-Api-Key header per the
-  // Test-Connection probe contract. Always returns an HTTP 200 envelope:
-  // expected failures (bad key, unreachable host) are { success: false, message }
-  // rather than 4xx/5xx, mirroring the proxy/Hardcover test handlers.
-  app.post<{ Body: z.infer<typeof testEarwitnessSchema> }>(
-    '/api/settings/earwitness/test',
-    {
-      schema: {
-        body: testEarwitnessSchema,
-      },
-    },
-    async (request, reply) => {
-      const inputKey = request.body.apiKey;
-      const useFallback =
-        inputKey === undefined ||
-        inputKey.trim().length === 0 ||
-        isSentinel(inputKey);
-
-      let resolvedKey: string;
-      if (useFallback) {
-        const earwitness = await settingsService.get('earwitness');
-        const stored = earwitness && typeof earwitness === 'object'
-          ? (earwitness as { apiKey?: string | null }).apiKey ?? ''
-          : '';
-        if (stored.trim().length === 0) {
-          return reply.status(400).send({ success: false, message: 'No earwitness API key configured.' });
-        }
-        resolvedKey = stored;
-      } else {
-        resolvedKey = inputKey;
-      }
-
-      // String join (not new URL(path, base)) so a pathful baseUrl like
-      // https://host/earwitness/ keeps its prefix → .../earwitness/api/v1/health.
-      const url = request.body.baseUrl.replace(/\/+$/, '') + EARWITNESS_HEALTH_PATH;
-      try {
-        const res = await fetchWithTimeout(
-          url,
-          { headers: { 'X-Api-Key': resolvedKey } },
-          EARWITNESS_PROBE_TIMEOUT_MS,
-        );
-        if (res.status >= 200 && res.status < 300) {
-          request.log.info('earwitness connection test successful');
-          return { success: true };
-        }
-        if (res.status === 401 || res.status === 403) {
-          return reply.status(200).send({ success: false, message: 'Invalid API key' });
-        }
-        request.log.debug({ status: res.status }, 'earwitness health probe returned non-2xx');
-        return reply.status(200).send({ success: false, message: 'Unable to reach server' });
-      } catch (error: unknown) {
-        request.log.debug({ error: serializeError(error) }, 'earwitness health probe failed');
-        return reply.status(200).send({ success: false, message: 'Unable to reach server' });
-      }
-    }
-  );
+  registerEarwitnessTestRoute(app, settingsService);
 }

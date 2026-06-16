@@ -1067,4 +1067,41 @@ describe('Key Management', () => {
       expect(result2.source).toBe('file');
     });
   });
+
+  // #1526 — earwitness integration settings. apiKey is the only secret; baseUrl
+  // is intentionally NOT registered (auth is via X-Api-Key header, so the URL is
+  // not credential-shaped) and must be returned in plaintext.
+  describe('earwitness secret fields (#1526)', () => {
+    it('apiKey is the only registered secret field for earwitness', () => {
+      expect(getSecretFieldNames('earwitness')).toEqual(['apiKey']);
+    });
+
+    it('encryptFields("earwitness") produces an $ENC$-prefixed apiKey and leaves baseUrl/enabled untouched', () => {
+      const encrypted = encryptFields('earwitness', { enabled: true, baseUrl: 'https://host', apiKey: 'sk-plain' }, TEST_KEY);
+      expect(isEncrypted(encrypted.apiKey as string)).toBe(true);
+      expect(encrypted.baseUrl).toBe('https://host');
+      expect(encrypted.enabled).toBe(true);
+    });
+
+    it('decryptFields round-trips the encrypted apiKey', () => {
+      const encrypted = encryptFields('earwitness', { apiKey: 'sk-roundtrip' }, TEST_KEY);
+      const decrypted = decryptFields('earwitness', encrypted, TEST_KEY);
+      expect(decrypted.apiKey).toBe('sk-roundtrip');
+    });
+
+    it('maskFields("earwitness") masks a non-empty apiKey with the sentinel', () => {
+      const masked = maskFields('earwitness', { enabled: true, baseUrl: 'https://host', apiKey: 'sk-live' });
+      expect(masked.apiKey).toBe('********');
+    });
+
+    it('maskFields("earwitness") leaves an empty / null apiKey untouched (empty = not configured)', () => {
+      expect(maskFields('earwitness', { apiKey: '' }).apiKey).toBe('');
+      expect(maskFields('earwitness', { apiKey: null as unknown as string }).apiKey).toBeNull();
+    });
+
+    it('maskFields("earwitness") returns baseUrl in plaintext (baseUrl is not a secret)', () => {
+      const masked = maskFields('earwitness', { baseUrl: 'https://host', apiKey: 'sk-live' });
+      expect(masked.baseUrl).toBe('https://host');
+    });
+  });
 });
