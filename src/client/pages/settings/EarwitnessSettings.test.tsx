@@ -102,6 +102,27 @@ describe('EarwitnessSettings', () => {
     });
   });
 
+  it('persists edited enable/Base URL/API Key on Save as { earwitness: { ... } }', async () => {
+    mockApi.updateSettings.mockResolvedValue(
+      createMockSettings({ earwitness: { enabled: true, baseUrl: 'https://earwitness:8080', apiKey: 'sk-new' } }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<EarwitnessSettings />);
+
+    await waitFor(() => expect(screen.getByLabelText('Base URL')).toHaveValue(''));
+
+    await user.click(screen.getByLabelText('Enable earwitness'));
+    await user.type(screen.getByLabelText('Base URL'), 'https://earwitness:8080');
+    await user.type(screen.getByLabelText('API Key'), 'sk-new');
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        earwitness: { enabled: true, baseUrl: 'https://earwitness:8080', apiKey: 'sk-new' },
+      });
+    });
+  });
+
   it('surfaces a success toast on { success: true }', async () => {
     mockApi.getSettings.mockResolvedValue(
       createMockSettings({ earwitness: { enabled: true, baseUrl: 'https://host', apiKey: '********' } }),
