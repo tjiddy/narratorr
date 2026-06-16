@@ -44,7 +44,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, analyseAttributionMutation, uploadCoverMutation, ffmpegConfigured, earwitnessEnabled, isSaving, handleSave } =
     useBookActions(libraryBook.id);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
@@ -92,6 +92,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onRefreshScanClick={() => refreshScanMutation.mutate()}
         isRefreshingScanning={refreshScanMutation.isPending}
         showRefreshScan={showRefreshScan}
+        onAnalyseAttributionClick={() => analyseAttributionMutation.mutate()}
+        isAnalysingAttribution={analyseAttributionMutation.isPending}
+        showAnalyseAttribution={earwitnessEnabled && !!libraryBook.path}
         onMergeClick={() => open('confirmMerge')}
         isMerging={mergeMutation.isPending || !!mergeProgress}
         mergePhase={mergeProgress?.phase}

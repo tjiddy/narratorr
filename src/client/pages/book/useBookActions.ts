@@ -76,6 +76,21 @@ export function useBookActions(bookId: number) {
   });
 
   const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
+  const earwitnessEnabled = !!settings?.earwitness?.enabled;
+
+  // Result is only visible as a book event, so invalidate the event-history
+  // queries (the existing book invalidations don't cover that key).
+  const analyseAttributionMutation = useMutation({
+    mutationFn: () => api.analyseBookAttribution(bookId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.byBookId(bookId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+      toast.success('Recorded earwitness analysis — see the History tab');
+    },
+    onError: (error: Error) => {
+      toast.error(`Earwitness analysis failed: ${getErrorMessage(error)}`);
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: ({ deleteFiles }: { deleteFiles: boolean }) =>
@@ -157,8 +172,10 @@ export function useBookActions(bookId: number) {
     deleteMutation,
     wrongReleaseMutation,
     retryImportMutation,
+    analyseAttributionMutation,
     uploadCoverMutation,
     ffmpegConfigured,
+    earwitnessEnabled,
     isSaving,
     handleSave,
   };
