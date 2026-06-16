@@ -386,6 +386,60 @@ describe('analyzeAttribution', () => {
       expect(delays).toEqual([EARWITNESS_ATTRIBUTION_DEFAULT_BACKOFF_MS]);
     });
 
+    it('blank/whitespace Retry-After → falls back to the default backoff (guards Number(\'\')===0)', async () => {
+      const delays = captureBackoffDelays();
+      let hits = 0;
+      server.use(
+        http.post(ATTR_URL, () => {
+          hits++;
+          if (hits === 1) {
+            return new HttpResponse(JSON.stringify({ error: 'busy' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '   ' },
+            });
+          }
+          return HttpResponse.json(detectionOnlyBody());
+        }),
+      );
+
+      const result = await analyzeAttribution({ baseUrl: BASE_URL, apiKey: API_KEY, path: 'x' });
+
+      expect(result.kind).toBe('ok');
+      // Without the `.trim().length > 0` guard a blank header coerces to Number('')===0,
+      // which would yield a 0ms backoff instead of the default — assert the default fires.
+      expect(delays).toEqual([EARWITNESS_ATTRIBUTION_DEFAULT_BACKOFF_MS]);
+    });
+
+    it('caller abort during a 503 backoff → transient_failure carrying retryAfterMs, no further retry', async () => {
+      const controller = new AbortController();
+      let hits = 0;
+      server.use(
+        http.post(ATTR_URL, () => {
+          hits++;
+          return HttpResponse.json({ error: 'busy' }, { status: 503, headers: { 'Retry-After': '2' } });
+        }),
+      );
+      // When the backoff sleep schedules its 2000ms timer, abort the caller signal
+      // via a microtask — which runs before the (immediately-redirected) timer fires —
+      // so the abort wins the race deterministically. If the signal were not plumbed
+      // into sleep(), the timer would resolve and a second fetch would retry instead.
+      const original = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+        if (ms === 2000) {
+          queueMicrotask(() => controller.abort());
+          return original(fn, 0);
+        }
+        return original(fn, ms);
+      }) as typeof globalThis.setTimeout);
+
+      const result = await analyzeAttribution({ baseUrl: BASE_URL, apiKey: API_KEY, path: 'x', signal: controller.signal });
+
+      expect(result.kind).toBe('transient_failure');
+      if (result.kind !== 'transient_failure') throw new Error('expected transient_failure');
+      expect(result.retryAfterMs).toBe(2000);
+      expect(hits).toBe(1);
+    });
+
     it('clamps an oversized Retry-After to the max backoff', async () => {
       const delays = captureBackoffDelays();
       let hits = 0;
@@ -414,6 +468,17 @@ describe('analyzeAttribution', () => {
       );
 
       const result = await analyzeAttribution({ baseUrl: BASE_URL, apiKey: API_KEY, path: 'x', timeoutMs: 20 });
+      expect(result.kind).toBe('transient_failure');
+    });
+
+    it('a pre-aborted caller signal surfaces a typed failure (no unhandled throw)', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      // Handler would return ok — so if the caller signal were not plumbed into
+      // fetchWithTimeout, the request would succeed and this would be `ok`.
+      server.use(http.post(ATTR_URL, () => HttpResponse.json(detectionOnlyBody())));
+
+      const result = await analyzeAttribution({ baseUrl: BASE_URL, apiKey: API_KEY, path: 'x', signal: controller.signal });
       expect(result.kind).toBe('transient_failure');
     });
   });
