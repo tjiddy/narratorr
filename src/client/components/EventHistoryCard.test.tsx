@@ -153,6 +153,13 @@ describe('EventHistoryCard', () => {
     expect(screen.getByText('unknown_type')).toBeInTheDocument();
   });
 
+  // #1528 — attribution_analysis label + icon (not the raw enum fallback)
+  it('attribution_analysis renders with label "Earwitness Analysis" (not raw event type)', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'attribution_analysis' })} />);
+    expect(screen.getByText('Earwitness Analysis')).toBeInTheDocument();
+    expect(screen.queryByText('attribution_analysis')).not.toBeInTheDocument();
+  });
+
   // #1157 — grab_failed event rendering
   it('grab_failed renders with label "Grab Failed" (not raw event type)', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'grab_failed' })} />);

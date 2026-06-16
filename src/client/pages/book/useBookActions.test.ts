@@ -26,6 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       deleteBook: vi.fn(),
       uploadBookCover: vi.fn(),
       refreshScanBook: vi.fn(),
+      analyseBookAttribution: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
@@ -37,6 +38,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' },
         network: {},
         rss: { intervalMinutes: 15, enabled: false },
+        earwitness: { enabled: true, baseUrl: 'http://earwitness:8080', apiKey: 'k' },
       }),
     },
   };
@@ -486,6 +488,56 @@ describe('useBookActions', () => {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5] });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5, 'files'] });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+    });
+  });
+
+  // #1528 — analyseAttributionMutation + earwitnessEnabled
+  describe('analyseAttributionMutation', () => {
+    it('calls api.analyseBookAttribution with the book ID', async () => {
+      (api.analyseBookAttribution as Mock).mockResolvedValue({ bookId: 3, outcome: 'ok', eventId: 9 });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(3), { wrapper });
+
+      act(() => { result.current.analyseAttributionMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(api.analyseBookAttribution).toHaveBeenCalledWith(3);
+      });
+    });
+
+    it('invalidates the event-history queries on success', async () => {
+      (api.analyseBookAttribution as Mock).mockResolvedValue({ bookId: 3, outcome: 'ok', eventId: 9 });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(3), { wrapper });
+
+      act(() => { result.current.analyseAttributionMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory', 'book', 3] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+      });
+    });
+
+    it('shows an error toast and does not crash on failure', async () => {
+      (api.analyseBookAttribution as Mock).mockRejectedValue(new Error('earwitness down'));
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(3), { wrapper });
+
+      act(() => { result.current.analyseAttributionMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Earwitness analysis failed: earwitness down');
+      });
+    });
+
+    it('exposes earwitnessEnabled from settings', async () => {
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(3), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.earwitnessEnabled).toBe(true);
       });
     });
   });

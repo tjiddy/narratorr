@@ -351,6 +351,34 @@ describe('BookDetails', () => {
       expect(screen.queryByRole('menuitem', { name: /Rename/ })).not.toBeInTheDocument();
     });
 
+    // #1528 — "Analyse with earwitness" menu gating
+    it('shows "Analyse with earwitness" when the integration is enabled and the book has a path', async () => {
+      (api.getSettings as Mock).mockResolvedValue({ earwitness: { enabled: true, baseUrl: 'http://ew', apiKey: 'k' } });
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await openOverflowMenu(user);
+      expect(await screen.findByRole('menuitem', { name: /Analyse with earwitness/i })).toBeInTheDocument();
+    });
+
+    it('hides "Analyse with earwitness" when the integration is disabled', async () => {
+      (api.getSettings as Mock).mockResolvedValue({ earwitness: { enabled: false, baseUrl: '', apiKey: '' } });
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await openOverflowMenu(user);
+      expect(screen.queryByRole('menuitem', { name: /Analyse with earwitness/i })).not.toBeInTheDocument();
+    });
+
+    it('hides "Analyse with earwitness" when the book has no path, even if enabled', async () => {
+      (api.getSettings as Mock).mockResolvedValue({ earwitness: { enabled: true, baseUrl: 'http://ew', apiKey: 'k' } });
+      const user = userEvent.setup();
+      renderBookDetails({ path: null });
+
+      await openOverflowMenu(user);
+      expect(screen.queryByRole('menuitem', { name: /Analyse with earwitness/i })).not.toBeInTheDocument();
+    });
+
     it('calls renameBook API when Rename button is clicked and confirmed', async () => {
       const user = userEvent.setup();
       (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);

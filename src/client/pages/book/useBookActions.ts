@@ -76,10 +76,6 @@ export function useBookActions(bookId: number) {
   });
 
   const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
-  const earwitnessEnabled = !!settings?.earwitness?.enabled;
-
-  // Result is only visible as a book event, so invalidate the event-history
-  // queries (the existing book invalidations don't cover that key).
   const analyseAttributionMutation = useMutation({
     mutationFn: () => api.analyseBookAttribution(bookId),
     onSuccess: () => {
@@ -175,7 +171,7 @@ export function useBookActions(bookId: number) {
     analyseAttributionMutation,
     uploadCoverMutation,
     ffmpegConfigured,
-    earwitnessEnabled,
+    earwitnessEnabled: !!settings?.earwitness?.enabled,
     isSaving,
     handleSave,
   };
