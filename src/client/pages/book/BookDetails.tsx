@@ -16,6 +16,7 @@ import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
+import { useAnalyseAttributionAction } from './useAnalyseAttributionAction.js';
 import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.js';
 import { useBookModals } from '@/hooks/useBookModals.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
@@ -44,8 +45,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, analyseAttributionMutation, uploadCoverMutation, ffmpegConfigured, earwitnessEnabled, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id);
+  const { analyseAttributionMutation, earwitnessEnabled } = useAnalyseAttributionAction(libraryBook.id);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
 

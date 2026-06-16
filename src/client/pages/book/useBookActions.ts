@@ -76,17 +76,6 @@ export function useBookActions(bookId: number) {
   });
 
   const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
-  const analyseAttributionMutation = useMutation({
-    mutationFn: () => api.analyseBookAttribution(bookId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.byBookId(bookId) });
-      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-      toast.success('Recorded earwitness analysis — see the History tab');
-    },
-    onError: (error: Error) => {
-      toast.error(`Earwitness analysis failed: ${getErrorMessage(error)}`);
-    },
-  });
 
   const deleteMutation = useMutation({
     mutationFn: ({ deleteFiles }: { deleteFiles: boolean }) =>
@@ -168,10 +157,8 @@ export function useBookActions(bookId: number) {
     deleteMutation,
     wrongReleaseMutation,
     retryImportMutation,
-    analyseAttributionMutation,
     uploadCoverMutation,
     ffmpegConfigured,
-    earwitnessEnabled: !!settings?.earwitness?.enabled,
     isSaving,
     handleSave,
   };
