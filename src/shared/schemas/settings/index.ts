@@ -10,6 +10,7 @@ export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchem
 export { networkSettingsSchema, networkFormSchema } from './network.js';
 export { systemSettingsSchema, systemFormSchema } from './system.js';
 export { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
+export { earwitnessSettingsSchema, earwitnessFormSchema } from './earwitness.js';
 export {
   settingsRegistry,
   type SettingsCategory,

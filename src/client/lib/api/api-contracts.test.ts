@@ -674,6 +674,14 @@ describe('settingsApi', () => {
       body: JSON.stringify({ path: '/usr/bin/ffmpeg' }),
     }));
   });
+
+  it('testEarwitness → POST /settings/earwitness/test with { baseUrl, apiKey }', async () => {
+    await settingsApi.testEarwitness({ baseUrl: 'https://earwitness.example.com', apiKey: 'sk-1234' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/settings/earwitness/test', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ baseUrl: 'https://earwitness.example.com', apiKey: 'sk-1234' }),
+    }));
+  });
 });
 
 describe('eventHistoryApi', () => {
