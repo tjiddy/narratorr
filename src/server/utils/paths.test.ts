@@ -362,6 +362,19 @@ describe('planFileRenames', () => {
       expect(renames.every(r => /\(\d{3}\)\.mp3$/.test(r.to))).toBe(true);
     });
 
+    it('numbers the bare file first, before its (N) duplicate copies', async () => {
+      // Windows/download duplicate convention: bare `Title.mp3` IS part 1, `(2)` is part 2.
+      // Pre-fix the bare file sorted LAST and got the highest ordinal — chapter 1 at the end.
+      await mockFiles(['Title.mp3', 'Title (10).mp3', 'Title (2).mp3']);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      expect(byFrom['Title.mp3']).toBe('Author - Test Book (1).mp3');
+      expect(byFrom['Title (2).mp3']).toBe('Author - Test Book (2).mp3');
+      expect(byFrom['Title (10).mp3']).toBe('Author - Test Book (3).mp3');
+    });
+
     it('orders already-suffixed (N) stems numerically, not lexicographically', async () => {
       // Lexicographic sort would order (10) < (100) < (2) because ')' < '0'.
       // Numeric sort must order (2) < (10) < (100), so re-numbering follows play order.
