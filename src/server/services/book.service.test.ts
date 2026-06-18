@@ -302,6 +302,61 @@ describe('BookService', () => {
     });
   });
 
+  describe('findLibraryStatusByAsins', () => {
+    it('returns a Map keyed by UPPERCASED asin with { bookId: publicId, status } values', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_abc123', status: 'imported', asin: 'B00ASIN' },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+
+      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_abc123', status: 'imported' });
+      // bookId is the bk_ publicId, NOT the internal numeric id.
+      expect(map.get('B00ASIN')!.bookId).toMatch(/^bk_/);
+    });
+
+    it('matches case-insensitively: a lowercased stored asin resolves under the uppercase key', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_drift', status: 'imported', asin: 'b00asin' },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+
+      expect(map.has('B00ASIN')).toBe(true);
+      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_drift', status: 'imported' });
+    });
+
+    it('returns an empty map WITHOUT issuing a query for an empty input array (no IN ())', async () => {
+      const map = await service.findLibraryStatusByAsins([]);
+
+      expect(map.size).toBe(0);
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('skips a null-asin row (partial index excludes null-asin owned books)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_null', status: 'wanted', asin: null },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+
+      expect(map.size).toBe(0);
+    });
+
+    it('resolves multiple asins in a single batch lookup (one query, not N)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_a', status: 'imported', asin: 'B00AAA' },
+        { bookId: 'bk_b', status: 'downloading', asin: 'B00BBB' },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00AAA', 'B00BBB']);
+
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(map.get('B00AAA')).toEqual({ bookId: 'bk_a', status: 'imported' });
+      expect(map.get('B00BBB')).toEqual({ bookId: 'bk_b', status: 'downloading' });
+    });
+  });
+
   describe('create() junction table CRUD', () => {
     it('inserts bookAuthors junction rows with correct positions for multiple authors', async () => {
       const author2 = { id: 2, name: 'Second Author', slug: 'second-author', asin: null, createdAt: new Date(), updatedAt: new Date() };

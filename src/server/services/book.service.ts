@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { assertPathInsideLibrary, cleanEmptyParents, PathOutsideLibraryError } from '../utils/paths.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { eq, and, sql, notExists } from 'drizzle-orm';
+import { eq, and, sql, notExists, inArray } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -13,6 +13,7 @@ import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 
 
 export { CoverUploadError } from './cover-upload.js';
@@ -171,6 +172,41 @@ export class BookService {
     }
 
     return null;
+  }
+
+  /**
+   * Batch ASIN → library-status lookup for the v1 metadata-search cross-reference
+   * (#1537). Given the result ASINs of a metadata search, returns a Map keyed by
+   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status }` for each owned
+   * book — so the caller does a plain `.get(result.asin?.toUpperCase())`.
+   *
+   * Case-insensitive by design: ASINs are NOT globally normalized in narratorr
+   * (the parser uppercases, but API validators only `.trim()` and add-by-ASIN
+   * stores as-is), so an exact `IN` would silently miss a case-drifted stored
+   * ASIN and wrongly show every such book as "not owned". We match on
+   * `lower(asin)` (the `book-list.service` precedent) and uppercase both the keys
+   * and the result rows. The query is bounded by the small search result set
+   * (currently ≤10) over the partial unique `idx_books_asin_unique`, so no
+   * chunking is needed — but guard the empty list so we never emit `IN ()`.
+   *
+   * Null-ASIN owned books cannot match (the unique index is partial,
+   * `asin IS NOT NULL`); that limitation is accepted and documented in #1537.
+   */
+  async findLibraryStatusByAsins(asins: string[]): Promise<Map<string, { bookId: string; status: BookStatus }>> {
+    const map = new Map<string, { bookId: string; status: BookStatus }>();
+    if (asins.length === 0) return map;
+
+    const lowered = asins.map((a) => a.toLowerCase());
+    const rows = await this.db
+      .select({ bookId: books.publicId, status: books.status, asin: books.asin })
+      .from(books)
+      .where(inArray(sql`lower(${books.asin})`, lowered));
+
+    for (const row of rows) {
+      if (row.asin == null) continue;
+      map.set(row.asin.toUpperCase(), { bookId: row.bookId, status: row.status as BookStatus });
+    }
+    return map;
   }
 
   /**

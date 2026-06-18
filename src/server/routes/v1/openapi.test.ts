@@ -90,7 +90,7 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       downloadOrchestrator: downloadOrchestrator as never,
       downloadService: downloadService as never,
     }, db);
-    await v1MetadataRoutes(scoped, { metadataService: metadataService as never });
+    await v1MetadataRoutes(scoped, { metadataService: metadataService as never, bookService: bookService as never });
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));
     scoped.get('/api/v1/system/status', async () => ({ ok: true })); // Prowlarr-compat shim
@@ -206,6 +206,9 @@ describe('v1 OpenAPI spec generation', () => {
     expect(schema.properties).toHaveProperty('data');
     expect(schema.properties).toHaveProperty('total');
     expect(schema.properties.data.type).toBe('array');
+    // The optional library cross-reference (#1537) is documented on the result item.
+    const item = schema.properties.data.items;
+    expect(item.properties).toHaveProperty('library');
   });
 });
 

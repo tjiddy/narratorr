@@ -280,7 +280,7 @@ const routeRegistry: RouteFactory[] = [
     downloadOrchestrator: s.downloadOrchestrator,
     downloadService: s.download,
   }, db),
-  (app, s) => v1MetadataRoutes(app, { metadataService: s.metadata }),
+  (app, s) => v1MetadataRoutes(app, { metadataService: s.metadata, bookService: s.book }),
 ];
 
 export { routeRegistry };
