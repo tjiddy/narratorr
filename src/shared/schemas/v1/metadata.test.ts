@@ -181,6 +181,37 @@ describe('metadataSearchResultV1Schema (fail-closed, .strict())', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  describe('library cross-reference (#1537)', () => {
+    it('accepts a result carrying a valid library { bookId, status }', () => {
+      const result = metadataSearchResultV1Schema.safeParse({
+        ...valid,
+        library: { bookId: 'bk_abc123', status: 'imported' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts library absent and library: null', () => {
+      expect(metadataSearchResultV1Schema.safeParse(valid).success).toBe(true);
+      expect(metadataSearchResultV1Schema.safeParse({ ...valid, library: null }).success).toBe(true);
+    });
+
+    it('rejects an out-of-enum library.status (must be a BOOK_STATUSES value)', () => {
+      const result = metadataSearchResultV1Schema.safeParse({
+        ...valid,
+        library: { bookId: 'bk_abc123', status: 'archived' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects an unknown key inside library (strict)', () => {
+      const result = metadataSearchResultV1Schema.safeParse({
+        ...valid,
+        library: { bookId: 'bk_abc123', status: 'imported', leak: 'x' },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });
 
 describe('metadataSearchV1QuerySchema (strict, min(1)/max(500))', () => {

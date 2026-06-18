@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bookStatusSchema } from '../book.js';
 
 // ============================================================================
 // Public API v1 — Metadata search (v1.1 — #1519)
@@ -59,6 +60,15 @@ export const metadataSearchResultV1SeriesSchema = z
  * field a projector regression might leak. `narrators` is a REQUIRED array
  * (defaults to `[]` when the source omits narrators) so consumers always get an
  * array, never `undefined`.
+ *
+ * `library` is the narratorr-only cross-reference (#1537): when the result's
+ * ASIN matches a book already in the library it carries `{ bookId, status }` —
+ * the `bk_` publicId and the raw canonical `BookStatus`. It is additive,
+ * optional, and best-effort: the route fills it AFTER projection (the projector
+ * keeps reading only public provider fields), so a library-lookup failure leaves
+ * it absent rather than failing the search. `status` reuses `bookStatusSchema`
+ * (NOT a parallel enum) so the consumer's vocabulary equals `BookV1`'s with zero
+ * translation; the consumer owns the tri-state collapse, narratorr emits facts.
  */
 export const metadataSearchResultV1Schema = z
   .object({
@@ -69,6 +79,14 @@ export const metadataSearchResultV1Schema = z
     series: metadataSearchResultV1SeriesSchema.optional(),
     cover: z.string().optional(),
     publishedDate: z.string().optional(),
+    library: z
+      .object({
+        bookId: z.string(),
+        status: bookStatusSchema,
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 
