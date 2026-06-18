@@ -209,6 +209,14 @@ describe('v1 OpenAPI spec generation', () => {
     // The optional library cross-reference (#1537) is documented on the result item.
     const item = schema.properties.data.items;
     expect(item.properties).toHaveProperty('library');
+    // #1539: library is present-or-absent — optional (not in `required`) and
+    // non-nullable (a plain object, no null union / nullable flag).
+    expect(item.required ?? []).not.toContain('library');
+    const library = item.properties.library;
+    expect(library.type).toBe('object');
+    expect(library.nullable).toBeUndefined();
+    expect(library.anyOf).toBeUndefined();
+    expect(library.oneOf).toBeUndefined();
   });
 });
 

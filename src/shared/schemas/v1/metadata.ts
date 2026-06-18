@@ -85,7 +85,6 @@ export const metadataSearchResultV1Schema = z
         status: bookStatusSchema,
       })
       .strict()
-      .nullable()
       .optional(),
   })
   .strict();
