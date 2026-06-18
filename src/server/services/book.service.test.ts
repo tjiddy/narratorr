@@ -315,7 +315,13 @@ describe('BookService', () => {
       expect(map.get('B00ASIN')!.bookId).toMatch(/^bk_/);
     });
 
-    it('matches case-insensitively: a lowercased stored asin resolves under the uppercase key', async () => {
+    // Map-SHAPE only: proves the returned map is keyed by the UPPERCASED asin even
+    // when the row's stored asin is lowercase (the `.toUpperCase()` in the method).
+    // It does NOT prove the SQL predicate is case-insensitive — a mock returns its
+    // preloaded row regardless of the WHERE clause. The case-insensitive `lower(asin)`
+    // PREDICATE is proven behaviorally in the DB-backed
+    // `book.service.find-library-status.integration.test.ts` (#1537 PR-review F1).
+    it('keys the map by the UPPERCASED asin even when the stored row is lowercase', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { bookId: 'bk_drift', status: 'imported', asin: 'b00asin' },
       ]));

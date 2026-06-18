@@ -232,9 +232,14 @@ describe('v1 metadata routes', () => {
       expect(res.json().data[0].library).toEqual({ bookId: 'bk_drift', status: 'imported' });
     });
 
-    it('returns the normal { data, total } payload with no library fields and no 5xx when the lookup throws', async () => {
+    it('returns the normal { data, total } payload with no library fields and no 5xx when the lookup throws, and logs the failure', async () => {
       (metadataService.search as Mock).mockResolvedValue({ books: [providerBook()], authors: [], series: [] });
-      (bookService.findLibraryStatusByAsins as Mock).mockRejectedValue(new Error('db down'));
+      const boom = new Error('db down');
+      (bookService.findLibraryStatusByAsins as Mock).mockRejectedValue(boom);
+      // With logger:false the abstract logger is a singleton, so request.log
+      // delegates to app.log — spying on app.log.warn captures the route's
+      // request.log.warn on the swallowed enrichment-failure path.
+      const warnSpy = vi.spyOn(app.log, 'warn');
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=wool', headers: keyHeaders });
 
@@ -243,6 +248,12 @@ describe('v1 metadata routes', () => {
       expect(Object.keys(body).sort()).toEqual(['data', 'total']);
       expect(body.total).toBe(1);
       expect(body.data[0]).not.toHaveProperty('library');
+      // The required failure log is emitted (deleting the route's log.warn fails this).
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        'v1 metadata-search library enrichment failed',
+      );
+      warnSpy.mockRestore();
     });
   });
 
