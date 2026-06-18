@@ -191,9 +191,9 @@ describe('metadataSearchResultV1Schema (fail-closed, .strict())', () => {
       expect(result.success).toBe(true);
     });
 
-    it('accepts library absent and library: null', () => {
+    it('accepts library absent but rejects library: null (present-or-absent contract)', () => {
       expect(metadataSearchResultV1Schema.safeParse(valid).success).toBe(true);
-      expect(metadataSearchResultV1Schema.safeParse({ ...valid, library: null }).success).toBe(true);
+      expect(metadataSearchResultV1Schema.safeParse({ ...valid, library: null }).success).toBe(false);
     });
 
     it('rejects an out-of-enum library.status (must be a BOOK_STATUSES value)', () => {
