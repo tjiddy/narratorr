@@ -42,7 +42,7 @@ function deepMerge<T extends Record<string, unknown>>(base: T, overrides: DeepPa
 // ---------------------------------------------------------------------------
 
 function deepClone<T>(obj: T): T {
-  return JSON.parse(JSON.stringify(obj)) as T;
+  return structuredClone(obj);
 }
 
 // ---------------------------------------------------------------------------
