@@ -272,3 +272,285 @@ fastify-type-provider-zod types FastifyReply.send() as the union of the schemas 
 ---
 
 React runs child effects before parent effects. If a child form component applies RHF setError() in a mount effect (e.g. mapping server test `fieldErrors` onto nested `settings.*` inputs) while the parent component resets the same form via form.reset() in its own mount effect, the parent reset wipes the child's errors because it runs second. This is invisible in production (the failing test result arrives after a user click, long after mount, so reset() has already run and its deps don't change), but it breaks component tests that pass the failing result as an initial prop. Fix in tests: deliver the result AFTER mount via a small stateful wrapper that setStates it in a useEffect, mirroring the real click-driven flow — do not pass it at initial render. Applies to any entity-edit card that pairs a parent reset() effect with child-applied field errors (currently ConnectorCard; the indexer/download-client/notifier cards would hit the same trap if they add fieldError mapping). See src/client/components/settings/ConnectorCard.test.tsx.
+
+## sqlite-null-unique-index
+
+**added:** 2026-06-17
+**files:** src/db/schema.ts, drizzle/**
+**tags:** sqlite, drizzle, unique-index, null, migrations
+
+---
+
+In SQLite, NULL ≠ NULL inside a UNIQUE index — a nullable column does NOT prevent duplicate rows where that column is NULL. Don't rely on a unique constraint over a nullable column to dedupe; populate the column before insert, or add a service-layer dedupe guard. (Surfaced during the publicId work, where a nullable unique column silently allowed dupes at the migration boundary.)
+
+## drizzle-enum-type-derivation
+
+**added:** 2026-06-17
+**files:** src/server/services/types.ts, src/db/schema.ts
+**tags:** drizzle, typescript, enums, inferselect, inferinsert
+
+---
+
+Drizzle widens enum columns to `string` at the TS boundary. On READ, `typeof table.$inferSelect` re-widens enum columns — do NOT redeclare `type FooRow = typeof foos.$inferSelect` per file; import the canonical narrowed Row type from `src/server/services/types.ts` (`BookRow`, `DownloadRow`, `IndexerRow`, `BookEventRow`, etc.). A hand-rolled DB-shaped type that types an enum column as `string` is the same anti-pattern in different syntax — import the canonical type instead. On WRITE/derive, get the narrow union from `NonNullable<typeof table.$inferInsert['col']>`, never bare `string`.
+
+## sqlite-in-clause-bind-limit
+
+**added:** 2026-06-17
+**tags:** sqlite, libsql, bind-limit, in-clause
+
+---
+
+When building a dynamic `IN (...)` query, chunk to stay under SQLite's bound-parameter cap and account for ALL bound params in the statement (the WHERE clause AND the IN list), not just the list length. The old "999" figure is stale — modern SQLite (≥ 3.32) / libSQL set `SQLITE_MAX_VARIABLE_NUMBER` to 32766 — but the failure mode is the same: exceed it and the statement errors at runtime. Count every placeholder when sizing chunks.
+
+## zod-nullish-external-api
+
+**added:** 2026-06-17
+**files:** src/core/indexers/**, src/core/metadata/**, src/core/import-lists/**
+**tags:** zod, validation, nullish, external-api, metadata, indexers
+
+---
+
+`z.string().optional()` accepts `undefined` but REJECTS `null` ("Expected string, received null"). Real external APIs (NYT, Audible, ABS, Hardcover, MAM, Audnexus) return `null` for absent values, so ANY field parsed from an external response must use `.nullish()` (accepts both null and undefined). Reserve `.optional()` for schemas we own (request validators, DB-derived shapes, form data, settings) where we control the contract.
+
+## zod-default-ignores-empty-string
+
+**added:** 2026-06-17
+**files:** src/shared/schemas/**
+**tags:** zod, defaults, validation, coercion
+
+---
+
+`z.string().default('x')` only applies the default for `undefined` — an empty string `''` passes through unchanged. To coalesce empty/whitespace input to a default, use `.transform(v => v || default)` (trim first if needed), not `.default()`.
+
+## zod-trim-min-one
+
+**added:** 2026-06-17
+**files:** src/shared/schemas/**
+**tags:** zod, validation, trim, user-input
+
+---
+
+`z.string().min(1)` accepts `'   '` (whitespace-only). For user-facing text fields use `.trim().min(1)` so a spaces-only value is rejected.
+
+## zod-resolver-effects-divergence
+
+**added:** 2026-06-17
+**files:** src/client/components/**
+**tags:** zod, zodresolver, react-hook-form, forms
+
+---
+
+`z.preprocess()`, `z.transform()`, and `z.default()` create ZodEffects where the input type ≠ output type; `zodResolver` requires them aligned and otherwise mistypes the form. Fix: omit `.default()` in form schemas (forms always pass explicit `defaultValues`), and use `setValueAs` in `register()` for coercion instead of `z.preprocess()`. Use the `stripDefaults()` helper to remove defaults from a server schema before reusing it in a form.
+
+## settings-field-dual-default
+
+**added:** 2026-06-17
+**files:** src/shared/schemas/settings/**
+**tags:** settings, zod, defaults, registry, mock-factory
+
+---
+
+A new settings field needs TWO edits: the Zod schema `.default(...)` AND `DEFAULT_SETTINGS` / `settingsRegistry.*.defaults` in `registry.ts`. Runtime reads `DEFAULT_SETTINGS` (it does NOT Zod-parse to fill defaults), so a schema-only addition leaves the runtime value and the mock factories missing the field — green typecheck, `undefined` at runtime.
+
+## settings-from-entity-registry-overlay
+
+**added:** 2026-06-17
+**files:** src/client/components/settings/**
+**tags:** settings, forms, registry, strict-schema, adapters
+
+---
+
+A `settingsFromX` helper that derives form state from a stored entity must spread `<ENTITY>_REGISTRY[entity.type].defaultSettings` and then overlay the entity's non-null stored values — never enumerate every possible field across every adapter type. Strict per-type schemas (`.strict()`) reject foreign-type fields with `Unrecognized keys` (400); the overlay (not defaults alone) is what preserves valid non-default keys the UI actually persisted (e.g. MAM's `isVip` / `classname`). Component tests must assert the `onFormTest` payload's `settings` contains no foreign keys for the selected type.
+
+## sse-setquerydata-not-invalidate
+
+**added:** 2026-06-17
+**files:** src/client/hooks/**
+**tags:** react-query, sse, setquerydata, realtime
+
+---
+
+For high-frequency SSE/stream updates, patch rows in place with `setQueryData()`, not `invalidateQueries()` — invalidation refetches on every event and thrashes the UI.
+
+## react-query-optimistic-cancel
+
+**added:** 2026-06-17
+**files:** src/client/hooks/**
+**tags:** react-query, optimistic-update, mutations
+
+---
+
+For optimistic updates, call `cancelQueries` before `setQueryData` — otherwise a pending refetch can overwrite the optimistic data. For paginated queries, set `placeholderData: (prev) => prev` to avoid flicker during page transitions.
+
+## module-state-use-sync-external-store
+
+**added:** 2026-06-17
+**files:** src/client/hooks/**, src/client/lib/**
+**tags:** react, usesyncexternalstore, module-state
+
+---
+
+Module-level mutable state read by React components must be exposed via `useSyncExternalStore` with a subscribe/notify pair — a bare `let` won't trigger re-renders and tears across concurrent renders.
+
+## derived-state-over-copied
+
+**added:** 2026-06-17
+**tags:** react, react-query, derived-state, race
+
+---
+
+Prefer derived state to copied state: `override ?? queryDefault ?? fallback` instead of copying async query data into `useState`. Copying creates a race where the local copy goes stale relative to the query cache.
+
+## backdrop-filter-stacking-context
+
+**added:** 2026-06-17
+**files:** src/client/components/**
+**tags:** css, tailwind, portal, z-index
+
+---
+
+An element with `backdrop-filter` (e.g. glass-card containers) creates a stacking context that traps descendant z-index. Dropdowns/modals that must escape it have to render through a portal attached to `<body>`, not the nearest parent.
+
+## dropdown-option-case-insensitive-dedup
+
+**added:** 2026-06-17
+**tags:** react, filters, dedup
+
+---
+
+Deduplicate dropdown/filter options case-insensitively (a Map keyed by the lowercased value) — otherwise values differing only by case render as duplicate entries.
+
+## stable-list-keys
+
+**added:** 2026-06-17
+**tags:** react, keys, lists
+
+---
+
+Use field-based React keys, not array indices. Append an index suffix only at actual collision points, via a dedup helper — index-only keys remount/reorder incorrectly when the list changes.
+
+## spa-fallback-url-base-scope
+
+**added:** 2026-06-17
+**files:** src/server/server-utils.ts
+**tags:** fastify, spa, url-base, routing
+
+---
+
+The SPA index.html fallback must reject any request whose path doesn't start with `URL_BASE` before serving index.html — otherwise unrelated paths get the SPA shell instead of a 404 when the app is mounted under a sub-path.
+
+## fire-and-forget-preflight
+
+**added:** 2026-06-17
+**files:** src/server/services/**
+**tags:** fastify, background-jobs, async, validation
+
+---
+
+When a service method kicks off a background job (`.start()`), do all pre-flight validation SYNCHRONOUSLY before creating the job — a throw inside the async work function is unreachable by the caller because the route already returned 202. Make the method `async`, validate first, then create the job.
+
+## db-update-after-first-irreversible-fs-step
+
+**added:** 2026-06-17
+**files:** src/server/utils/import-staging.ts, src/server/services/import.service.ts
+**tags:** import, filesystem, db-consistency
+
+---
+
+In a pipeline that mutates the filesystem, update the database immediately after the FIRST irreversible fs step, not at the end. Deferring the DB write opens a window where the files have moved but the DB still points at the old state if the process dies mid-pipeline.
+
+## fk-restore-find-or-create
+
+**added:** 2026-06-17
+**files:** src/server/services/**
+**tags:** backup, restore, foreign-keys, db
+
+---
+
+When restoring records (backup import, re-import), find-or-create the related FK records too, not just the primary scalar columns — a restore that writes only the primary row leaves dangling FKs to authors/series/etc. that no longer exist.
+
+## import-commit-atomic-rename
+
+**added:** 2026-06-17
+**files:** src/server/utils/import-staging.ts
+**tags:** import, filesystem, rename, atomicity
+
+---
+
+The import commit/rollback in `import-staging.ts` relies on `rename()` atomically replacing the destination file. Do NOT `unlink()` before `rename()`, and don't substitute copy+delete — either opens a data-loss window the rollback assumes cannot exist. (POSIX gives no ordering guarantee between an un-fsync'd write and the backup-out renames, which is why the commit guards before the destructive step.)
+
+## variable-length-format-most-specific-first
+
+**added:** 2026-06-17
+**tags:** parsing, cron, schedule
+
+---
+
+When parsing a format with a variable field count, check the MOST specific shape first — e.g. a 6-part (seconds-precision) cron before a 5-part cron — otherwise the shorter pattern greedily matches and the extra field is mis-parsed.
+
+## bitrate-bps-kbps-boundary
+
+**added:** 2026-06-17
+**files:** src/core/utils/**
+**tags:** audio, bitrate, music-metadata, units
+
+---
+
+`music-metadata` returns bitrate in bps (128000); settings/schemas use kbps (128); the DB stores bps. Always convert at the call site with `Math.floor(bps / 1000)` — never compare raw bitrate values across this boundary.
+
+## retention-lt-not-lte
+
+**added:** 2026-06-17
+**files:** src/server/jobs/**
+**tags:** retention, cleanup, date-boundary
+
+---
+
+"Older than N days" means strictly-less-than: use `lt`, not `lte`, on the cutoff timestamp. `lte` includes the boundary day and deletes one day too much.
+
+## mock-settings-deep-clone
+
+**added:** 2026-06-17
+**files:** src/shared/schemas/settings/create-mock-settings.fixtures.ts
+**tags:** test-fixtures, settings, deep-clone, test-isolation
+
+---
+
+The mock-settings factory deep-clones `DEFAULT_SETTINGS` (via `JSON.parse(JSON.stringify(...))`) so a test mutating the returned object can't pollute the shared default for later tests. Any new factory built off a shared default object must deep-clone it — a shallow `{ ...obj }` shares nested references and leaks mutations across tests.
+
+## vitest-clearallmocks-once-queue
+
+**added:** 2026-06-17
+**tags:** vitest, mocks, test-isolation
+
+---
+
+`vi.clearAllMocks()` only clears call history (`mockClear`); it does NOT drain `mockResolvedValueOnce` / `mockReturnValueOnce` / `mockImplementationOnce` queues or reset implementations. A `beforeEach(clearAllMocks)` mixed with per-test `*Once()` queueing leaks stale queued responses across tests (flaky pass/fail). Use `vi.resetAllMocks()` (or per-mock `mockReset()`) when `*Once()` queues are in play — it drains the queue AND restores the implementation.
+
+## vitest-faketimers-react-query
+
+**added:** 2026-06-17
+**tags:** vitest, faketimers, react-query
+
+---
+
+A full `vi.useFakeTimers()` deadlocks TanStack Query's internal `setTimeout`. In tests that mix polling hooks with Query, fake only what you need: `vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })` and drive with explicit `vi.advanceTimersByTime()`.
+
+## esm-same-module-vi-mock-bypass
+
+**added:** 2026-06-17
+**files:** src/core/utils/network-service.ts
+**tags:** vitest, vi-mock, esm, module-binding
+
+---
+
+When an exported function calls another exported function from the SAME module (e.g. `fetchWithSsrfRedirect` → `fetchWithOptionalDispatcher` in `network-service.ts`), the inner call uses the local binding, not the module's export — so a `vi.mock` factory overriding the inner export will NOT intercept it (only external callers see the override). Workarounds, in order of preference: (1) mock at the OS boundary (`node:dns/promises`, `node:fs/promises`, `vi.stubGlobal('fetch', ...)`); (2) stub the entry point itself, not its inner deps; (3) replace the entry-point implementation in the mock factory. Do NOT add `__internal` indirection to production code just to enable mocking.
+
+## serialize-error-catch-binding-tracing
+
+**added:** 2026-06-17
+**tags:** eslint, pino, serialize-error, logging
+
+---
+
+The `narratorr/no-raw-error-logging` rule traces values back to their catch-binding origin: it fires on `{ error: catchBinding.<dot.chain> }` (e.g. `{ error: error.cause }`, `{ error: err.message }`) but NOT on `{ error: typedResult.error }` where the root identifier is a typed result-union. Computed (`obj[key]`) segments are skipped. If it fires, wrap the value with `serializeError()` from `src/server/utils/serialize-error.js` — don't reach for `// eslint-disable`; check whether the value really traces back to a catch binding.

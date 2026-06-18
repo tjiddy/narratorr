@@ -68,7 +68,7 @@ src/
 
 **Frontend** uses React Router (routes in `App.tsx`), nav items in `Layout.tsx`, TanStack Query for server state, Tailwind for styling.
 
-**Database** changes go through Drizzle: edit `db/schema.ts`, run `pnpm db:generate`, and commit the whole `drizzle/` folder — the generated SQL file plus the `meta/` journal and snapshot are co-required (committing only the SQL silently skips the migration in CI). See `CLAUDE.md` for the migration gotchas.
+**Database** changes go through Drizzle: edit `db/schema.ts`, run `pnpm db:generate`, and commit the whole `drizzle/` folder — the generated SQL file plus the `meta/` journal and snapshot are co-required (committing only the SQL silently skips the migration in CI). For a column/table **rename**, `db:generate` shows an interactive disambiguation prompt — answer it, or split the change into a drops-only generate then an adds-only generate so each diff is unambiguous.
 
 ## Testing
 
@@ -102,6 +102,8 @@ See [e2e/README.md](e2e/README.md) for the Playwright harness, fakes, and fixtur
 - Tailwind CSS (no CSS files)
 - `@/` path alias for client imports
 - Logger type: `FastifyBaseLogger` from `fastify` (not `BaseLogger` from `pino`)
+- Non-submit `<button>` inside a `<form>` must have `type="button"` — the browser default is `type="submit"`, so an unmarked button submits the form on click
+- API client methods in `src/client/lib/api/` use domain-prefixed names (`getSystemStatus`, not `getStatus`) — the barrel export spreads them, so an unprefixed name silently overwrites another module's method
 
 ### Logging guidelines
 
@@ -114,4 +116,11 @@ See [e2e/README.md](e2e/README.md) for the Playwright harness, fakes, and fixtur
 
 Every catch block must log. Every create/update/delete should log at info. Core adapters (`src/core/`) do NOT log — they throw or return failures.
 
-See `CLAUDE.md` for additional conventions, gotchas, and architectural context.
+Wrap `unknown` catch values with `serializeError()` (from `src/server/utils/serialize-error.js`) before passing them to the logger — a raw `unknown` serializes to `{}` in JSON logs. The `narratorr/no-raw-error-logging` ESLint rule enforces this on server code; use the `error:` key.
+
+## Debugging
+
+- **Folder-name parse tester (`POST /api/library/scan-debug`):** body `{ folderName }` → the parsed `{ title, author, series, seriesPosition, asin }`, a per-step `cleanName` trace, the metadata search result, and a library duplicate check. The tool for diagnosing import **"No Match"** problems — it shows how a download folder name resolves *before* the metadata lookup, so you can tell a parse failure from a provider miss. The parser is pure functions in `src/server/utils/folder-parsing.ts`; you can call them directly via `pnpm exec tsx` to test a name without auth/HTTP.
+- **Search → enrich pipeline trace:** the indexer adapters, blacklist gate, language enrichment, multi-part filter, and quality/language filters emit a per-result audit trail at `debug` level, so a single search can be replayed from the logs. Set `LOG_LEVEL=debug` (env var, at boot) or the General-settings log level, then grep by `title:` substring (or `guid:` / `infoHash:`) to follow one result through the pipeline.
+
+See `SECURITY.md` for the full security model.

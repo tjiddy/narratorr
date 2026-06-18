@@ -193,7 +193,7 @@ Three outbound code paths follow attacker-influenced URLs and route through the 
 - Redirect limit caps redirect chains and prevents external→internal pivots
 - AbortSignal timeout enforced
 
-**Coverage scope:** SSRF address-blocking is intentionally scoped to attacker-influenced URLs. Operator-configured fetch destinations — indexer apiUrl, download-client host, notifier webhook URL, import-list source, metadata provider — are NOT address-blocked, by design. Self-hosted *arr deployments legitimately point at private-IP services (Prowlarr in Docker compose, qBittorrent on LAN, self-hosted Apprise instance). The trust boundary for those paths is "the operator configured this URL"; extending the block policy would break legitimate setups. See `CLAUDE.md` security section and closed issues #769 / #877 / #885 for the design rationale.
+**Coverage scope:** SSRF address-blocking is intentionally scoped to attacker-influenced URLs. Operator-configured fetch destinations — indexer apiUrl, download-client host, notifier webhook URL, import-list source, metadata provider — are NOT address-blocked, by design. Self-hosted *arr deployments legitimately point at private-IP services (Prowlarr in Docker compose, qBittorrent on LAN, self-hosted Apprise instance). The trust boundary for those paths is "the operator configured this URL"; extending the block policy would break legitimate setups. See closed issues #769 / #877 / #885 for the design rationale.
 
 ## Connector refresh (best-effort)
 
