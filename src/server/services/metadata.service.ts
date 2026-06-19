@@ -45,15 +45,36 @@ export interface MetadataServiceConfig {
   audibleRegion?: string;
 }
 
+const PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
+
+function isPseudoNarrator(name: string): boolean {
+  return PSEUDO_NARRATORS.has(name.trim().toLowerCase().replace(/\s+/g, ' '));
+}
+
+/**
+ * Single-book reject-words predicate — the ONE source of truth shared by the
+ * search filter (`filterRejectedBooks`) and the v1 add-by-ASIN gate
+ * (`POST /api/v1/books`), so the two can never drift. The matched surface is
+ * `title + subtitle + authors + narrators + formatType` (pseudo-narrators
+ * stripped, lower-cased), matched with `matchesWord` over
+ * `parseWordList(rejectWords)`. Pure: takes the book + the raw `rejectWords`
+ * setting value and returns whether it should be rejected. The per-call settings
+ * read and fail-open handling stay at each call site.
+ */
+export function isRejectedByWords(book: BookMetadata, rejectWords: string): boolean {
+  const rejectList = parseWordList(rejectWords);
+  if (rejectList.length === 0) return false;
+
+  const authorNames = (book.authors ?? []).map((a) => a.name).join(' ');
+  const narrators = (book.narrators ?? [])
+    .filter((n) => !isPseudoNarrator(n))
+    .join(' ');
+  const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators} ${book.formatType ?? ''}`.toLowerCase();
+  return rejectList.some((word) => matchesWord(surface, word));
+}
+
 export class MetadataService {
   private static readonly KNOWN_PODCAST_TYPES = new Set(['PodcastParent', 'Periodical']);
-  private static readonly PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
-
-  private static isPseudoNarrator(name: string): boolean {
-    return MetadataService.PSEUDO_NARRATORS.has(
-      name.trim().toLowerCase().replace(/\s+/g, ' '),
-    );
-  }
 
   private providers: MetadataSearchProvider[] = [];
   private audnexus: MetadataEnrichmentProvider;
@@ -271,17 +292,7 @@ export class MetadataService {
       return books;
     }
 
-    const rejectList = parseWordList(rejectWords);
-    if (rejectList.length === 0) return books;
-
-    return books.filter((book) => {
-      const authorNames = (book.authors ?? []).map((a) => a.name).join(' ');
-      const narrators = (book.narrators ?? [])
-        .filter((n) => !MetadataService.isPseudoNarrator(n))
-        .join(' ');
-      const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators} ${book.formatType ?? ''}`.toLowerCase();
-      return !rejectList.some((word) => matchesWord(surface, word));
-    });
+    return books.filter((book) => !isRejectedByWords(book, rejectWords));
   }
 
   private async filterByMinDuration(books: BookMetadata[]): Promise<BookMetadata[]> {

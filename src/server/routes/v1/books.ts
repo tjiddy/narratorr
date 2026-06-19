@@ -12,6 +12,7 @@ import type {
   IndexerSearchService,
   IndexerService,
 } from '../../services/index.js';
+import { isRejectedByWords } from '../../services/index.js';
 import type { BlacklistService } from '../../services/blacklist.service.js';
 import type { DownloadOrchestrator } from '../../services/download-orchestrator.js';
 import type { EventBroadcasterService } from '../../services/event-broadcaster.service.js';
@@ -189,6 +190,10 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
       // hydrate the ASIN via the metadata provider, create the book, record a
       // `manual` `book_added` event, and (operator-gated on
       // `quality.searchImmediately`) fire a fire-and-forget immediate search.
+      // 422 outcomes: `asin_not_resolved` (provider miss) and `edition_rejected`
+      // (the hydrated edition matches the owner's reject-words filter — the same
+      // gate the search applies, enforced here so an out-of-band ASIN can't bypass
+      // it).
       typed.post(
         '/books',
         {
@@ -227,6 +232,30 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             return reply.status(mapped.status).send(envelope(mapped.code, mapped.message));
           }
 
+          // Read `quality` ONCE here, fail-open. On a successful read, gate the
+          // add on reject-words using the SAME predicate the search filter uses
+          // (`isRejectedByWords`) so the add gate and the search can't drift, and
+          // capture `searchImmediately` to reuse after create. On a read failure,
+          // fail open (preference, not a security boundary — mirrors the search
+          // filter's posture, #1004): proceed to create AND skip the immediate
+          // search. Single read ⇒ a thrown read can never create-then-500.
+          let searchImmediately = false;
+          try {
+            const quality = await deps.settingsService.get('quality');
+            if (isRejectedByWords(lookup.book, quality.rejectWords)) {
+              request.log.info({ asin }, 'v1 add-by-ASIN: edition rejected by reject-words filter');
+              return await reply
+                .status(422)
+                .send(envelope('edition_rejected', "This edition is excluded by the library owner's reject-words filter"));
+            }
+            searchImmediately = quality.searchImmediately;
+          } catch (err: unknown) {
+            request.log.warn(
+              { asin, error: serializeError(err) },
+              'v1 add-by-ASIN: failed to read quality settings — proceeding without reject gate, skipping immediate search',
+            );
+          }
+
           const book = await deps.bookService.create(metadataToCreatePayload(lookup.book, asin));
 
           deps.eventHistory
@@ -243,8 +272,8 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
           request.log.info({ asin, publicId: book.publicId }, 'v1 add-by-ASIN: book created');
 
           // Operator-gated, fire-and-forget — return 201 immediately; never await
-          // the search nor surface its error. Mirrors the import-list path.
-          const { searchImmediately } = await deps.settingsService.get('quality');
+          // the search nor surface its error. Mirrors the import-list path. Reuses
+          // the `searchImmediately` captured from the single quality read above.
           if (searchImmediately && book.status === 'wanted') {
             triggerImmediateSearch(
               book,

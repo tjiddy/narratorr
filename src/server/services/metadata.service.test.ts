@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { MetadataService } from './metadata.service.js';
+import { MetadataService, isRejectedByWords } from './metadata.service.js';
+import type { BookMetadata } from '../../core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
 
@@ -2094,5 +2095,70 @@ describe('MetadataService', () => {
       const result = await service.lookupForFixMatch('B_NEW');
       expect(result.kind).toBe('ok');
     });
+  });
+});
+
+// ===== #1545 — shared reject-words predicate (add gate ⇔ search filter lockstep) =====
+describe('isRejectedByWords (shared predicate)', () => {
+  const book = (overrides?: Partial<BookMetadata>): BookMetadata =>
+    ({ title: 'Clean Title', authors: [{ name: 'Real Author' }], ...overrides }) as BookMetadata;
+
+  it('returns false when rejectWords is empty', () => {
+    expect(isRejectedByWords(book(), '')).toBe(false);
+  });
+
+  it('rejects on a title match', () => {
+    expect(isRejectedByWords(book({ title: 'Free Excerpt — Chapter 1' }), 'Free Excerpt')).toBe(true);
+  });
+
+  it('rejects on a subtitle-only match', () => {
+    expect(isRejectedByWords(book({ subtitle: 'A Sample for the audiobook' }), 'Sample')).toBe(true);
+  });
+
+  it('rejects on an author-name match', () => {
+    expect(isRejectedByWords(book({ authors: [{ name: 'Amy McMahon' }] }), 'Amy McMahon')).toBe(true);
+  });
+
+  it('rejects on a narrator-only match', () => {
+    expect(isRejectedByWords(book({ narrators: ['Virtual Voice'] }), 'Virtual Voice')).toBe(true);
+  });
+
+  it('rejects on a formatType-only match (word boundary: unabridged survives)', () => {
+    expect(isRejectedByWords(book({ formatType: 'abridged' }), 'Abridged')).toBe(true);
+    expect(isRejectedByWords(book({ formatType: 'unabridged' }), 'Abridged')).toBe(false);
+  });
+
+  it('does NOT reject when the word matches only a pseudo-narrator (stripped from surface)', () => {
+    expect(isRejectedByWords(book({ narrators: ['full cast'] }), 'Full Cast')).toBe(false);
+    // …but a real narrator containing the phrase IS rejected.
+    expect(isRejectedByWords(book({ narrators: ['GraphicAudio Full Cast'] }), 'Full Cast')).toBe(true);
+  });
+
+  // Lockstep: the search filter (via the public searchBooks path) and the predicate
+  // must agree on the same fixture + reject list — the search keeps exactly the books
+  // the predicate does not reject.
+  it('agrees with the search filter: searchBooks keeps exactly the books the predicate does not reject', async () => {
+    const REJECT = 'Virtual Voice';
+    const fixtures: BookMetadata[] = [
+      book({ title: 'Real Book', narrators: ['Jim Dale'] }),
+      book({ title: 'Fake Knockoff', authors: [{ name: 'Spammer' }], narrators: ['Virtual Voice'] }),
+      book({ title: 'Clean Sequel', narrators: ['Kate Reading'] }),
+    ];
+    const mockSettings = {
+      get: vi.fn().mockImplementation((key: string) => {
+        if (key === 'quality') return Promise.resolve({ rejectWords: REJECT });
+        if (key === 'metadata') return Promise.resolve({ languages: [], minDurationMinutes: 0 });
+        return Promise.resolve({});
+      }),
+    };
+    const svc = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), undefined, mockSettings as never);
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixtures });
+
+    const kept = await svc.searchBooks('query');
+
+    const expectedKept = fixtures.filter((b) => !isRejectedByWords(b, REJECT));
+    expect(kept).toEqual(expectedKept);
+    // Sanity: the partition is non-trivial (one dropped, two kept).
+    expect(kept).toHaveLength(2);
   });
 });
