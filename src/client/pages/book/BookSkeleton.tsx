@@ -6,7 +6,7 @@ export function BookSkeleton() {
 
       {/* Hero: cover + text */}
       <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
-        <div className="w-48 sm:w-56 lg:w-72 aspect-[2/3] skeleton rounded-2xl shrink-0 mx-auto sm:mx-0" />
+        <div className="w-44 sm:w-48 lg:w-56 aspect-square skeleton rounded-2xl shrink-0 mx-auto sm:mx-0" />
         <div className="flex-1 space-y-4">
           <div className="h-10 w-3/4 skeleton rounded" />
           <div className="h-5 w-1/2 skeleton rounded" />
