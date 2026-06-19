@@ -8,7 +8,7 @@ export { BookImportService, type ImportJobListing, type RetryImportResult } from
 export { BookListService, type BookListOptions, type BookStats } from './book-list.service.js';
 export { DownloadService, type DownloadWithBook, type RetryResult } from './download.service.js';
 export { DownloadOrchestrator } from './download-orchestrator.js';
-export { MetadataService } from './metadata.service.js';
+export { MetadataService, isRejectedByWords } from './metadata.service.js';
 export { ImportService } from './import.service.js';
 export { ImportOrchestrator } from './import-orchestrator.js';
 export { NotifierService } from './notifier.service.js';

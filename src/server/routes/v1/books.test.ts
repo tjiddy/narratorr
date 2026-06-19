@@ -421,6 +421,65 @@ describe('v1 books routes', () => {
       expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
     });
 
+    it('422 edition_rejected: a reject-word-matching edition is refused before create (#1545)', async () => {
+      // metaBook title is "The Way of Kings" → reject-word "kings" matches the surface.
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, rejectWords: 'kings' });
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('edition_rejected');
+      expect(bookService.create as Mock).not.toHaveBeenCalled();
+      expect(eventHistory.create as Mock).not.toHaveBeenCalled();
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+    });
+
+    it('201: a configured reject-word that does NOT match the edition is unchanged (#1545)', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, rejectWords: 'dramatized' });
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('201: searchImmediately survives the single quality read (regression guard, #1545)', async () => {
+      // The reject gate and the post-create immediate search now share ONE read —
+      // assert reusing the captured value did not drop the search.
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: true, rejectWords: 'dramatized' });
+      const created = hydratedRow({ status: 'wanted' });
+      (bookService.create as Mock).mockResolvedValue(created);
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      expect(settingsService.get as Mock).toHaveBeenCalledTimes(1);
+      expect(triggerImmediateSearch as Mock).toHaveBeenCalledTimes(1);
+    });
+
+    it('201 fail-open (deterministic): a thrown quality read creates the book and skips the immediate search (#1545)', async () => {
+      (settingsService.get as Mock).mockRejectedValue(new Error('settings unavailable'));
+      (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
+
+      const res = await post({ asin: ASIN });
+
+      // Single read ⇒ the throw cannot create-then-500: 201, book created, no search.
+      expect(res.statusCode).toBe(201);
+      expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+    });
+
+    it('409 still precedes the reject gate even when reject-words are configured (#1545)', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, rejectWords: 'kings' });
+      (bookService.findDuplicate as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_existing0000000000' }));
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('book_exists');
+      expect(bookService.create as Mock).not.toHaveBeenCalled();
+    });
+
     it.each([['not_found'], ['invalid_record']])(
       '422: provider %s maps to the v1 envelope, no create',
       async (kind) => {
