@@ -21,6 +21,20 @@ describe('normalizeMemberTitleForMatch', () => {
   it("normalizes curly apostrophes to straight", () => {
     expect(normalizeMemberTitleForMatch("Hitchhiker’s Guide")).toBe("hitchhiker's guide");
   });
+
+  // #1543: `&` and the word `and` must normalize identically — the `&` form
+  // was previously dropped to nothing, so it never matched the spelled-out form.
+  it('canonicalizes `&` to the word `and` so both spellings converge', () => {
+    expect(normalizeMemberTitleForMatch('Night of Cake & Puppets')).toBe('night of cake and puppets');
+    expect(normalizeMemberTitleForMatch('Night of Cake and Puppets')).toBe('night of cake and puppets');
+    expect(normalizeMemberTitleForMatch('Night of Cake & Puppets')).toBe(
+      normalizeMemberTitleForMatch('Night of Cake and Puppets'),
+    );
+  });
+
+  it('treats `+` the same as `&`, collapsing surrounding whitespace', () => {
+    expect(normalizeMemberTitleForMatch('Cake + Puppets')).toBe('cake and puppets');
+  });
 });
 
 describe('findInLibraryMatch', () => {
@@ -53,6 +67,20 @@ describe('findInLibraryMatch', () => {
   it('matches within floating-point tolerance for non-integer positions', () => {
     const candidates = [{ id: 1, title: 'Book', seriesPosition: 11.9 }];
     const match = findInLibraryMatch({ title: 'Different', position: 11.9 + 1e-12 }, candidates);
+    expect(match?.id).toBe(1);
+  });
+
+  // #1543: when both positions are null, only the title path can match — and
+  // `&` vs `and` drift must not block it, in either direction.
+  it('matches `&`-title book from an `and`-title member when both positions are null', () => {
+    const candidates = [{ id: 1, title: 'Night of Cake & Puppets', seriesPosition: null }];
+    const match = findInLibraryMatch({ title: 'Night of Cake and Puppets', position: null }, candidates);
+    expect(match?.id).toBe(1);
+  });
+
+  it('matches `and`-title book from an `&`-title member when both positions are null', () => {
+    const candidates = [{ id: 1, title: 'Night of Cake and Puppets', seriesPosition: null }];
+    const match = findInLibraryMatch({ title: 'Night of Cake & Puppets', position: null }, candidates);
     expect(match?.id).toBe(1);
   });
 
