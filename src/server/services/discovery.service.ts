@@ -118,14 +118,6 @@ export class DiscoveryService {
       this.log.warn({ error: serializeError(error) }, 'Discovery: dismissal ratio computation failed — using default weights');
     }
 
-    // Store computed multipliers in settings
-    try {
-      const currentSettings = await this.settingsService.get('discovery');
-      await this.settingsService.set('discovery', { ...currentSettings, weightMultipliers: multipliers });
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error) }, 'Discovery: failed to persist weight multipliers — continuing with in-memory values');
-    }
-
     // Step 2: Generate candidates
     const signals = await this.analyzeLibrary();
     const candidates = await this.generateCandidates(signals, multipliers);

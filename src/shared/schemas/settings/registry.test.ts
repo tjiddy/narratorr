@@ -27,7 +27,6 @@ import { networkSettingsSchema, networkFormSchema } from './network.js';
 // subtracts these before comparing keys, so an *unintentional* omission fails
 // while an intentional hidden field is explicit and auditable.
 //   general → welcomeSeen      (managed by Layout.tsx onboarding; see general.ts:13-16)
-//   discovery → weightMultipliers (computed by DiscoveryService, not user-editable)
 // INVARIANT: a key-omitting form schema must NEVER be registered as a registry
 // `formSchema` override. Overrides are key-aligned by the #1308 guard above and
 // would fail on the omitted key; a "consistency" fix that re-adds welcomeSeen to
@@ -35,7 +34,6 @@ import { networkSettingsSchema, networkFormSchema } from './network.js';
 // in the allowlist, not in a registry override.
 const HIDDEN_FIELD_ALLOWLIST: Record<string, readonly string[]> = {
   general: ['welcomeSeen'],
-  discovery: ['weightMultipliers'],
 };
 
 describe('settingsRegistry', () => {
@@ -133,17 +131,17 @@ describe('settingsRegistry', () => {
     for (const { category, categorySchema, formSchema } of siblingSchemas) {
       it(`${category}FormSchema keys equal its category schema keys minus the hidden-field allowlist`, () => {
         const formKeys = Object.keys(formSchema.shape).sort();
-        const expected = expectedFormKeys(categorySchema, HIDDEN_FIELD_ALLOWLIST[category]!);
+        const expected = expectedFormKeys(categorySchema, HIDDEN_FIELD_ALLOWLIST[category] ?? []);
         expect(formKeys).toEqual(expected);
       });
 
       it(`${category}FormSchema sibling invariant fails on a non-allowlisted omission`, () => {
         // Simulate dropping a real, non-allowlisted field from the form schema.
         const allKeys = Object.keys(formSchema.shape);
-        const droppable = allKeys.find((k) => !HIDDEN_FIELD_ALLOWLIST[category]!.includes(k));
+        const droppable = allKeys.find((k) => !(HIDDEN_FIELD_ALLOWLIST[category] ?? []).includes(k));
         expect(droppable, `${category}FormSchema should have at least one non-allowlisted key`).toBeDefined();
         const brokenFormKeys = allKeys.filter((k) => k !== droppable).sort();
-        const expected = expectedFormKeys(categorySchema, HIDDEN_FIELD_ALLOWLIST[category]!);
+        const expected = expectedFormKeys(categorySchema, HIDDEN_FIELD_ALLOWLIST[category] ?? []);
         expect(brokenFormKeys).not.toEqual(expected);
       });
     }
@@ -151,7 +149,7 @@ describe('settingsRegistry', () => {
     it('every HIDDEN_FIELD_ALLOWLIST entry exists in its category schema (no stale allowlist masking a real omission)', () => {
       for (const { category, categorySchema } of siblingSchemas) {
         const schemaKeys = Object.keys(categorySchema.shape);
-        for (const hidden of HIDDEN_FIELD_ALLOWLIST[category]!) {
+        for (const hidden of HIDDEN_FIELD_ALLOWLIST[category] ?? []) {
           expect(schemaKeys, `${category} allowlist entry '${hidden}' must exist in its category schema`).toContain(hidden);
         }
       }
@@ -793,22 +791,8 @@ describe('settingsRegistry', () => {
     });
   });
 
-  describe('hidden field preservation — discovery', () => {
-    it('discoveryFormSchema omits weightMultipliers from parsed output', () => {
-      const result = discoveryFormSchema.safeParse({
-        enabled: true,
-        intervalHours: 24,
-        maxSuggestionsPerAuthor: 5,
-        expiryDays: 90,
-        weightMultipliers: { some: 0.5 },
-      });
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).not.toHaveProperty('weightMultipliers');
-      }
-    });
-
-    it('discoveryFormSchema accepts valid discovery settings without weightMultipliers', () => {
+  describe('discoveryFormSchema derivation', () => {
+    it('discoveryFormSchema accepts valid discovery settings', () => {
       const result = discoveryFormSchema.safeParse({
         enabled: false,
         intervalHours: 48,
