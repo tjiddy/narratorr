@@ -2,7 +2,7 @@ import { type FastifyInstance } from 'fastify';
 import { type DownloadOrchestrator } from '../services/download-orchestrator.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
-import { DuplicateDownloadError } from '../services/download.service.js';
+import { DuplicateDownloadError } from '../services/download-errors.js';
 import { DownloadClientError } from '../../core/download-clients/errors.js';
 import {
   grabSchema,

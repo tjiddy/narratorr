@@ -25,6 +25,7 @@ import { resolveArtifact, insertDownloadRecord } from './download-record.js';
 import type { BookRow, DownloadRow } from './types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 
 export interface DownloadWithBook extends DownloadRow {
   /** Derived legacy display status — the REST/SSE/client compatibility seam (#1445). */
@@ -38,25 +39,11 @@ export type RetryResult =
   | { status: 'no_candidates' }
   | { status: 'retry_error'; error: string };
 
-export class DownloadError extends Error {
-  constructor(
-    message: string,
-    public code: 'NOT_FOUND' | 'INVALID_STATUS' | 'NO_BOOK_LINKED' | 'IMPORTED_BOOK_NO_RETRY',
-  ) {
-    super(message);
-    this.name = 'DownloadError';
-  }
-}
-
-export class DuplicateDownloadError extends Error {
-  constructor(
-    message: string,
-    public code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE',
-  ) {
-    super(message);
-    this.name = 'DuplicateDownloadError';
-  }
-}
+// Back-compat: these error classes now live in the dependency-free leaf module
+// `download-errors.js` (#1551), imported above for local use. Re-exported here so
+// importers resolving them from `download.service.js` keep working and `instanceof`
+// identity is preserved.
+export { DownloadError, DuplicateDownloadError };
 
 export interface DownloadServiceWireDeps {
   retrySearchDeps: RetrySearchDeps;

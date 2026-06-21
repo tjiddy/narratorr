@@ -8,7 +8,7 @@ import type { IndexerSearchService } from '../services/indexer-search.service.js
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
-import { DuplicateDownloadError } from '../services/download.service.js';
+import { DuplicateDownloadError } from '../services/download-errors.js';
 import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';

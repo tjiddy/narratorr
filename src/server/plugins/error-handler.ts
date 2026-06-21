@@ -8,7 +8,7 @@ import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
-import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
+import { DownloadError, DuplicateDownloadError } from '../services/download-errors.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
 import { RefreshScanError } from '../services/refresh-scan.service.js';
