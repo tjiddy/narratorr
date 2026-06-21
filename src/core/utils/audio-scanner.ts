@@ -4,6 +4,8 @@ import { execFile } from 'node:child_process';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
+// Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
+import { sanitizedEnv } from './sanitized-env.js';
 
 export interface AudioScanResult {
   // From tags (first file with tags wins, except tagTitle for multi-file scans —
@@ -94,7 +96,7 @@ export async function getFFprobeDuration(ffprobePath: string, filePath: string):
       execFile(
         ffprobePath,
         ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'json', filePath],
-        { timeout: 10_000 },
+        { timeout: 10_000, env: sanitizedEnv() },
         (error, stdout, stderr) => {
           if (error) reject(error);
           else resolve({ stdout: stdout as string, stderr: stderr as string });

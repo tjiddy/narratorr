@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { deriveFfprobePath } from './ffprobe-path.js';
+// Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
+import { sanitizedEnv } from './sanitized-env.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -70,7 +72,7 @@ export async function detectCoverArtSource(ffmpegPath: string, filePaths: string
         '-show_entries', 'stream=codec_type',
         '-of', 'default=noprint_wrappers=1:nokey=1',
         filePath,
-      ]);
+      ], { env: sanitizedEnv() });
       const types = stdout.trim().split('\n').map(l => l.trim());
       if (types.includes('video')) return filePath;
     } catch {
