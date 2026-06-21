@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { createRunTempDirs, getCurrentRun, _resetCurrentRunForTests } from './temp-dirs.js';
+import { createRunTempDirs, getCurrentRun, getRun, getAllRuns, ROOT_RUN, _resetCurrentRunForTests } from './temp-dirs.js';
 
 describe('createRunTempDirs', () => {
   const createdPaths: string[] = [];
@@ -117,5 +117,43 @@ describe('createRunTempDirs', () => {
     );
 
     expect(first.sourcePath).not.toBe(second.sourcePath);
+  });
+
+  it('stores a named run without clobbering the root run', () => {
+    // The subpath server (#1556) allocates a second named run. Allocating it
+    // must NOT overwrite the root run's handoff — getCurrentRun() still resolves
+    // to the root run, while getRun(name) reaches the isolated subpath set.
+    const root = createRunTempDirs();
+    const subpath = createRunTempDirs('subpath');
+    createdPaths.push(
+      dirname(root.dbPath), root.libraryPath, root.configPath, root.downloadsPath, root.sourcePath,
+      dirname(subpath.dbPath), subpath.libraryPath, subpath.configPath, subpath.downloadsPath, subpath.sourcePath,
+    );
+
+    expect(getCurrentRun()).toEqual(root);
+    expect(getRun(ROOT_RUN)).toEqual(root);
+    expect(getRun('subpath')).toEqual(subpath);
+    // The two runs are fully isolated — no shared DB/library/config/etc.
+    expect(subpath.dbPath).not.toBe(root.dbPath);
+    expect(subpath.libraryPath).not.toBe(root.libraryPath);
+    expect(subpath.configPath).not.toBe(root.configPath);
+  });
+
+  it('getAllRuns returns every recorded run for teardown', () => {
+    const root = createRunTempDirs();
+    const subpath = createRunTempDirs('subpath');
+    createdPaths.push(
+      dirname(root.dbPath), root.libraryPath, root.configPath, root.downloadsPath, root.sourcePath,
+      dirname(subpath.dbPath), subpath.libraryPath, subpath.configPath, subpath.downloadsPath, subpath.sourcePath,
+    );
+
+    const all = getAllRuns();
+    expect(all).toHaveLength(2);
+    expect(all).toContainEqual(root);
+    expect(all).toContainEqual(subpath);
+  });
+
+  it('getRun returns undefined for an unknown run name', () => {
+    expect(getRun('nope')).toBeUndefined();
   });
 });
