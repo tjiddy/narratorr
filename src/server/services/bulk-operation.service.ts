@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { cp, mkdir, readdir, rename as fsRename, rm, unlink } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { books, bookAuthors, authors, narrators, bookNarrators } from '../../db/schema.js';
@@ -223,11 +223,23 @@ export class BulkOperationService {
     return map;
   }
 
+  /**
+   * The single source of truth for "which books qualify for bulk re-tag":
+   * imported books that have a path on disk. Consumed by both `countRetagEligible`
+   * (the preview denominator) and `startRetagJob` (the job's `setTotal` / row set)
+   * so the modal's "re-tag N books" can never drift from what the job actually
+   * touches. Intentionally kept separate from the rename eligibility predicate
+   * (`loadRenameRows` / `computeFolderTarget`) — same WHERE today, different question.
+   */
+  private retagEligibleWhere(): SQL | undefined {
+    return and(eq(books.status, 'imported'), isNotNull(books.path));
+  }
+
   async countRetagEligible(): Promise<{ total: number }> {
     const result = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(books)
-      .where(and(eq(books.status, 'imported'), isNotNull(books.path)));
+      .where(this.retagEligibleWhere());
     return { total: Number(result[0]?.count ?? 0) };
   }
 
@@ -296,7 +308,7 @@ export class BulkOperationService {
       const rows = await this.db
         .select({ id: books.id })
         .from(books)
-        .where(and(eq(books.status, 'imported'), isNotNull(books.path)));
+        .where(this.retagEligibleWhere());
 
       setTotal(rows.length);
 
