@@ -8,7 +8,7 @@ import type { BookService } from '../../services/book.service.js';
 import type { IndexerSearchService } from '../../services/indexer-search.service.js';
 import type { DownloadOrchestrator, GrabParams } from '../../services/download-orchestrator.js';
 import type { DownloadService } from '../../services/download.service.js';
-import { DuplicateDownloadError } from '../../services/download.service.js';
+import { DuplicateDownloadError } from '../../services/download-errors.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../../core/download-clients/errors.js';
 import { buildSearchQuery } from '../../services/search-pipeline.js';
 import { resolveByPublicId } from '../../utils/public-id.js';

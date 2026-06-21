@@ -7,7 +7,7 @@ import type { SearchResult } from '../../core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
-import { DuplicateDownloadError } from './download.service.js';
+import { DuplicateDownloadError } from './download-errors.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
