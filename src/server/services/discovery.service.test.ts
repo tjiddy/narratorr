@@ -1559,18 +1559,31 @@ describe('DiscoveryService', () => {
       return db;
     }
 
-    it('full refresh with no dismissal history → all multipliers default to 1.0', async () => {
+    // Helper: assert no settings write persisted a weightMultipliers key. The
+    // computed multipliers are an in-memory parameter only (#1565 removed the
+    // inert persisted snapshot); they must never be written back to settings.
+    function expectNoPersistedMultipliers(settingsService: { set: unknown }) {
+      const setMock = settingsService.set as ReturnType<typeof vi.fn>;
+      const persistedMultiplierWrites = setMock.mock.calls.filter(
+        (c: unknown[]) => c[0] === 'discovery' && (c[1] as Record<string, unknown>)?.weightMultipliers !== undefined,
+      );
+      expect(persistedMultiplierWrites).toEqual([]);
+    }
+
+    it('full refresh with no dismissal history → does not persist weightMultipliers (#1565)', async () => {
       const db = setupRefreshTest([]);
       const { service, settingsService } = createService(db);
 
       await service.refreshSuggestions();
 
-      expect(settingsService.set).toHaveBeenCalledWith('discovery', expect.objectContaining({
-        weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
-      }));
+      expectNoPersistedMultipliers(settingsService);
     });
 
-    it('refresh stores computed multipliers via settings.set with full 5-key record', async () => {
+    it('refresh with downweighting dismissal history → still does not persist weightMultipliers (#1565)', async () => {
+      // Dismissal history that would downweight the `author` reason. The computed
+      // multiplier still flows into scoring via generateCandidates(signals,
+      // multipliers) — see the `scoreCandidate with multiplier` suite — but the
+      // value is never written back to the discovery settings blob.
       const db = setupRefreshTest([
         { reason: 'author', status: 'dismissed', count: 9 },
         { reason: 'author', status: 'added', count: 1 },
@@ -1579,23 +1592,10 @@ describe('DiscoveryService', () => {
 
       await service.refreshSuggestions();
 
-      const setCall = (settingsService.set as ReturnType<typeof vi.fn>).mock.calls.find(
-        (c: unknown[]) => c[0] === 'discovery',
-      );
-      expect(setCall).toBeDefined();
-      const multipliers = setCall![1].weightMultipliers;
-      // All 5 keys must be present
-      expect(Object.keys(multipliers).sort()).toEqual(['author', 'diversity', 'genre', 'narrator', 'series']);
-      // Author should be reduced (ratio 0.9 → multiplier 0.80)
-      expect(multipliers.author).toBeCloseTo(0.80);
-      // Others should be 1.0
-      expect(multipliers.series).toBe(1);
-      expect(multipliers.genre).toBe(1);
-      expect(multipliers.narrator).toBe(1);
-      expect(multipliers.diversity).toBe(1);
+      expectNoPersistedMultipliers(settingsService);
     });
 
-    it('DB error during ratio computation → refresh continues with default weights (1.0)', async () => {
+    it('DB error during ratio computation → refresh continues, still no persisted multipliers (#1565)', async () => {
       const db = createMockDb();
       db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
       // computeDismissalStats throws
@@ -1611,25 +1611,10 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]));
       const { service, settingsService } = createService(db);
 
-      // Should not throw
+      // Should not throw — refresh falls back to DEFAULT_MULTIPLIERS in-memory
       await expect(service.refreshSuggestions()).resolves.toBeDefined();
 
-      // Should still write default multipliers
-      expect(settingsService.set).toHaveBeenCalledWith('discovery', expect.objectContaining({
-        weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
-      }));
-    });
-
-    it('settings write failure for multipliers → refresh continues, logs warning', async () => {
-      const db = setupRefreshTest([]);
-      const { service, settingsService, log } = createService(db);
-      (settingsService.set as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Settings DB error'));
-
-      // Should not throw — refresh continues
-      await expect(service.refreshSuggestions()).resolves.toBeDefined();
-
-      // Should log warning
-      expect(log.warn).toHaveBeenCalled();
+      expectNoPersistedMultipliers(settingsService);
     });
 
   });

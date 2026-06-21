@@ -15,7 +15,6 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 12,
       maxSuggestionsPerAuthor: 10,
       expiryDays: 60,
-      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
@@ -26,7 +25,6 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
@@ -42,18 +40,12 @@ describe('Discovery Settings Schema', () => {
     expect(() => discoverySettingsSchema.parse({ intervalHours: 2.5 })).toThrow();
   });
 
-  it('preserves caller-provided weightMultipliers and strips unknown keys', () => {
-    const result = discoverySettingsSchema.parse({
-      weightMultipliers: { author: 0.5, series: 0.6, genre: 0.7, narrator: 0.8, diversity: 0.9, bogus: 1 },
-    });
-    expect(result.weightMultipliers).toEqual({
-      author: 0.5,
-      series: 0.6,
-      genre: 0.7,
-      narrator: 0.8,
-      diversity: 0.9,
-    });
-    expect(result.weightMultipliers).not.toHaveProperty('bogus');
+  it('strips a legacy persisted weightMultipliers key without throwing (#1565)', () => {
+    // weightMultipliers was removed as a persisted setting in #1565. Stored
+    // settings rows may still carry it; parsing must tolerate and drop it.
+    const result = discoverySettingsSchema.parse({ enabled: true, weightMultipliers: { author: 0.5 } });
+    expect(result).not.toHaveProperty('weightMultipliers');
+    expect(result.enabled).toBe(true);
   });
 
   it('is registered in settingsRegistry with correct defaults', () => {
@@ -63,7 +55,6 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
@@ -73,7 +64,6 @@ describe('Discovery Settings Schema', () => {
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
-      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
