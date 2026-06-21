@@ -58,6 +58,30 @@ describe('globalTeardown', () => {
     expect(existsSync(run.downloadsPath)).toBe(false);
   });
 
+  it('removes the temp dirs of every recorded run (root + subpath)', async () => {
+    // #1556 boots a second isolated subpath server. Teardown must sweep BOTH
+    // temp-dir sets, not just the root run.
+    const root = createRunTempDirs();
+    const subpath = createRunTempDirs('subpath');
+    orphans.push(
+      dirname(root.dbPath), root.libraryPath, root.configPath, root.downloadsPath, root.sourcePath,
+      dirname(subpath.dbPath), subpath.libraryPath, subpath.configPath, subpath.downloadsPath, subpath.sourcePath,
+    );
+
+    writeFileSync(root.dbPath, 'db-bytes');
+    writeFileSync(subpath.dbPath, 'db-bytes');
+
+    await globalTeardown();
+
+    for (const run of [root, subpath]) {
+      expect(existsSync(dirname(run.dbPath))).toBe(false);
+      expect(existsSync(run.libraryPath)).toBe(false);
+      expect(existsSync(run.configPath)).toBe(false);
+      expect(existsSync(run.downloadsPath)).toBe(false);
+      expect(existsSync(run.sourcePath)).toBe(false);
+    }
+  });
+
   it('does not throw when a target directory was already removed', async () => {
     // Simulates partial-state recovery — e.g. a crash mid-run that removed
     // the library dir but left the config dir. Teardown should clean what

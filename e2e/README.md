@@ -1,8 +1,22 @@
 # E2E Test Harness
 
 Playwright-based browser E2E tests for Narratorr. Hermetic by design — each run
-boots Narratorr against four per-run temp directories (DB / library / config /
-downloads), fakes for MAM and qBittorrent, and `AUTH_BYPASS=true`.
+boots Narratorr against per-run temp directories (DB / library / config /
+downloads / source), fakes for MAM and qBittorrent, and `AUTH_BYPASS=true`.
+
+Two servers boot in a single run, each with its own isolated temp-dir set and
+seeded DB (#1556):
+
+- the **root** server (`URL_BASE=/`, port `3100`) — runs the critical-path and
+  smoke specs under the `chromium` project;
+- the **subpath** server (`URL_BASE=/narratorr`, port `3101`) — assembled
+  reverse-proxy coverage, runs only `tests/subpath/**` under the
+  `chromium-subpath` project. Its `baseURL` carries a trailing slash
+  (`http://localhost:3101/narratorr/`) so relative navigation
+  (`page.goto('library')`) resolves under the prefix; a leading-slash path is
+  origin-rooted and strips the prefix — reserved for the deliberate
+  non-prefixed 404 check. The prefix/port/base is defined once in
+  `fixtures/subpath.ts`.
 
 ## Quick start
 
@@ -20,16 +34,19 @@ pnpm exec playwright install chromium
 
 ## How the harness is wired
 
-`playwright.config.ts` uses Playwright's `webServer` to launch `node ../dist/server/index.js` with these env vars:
+`playwright.config.ts` uses Playwright's `webServer` (an array of two entries —
+root + subpath) to launch `node ../dist/server/index.js` per server, with these
+env vars (the root server's values shown; the subpath server differs only in
+`PORT` `3101`, `URL_BASE` `/narratorr`, and its isolated temp-dir paths):
 
 | Var                     | Value                                                       |
 |-------------------------|-------------------------------------------------------------|
 | `NODE_ENV`              | `production`                                                |
-| `PORT`                  | `3100` (kept off 3000/5173 to avoid dev clash)              |
+| `PORT`                  | `3100` root / `3101` subpath (off 3000/5173 to avoid dev clash) |
 | `DATABASE_URL`          | per-run temp libSQL file under `os.tmpdir()`                |
 | `CONFIG_PATH`           | per-run temp directory (scopes `secret.key` etc.)           |
 | `AUTH_BYPASS`           | `true` — skips login for Phase 1/2                          |
-| `URL_BASE`              | `/`                                                         |
+| `URL_BASE`              | `/` root / `/narratorr` subpath                             |
 | `MONITOR_INTERVAL_CRON` | `*/2 * * * * *` — override of prod's 30s cadence            |
 | `E2E_DOWNLOADS_PATH`    | per-run downloads temp dir (surfaced for spec forensics)    |
 
@@ -38,20 +55,27 @@ pnpm exec playwright install chromium
 Three files split the harness lifecycle along natural sync/async boundaries:
 
 1. **`playwright.config.ts`** (module load, synchronous): calls
-   `createRunTempDirs()` which creates four directories via `mkdtempSync` and
-   stores them in module-level state. Paths must exist by the time `webServer.env`
-   is evaluated, so this can't move to `globalSetup`.
+   `createRunTempDirs()` once per server (root + a named `subpath` run), each
+   creating five directories via `mkdtempSync` and stored under its run name in
+   module-level state. Paths must exist by the time `webServer.env` is
+   evaluated, so this can't move to `globalSetup`. The `E2E_RUN_STATE_DIR`
+   handoff stays pointed at the **root** run's config path.
 2. **`global-setup.ts`** (async, before webServer boots): reads
-   `getCurrentRun()` for paths, starts the MAM + qBit fakes on their fixed ports,
-   runs Drizzle migrations, and seeds the `indexers` / `download_clients` /
-   `authors` / `books` rows the spec test depends on. Fake handles are registered
-   with `fixtures/run-state.ts` so teardown can reach them.
+   `getCurrentRun()` for the root paths, starts the MAM + qBit fakes on their
+   fixed ports, runs Drizzle migrations, and seeds the `indexers` /
+   `download_clients` / `authors` / `books` rows the spec test depends on. When
+   a subpath run exists it seeds that server's isolated DB the same way (the
+   read-only subpath smoke shares the fakes). Fake handles are registered with
+   `fixtures/run-state.ts` so teardown can reach them.
 3. **`global-teardown.ts`** (after tests): closes the registered fake handles,
-   then removes all four temp dirs (including libSQL `-wal`/`-shm` sidecars).
+   then removes the temp dirs of **every** recorded run (root + subpath),
+   including libSQL `-wal`/`-shm` sidecars.
 
-No on-disk state file — module state is sufficient because Playwright's global
+Module state keyed by run name is sufficient because Playwright's global
 teardown runs in the same Node process that loaded the config, and it avoids
-the concurrent-run footgun a shared state file would create.
+the concurrent-run footgun a shared state file would create. (The only on-disk
+state is the per-run `.run-paths.json` inside each run's `configPath`, written
+by `global-setup.ts` so manual-import workers can resolve the source path.)
 
 `reuseExistingServer: false` — local `--ui` mode still boots its own hermetic
 server. This prevents silent attachment to a `pnpm dev:server` / `pnpm dev:client`
@@ -82,10 +106,11 @@ e2e/
 ├── global-teardown.ts            # closes fakes + cleans temp dirs after the run
 ├── global-teardown.test.ts       # vitest — cleanup contract regression tests
 ├── fixtures/
-│   ├── temp-dirs.ts              # creates per-run DB/library/config/downloads dirs
+│   ├── temp-dirs.ts              # creates per-run DB/library/config/downloads/source dirs (named multi-run)
 │   ├── temp-dirs.test.ts         # vitest — temp-dir lifecycle tests
 │   ├── run-state.ts              # fake-server handle registry
 │   ├── run-state.test.ts         # vitest
+│   ├── subpath.ts                # single source of truth for the subpath topology (port/prefix/baseURL)
 │   ├── seed.ts                   # Drizzle seed for indexer/client/author/book rows
 │   └── seed.test.ts              # vitest
 ├── fakes/
@@ -101,10 +126,12 @@ e2e/
 │   └── silent.m4b                # 10-second silent fixture (~4KB, AAC)
 └── tests/
     ├── smoke/
-    │   └── library.spec.ts       # Playwright — library page smoke
-    └── critical-path/
-        ├── search-grab-import.spec.ts  # Playwright — search → grab → import
-        └── manual-import.spec.ts       # Playwright — manual import flow
+    │   └── library.spec.ts       # Playwright — library page smoke (root project)
+    ├── critical-path/
+    │   ├── search-grab-import.spec.ts  # Playwright — search → grab → import (root project)
+    │   └── manual-import.spec.ts       # Playwright — manual import flow (root project)
+    └── subpath/
+        └── subpath-smoke.spec.ts       # Playwright — reverse-proxy subpath smoke (chromium-subpath project)
 ```
 
 ## Debugging a CI failure
