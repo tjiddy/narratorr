@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, createMockDb, mockDbChain, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { RenameService, RenameError } from './rename.service.js';
-import { renameFilesWithTemplate } from '../utils/paths.js';
+import { renameFilesWithTemplate, PathOutsideLibraryError } from '../utils/paths.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { rename, readdir, mkdir, stat, rm, cp } from 'node:fs/promises';
+import { rename, readdir, mkdir, stat, rm, cp, realpath } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -22,6 +22,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     stat: vi.fn(),
     rm: vi.fn(),
     cp: vi.fn(),
+    realpath: vi.fn(),
   };
 });
 
@@ -83,6 +84,11 @@ describe('RenameService', () => {
     (rename as Mock).mockResolvedValue(undefined);
     (mkdir as Mock).mockResolvedValue(undefined);
     (rm as Mock).mockResolvedValue(undefined);
+    // Default: in-library oldPaths don't exist on disk under the mocked fs, so the
+    // realpath-aware guard sees ENOENT and swallows it — mirroring real-fs behavior
+    // for these synthetic paths. Individual tests override to simulate symlink escapes
+    // or in-library canonical resolution.
+    (realpath as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
   });
 
   describe('planRename', () => {
@@ -416,7 +422,9 @@ describe('RenameService', () => {
 
     it('handles cross-volume move with copy+delete fallback (EXDEV)', async () => {
       const { service, bookService } = createService();
-      const book = { ...mockBook, path: '/volume1/wrong/path' };
+      // In-library source (EXDEV can still happen within the root across bind mounts) —
+      // the containment guard must let it through to the EXDEV fallback.
+      const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
       bookService.getById.mockResolvedValue(book);
       bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue(book);
@@ -481,6 +489,93 @@ describe('RenameService', () => {
       // renames (both go through rename()), and the DB row was not updated.
       expect(rename).not.toHaveBeenCalled();
       expect(bookService.update).not.toHaveBeenCalled();
+    });
+
+    // #1550 — library-root containment guard runs before any destructive mutation
+    describe('library-root containment guard (#1550)', () => {
+      it('rejects an outside-root book.path before recovery, move, or DB update (folder-move branch)', async () => {
+        const { service, bookService } = createService();
+        bookService.getById.mockResolvedValue({ ...mockBook, path: '/etc' });
+
+        await expect(service.renameBook(1)).rejects.toThrow(PathOutsideLibraryError);
+
+        expect(recoverInterruptedCommit).not.toHaveBeenCalled();
+        expect(rename).not.toHaveBeenCalled();
+        expect(cp).not.toHaveBeenCalled();
+        expect(rm).not.toHaveBeenCalled();
+        expect(bookService.update).not.toHaveBeenCalled();
+      });
+
+      it('rejects a sibling-prefix book.path (/library2 vs /library)', async () => {
+        const { service, bookService } = createService();
+        bookService.getById.mockResolvedValue({ ...mockBook, path: '/library2/Author/Title' });
+
+        await expect(service.renameBook(1)).rejects.toThrow(PathOutsideLibraryError);
+        expect(recoverInterruptedCommit).not.toHaveBeenCalled();
+        expect(rename).not.toHaveBeenCalled();
+      });
+
+      it('rejects a `..`-escaping book.path', async () => {
+        const { service, bookService } = createService();
+        bookService.getById.mockResolvedValue({ ...mockBook, path: '/library/../etc/passwd' });
+
+        await expect(service.renameBook(1)).rejects.toThrow(PathOutsideLibraryError);
+        expect(rename).not.toHaveBeenCalled();
+      });
+
+      it('rejects an in-library symlink whose realpath escapes the root', async () => {
+        const { service, bookService } = createService();
+        bookService.getById.mockResolvedValue({ ...mockBook, path: '/library/escape-link' });
+        (realpath as Mock)
+          .mockResolvedValueOnce('/library')        // realpath(libraryRoot)
+          .mockResolvedValueOnce('/etc/secret');    // realpath(oldPath) escapes
+
+        await expect(service.renameBook(1)).rejects.toThrow(PathOutsideLibraryError);
+        expect(recoverInterruptedCommit).not.toHaveBeenCalled();
+        expect(rename).not.toHaveBeenCalled();
+      });
+
+      it('rejects on the !pathChanged branch before in-place file renames (symlink escape)', async () => {
+        const { service, bookService } = createService();
+        // Path already at its computed target → pathChanged=false → in-place rename branch.
+        bookService.getById.mockResolvedValue({ ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' });
+        (readdir as Mock).mockResolvedValue([{ name: 'foo.m4b', isFile: () => true }]);
+        (realpath as Mock)
+          .mockResolvedValueOnce('/library')
+          .mockResolvedValueOnce('/etc/escaped');
+
+        await expect(service.renameBook(1)).rejects.toThrow(PathOutsideLibraryError);
+        expect(recoverInterruptedCommit).not.toHaveBeenCalled();
+        expect(rename).not.toHaveBeenCalled();
+      });
+
+      it('swallows ENOENT for an in-library path missing on disk — no spurious rejection', async () => {
+        const { service, bookService } = createService();
+        const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+        bookService.getById.mockResolvedValue(book);
+        bookService.update.mockResolvedValue(book);
+        // realpath ENOENT (default) — the guard must not raise; rename/recovery proceed.
+
+        await service.renameBook(1);
+
+        expect(recoverInterruptedCommit).toHaveBeenCalled();
+        expect(rename).toHaveBeenCalled();
+      });
+
+      it('allows an in-library path whose realpath stays inside the root', async () => {
+        const { service, bookService } = createService();
+        const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
+        bookService.getById.mockResolvedValue(book);
+        bookService.update.mockResolvedValue(book);
+        (realpath as Mock)
+          .mockResolvedValueOnce('/library')
+          .mockResolvedValueOnce('/library/Wrong Author/Old Title');
+
+        const result = await service.renameBook(1);
+
+        expect(result.newPath).toContain('Brandon Sanderson');
+        expect(rename).toHaveBeenCalled();
+      });
     });
   });
 

@@ -10,7 +10,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import { cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
+import { assertRealPathInsideLibrary, cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
@@ -150,6 +150,18 @@ export class RenameService {
     );
 
     const oldPath = book.path;
+
+    // Library-root containment guard (#1550). A corrupt or hand-edited books.path
+    // (e.g. `/etc`) would otherwise be moved or — on EXDEV — recursively rm'd. Reject
+    // it BEFORE any destructive mutation consumes oldPath: recovery (restores
+    // `.import-bak` / clears the marker), the folder move, the EXDEV `rm`, the DB path
+    // update, and the in-place file-template renames. The check is realpath-aware so an
+    // in-library symlink can't escape, and runs once at the top so it covers both the
+    // pathChanged and !pathChanged branches and every caller (bulk, fix-match). An
+    // in-library oldPath that is merely missing on disk is swallowed (ENOENT) so the
+    // existing rename/recovery surfaces the real cause. Maps to 400 via the existing
+    // PathOutsideLibraryError handler.
+    await assertRealPathInsideLibrary(oldPath, librarySettings.path);
 
     // Converge any interrupted commit-pending marker at oldPath BEFORE any destructive
     // mutation (#1418). Both destructive paths below can otherwise strand or re-arm a

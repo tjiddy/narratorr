@@ -914,6 +914,20 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it('maps path_outside_library → 400 with the real ancestry-guard message (#1550)', async () => {
+      // Use the real PathOutsideLibraryError message (not a fabricated string) so this
+      // pins the actual `error: error.message` pass-through. The global handler emits
+      // message-only — there is no PATH_OUTSIDE_LIBRARY literal in the response body.
+      const err = new PathOutsideLibraryError('/etc/passwd', '/audiobooks');
+      (services.rename.renameBook as Mock).mockRejectedValue(err);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: err.message });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('code');
+    });
+
     it('returns 409 on conflict with different book', async () => {
       (services.rename.renameBook as Mock).mockRejectedValue(
         new RenameError(
