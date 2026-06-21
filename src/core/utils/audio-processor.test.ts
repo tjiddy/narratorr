@@ -150,17 +150,16 @@ describe('detectFfmpegPath', () => {
   });
 
   it('falls back to which ffmpeg when /usr/bin/ffmpeg probe fails', async () => {
-    mockExecFile
-      .mockImplementationOnce((...args: unknown[]) => {
-        const cb = args[args.length - 1] as (err: Error) => void;
-        cb(new Error('spawn ENOENT'));
-        return {} as never;
-      })
-      .mockImplementationOnce((...args: unknown[]) => {
-        const cb = args[args.length - 1] as (err: null, result: { stdout: string }) => void;
-        cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
-        return {} as never;
-      });
+    // Arg-keyed single implementation rather than a mockImplementationOnce queue: clearAllMocks
+    // (file-level beforeEach) does not drain *Once() queues, so a leftover queued impl could leak
+    // into later tests (vitest-clearallmocks-once-queue). `/usr/bin/ffmpeg` probe fails; `which` wins.
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
+      if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+      else cb(new Error('spawn ENOENT'));
+      return {} as never;
+    });
 
     const result = await detectFfmpegPath();
     expect(result).toBe('/usr/local/bin/ffmpeg');
@@ -196,17 +195,17 @@ describe('media-tool env sanitization', () => {
   });
 
   it('detectFfmpegPath passes a sanitized env to the `which ffmpeg` fallback', async () => {
-    mockExecFile
-      .mockImplementationOnce((...args: unknown[]) => {
-        const cb = args[args.length - 1] as (err: Error) => void;
-        cb(new Error('spawn ENOENT'));
-        return {} as never;
-      })
-      .mockImplementationOnce((...args: unknown[]) => {
-        const cb = args[args.length - 1] as (err: null, result: { stdout: string }) => void;
-        cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
-        return {} as never;
-      });
+    // Single arg-keyed implementation (not a mockImplementationOnce queue): the file-level
+    // beforeEach uses clearAllMocks, which does NOT drain *Once() queues, so a queued impl could
+    // leak into later tests if control flow changed (vitest-clearallmocks-once-queue learning).
+    // Branch on the command instead: the `/usr/bin/ffmpeg` probe fails, `which ffmpeg` succeeds.
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
+      if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+      else cb(new Error('spawn ENOENT'));
+      return {} as never;
+    });
 
     const result = await detectFfmpegPath();
     expect(result).toBe('/usr/local/bin/ffmpeg');
