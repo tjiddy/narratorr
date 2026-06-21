@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlin
 import { fileURLToPath } from 'node:url';
 import { getCurrentRun, getRun } from './fixtures/temp-dirs.js';
 import { SUBPATH_RUN } from './fixtures/subpath.js';
+import { FORMS_RUN } from './fixtures/auth.js';
 import { registerFake } from './fixtures/run-state.js';
 import { createMAMFake } from './fakes/mam.js';
 import { createQBitFake } from './fakes/qbit.js';
@@ -135,6 +136,23 @@ export default async function globalSetup(): Promise<void> {
       qbitHost: 'localhost',
       qbitPort: qbitPort,
       libraryPath: subpathRun.libraryPath,
+    });
+  }
+
+  // Seed the forms-auth server's isolated DB the same way (#1555). The forms
+  // spec lands on /library after login and asserts the seeded book renders, so
+  // it needs content. The DB starts with NO auth config row, so the server boots
+  // in the default `none` mode — the auth-setup project creates the user and
+  // flips the mode to `forms` once the server is up. Read-only after that flip,
+  // so it can share the fake MAM/qBit servers.
+  const formsRun = getRun(FORMS_RUN);
+  if (formsRun) {
+    await seedE2ERun({
+      dbPath: formsRun.dbPath,
+      mamUrl: mam.url,
+      qbitHost: 'localhost',
+      qbitPort: qbitPort,
+      libraryPath: formsRun.libraryPath,
     });
   }
 

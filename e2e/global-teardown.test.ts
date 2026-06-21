@@ -58,22 +58,25 @@ describe('globalTeardown', () => {
     expect(existsSync(run.downloadsPath)).toBe(false);
   });
 
-  it('removes the temp dirs of every recorded run (root + subpath)', async () => {
-    // #1556 boots a second isolated subpath server. Teardown must sweep BOTH
-    // temp-dir sets, not just the root run.
+  it('removes the temp dirs of every recorded run (root + subpath + forms)', async () => {
+    // #1556 boots a second isolated subpath server; #1555 boots a third
+    // forms-auth server. Teardown must sweep ALL temp-dir sets, not just the root.
     const root = createRunTempDirs();
     const subpath = createRunTempDirs('subpath');
+    const forms = createRunTempDirs('forms');
     orphans.push(
       dirname(root.dbPath), root.libraryPath, root.configPath, root.downloadsPath, root.sourcePath,
       dirname(subpath.dbPath), subpath.libraryPath, subpath.configPath, subpath.downloadsPath, subpath.sourcePath,
+      dirname(forms.dbPath), forms.libraryPath, forms.configPath, forms.downloadsPath, forms.sourcePath,
     );
 
     writeFileSync(root.dbPath, 'db-bytes');
     writeFileSync(subpath.dbPath, 'db-bytes');
+    writeFileSync(forms.dbPath, 'db-bytes');
 
     await globalTeardown();
 
-    for (const run of [root, subpath]) {
+    for (const run of [root, subpath, forms]) {
       expect(existsSync(dirname(run.dbPath))).toBe(false);
       expect(existsSync(run.libraryPath)).toBe(false);
       expect(existsSync(run.configPath)).toBe(false);

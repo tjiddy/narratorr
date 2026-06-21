@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createRunTempDirs, type RunTempDirs } from './fixtures/temp-dirs.js';
+import { createRunTempDirs } from './fixtures/temp-dirs.js';
+import { serverEnv } from './fixtures/server-env.js';
 import {
   ROOT_PORT,
   SUBPATH_PORT,
@@ -9,6 +10,12 @@ import {
   SUBPATH_BASE_URL,
   URL_BASE_SUBPATH,
 } from './fixtures/subpath.js';
+import {
+  FORMS_PORT,
+  FORMS_RUN,
+  FORMS_BASE_URL,
+  AUTH_FILE,
+} from './fixtures/auth.js';
 
 /**
  * Phase 1 E2E harness — see issue #612.
@@ -17,11 +24,14 @@ import {
  * per-run temp directories (DB, library, config, downloads, source) and
  * AUTH_BYPASS=true so the smoke test doesn't need a login flow.
  *
- * Two servers boot in one run (#1556):
+ * Three servers boot in one run (#1556, #1555):
  *   - the root server at `URL_BASE=/` on port 3100 — the existing topology;
  *   - a subpath server at `URL_BASE=/narratorr` on port 3101 — assembled
- *     reverse-proxy coverage. Each owns an isolated temp-dir set + seeded DB so
- *     they never share mutable state.
+ *     reverse-proxy coverage;
+ *   - a forms-auth server at `URL_BASE=/` on port 3102 booted WITHOUT
+ *     `AUTH_BYPASS` so the real login/session/redirect loop is exercised.
+ *   Each owns an isolated temp-dir set + seeded DB so they never share mutable
+ *   state.
  *
  * Caller MUST have run `pnpm build` before `pnpm test:e2e`. The webServer
  * command will fail with a clear error if `dist/server/index.js` is missing.
@@ -33,6 +43,7 @@ import {
 // is allocated under a distinct name so it does not clobber the root run.
 const rootRun = createRunTempDirs();
 const subpathRun = createRunTempDirs(SUBPATH_RUN);
+const formsRun = createRunTempDirs(FORMS_RUN);
 
 // Expose the ROOT run's configPath as an env var at config-load time so test
 // workers inherit it (workers fork from this process AFTER config loads).
@@ -46,40 +57,20 @@ process.env.E2E_RUN_STATE_DIR = rootRun.configPath;
 // otherwise Playwright dumps test-results/ at wherever pnpm was invoked from.
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
 
-/**
- * Build the production-bundle env for one server. The two servers differ only
- * in their isolated temp-dir set, port, and URL_BASE; everything else (fakes,
- * monitor cadence, auth bypass) is shared.
- */
-function serverEnv(run: RunTempDirs, urlBase: string, port: number): Record<string, string> {
-  return {
-    NODE_ENV: 'production',
-    PORT: String(port),
-    DATABASE_URL: run.dbPath,
-    CONFIG_PATH: run.configPath,
-    AUTH_BYPASS: 'true',
-    URL_BASE: urlBase,
-    // Poll every 2 seconds instead of the default 30 so the spec doesn't wait a
-    // full minute for the monitor to notice the fake qBit's "complete" flip.
-    MONITOR_INTERVAL_CRON: '*/2 * * * * *',
-    // Surface the per-run downloads path for spec-side forensics/assertions.
-    // Not consumed by app code — the fake qBit already knows the path from
-    // its constructor in global-setup.ts.
-    E2E_DOWNLOADS_PATH: run.downloadsPath,
-    // Override the Audible API base URL so AudibleProvider sends requests to
-    // the E2E fake instead of the real Audible API. The fake returns empty
-    // products, making the match job resolve to confidence 'none'.
-    AUDIBLE_BASE_URL: 'http://localhost:4300',
-    // Surface the per-run source path for the manual-import spec. The spec
-    // enters this path in the scan input so Narratorr discovers the seeded
-    // audiobook folder.
-    E2E_SOURCE_PATH: run.sourcePath,
-  };
-}
-
 // Spec selection regex for the subpath suite — matches the `tests/subpath/`
 // directory with either path separator so it works on Linux/CI and Windows.
 const SUBPATH_SPECS = /[\\/]subpath[\\/].*\.spec\.ts$/;
+
+// Spec selection regex for the forms-auth suite — matches `tests/auth/*.spec.ts`
+// with either path separator. The root `chromium` project ignores this (its
+// AUTH_BYPASS/no-storageState config would make the redirect/status assertions
+// fail or vacuously pass); the forms project runs ONLY this.
+const AUTH_SPECS = /[\\/]auth[\\/].*\.spec\.ts$/;
+
+// The setup file lives in `tests/auth/` but is NOT a `.spec.ts`, so the top-level
+// `testMatch` and AUTH_SPECS both skip it — only the `auth-setup` project, which
+// targets this regex explicitly, runs it.
+const AUTH_SETUP = /[\\/]auth[\\/]auth\.setup\.ts$/;
 
 export default defineConfig({
   testDir: 'tests',
@@ -109,9 +100,12 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      // The root project runs every spec EXCEPT the subpath suite — the
-      // mutation-heavy critical-path specs run once, against the root server.
-      testIgnore: SUBPATH_SPECS,
+      // The root project runs every spec EXCEPT the subpath and forms-auth
+      // suites — the mutation-heavy critical-path specs run once, against the
+      // root server. The forms specs MUST be excluded here: this project boots
+      // with AUTH_BYPASS=true and no storageState/setup dependency, so the
+      // redirect/status assertions would fail or vacuously pass.
+      testIgnore: [SUBPATH_SPECS, AUTH_SPECS],
     },
     {
       name: 'chromium-subpath',
@@ -120,6 +114,22 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], baseURL: SUBPATH_BASE_URL },
       // This project runs ONLY the subpath suite.
       testMatch: SUBPATH_SPECS,
+    },
+    {
+      // Bootstraps forms auth against the forms server (create user → flip mode
+      // to forms → login) and persists the authenticated storageState. The
+      // forms project depends on this, so it runs first. See tests/auth/auth.setup.ts.
+      name: 'auth-setup',
+      use: { ...devices['Desktop Chrome'], baseURL: FORMS_BASE_URL },
+      testMatch: AUTH_SETUP,
+    },
+    {
+      name: 'chromium-forms',
+      // Reuse the authenticated storageState the setup project saved. The
+      // redirect spec overrides to an empty context via `test.use(...)`.
+      use: { ...devices['Desktop Chrome'], baseURL: FORMS_BASE_URL, storageState: AUTH_FILE },
+      testMatch: AUTH_SPECS,
+      dependencies: ['auth-setup'],
     },
   ],
 
@@ -143,6 +153,20 @@ export default defineConfig({
       stdout: 'pipe',
       stderr: 'pipe',
       env: serverEnv(subpathRun, URL_BASE_SUBPATH, SUBPATH_PORT),
+    },
+    {
+      command: 'node ../dist/server/index.js',
+      // Public health route works before any auth exists — the forms server
+      // boots in the default `none` mode (no config row yet) and the setup
+      // project flips it to `forms` once it's up.
+      url: `http://localhost:${FORMS_PORT}/api/health`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      // authBypass:false — forms enforcement must be genuinely active, or every
+      // login/redirect/logout assertion goes vacuous (see fixtures/server-env.ts).
+      env: serverEnv(formsRun, '/', FORMS_PORT, { authBypass: false }),
     },
   ],
 });
