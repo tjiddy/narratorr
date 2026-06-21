@@ -5,6 +5,8 @@ import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { RateLimitError, TransientError, MetadataError } from '../../core/metadata/errors.js';
 import type * as HardcoverModule from '../../core/metadata/hardcover.js';
 import type { Services } from './index.js';
+import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
+import { getSecretFieldNames } from '../utils/secret-codec.js';
 
 const { mockHardcoverSearchSeries, mockHardcoverClientCtor, mockFetchWithTimeout } = vi.hoisted(() => {
   const searchSeriesFn = vi.fn();
@@ -80,6 +82,33 @@ describe('settings routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.library.path).toBe('/audiobooks');
       expect(body.search.enabled).toBe(true);
+    });
+
+    // #1567 — no decrypted secret is ever echoed by GET for any encrypt-on-write
+    // category. getAll() returns plaintext (post-decrypt); the route must mask it.
+    // Derived from the canonical map so a new secret category is covered for free.
+    it('masks every encrypt-on-write secret field, never echoing plaintext', async () => {
+      const plaintext = (cat: string, field: string) => `PLAIN-${cat}-${field}`;
+      const withSecrets = structuredClone(mockSettings) as Record<string, Record<string, unknown>>;
+      for (const [category, entity] of Object.entries(SECRET_CATEGORIES)) {
+        if (!entity) continue;
+        for (const field of getSecretFieldNames(entity)) {
+          withSecrets[category] = { ...withSecrets[category], [field]: plaintext(category, field) };
+        }
+      }
+      (services.settings.getAll as Mock).mockResolvedValue(withSecrets);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload) as Record<string, Record<string, unknown>>;
+      expect(res.payload).not.toContain('PLAIN-');
+      for (const [category, entity] of Object.entries(SECRET_CATEGORIES)) {
+        if (!entity) continue;
+        for (const field of getSecretFieldNames(entity)) {
+          expect(body[category]![field]).toBe('********');
+        }
+      }
     });
   });
 
