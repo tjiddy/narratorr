@@ -173,6 +173,83 @@ describe('detectFfmpegPath', () => {
   });
 });
 
+describe('media-tool env sanitization', () => {
+  // execFile/spawn options object is the 3rd positional arg (file, args, options[, cb]).
+  const optsOf = (call: unknown[]): { env?: Record<string, string> } =>
+    (call[2] ?? {}) as { env?: Record<string, string> };
+
+  beforeEach(() => {
+    process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
+  });
+  afterEach(() => {
+    delete process.env.NARRATORR_SECRET_KEY;
+  });
+
+  it('probeFfmpeg runs ffmpeg with a sanitized env (no secret, PATH preserved)', async () => {
+    mockExecFileSuccess('ffmpeg version 6.1.1 Copyright');
+    await probeFfmpeg('/usr/bin/ffmpeg');
+
+    const { env } = optsOf(mockExecFile.mock.calls[0]!);
+    expect(env).toBeDefined();
+    expect(env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+    expect(env).toHaveProperty('PATH');
+  });
+
+  it('detectFfmpegPath passes a sanitized env to the `which ffmpeg` fallback', async () => {
+    mockExecFile
+      .mockImplementationOnce((...args: unknown[]) => {
+        const cb = args[args.length - 1] as (err: Error) => void;
+        cb(new Error('spawn ENOENT'));
+        return {} as never;
+      })
+      .mockImplementationOnce((...args: unknown[]) => {
+        const cb = args[args.length - 1] as (err: null, result: { stdout: string }) => void;
+        cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+        return {} as never;
+      });
+
+    const result = await detectFfmpegPath();
+    expect(result).toBe('/usr/local/bin/ffmpeg');
+
+    // Second call is the `which ffmpeg` invocation.
+    const whichCall = mockExecFile.mock.calls[1]!;
+    expect(whichCall[0]).toBe('which');
+    const { env } = optsOf(whichCall);
+    expect(env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+    expect(env).toHaveProperty('PATH');
+  });
+
+  it('spawnFfmpeg (via processAudioFiles convert path) runs with a sanitized env', async () => {
+    setupConvertFile();
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
+    ]);
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', { ...defaultConfig, outputFormat: 'mp3' }, defaultContext);
+
+    expect(mockSpawn).toHaveBeenCalled();
+    const { env } = optsOf(mockSpawn.mock.calls[0]!);
+    expect(env).toBeDefined();
+    expect(env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+    expect(env).toHaveProperty('PATH');
+  });
+
+  it('getFileDurations ffprobe calls run with a sanitized env (merge path)', async () => {
+    setupMergeFiles([300, 300]);
+    mockSpawnSuccess();
+
+    await processAudioFiles('/lib/book', defaultConfig, defaultContext);
+
+    // The execFile calls in the merge path are the ffprobe duration queries.
+    expect(mockExecFile).toHaveBeenCalled();
+    const { env } = optsOf(mockExecFile.mock.calls[0]!);
+    expect(env).toBeDefined();
+    expect(env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+    expect(env).toHaveProperty('PATH');
+  });
+});
+
 /** Setup helpers for merge path tests. */
 function setupMergeFiles(durations: number[] = [300, 300, 300]) {
   const fileCount = durations.length;

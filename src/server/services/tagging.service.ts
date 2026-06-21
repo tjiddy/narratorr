@@ -9,6 +9,8 @@ import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
+// Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
+import { sanitizedEnv } from '../../core/utils/sanitized-env.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import {
@@ -143,7 +145,7 @@ export async function tagFile(
       shouldEmbedCover ? coverPath : undefined,
     );
 
-    await execFileAsync(ffmpegPath, ffmpegArgs);
+    await execFileAsync(ffmpegPath, ffmpegArgs, { env: sanitizedEnv() });
 
     // Verify temp file exists and has reasonable size
     const [originalStat, tmpStat] = await Promise.all([stat(filePath), stat(tmpPath)]);

@@ -10,6 +10,10 @@ import { renderFilename } from './naming.js';
 import type { NamingOptions } from './naming.js';
 import { withCoverArtPipeline } from './cover-art.js';
 import { deriveFfprobePath } from './ffprobe-path.js';
+// Imported by path, not via the core/utils barrel — the barrel is excluded from
+// the Vite client build, and sanitizedEnv is Node-only. Mirrors the script
+// notifier / post-processing-script call sites.
+import { sanitizedEnv } from './sanitized-env.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -62,7 +66,7 @@ export async function detectFfmpegPath(): Promise<string | null> {
     // fall through to which
   }
   try {
-    const { stdout } = await execFileAsync('which', ['ffmpeg']);
+    const { stdout } = await execFileAsync('which', ['ffmpeg'], { env: sanitizedEnv() });
     const resolved = stdout.trim();
     if (resolved) return resolved;
   } catch {
@@ -75,7 +79,7 @@ export async function detectFfmpegPath(): Promise<string | null> {
  * Probe an ffmpeg binary at the given path. Returns the version string on success.
  */
 export async function probeFfmpeg(ffmpegPath: string): Promise<string> {
-  const { stdout } = await execFileAsync(ffmpegPath, ['-version']);
+  const { stdout } = await execFileAsync(ffmpegPath, ['-version'], { env: sanitizedEnv() });
   const firstLine = stdout.split('\n')[0]!;
   const versionMatch = firstLine.match(/ffmpeg version (\S+)/);
   return versionMatch ? versionMatch[1]! : firstLine.trim();
@@ -149,7 +153,7 @@ function spawnFfmpeg(
       return;
     }
 
-    const child = spawn(ffmpegPath, args);
+    const child = spawn(ffmpegPath, args, { env: sanitizedEnv() });
 
     // AbortSignal listener — kill ffmpeg on external cancel
     if (options?.signal) {
@@ -457,7 +461,7 @@ async function getFileDurations(ffmpegPath: string, filePaths: string[]): Promis
         '-show_entries', 'format=duration',
         '-of', 'default=noprint_wrappers=1:nokey=1',
         filePath,
-      ]);
+      ], { env: sanitizedEnv() });
       durations.push(parseFloat(stdout.trim()) || 0);
     } catch {
       durations.push(0);

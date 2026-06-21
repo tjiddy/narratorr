@@ -879,6 +879,22 @@ describe('scanAudioDirectory', () => {
           expect.any(Function),
         );
       });
+
+      it('runs ffprobe with a sanitized env (no secret, PATH preserved) alongside the timeout', async () => {
+        process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
+        try {
+          mockExecFileSuccess(JSON.stringify({ format: { duration: '100.0' } }));
+          await getFFprobeDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+
+          const opts = mockExecFile.mock.calls[0]![2] as { timeout?: number; env?: Record<string, string> };
+          expect(opts.timeout).toBe(10_000);
+          expect(opts.env).toBeDefined();
+          expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+          expect(opts.env).toHaveProperty('PATH');
+        } finally {
+          delete process.env.NARRATORR_SECRET_KEY;
+        }
+      });
     });
 
     describe('scanAudioDirectory with ffprobePath', () => {
