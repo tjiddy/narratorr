@@ -2,10 +2,11 @@
 
 Playwright-based browser E2E tests for Narratorr. Hermetic by design — each run
 boots Narratorr against per-run temp directories (DB / library / config /
-downloads / source), fakes for MAM and qBittorrent, and `AUTH_BYPASS=true`.
+downloads / source) and fakes for MAM and qBittorrent. The root and subpath
+servers run with `AUTH_BYPASS=true`; the forms server runs with auth enforced.
 
-Two servers boot in a single run, each with its own isolated temp-dir set and
-seeded DB (#1556):
+Three servers boot in a single run, each with its own isolated temp-dir set and
+seeded DB (#1556, #1555):
 
 - the **root** server (`URL_BASE=/`, port `3100`) — runs the critical-path and
   smoke specs under the `chromium` project;
@@ -17,6 +18,11 @@ seeded DB (#1556):
   origin-rooted and strips the prefix — reserved for the deliberate
   non-prefixed 404 check. The prefix/port/base is defined once in
   `fixtures/subpath.ts`.
+- the **forms** server (`URL_BASE=/`, port `3102`) — booted **without**
+  `AUTH_BYPASS` so the real login/session/redirect loop is exercised. Runs only
+  `tests/auth/**` under the `chromium-forms` project, which depends on the
+  `auth-setup` project. The port/baseURL/credentials/storageState path are
+  defined once in `fixtures/auth.ts`.
 
 ## Quick start
 
@@ -34,19 +40,21 @@ pnpm exec playwright install chromium
 
 ## How the harness is wired
 
-`playwright.config.ts` uses Playwright's `webServer` (an array of two entries —
-root + subpath) to launch `node ../dist/server/index.js` per server, with these
-env vars (the root server's values shown; the subpath server differs only in
-`PORT` `3101`, `URL_BASE` `/narratorr`, and its isolated temp-dir paths):
+`playwright.config.ts` uses Playwright's `webServer` (an array of three entries —
+root + subpath + forms) to launch `node ../dist/server/index.js` per server, with
+these env vars (the root server's values shown; the subpath/forms servers differ
+in `PORT`, `URL_BASE`, `AUTH_BYPASS`, and their isolated temp-dir paths). The
+shared env builder lives in `fixtures/server-env.ts`, which takes an `authBypass`
+flag (the forms server passes `false`, omitting `AUTH_BYPASS` entirely):
 
 | Var                     | Value                                                       |
 |-------------------------|-------------------------------------------------------------|
 | `NODE_ENV`              | `production`                                                |
-| `PORT`                  | `3100` root / `3101` subpath (off 3000/5173 to avoid dev clash) |
+| `PORT`                  | `3100` root / `3101` subpath / `3102` forms (off 3000/5173 to avoid dev clash) |
 | `DATABASE_URL`          | per-run temp libSQL file under `os.tmpdir()`                |
 | `CONFIG_PATH`           | per-run temp directory (scopes `secret.key` etc.)           |
-| `AUTH_BYPASS`           | `true` — skips login for Phase 1/2                          |
-| `URL_BASE`              | `/` root / `/narratorr` subpath                             |
+| `AUTH_BYPASS`           | `true` on root/subpath — skips login; **omitted** on forms so auth is enforced |
+| `URL_BASE`              | `/` root / `/narratorr` subpath / `/` forms                 |
 | `MONITOR_INTERVAL_CRON` | `*/2 * * * * *` — override of prod's 30s cadence            |
 | `E2E_DOWNLOADS_PATH`    | per-run downloads temp dir (surfaced for spec forensics)    |
 
@@ -111,6 +119,9 @@ e2e/
 │   ├── run-state.ts              # fake-server handle registry
 │   ├── run-state.test.ts         # vitest
 │   ├── subpath.ts                # single source of truth for the subpath topology (port/prefix/baseURL)
+│   ├── auth.ts                   # single source of truth for the forms-auth topology (port/baseURL/creds/authFile)
+│   ├── server-env.ts            # builds each server's env (authBypass flag)
+│   ├── server-env.test.ts       # vitest — env builder contract (forms omits AUTH_BYPASS)
 │   ├── seed.ts                   # Drizzle seed for indexer/client/author/book rows
 │   └── seed.test.ts              # vitest
 ├── fakes/
@@ -130,8 +141,11 @@ e2e/
     ├── critical-path/
     │   ├── search-grab-import.spec.ts  # Playwright — search → grab → import (root project)
     │   └── manual-import.spec.ts       # Playwright — manual import flow (root project)
-    └── subpath/
-        └── subpath-smoke.spec.ts       # Playwright — reverse-proxy subpath smoke (chromium-subpath project)
+    ├── subpath/
+    │   └── subpath-smoke.spec.ts       # Playwright — reverse-proxy subpath smoke (chromium-subpath project)
+    └── auth/
+        ├── auth.setup.ts              # Playwright — forms-auth bootstrap (auth-setup project, writes storageState)
+        └── forms-auth.spec.ts         # Playwright — login/redirect/logout (chromium-forms project)
 ```
 
 ## Debugging a CI failure
@@ -164,19 +178,44 @@ If a future phase needs categorical zero-network behavior, we add an E2E-only
 env flag to suppress these jobs (e.g. `DISABLE_JOBS=version-check,enrichment`).
 Not day one.
 
-## Forms auth bootstrap (deferred)
+## Forms auth bootstrap (#1555)
 
-Phase 1 uses `AUTH_BYPASS=true` — no login flow exercised. The first Phase 2+
-issue that needs auth-sensitive testing will add forms-auth bootstrap via
-Playwright's `storageState` pattern:
+The root and subpath servers run with `AUTH_BYPASS=true` — no login flow. The
+**forms** server (port `3102`) instead boots **without** `AUTH_BYPASS` so the
+real login/session/redirect loop is covered, using Playwright's `storageState`
+pattern. Two projects drive it:
 
-1. Global setup creates a test user via `POST /api/auth/setup`.
-2. Flips auth mode to `forms` via `PUT /api/auth/config`.
-3. Logs in via `POST /api/auth/login`, captures the cookie.
-4. Writes the cookie to `storageState.json`; test projects reuse it.
+- **`auth-setup`** (`tests/auth/auth.setup.ts`) runs first (the forms project
+  `dependsOn` it) and bootstraps auth in a load-bearing order — `AuthService`
+  rejects flipping to a non-`none` mode while zero users exist:
+  1. `POST /api/auth/setup` — create the user (public while mode is `none`);
+  2. `PUT /api/auth/config` `{ mode: 'forms' }` — flip the mode;
+  3. `POST /api/auth/login` — establish the `narratorr_session` cookie;
+  4. `page.context().storageState({ path })` — persist the authenticated state.
 
-None of this exists today — adding it prematurely would be scaffolding without
-a consumer.
+  All three HTTP calls go through **`page.request`** (the page's browser-context
+  request), NOT the standalone `{ request }` fixture — only the browser-context
+  request shares its cookie jar with the page, so the login `Set-Cookie` lands in
+  the jar that `storageState()` then captures. The isolated fixture would save an
+  unauthenticated state (login still returns 200, but the forms project would
+  start logged out).
+
+- **`chromium-forms`** (`tests/auth/forms-auth.spec.ts`) reuses that
+  `storageState` and asserts: unauthenticated navigation redirects to `/login`
+  (this spec overrides to an empty context, which is also the live guard against
+  an accidental bypass), the authenticated context reaches `/library` with
+  `GET /api/auth/status` → `{ mode: 'forms', authenticated: true }`, and logout
+  clears the session.
+
+  **Logout is exercised via the `POST /api/auth/logout` API** (through
+  `page.request`, sharing the page's cookie jar), not a UI click — the client
+  exposes `logout()` but no rendered control calls it, and this harness work is
+  scoped to no production code changes. Adding a logout control is a separate
+  (production) issue.
+
+The persisted state is written to `e2e/.auth/forms-user.json` (gitignored — it
+holds a live session cookie). The topology (port, baseURL, credentials, auth-file
+path) is defined once in `fixtures/auth.ts`.
 
 ## Writing critical-path tests
 

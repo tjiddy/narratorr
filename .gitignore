@@ -42,6 +42,8 @@ lighthouse-reports/
 # Playwright E2E
 e2e/test-results/
 e2e/playwright-report/
+# Persisted forms-auth storageState — holds a live session cookie, never commit
+e2e/.auth/
 
 # Turbo
 .turbo/
