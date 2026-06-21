@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 
 // Mock dependencies before imports
@@ -638,7 +639,7 @@ describe('prepareImportSiblings', () => {
     await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
     // Backed-up original restored into the target...
-    expect(rename).toHaveBeenCalledWith(`${backup}/old.m4b`, `${target}/old.m4b`);
+    expect(rename).toHaveBeenCalledWith(join(backup, 'old.m4b'), join(target, 'old.m4b'));
     // ...the now-empty backup strict-cleared, and the marker removed.
     expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith(marker, { force: true });
@@ -724,12 +725,12 @@ describe('commitStagedImport', () => {
     await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
     // Existing audio moved to backup (per-file rename, not deleted)...
-    expect(rename).toHaveBeenCalledWith(`${target}/old - 001.mp3`, `${backup}/old - 001.mp3`);
-    expect(rename).toHaveBeenCalledWith(`${target}/old - 002.mp3`, `${backup}/old - 002.mp3`);
+    expect(rename).toHaveBeenCalledWith(join(target, 'old - 001.mp3'), join(backup, 'old - 001.mp3'));
+    expect(rename).toHaveBeenCalledWith(join(target, 'old - 002.mp3'), join(backup, 'old - 002.mp3'));
     // ...cover left untouched (non-audio stays in targetPath)...
-    expect(rename).not.toHaveBeenCalledWith(`${target}/cover.jpg`, expect.anything());
+    expect(rename).not.toHaveBeenCalledWith(join(target, 'cover.jpg'), expect.anything());
     // ...new staged file moved into the target...
-    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
     // ...and both siblings removed on success.
     expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
@@ -744,7 +745,7 @@ describe('commitStagedImport', () => {
     await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
     expect(mkdir).not.toHaveBeenCalledWith(backup, expect.anything());
-    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
     expect(rename).toHaveBeenCalledTimes(1);
     expect(rm).toHaveBeenCalledWith(staging, { recursive: true, force: true });
   });
@@ -819,7 +820,7 @@ describe('commitStagedImport', () => {
     ).rejects.toThrow('ENOSPC marker');
 
     // The original was NOT moved into .import-bak — the existing book is untouched.
-    expect(rename).not.toHaveBeenCalledWith(`${target}/old.mp3`, `${backup}/old.mp3`);
+    expect(rename).not.toHaveBeenCalledWith(join(target, 'old.mp3'), join(backup, 'old.mp3'));
   });
 
   it('a parent-directory fsync failure does NOT abort the commit — backup renames still run, handle closed (#1339)', async () => {
@@ -839,8 +840,8 @@ describe('commitStagedImport', () => {
     ).resolves.toBeUndefined();
 
     // The commit proceeded: the original was backed up and the staged file moved in.
-    expect(rename).toHaveBeenCalledWith(`${target}/old.mp3`, `${backup}/old.mp3`);
-    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(rename).toHaveBeenCalledWith(join(target, 'old.mp3'), join(backup, 'old.mp3'));
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
     // The directory handle is closed even on the swallowed-fsync path (no leak).
     expect(close).toHaveBeenCalled();
   });
@@ -924,7 +925,7 @@ describe('commitStagedImport', () => {
       ).rejects.toThrow('EBUSY marker');
 
       // The existing rollback ran (restores the backed-up original).
-      expect(rename).toHaveBeenCalledWith(`${backup}/old.mp3`, `${target}/old.mp3`);
+      expect(rename).toHaveBeenCalledWith(join(backup, 'old.mp3'), join(target, 'old.mp3'));
       expect(log.error).toHaveBeenCalledWith(
         expect.objectContaining({ targetPath: target }),
         expect.stringMatching(/rolling back/i),
@@ -946,7 +947,7 @@ describe('commitStagedImport', () => {
 
     await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
-    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
     expect(mkdir).not.toHaveBeenCalledWith(backup, expect.anything());
   });
 
@@ -963,7 +964,7 @@ describe('commitStagedImport', () => {
     ).rejects.toThrow('EIO staged move');
 
     // Backed-up audio restored into the target — existing book left intact.
-    expect(rename).toHaveBeenCalledWith(`${backup}/old.mp3`, `${target}/old.mp3`);
+    expect(rename).toHaveBeenCalledWith(join(backup, 'old.mp3'), join(target, 'old.mp3'));
     // Commit threw before the success cleanup — siblings not removed here.
     expect(rm).not.toHaveBeenCalledWith(backup, expect.objectContaining({ recursive: true }));
     expect(log.error).toHaveBeenCalledWith(
@@ -986,9 +987,9 @@ describe('commitStagedImport', () => {
     ).rejects.toThrow('boom');
 
     // The already-moved staged file is removed from the target on rollback.
-    expect(rm).toHaveBeenCalledWith(`${target}/a.m4b`, { force: true });
+    expect(rm).toHaveBeenCalledWith(join(target, 'a.m4b'), { force: true });
     // And the backed-up original is restored.
-    expect(rename).toHaveBeenCalledWith(`${backup}/old.mp3`, `${target}/old.mp3`);
+    expect(rename).toHaveBeenCalledWith(join(backup, 'old.mp3'), join(target, 'old.mp3'));
   });
 
   it('rolls back when the backup move itself fails partway', async () => {
@@ -1004,7 +1005,7 @@ describe('commitStagedImport', () => {
     ).rejects.toThrow('EXDEV backup move');
 
     // Only the audio that made it to backup is restored.
-    expect(rename).toHaveBeenCalledWith(`${backup}/a.mp3`, `${target}/a.mp3`);
+    expect(rename).toHaveBeenCalledWith(join(backup, 'a.mp3'), join(target, 'a.mp3'));
   });
 
   it('best-effort rollback: a restore failure is logged but never masks the original commit error (F2)', async () => {
@@ -1040,7 +1041,7 @@ describe('commitStagedImport', () => {
     // admits it, so the backup must descend into `Disc 1` or the old audio survives.
     vi.mocked(readdir).mockImplementation(async (p: unknown) => {
       if (p === target) return [dirent('Disc 1', false), dirent('cover.jpg')] as never;
-      if (p === `${target}/Disc 1`) return [dirent('old.mp3'), dirent('disc.nfo')] as never;
+      if (p === join(target, 'Disc 1')) return [dirent('old.mp3'), dirent('disc.nfo')] as never;
       if (p === staging) return [dirent('new.m4b')] as never;
       return [] as never;
     });
@@ -1048,20 +1049,20 @@ describe('commitStagedImport', () => {
     await commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
     // Nested audio backed up under its relative path inside the backup dir...
-    expect(mkdir).toHaveBeenCalledWith(`${backup}/Disc 1`, { recursive: true });
-    expect(rename).toHaveBeenCalledWith(`${target}/Disc 1/old.mp3`, `${backup}/Disc 1/old.mp3`);
+    expect(mkdir).toHaveBeenCalledWith(join(backup, 'Disc 1'), { recursive: true });
+    expect(rename).toHaveBeenCalledWith(join(target, 'Disc 1', 'old.mp3'), join(backup, 'Disc 1', 'old.mp3'));
     // ...nested non-audio (disc.nfo) and top-level cover left untouched...
-    expect(rename).not.toHaveBeenCalledWith(`${target}/Disc 1/disc.nfo`, expect.anything());
-    expect(rename).not.toHaveBeenCalledWith(`${target}/cover.jpg`, expect.anything());
+    expect(rename).not.toHaveBeenCalledWith(join(target, 'Disc 1', 'disc.nfo'), expect.anything());
+    expect(rename).not.toHaveBeenCalledWith(join(target, 'cover.jpg'), expect.anything());
     // ...and the new staged file moved into the target top level.
-    expect(rename).toHaveBeenCalledWith(`${staging}/new.m4b`, `${target}/new.m4b`);
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
   });
 
   it('rolls a nested backed-up file back to its original relative path on commit failure (#1287 F7)', async () => {
     const log = createMockLog();
     vi.mocked(readdir).mockImplementation(async (p: unknown) => {
       if (p === target) return [dirent('Disc 1', false)] as never;
-      if (p === `${target}/Disc 1`) return [dirent('old.mp3')] as never;
+      if (p === join(target, 'Disc 1')) return [dirent('old.mp3')] as never;
       if (p === staging) return [dirent('new.m4b')] as never;
       return [] as never;
     });
@@ -1075,8 +1076,8 @@ describe('commitStagedImport', () => {
     ).rejects.toThrow('EIO staged move');
 
     // Rollback recreates the subdir, then restores the nested backup to its origin.
-    expect(mkdir).toHaveBeenCalledWith(`${target}/Disc 1`, { recursive: true });
-    expect(rename).toHaveBeenCalledWith(`${backup}/Disc 1/old.mp3`, `${target}/Disc 1/old.mp3`);
+    expect(mkdir).toHaveBeenCalledWith(join(target, 'Disc 1'), { recursive: true });
+    expect(rename).toHaveBeenCalledWith(join(backup, 'Disc 1', 'old.mp3'), join(target, 'Disc 1', 'old.mp3'));
   });
 });
 
@@ -1105,7 +1106,9 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     // a real marker is a file, so it reads as present (#1341 isFile).
     vi.mocked(stat).mockRejectedValueOnce(enoent()).mockRejectedValueOnce(enoent()).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
-      const s = String(src), d = String(dst);
+      // Normalize separators: production builds these args with join() (backslashes on Windows),
+      // so match against the POSIX needles below regardless of host.
+      const s = String(src).split('\\').join('/'), d = String(dst).split('\\').join('/');
       if (s === `${staging}/new.m4b`) throw new Error('EIO move-in');           // move-in fails → rollback
       if (s === `${backup}/z.mp3` && d === `${target}/z.mp3`) throw new Error('EIO restore z'); // one restore fails (swallowed)
       return undefined as never;                                                // backups + a.mp3 restore succeed
@@ -1122,7 +1125,7 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     expect(thrown).not.toBeInstanceOf(BackupRecoveryError);
     expect((thrown as Error).message).toMatch(/EIO move-in/);
     // The unrestored original's restore WAS attempted (and failed best-effort) → z.mp3 is left in .import-bak.
-    expect(rename).toHaveBeenCalledWith(`${backup}/z.mp3`, `${target}/z.mp3`);
+    expect(rename).toHaveBeenCalledWith(join(backup, 'z.mp3'), join(target, 'z.mp3'));
     // The catch preserved the marker: removeMarker (the only `rm(marker, { force })` caller on
     // the failure path) was never invoked. A regression that drops the marker gate from the
     // stagedAudioReplace catch would call it here.
@@ -1142,7 +1145,7 @@ describe('partial in-process rollback restore failure (#1336 window 5)', () => {
     await prepareImportSiblings({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log });
 
     // The leftover original is restored, then the now-empty backup and the marker are cleared.
-    expect(rename).toHaveBeenCalledWith(`${backup}/z.mp3`, `${target}/z.mp3`);
+    expect(rename).toHaveBeenCalledWith(join(backup, 'z.mp3'), join(target, 'z.mp3'));
     expect(rm).toHaveBeenCalledWith(backup, { recursive: true, force: true });
     expect(rm).toHaveBeenCalledWith(marker, { force: true });
   });

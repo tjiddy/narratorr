@@ -103,7 +103,9 @@ describe('RenameService marker convergence (#1418, real tmpdir)', () => {
     expect(await pathExists(`${oldPath}.import-bak`)).toBe(false);
     expect(await pathExists(oldPath)).toBe(false);
     expect(await listFiles(target)).toContain('original.mp3');
-    expect(bookService.update).toHaveBeenCalledWith(1, { path: target });
+    // renameBook stores the new path POSIX-normalized (DB paths are POSIX; consumed in Docker);
+    // `target` is a native tmpdir path, so normalize before matching on a Windows dev box.
+    expect(bookService.update).toHaveBeenCalledWith(1, { path: target.split('\\').join('/') });
     // A subsequent boot sweep finds nothing to recover at the old path.
     expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
   });

@@ -809,9 +809,14 @@ describe('reconstructDiscGroup', () => {
   // the audio-bearing decision is driven through the real OS boundary (the exported
   // containsAudioFiles is same-module, so a vi.mock of it would not intercept the internal call).
   type TreeEntry = { name: string; isFile: boolean; reject?: boolean };
+  // reconstructDiscGroup builds sibling paths with join(parent, name), which emits backslashes
+  // on Windows; the tree is keyed with POSIX separators, so normalize the lookup key before
+  // matching. Without this the per-sibling audio probe ENOENTs on a Windows dev box, audioBearing
+  // empties, and reconstruction returns [] (a silent local-only failure; Linux CI stays green).
+  const norm = (paths: string[]): string[] => paths.map(p => p.split('\\').join('/'));
   function setupTree(tree: Record<string, TreeEntry[]>) {
     vi.mocked(readdir).mockImplementation(async (p: unknown) => {
-      const key = String(p);
+      const key = String(p).split('\\').join('/');
       const entries = tree[key];
       if (!entries) throw Object.assign(new Error(`ENOENT: ${key}`), { code: 'ENOENT' });
       if (entries.some(e => e.reject)) {
@@ -854,7 +859,7 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
 
-    expect(result).toEqual(discPaths);
+    expect(norm(result)).toEqual(discPaths);
   });
 
   it('filters to siblings sharing the stem — ignores a different group under the same parent', async () => {
@@ -874,7 +879,7 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 2');
 
-    expect(result).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
+    expect(norm(result)).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
   });
 
   it('does NOT reconstruct a set with inconsistent "of M" totals (mirrors discovery guard)', async () => {
@@ -891,7 +896,7 @@ describe('reconstructDiscGroup', () => {
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
 
     // Discovery left these separate → reconstruction must too (length 1 → callers skip flatten)
-    expect(result).toEqual(['/downloads/Author - Book Disc 1 of 10']);
+    expect(norm(result)).toEqual(['/downloads/Author - Book Disc 1 of 10']);
   });
 
   it('does NOT reconstruct when an AUDIO-bearing markerless sibling shares the stem (all-or-nothing)', async () => {
@@ -903,7 +908,7 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
 
-    expect(result).toEqual(['/downloads/Author - Book Disc 1 of 3']);
+    expect(norm(result)).toEqual(['/downloads/Author - Book Disc 1 of 3']);
   });
 
   it('reconstructs the FULL N-disc set despite an audioless markerless stem-sharing sibling (#1280)', async () => {
@@ -916,9 +921,9 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
 
-    expect(result).toEqual(discPaths);
+    expect(norm(result)).toEqual(discPaths);
     expect(result).toHaveLength(10);
-    expect(result).not.toContain('/downloads/1776 Artwork');
+    expect(norm(result)).not.toContain('/downloads/1776 Artwork');
   });
 
   it('returns the full set with NO audioless sibling present (happy-path control)', async () => {
@@ -927,7 +932,7 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
 
-    expect(result).toEqual(discPaths);
+    expect(norm(result)).toEqual(discPaths);
   });
 
   it('excludes a marker-carrying AUDIOLESS sibling from the member set (members are audio-bearing dirs only)', async () => {
@@ -940,8 +945,8 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
 
-    expect(result).toEqual(discPaths);
-    expect(result).not.toContain('/downloads/1776 Disc 11 of 10');
+    expect(norm(result)).toEqual(discPaths);
+    expect(norm(result)).not.toContain('/downloads/1776 Disc 11 of 10');
   });
 
   it('reconstructs ALL members of an incomplete N-of-M set unchanged — import is never blocked (#1282)', async () => {
@@ -953,7 +958,7 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
 
-    expect(result).toEqual(discPaths);
+    expect(norm(result)).toEqual(discPaths);
     expect(result).toHaveLength(8);
   });
 
@@ -967,7 +972,7 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
 
-    expect(result).toEqual(discPaths);
+    expect(norm(result)).toEqual(discPaths);
   });
 });
 

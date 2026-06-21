@@ -79,6 +79,7 @@ import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
+import { join } from 'node:path';
 import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
@@ -823,14 +824,14 @@ describe('ImportService', () => {
       const base = '/audiobooks/Brandon Sanderson/The Way of Kings';
       const renameMock = vi.mocked(rename);
       // Old audio is moved (backed up) out of the target — not destroyed in place...
-      expect(renameMock).toHaveBeenCalledWith(`${base}/old - 001.mp3`, `${base}.import-bak/old - 001.mp3`);
-      expect(renameMock).toHaveBeenCalledWith(`${base}/old - 002.mp3`, `${base}.import-bak/old - 002.mp3`);
+      expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 001.mp3'), join(`${base}.import-bak`, 'old - 001.mp3'));
+      expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 002.mp3'), join(`${base}.import-bak`, 'old - 002.mp3'));
       // ...the cover is never moved out of the target (non-audio preserved)...
-      expect(renameMock).not.toHaveBeenCalledWith(`${base}/cover.jpg`, `${base}.import-bak/cover.jpg`);
+      expect(renameMock).not.toHaveBeenCalledWith(join(base, 'cover.jpg'), join(`${base}.import-bak`, 'cover.jpg'));
 
       const rmMock = vi.mocked(rm);
       // ...old audio is not individually force-deleted (it is moved, then the backup dir cleaned)...
-      expect(rmMock).not.toHaveBeenCalledWith(`${base}/old - 001.mp3`, { force: true });
+      expect(rmMock).not.toHaveBeenCalledWith(join(base, 'old - 001.mp3'), { force: true });
       // ...the target folder itself is never wholesale-deleted...
       expect(rmMock).not.toHaveBeenCalledWith(base, expect.objectContaining({ recursive: true }));
       // ...and the staging + backup siblings are removed on success.
@@ -934,7 +935,7 @@ describe('ImportService', () => {
       // The existing book folder is NEVER blanket-removed...
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
       // ...no existing audio was moved out (the commit phase was never reached)...
-      expect(rename).not.toHaveBeenCalledWith(`${SAME_PATH}/old.mp3`, `${BACKUP}/old.mp3`);
+      expect(rename).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), join(BACKUP, 'old.mp3'));
       // ...and the staging sibling is cleaned up.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
@@ -957,7 +958,7 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('EIO during swap');
 
       // Rollback restored the backed-up audio into the target...
-      expect(rename).toHaveBeenCalledWith(`${BACKUP}/old.mp3`, `${SAME_PATH}/old.mp3`);
+      expect(rename).toHaveBeenCalledWith(join(BACKUP, 'old.mp3'), join(SAME_PATH, 'old.mp3'));
       // ...the existing book folder was never blanket-removed...
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
       // ...and both transient siblings are cleaned up.

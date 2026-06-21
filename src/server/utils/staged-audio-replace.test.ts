@@ -564,7 +564,13 @@ describe('marker-path directory collision (#1341)', () => {
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
   });
 
-  it('preservation: a genuine non-ENOENT marker stat error still returns true from markerPresent (#1336)', async () => {
+  // POSIX-only: wedging the marker path under a regular file yields ENOTDIR on Linux (a
+  // genuine non-ENOENT error → markerPresent preserves), but Windows returns ENOENT for the
+  // same path (errno -4058), so markerExists reads it as marker-absent and the preservation
+  // branch never fires. The behavior under test is real-OS error-code routing that can't be
+  // portably reproduced via the filesystem (EACCES/ELOOP setups aren't cross-platform either),
+  // and narratorr runs on Linux/Docker — so skip on win32; CI (Linux) fully exercises it.
+  it.skipIf(process.platform === 'win32')('preservation: a genuine non-ENOENT marker stat error still returns true from markerPresent (#1336)', async () => {
     // An ancestor that is a FILE makes stat on the derived marker path throw ENOTDIR (a
     // non-ENOENT error) — markerPresent must fail toward preservation and return true.
     const ancestorFile = join(libraryRoot, 'AuthorAsFile');

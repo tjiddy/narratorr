@@ -17,6 +17,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
+// copyToLibrary returns the target POSIX-normalized (paths are stored in the DB and consumed
+// inside Docker/Linux). The test `target` is a real tmpdir path — native-separator, so it carries
+// backslashes on Windows. Normalize the expected before comparing so the return-value assertions
+// hold on a Windows dev machine, not just on Linux CI.
+const toPosix = (p: string): string => p.split('\\').join('/');
+
 vi.mock('./enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('./enrichment-orchestration.helpers.js')),
   orchestrateBookEnrichment: vi.fn().mockResolvedValue({ audioEnriched: true }),
@@ -477,7 +483,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
 
     const result = await copyToLibrary(item(), null, 'copy', buildDeps());
 
-    expect(result).toBe(target);
+    expect(result).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
     // Old edition's audio gone; new audio present; non-audio cover preserved.
     expect(files).toEqual(['a.mp3', 'b.mp3', 'cover.jpg']);
@@ -526,7 +532,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
     const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
 
-    expect(result).toBe(target);
+    expect(result).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
     // Old edition's audio gone; both discs flattened (sequentially renamed) into the top level;
     // non-audio cover preserved. A regression to the direct merge-copy path would leave old.m4b.
@@ -604,7 +610,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
 
     const result = await copyToLibrary(item(), null, 'copy', buildDeps());
 
-    expect(result).toBe(target);
+    expect(result).toBe(toPosix(target));
     // Recovery restored old.m4b → target was populated → the staged swap replaced
     // it with the manual import's audio. The stale edition is gone (no Frankenbook).
     expect((await readdir(target)).sort()).toEqual(['a.mp3', 'b.mp3']);
@@ -628,7 +634,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
     const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
 
-    expect(result).toBe(target);
+    expect(result).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
     // Old single-file edition replaced; both discs flattened into the top level.
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
@@ -798,7 +804,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
       return fsMocks.real.rm(p, opts);
     });
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(target);
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
     // New audio committed despite the vanished source.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(fsMocks.rm).toHaveBeenCalledWith(source, expect.objectContaining({ force: true }));
@@ -827,7 +833,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     });
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
-    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(target);
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
     const files = (await readdir(target)).sort();
     // Both discs flattened into the target; old single-file edition replaced.
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);

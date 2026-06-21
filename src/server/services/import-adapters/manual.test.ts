@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Dirent } from 'node:fs';
+import { join } from 'node:path';
 import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
 import type { Db } from '../../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -297,10 +298,13 @@ describe('ManualImportAdapter', () => {
     });
 
     describe('coalesced disc-group rows (#1272)', () => {
+      // Built with join() so they carry the same native separators reconstructDiscGroup emits
+      // (join(parent, name) → backslashes on Windows). Forward-slash literals would mismatch the
+      // reconstructed member paths on a Windows dev box while passing on Linux CI.
       const MEMBER_PATHS = [
-        '/audiobooks/Author - Book Disc 1 of 3',
-        '/audiobooks/Author - Book Disc 2 of 3',
-        '/audiobooks/Author - Book Disc 3 of 3',
+        join('/audiobooks', 'Author - Book Disc 1 of 3'),
+        join('/audiobooks', 'Author - Book Disc 2 of 3'),
+        join('/audiobooks', 'Author - Book Disc 3 of 3'),
       ];
 
       /**
@@ -312,7 +316,9 @@ describe('ManualImportAdapter', () => {
       async function mockSiblingTree(names: string[], audioless: string[] = []): Promise<void> {
         const fs = await import('node:fs/promises');
         vi.mocked(fs.readdir).mockImplementation(async (p: unknown) => {
-          const key = String(p);
+          // reconstructDiscGroup probes siblings with join(parent, name) → backslashes on Windows;
+          // normalize so the POSIX-keyed tree matches regardless of host separator.
+          const key = String(p).split('\\').join('/');
           if (key === '/audiobooks') return names.map(n => makeDirent(n, false)) as never;
           const name = key.slice('/audiobooks/'.length);
           return (audioless.includes(name)
