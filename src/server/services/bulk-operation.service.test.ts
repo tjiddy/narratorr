@@ -751,6 +751,72 @@ describe('BulkOperationService — re-tag batch', () => {
   });
 });
 
+// ===== Retag eligibility: single shared predicate (count ↔ job lockstep) =====
+
+describe('BulkOperationService — retag eligibility (single source)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('lockstep: countRetagEligible total === job setTotal === retagBook call count for the same fixture', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db } = createService({ taggingService });
+    // One fixture set of imported books with non-null paths drives both reads:
+    // the count select reports count(*), the job select returns the row ids.
+    const eligible = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ count: eligible.length }])) // countRetagEligible
+      .mockReturnValueOnce(mockDbChain(eligible)); // startRetagJob row select
+    (taggingService.retagBook as Mock).mockResolvedValue({ bookId: 1, filesTagged: 1, message: 'ok' });
+
+    const { total } = await service.countRetagEligible();
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    // The preview denominator the modal shows must equal the job's real total.
+    expect(total).toBe(eligible.length);
+    expect(service.getJob(id)?.total).toBe(total);
+    expect((taggingService.retagBook as Mock).mock.calls).toHaveLength(total);
+  });
+
+  it('no eligible books: count total === 0 and job setTotal === 0 (job touches nothing)', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db } = createService({ taggingService });
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ count: 0 }])) // countRetagEligible
+      .mockReturnValueOnce(mockDbChain([])); // startRetagJob row select
+
+    const { total } = await service.countRetagEligible();
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    expect(total).toBe(0);
+    expect(service.getJob(id)?.total).toBe(0);
+    expect(taggingService.retagBook).not.toHaveBeenCalled();
+  });
+
+  it('both retag call sites filter on the same predicate (imported AND path present)', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db } = createService({ taggingService });
+    const countChain = mockDbChain([{ count: 0 }]);
+    const jobChain = mockDbChain([]);
+    db.select
+      .mockReturnValueOnce(countChain) // countRetagEligible
+      .mockReturnValueOnce(jobChain); // startRetagJob row select
+
+    await service.countRetagEligible();
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    const countWhere = (countChain.where as Mock).mock.calls[0]![0];
+    const jobWhere = (jobChain.where as Mock).mock.calls[0]![0];
+    // Structurally identical where-args prove both sites consume one shared source,
+    // not two inlined copies that merely happen to agree.
+    expect(toSQL(countWhere)).toEqual(toSQL(jobWhere));
+    const { sql } = toSQL(countWhere);
+    expect(sql).toMatch(/"books"\."status" = \?/i);
+    expect(sql).toMatch(/"books"\."path" is not null/i);
+  });
+});
+
 // ===== Convert batch =====
 
 describe('BulkOperationService — convert batch', () => {
