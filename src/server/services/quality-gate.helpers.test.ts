@@ -14,7 +14,7 @@ const baseBook = {
   audioChannels: 2, updatedAt: new Date(), addedAt: new Date(),
   createdAt: new Date(), enrichmentStatus: 'pending' as const,
   audioBitrateMode: null, audioFileFormat: null, audioFileCount: null, topLevelAudioFileCount: null,
-  audibleId: null, goodreadsId: null, seriesId: null, importListId: null,
+  seriesId: null, importListId: null,
   lastGrabGuid: null, lastGrabInfoHash: null,
 };
 

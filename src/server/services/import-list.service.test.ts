@@ -46,8 +46,6 @@ function makeBookService(overrides: {
     title: data.title,
     description: null,
     coverUrl: null,
-    goodreadsId: null,
-    audibleId: null,
     asin: null,
     isbn: null,
     seriesName: null,
@@ -482,7 +480,7 @@ describe('ImportListService', () => {
      */
     const createdBook = (id: number, title: string): BookWithAuthor => ({
       id, publicId: `bk_test`, title,
-      description: null, coverUrl: null, goodreadsId: null, audibleId: null,
+      description: null, coverUrl: null,
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,
       status: 'wanted', enrichmentStatus: 'pending',
