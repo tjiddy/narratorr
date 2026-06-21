@@ -13,18 +13,12 @@ import {
 import { DEFAULT_REJECT_WORDS } from '../../shared/schemas/settings/quality.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames, type SecretEntity } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
 export type { AppSettings };
-
-/** Categories that contain secret fields (only categories managed by SettingsService). */
-const SECRET_CATEGORIES: Partial<Record<SettingsCategory, SecretEntity>> = {
-  network: 'network',
-  metadata: 'metadata',
-  earwitness: 'earwitness',
-};
 
 function parseCategory<K extends SettingsCategory>(
   key: K,
