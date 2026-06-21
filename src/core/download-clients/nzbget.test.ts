@@ -1006,6 +1006,28 @@ describe('NZBGetClient', () => {
       expect(result.success).toBe(true);
     });
 
+    it('rpc() with success envelope { result, error: null } parses and returns the result', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ result: '21.1', error: null });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('NZBGet 21.1');
+    });
+
+    it('rpc() with neither result nor a non-null error still fails the refine', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ error: null });
+        }),
+      );
+
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet returned unexpected response');
+    });
+
     it('rpc() with error object throws with descriptive message', async () => {
       server.use(
         http.post(RPC_URL, async () => {
