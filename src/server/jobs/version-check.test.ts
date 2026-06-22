@@ -129,8 +129,9 @@ describe('version check job', () => {
       });
       await runCheck();
 
-      // Should keep cached result since response has no tag_name
+      // Should keep cached result since response fails the schema parse.
       expect(getUpdateStatus()).toBeDefined();
+      expect(log.warn).toHaveBeenCalledWith('Version check: GitHub API returned unexpected response shape');
     });
 
     it('empty/null release response → no crash, no false update', async () => {
@@ -142,6 +143,31 @@ describe('version check job', () => {
       await runCheck();
 
       expect(getUpdateStatus()).toBeUndefined();
+      expect(log.warn).toHaveBeenCalledWith('Version check: GitHub API returned unexpected response shape');
+    });
+
+    it('extra GitHub fields → still parses (.strip(), not .strict()) and yields the update', async () => {
+      // A realistic /releases/latest payload carries many more keys than we read.
+      // Default `.strip()` must drop them; `.strict()` would reject the parse.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          tag_name: 'v0.2.0',
+          html_url: 'https://github.com/releases/v0.2.0',
+          id: 12345,
+          draft: false,
+          prerelease: false,
+          assets: [{ name: 'narratorr.tar.gz' }],
+        }),
+      });
+
+      await runCheck();
+
+      expect(getUpdateStatus()).toEqual({
+        latestVersion: '0.2.0',
+        releaseUrl: 'https://github.com/releases/v0.2.0',
+        channel: 'stable',
+      });
     });
 
     it('network timeout → error logged with canonical serialized payload, cached result used', async () => {
@@ -272,6 +298,65 @@ describe('version check job', () => {
       expect(getUpdateStatus()?.channel).toBe('develop');
     });
 
+    it('ahead_by > 0 with empty commits → parses, falls back to the develop sentinel', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ahead_by: 2, html_url: COMPARE_HTML_URL, commits: [] }),
+      });
+
+      await runCheck();
+
+      // Empty commits is a *successful* parse that reaches developHeadSha's
+      // fallback — not a warn-and-preserve no-op.
+      expect(getUpdateStatus()).toEqual({
+        latestVersion: 'develop',
+        releaseUrl: COMPARE_HTML_URL,
+        channel: 'develop',
+      });
+      expect(log.warn).not.toHaveBeenCalled();
+    });
+
+    it('head commit missing sha → parses (sha is lenient) and falls back to the develop sentinel', async () => {
+      // The head commit lacks a string `sha`. The schema's `sha: z.string().nullish()`
+      // must accept this so the payload PARSES and flows through to developHeadSha's
+      // fallback. A required `sha` would instead reject the parse and warn-and-preserve.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ahead_by: 1, html_url: COMPARE_HTML_URL, commits: [{ sha: 'aaa' }, {}] }),
+      });
+
+      await runCheck();
+
+      expect(getUpdateStatus()).toEqual({
+        latestVersion: 'develop',
+        releaseUrl: COMPARE_HTML_URL,
+        channel: 'develop',
+      });
+      expect(log.warn).not.toHaveBeenCalledWith('Version check: GitHub compare API returned unexpected response shape');
+    });
+
+    it('extra compare fields → still parses (.strip(), not .strict()) and yields the develop update', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          ahead_by: 2,
+          html_url: COMPARE_HTML_URL,
+          commits: [{ sha: '1111111aaaa' }, { sha: 'def56780000' }],
+          status: 'ahead',
+          total_commits: 2,
+          behind_by: 0,
+        }),
+      });
+
+      await runCheck();
+
+      expect(getUpdateStatus()).toEqual({
+        latestVersion: 'def5678',
+        releaseUrl: COMPARE_HTML_URL,
+        channel: 'develop',
+      });
+    });
+
     describe('failure modes preserve prior cache', () => {
       async function seedDevelopUpdate() {
         mockFetch.mockResolvedValue(makeGitHubCompare(4, COMPARE_HTML_URL));
@@ -299,7 +384,7 @@ describe('version check job', () => {
         await seedDevelopUpdate();
         mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ html_url: COMPARE_HTML_URL }) });
         await runCheck();
-        expect(log.warn).toHaveBeenCalled();
+        expect(log.warn).toHaveBeenCalledWith('Version check: GitHub compare API returned unexpected response shape');
         expect(getUpdateStatus()).toBeDefined();
       });
 
@@ -307,6 +392,15 @@ describe('version check job', () => {
         await seedDevelopUpdate();
         mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ahead_by: 'lots', html_url: COMPARE_HTML_URL }) });
         await runCheck();
+        expect(log.warn).toHaveBeenCalledWith('Version check: GitHub compare API returned unexpected response shape');
+        expect(getUpdateStatus()).toBeDefined();
+      });
+
+      it('missing html_url → cached result preserved', async () => {
+        await seedDevelopUpdate();
+        mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ ahead_by: 3 }) });
+        await runCheck();
+        expect(log.warn).toHaveBeenCalledWith('Version check: GitHub compare API returned unexpected response shape');
         expect(getUpdateStatus()).toBeDefined();
       });
 

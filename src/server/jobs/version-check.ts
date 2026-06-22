@@ -1,9 +1,30 @@
 import type { FastifyBaseLogger } from 'fastify';
+import { z } from 'zod';
 import { getVersion, getCommit, isNewerVersion } from '../utils/version.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
 type UpdateChannel = 'stable' | 'develop';
+
+// GitHub API response shapes — third-party payloads consumed only by this job,
+// so they live here, NOT in src/shared/schemas/ (reserved for cross-client/server
+// domain contracts). Default `.strip()` (NOT `.strict()`): GitHub adds response
+// fields over time and `.strict()` would reject every new key and break the
+// check; we read only the named fields. Fields required for the channel to
+// proceed stay required so an absent value fails the parse and degrades to the
+// existing graceful no-op; `commits` (and per-commit `sha`) are `.nullish()` so
+// a thin/absent commit list still parses and reaches the `developHeadSha`
+// 'develop' fallback rather than becoming a parse failure.
+const githubReleaseSchema = z.object({
+  tag_name: z.string(),
+  html_url: z.string(),
+});
+
+const githubCompareSchema = z.object({
+  ahead_by: z.number(),
+  html_url: z.string(),
+  commits: z.array(z.object({ sha: z.string().nullish() })).nullish(),
+});
 
 interface CachedUpdate {
   latestVersion: string;
@@ -95,14 +116,15 @@ async function checkStableUpdate(log: FastifyBaseLogger, currentVersion: string)
     }
 
     const data = await response.json();
-    if (!data || typeof data.tag_name !== 'string' || typeof data.html_url !== 'string') {
+    const result = githubReleaseSchema.safeParse(data);
+    if (!result.success) {
       log.warn('Version check: GitHub API returned unexpected response shape');
       return;
     }
 
-    const latestVersion = data.tag_name.replace(/^v/, '');
+    const latestVersion = result.data.tag_name.replace(/^v/, '');
     if (isNewerVersion(currentVersion, latestVersion)) {
-      cachedUpdate = { latestVersion, releaseUrl: data.html_url, channel: 'stable' };
+      cachedUpdate = { latestVersion, releaseUrl: result.data.html_url, channel: 'stable' };
       log.info({ currentVersion, latestVersion }, 'Version check: newer version available');
     } else {
       cachedUpdate = undefined;
@@ -128,18 +150,19 @@ async function checkDevelopUpdate(log: FastifyBaseLogger, currentCommit: string)
     }
 
     const data = await response.json();
-    if (!data || typeof data.ahead_by !== 'number' || typeof data.html_url !== 'string') {
+    const result = githubCompareSchema.safeParse(data);
+    if (!result.success) {
       log.warn('Version check: GitHub compare API returned unexpected response shape');
       return;
     }
 
-    if (data.ahead_by > 0) {
+    if (result.data.ahead_by > 0) {
       cachedUpdate = {
-        latestVersion: developHeadSha(data),
-        releaseUrl: data.html_url,
+        latestVersion: developHeadSha(result.data),
+        releaseUrl: result.data.html_url,
         channel: 'develop',
       };
-      log.info({ currentCommit, aheadBy: data.ahead_by }, 'Version check: newer develop build available');
+      log.info({ currentCommit, aheadBy: result.data.ahead_by }, 'Version check: newer develop build available');
     } else {
       cachedUpdate = undefined;
       log.debug({ currentCommit }, 'Version check: on latest develop build');
