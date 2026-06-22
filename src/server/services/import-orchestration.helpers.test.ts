@@ -896,15 +896,25 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
     // Post-commit, the disc-1 source cleanup readdir rejects EACCES. Per-member try/catch (#1591)
-    // keeps the committed import successful and does not skip the remaining disc.
+    // keeps the committed import successful and does not skip the remaining disc. The flatten renames
+    // members to sequential stems, so we can't key the post-swap window on a member filename in the
+    // target; instead key on the staged swap having replaced the target's `old.m4b` audio. Pre-swap
+    // reads of disc1 (size probe + copyDiscGroup staging) still see `old.m4b` and pass through.
     fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
-      if (String(p) === disc1 && existsSync(join(target, 'd1.mp3'))) throw eacces();
+      if (String(p) === disc1 && !existsSync(join(target, 'old.m4b'))) throw eacces();
       return fsMocks.real.readdir(p, opts);
     });
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
     await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
     expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    // F1: prove per-member continuation — disc-1 cleanup threw (its readdir EACCES'd, so d1.mp3
+    // survives), but the loop still reached disc 2 and swept it (d2.mp3 removed, empty folder gone).
+    // A single catch around the whole loop would skip disc 2, leaving it on disk — this assertion
+    // is what distinguishes per-member try/catch from loop-level.
+    expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(true);
+    expect(await pathExists(join(disc2, 'd2.mp3'))).toBe(false);
+    expect(await pathExists(disc2)).toBe(false);
   });
 
   it('still fails the import when copy verification falls below threshold (verification path untouched)', async () => {
