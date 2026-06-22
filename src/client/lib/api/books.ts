@@ -108,6 +108,19 @@ export interface RenameResult {
   filesRenamed: number;
 }
 
+/**
+ * Result of `DELETE /api/books/:id`. `fileSummary` is present only when files were removed from
+ * disk (`deleteFiles=true` and the book had a path); it drives the "kept N files" disclosure when
+ * foreign files (e-books, PDFs, …) were preserved alongside the audiobook (#1589).
+ */
+export interface DeleteBookResult {
+  success: boolean;
+  fileSummary?: {
+    deletedManaged: number;
+    preservedForeign: string[];
+  };
+}
+
 export interface RenamePreviewResult {
   libraryRoot: string;
   folderFormat: string;
@@ -305,7 +318,7 @@ export const booksApi = {
       body: JSON.stringify(data),
     }),
   deleteBook: (id: number, options?: { deleteFiles?: boolean }) =>
-    fetchApi<{ success: boolean }>(`/books/${id}${options?.deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
+    fetchApi<DeleteBookResult>(`/books/${id}${options?.deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   deleteMissingBooks: () =>
     fetchApi<{ deleted: number }>('/books/missing', { method: 'DELETE' }),
   getBookFiles: (id: number) =>

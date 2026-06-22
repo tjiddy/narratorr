@@ -1,4 +1,4 @@
-import { stat, rm, statfs, mkdir, cp } from 'node:fs/promises';
+import { stat, statfs, mkdir, cp } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -33,6 +33,7 @@ import { revertBookStatus } from './book-status.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { removeImportSibling, removeMarker, markerPresent } from './import-staging.js';
+import { deleteManagedBookFiles } from './delete-managed-files.js';
 
 // Staged-import siblings machinery (.import-tmp/.import-bak) lives in import-staging.ts;
 // re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
@@ -249,10 +250,17 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
     throw gateError;
   }
   try {
-    await rm(bookPath, { recursive: true, force: true });
-    log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during re-import');
-  } catch (rmError: unknown) {
-    log.warn({ error: serializeError(rmError), oldPath: bookPath }, 'Failed to delete old book files during re-import — continuing');
+    // Delete only MANAGED files from the old library folder (#1589) so a co-located e-book/PDF/NFO
+    // or user image survives the re-import. Containment was already asserted above, so the helper
+    // runs without re-asserting. Nonfatal: a per-file failure is recorded+logged inside the helper
+    // and the import continues (existing contract preserved).
+    const cleanup = await deleteManagedBookFiles(bookPath, libraryRoot, log, { assertInsideLibrary: false });
+    log.info(
+      { oldPath: bookPath, newPath: targetPath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length },
+      'Cleaned old book managed files during re-import (foreign files preserved)',
+    );
+  } catch (cleanupError: unknown) {
+    log.warn({ error: serializeError(cleanupError), oldPath: bookPath }, 'Failed to clean old book files during re-import — continuing');
   }
 }
 
@@ -401,8 +409,13 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
         throw gateError;
       }
     }
-    await rm(targetPath, { recursive: true, force: true })
-      .catch((rmError) => log.warn({ error: serializeError(rmError), targetPath }, 'Failed to clean up target path after import failure'));
+    // Delete only MANAGED files (#1589): a pre-existing/populated library target's foreign files
+    // (a bundled e-book/PDF) are preserved instead of being blanket-wiped, while a genuine scratch
+    // target containing only import-written audio is still fully removed (folder gone). Containment
+    // was asserted just above, so the helper runs without re-asserting. Nonfatal — a per-file
+    // failure is recorded+logged inside the helper; we still revertAndRethrow the original error.
+    await deleteManagedBookFiles(targetPath, libraryRoot ?? targetPath, log, { assertInsideLibrary: false })
+      .catch((cleanupError) => log.warn({ error: serializeError(cleanupError), targetPath }, 'Failed to clean up target path after import failure'));
   }
 
   return revertAndRethrow(args);

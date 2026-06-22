@@ -1,5 +1,5 @@
-import { rm } from 'node:fs/promises';
-import { assertPathInsideLibrary, cleanEmptyParents, PathOutsideLibraryError } from '../utils/paths.js';
+import { cleanEmptyParents } from '../utils/paths.js';
+import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/delete-managed-files.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { eq, and, sql, notExists, inArray } from 'drizzle-orm';
@@ -454,23 +454,21 @@ export class BookService {
   }
 
   /**
-   * Delete a book's files from disk and clean up empty parent directories.
-   * Throws on failure so the caller can abort the deletion flow.
+   * Delete a book's MANAGED files from disk (audio + the narratorr cover sidecar), preserving any
+   * foreign files (e-books, PDFs, subtitles, user images) co-located in the folder (#1589), then
+   * clean up empty parent directories. Throws {@link PathOutsideLibraryError} for a path outside
+   * the library root. A per-file deletion failure does NOT throw — it is recorded in the returned
+   * `failedManaged`; the caller decides fatality (manual delete aborts before its DB mutation).
    */
-  async deleteBookFiles(bookPath: string, libraryRoot: string): Promise<void> {
-    try {
-      assertPathInsideLibrary(bookPath, libraryRoot);
-    } catch (error: unknown) {
-      if (error instanceof PathOutsideLibraryError) {
-        this.log.warn({ bookPath, libraryRoot }, 'Refusing to delete book path outside library root');
-      }
-      throw error;
-    }
-
-    await rm(bookPath, { recursive: true, force: true });
-    this.log.info({ path: bookPath }, 'Book files deleted from disk');
+  async deleteBookFiles(bookPath: string, libraryRoot: string): Promise<DeleteManagedFilesResult> {
+    const result = await deleteManagedBookFiles(bookPath, libraryRoot, this.log);
+    this.log.info(
+      { path: bookPath, deleted: result.deletedManaged.length, preserved: result.preservedForeign.length, failed: result.failedManaged.length },
+      'Book managed files deleted from disk',
+    );
 
     await cleanEmptyParents(bookPath, libraryRoot, this.log);
+    return result;
   }
 
   /**

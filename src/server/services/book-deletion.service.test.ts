@@ -38,7 +38,7 @@ function createService(opts?: {
   const bookService = inject<BookService>({
     getById: vi.fn().mockResolvedValue(deletableBook),
     delete: vi.fn().mockResolvedValue(true),
-    deleteBookFiles: vi.fn().mockResolvedValue(undefined),
+    deleteBookFiles: vi.fn().mockResolvedValue({ deletedManaged: [], preservedForeign: [], failedManaged: [] }),
     ...opts?.bookService,
   });
   const downloadService = inject<DownloadService>({
@@ -227,6 +227,59 @@ describe('BookDeletionService', () => {
       expect(downloadService.getActiveByBookId).not.toHaveBeenCalled();
       expect(eventHistory!.create).not.toHaveBeenCalled();
       expect(bookService.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns file_deletion_failed (and skips DB delete) when a managed file fails to delete (#1589)', async () => {
+      const { service, bookService, eventHistory } = createService({
+        bookService: {
+          getById: vi.fn().mockResolvedValue(deletableBook),
+          deleteBookFiles: vi.fn().mockResolvedValue({
+            deletedManaged: ['/audiobooks/Sanderson/Way of Kings/ch1.mp3'],
+            preservedForeign: [],
+            failedManaged: ['/audiobooks/Sanderson/Way of Kings/ch2.mp3'],
+          }),
+          delete: vi.fn().mockResolvedValue(true),
+        },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: true });
+
+      expect(result).toEqual({ outcome: 'file_deletion_failed', error: 'Failed to delete book files from disk' });
+      expect(eventHistory!.create).not.toHaveBeenCalled();
+      expect(bookService.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('preserved-foreign disclosure (#1589)', () => {
+    it('returns a deleted result carrying the kept-files summary when foreign files were preserved', async () => {
+      const { service, bookService } = createService({
+        bookService: {
+          getById: vi.fn().mockResolvedValue(deletableBook),
+          deleteBookFiles: vi.fn().mockResolvedValue({
+            deletedManaged: ['/audiobooks/Sanderson/Way of Kings/ch1.mp3', '/audiobooks/Sanderson/Way of Kings/cover.jpg'],
+            preservedForeign: ['/audiobooks/Sanderson/Way of Kings/book.epub', '/audiobooks/Sanderson/Way of Kings/notes.pdf'],
+            failedManaged: [],
+          }),
+          delete: vi.fn().mockResolvedValue(true),
+        },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: true });
+
+      expect(result).toEqual({
+        outcome: 'deleted',
+        bookTitle: 'The Way of Kings',
+        fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
+      expect(bookService.delete).toHaveBeenCalledWith(1);
+    });
+
+    it('omits fileSummary when deleteFiles is false (no on-disk delete)', async () => {
+      const { service } = createService();
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
     });
   });
 

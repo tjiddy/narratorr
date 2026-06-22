@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
+import { describeKeptFiles } from '@/lib/kept-files-message.js';
 
 export function useLibraryMutations() {
   const queryClient = useQueryClient();
@@ -21,8 +22,13 @@ export function useLibraryMutations() {
   const deleteMutation = useMutation({
     mutationFn: ({ id, deleteFiles }: { id: number; deleteFiles: boolean }) =>
       api.deleteBook(id, deleteFiles ? { deleteFiles: true } : undefined),
-    onSuccess: (_data, variables) => {
-      toast.success(variables.deleteFiles ? 'Removed book and deleted files from disk' : 'Removed book from library');
+    onSuccess: (data, variables) => {
+      if (variables.deleteFiles) {
+        const kept = describeKeptFiles(data.fileSummary?.preservedForeign);
+        toast.success(kept ? `Removed book and deleted files from disk — ${kept}` : 'Removed book and deleted files from disk');
+      } else {
+        toast.success('Removed book from library');
+      }
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {

@@ -23,6 +23,7 @@ vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
+  rmdir: vi.fn().mockResolvedValue(undefined),
   statfs: vi.fn().mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) }),
 }));
 
@@ -75,7 +76,7 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
   };
 });
 
-import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, writeFile, rename, rm, rmdir, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
@@ -746,8 +747,9 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
+      // #1589: the old folder's MANAGED files are deleted per-file (not a blanket recursive rm).
       const rmMock = vi.mocked(rm);
-      expect(rmMock).toHaveBeenCalledWith('/audiobooks/Old Author/Old Book', { recursive: true, force: true });
+      expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]chapter1\.mp3$/), { force: true });
     });
 
     it('logs old path at info level during re-import', async () => {
@@ -761,7 +763,7 @@ describe('ImportService', () => {
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),
-        'Deleted old book files during re-import',
+        'Cleaned old book managed files during re-import (foreign files preserved)',
       );
     });
 
@@ -1165,8 +1167,9 @@ describe('ImportService', () => {
       const result = await service.importDownload(1);
 
       expect(result.targetPath).toBe(NEW_TARGET);
-      // Old-folder deletion still happens on the success path, just after the DB commit.
-      expect(rm).toHaveBeenCalledWith(OLD_PATH, { recursive: true, force: true });
+      // Old-folder managed-file deletion still happens on the success path, just after the DB
+      // commit — now per-file (#1589) rather than a blanket recursive rm.
+      expect(rm).toHaveBeenCalledWith(expect.stringMatching(/Old Title[\\/]chapter1\.mp3$/), { force: true });
       // Book row now points at the new target.
       const allSetArgs = collectSetArgs(db);
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported', path: NEW_TARGET }));
@@ -1191,8 +1194,10 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
 
-      // Pre-commit → protectTarget false → the scratch target is removed (no orphan).
-      expect(rm).toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
+      // Pre-commit → protectTarget false → the scratch target's managed files are removed (#1589,
+      // per-file) and the emptied folder cleaned up; the staging sibling is blanket-removed as before.
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining(NEW_TARGET), { force: true });
+      expect(rmdir).toHaveBeenCalledWith(NEW_TARGET);
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
 
@@ -1204,11 +1209,13 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
 
-      // The new scratch target is cleaned (protectTarget still false pre-commit)...
-      expect(rm).toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
+      // The new scratch target's managed files are cleaned (protectTarget still false pre-commit)...
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining(NEW_TARGET), { force: true });
+      expect(rmdir).toHaveBeenCalledWith(NEW_TARGET);
       // ...but cleanupOldBookPath only runs after a successful commit + DB write, so
       // the old path is never touched on a pre-commit failure.
-      expect(rm).not.toHaveBeenCalledWith(OLD_PATH, { recursive: true, force: true });
+      expect(rm).not.toHaveBeenCalledWith(expect.stringContaining(OLD_PATH), expect.anything());
+      expect(rmdir).not.toHaveBeenCalledWith(OLD_PATH);
     });
   });
 
@@ -1331,40 +1338,31 @@ describe('ImportService', () => {
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
 
-    it('logs warning and continues DB revert when rm(targetPath) throws (pre-commit cleanup)', async () => {
-      // #1257: post-commit first imports now PROTECT targetPath, so the recursive
-      // targetPath cleanup rm only fires on a PRE-commit failure (protectTarget
-      // still false). Trigger one via a copy failure so this still exercises the
-      // "Failed to clean up target path" warn-log + DB-revert-continues behavior.
+    it('logs warning and continues DB revert when a managed targetPath file cannot be deleted (pre-commit cleanup)', async () => {
+      // #1257/#1589: post-commit first imports PROTECT targetPath, so the targetPath cleanup only
+      // fires on a PRE-commit failure (protectTarget still false). The cleanup now deletes managed
+      // files per-file via the shared helper; a locked managed file is recorded + warn-logged
+      // (not thrown), and the import error still rethrows + DB revert continues.
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
       db.update.mockReturnValue(mockDbChain());
 
       vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during copy'));
 
-      // Make recursive rm of the real target throw, but let the strict pre-stage
-      // sibling cleanup succeed — so the failure under test surfaces on the
-      // recursive targetPath cleanup rm, not the pre-stage staging removal.
+      // Let the recursive sibling cleanup succeed; make the per-file managed delete (force-only,
+      // non-recursive rm) reject so the failure under test surfaces inside the managed-file sweep.
       const rmMock = vi.mocked(rm);
-      rmMock.mockImplementation((p: unknown, opts: unknown) => {
-        const path = String(p);
-        if (path.endsWith('.import-tmp') || path.endsWith('.import-bak')) return Promise.resolve(undefined);
-        return (opts as { recursive?: boolean })?.recursive
-          ? Promise.reject(new Error('EPERM: permission denied'))
-          : Promise.resolve(undefined);
-      });
+      rmMock.mockImplementation((_p: unknown, opts: unknown) =>
+        (opts as { recursive?: boolean })?.recursive
+          ? Promise.resolve(undefined)
+          : Promise.reject(new Error('EPERM: permission denied')));
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during copy');
 
-      // Verify cleanup was attempted
-      expect(rmMock).toHaveBeenCalledWith(
-        expect.stringContaining('audiobooks'),
-        { recursive: true, force: true },
-      );
-
-      // Verify cleanup failure was logged at warn level
+      // The managed-file deletion was attempted (force-only rm) and its failure logged at warn level.
+      expect(rmMock).toHaveBeenCalledWith(expect.stringContaining('audiobooks'), { force: true });
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ targetPath: expect.stringContaining('audiobooks') }),
-        expect.stringContaining('Failed to clean up target path'),
+        expect.objectContaining({ file: expect.stringContaining('audiobooks') }),
+        expect.stringContaining('Failed to delete managed book file'),
       );
 
       // Verify DB revert still proceeded despite rm failure
@@ -1722,26 +1720,24 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // rm rejects for the recursive old-path folder delete, but the strict
-      // pre-stage sibling cleanup must still succeed so the import proceeds.
+      // #1589: old-path cleanup deletes managed files per-file (force-only rm). Make those reject
+      // while the recursive sibling cleanup still succeeds, so the import proceeds and the managed
+      // deletion failure stays nonfatal (warn, not error).
       const rmMock = vi.mocked(rm);
-      rmMock.mockImplementation((p: unknown, opts: unknown) => {
-        const path = String(p);
-        if (path.endsWith('.import-tmp') || path.endsWith('.import-bak')) return Promise.resolve(undefined);
-        return (opts as { recursive?: boolean })?.recursive
+      rmMock.mockImplementation((p: unknown, opts: unknown) =>
+        (String(p).includes('Old Book') && !(opts as { recursive?: boolean })?.recursive)
           ? Promise.reject(new Error('EACCES: permission denied'))
-          : Promise.resolve(undefined);
-      });
+          : Promise.resolve(undefined));
 
       const result = await svc.importDownload(1);
 
       // Import still succeeds
       expect(result.downloadId).toBe(1);
 
-      // Logged at warn level, not error
+      // Logged at warn level, not error (the helper records the failed managed deletion).
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),
-        expect.stringContaining('Failed to delete old book files'),
+        expect.objectContaining({ file: expect.stringContaining('Old Book') }),
+        expect.stringContaining('Failed to delete managed book file'),
       );
       expect(log.error).not.toHaveBeenCalledWith(
         expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),

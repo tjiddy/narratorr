@@ -788,49 +788,49 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await fsMocks.real.rm(baseDir, { recursive: true, force: true });
   });
 
-  it('completes a move when the post-swap source removal hits ENOENT (vanished source)', async () => {
+  it('preserves a bundled foreign file in the source after a populated-target move (#1589)', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+    await writeFile(join(source, 'bundled.epub'), Buffer.from('EBOOK'));
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+    // New audio committed.
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    // Source audio removed, bundled e-book preserved, source folder retained.
+    expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
+    expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
+    expect(await pathExists(source)).toBe(true);
+  });
+
+  it('a vanished source is a no-op and the committed move still succeeds (#1589)', async () => {
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    // Simulate the source vanishing before the post-commit cleanup runs: a
-    // force-less rm would throw ENOENT and fail an already-committed import;
-    // force: true must suppress it.
+    // The managed-file cleanup tolerates a vanished source (stat ENOENT → no-op),
+    // so an already-committed import never fails on cleanup.
     fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
-      if (p === source) {
-        if ((opts as { force?: boolean } | undefined)?.force) return;
-        throw enoent();
-      }
+      if (String(p).startsWith(source)) throw enoent();
       return fsMocks.real.rm(p, opts);
     });
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
-    // New audio committed despite the vanished source.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
-    expect(fsMocks.rm).toHaveBeenCalledWith(source, expect.objectContaining({ force: true }));
   });
 
-  it('completes a multi-disc move when one member source has vanished (ENOENT)', async () => {
+  it('preserves a bundled foreign file in a disc-member source on a multi-disc move (#1589)', async () => {
     const downloads = join(baseDir, 'downloads');
     const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
     const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
     await mkdir(disc1, { recursive: true });
     await mkdir(disc2, { recursive: true });
     await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc1, 'liner-notes.pdf'), Buffer.from('PDF'));
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
     // Populated target routes the disc group through the staged swap.
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
-
-    // One member's source vanishes during the post-swap rm loop — force: true
-    // must keep the loop from breaking early and orphaning the other members.
-    fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
-      if (p === disc2) {
-        if ((opts as { force?: boolean } | undefined)?.force) return;
-        throw enoent();
-      }
-      return fsMocks.real.rm(p, opts);
-    });
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
     await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
@@ -838,24 +838,28 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     // Both discs flattened into the target; old single-file edition replaced.
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
-    expect(fsMocks.rm).toHaveBeenCalledWith(disc2, expect.objectContaining({ force: true }));
-    // The non-vanished member was still really removed.
-    expect(await pathExists(disc1)).toBe(false);
+    // Disc-1 audio removed but its bundled PDF preserved (folder retained); disc-2 fully removed.
+    expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(false);
+    expect(await pathExists(join(disc1, 'liner-notes.pdf'))).toBe(true);
+    expect(await pathExists(disc2)).toBe(false);
   });
 
-  it('still surfaces a non-ENOENT (EPERM) failure from post-swap source removal', async () => {
+  it('records a locked managed source file without failing the committed move (#1589)', async () => {
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    // force: true only suppresses ENOENT — a genuine permission/IO error must
-    // still propagate and fail the import.
+    // A per-file EPERM during managed-file cleanup is now recorded + logged, NOT thrown —
+    // a locked source file must not fail an already-committed import.
     fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
-      if (p === source) throw eperm();
+      if (String(p).endsWith('new.mp3')) throw eperm();
       return fsMocks.real.rm(p, opts);
     });
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toThrow(/EPERM/);
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+    // Committed audio intact; the locked source file remains (rm rejected), source retained.
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
   });
 
   it('still fails the import when copy verification falls below threshold (verification path untouched)', async () => {

@@ -1381,6 +1381,32 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Failed to delete book files from disk');
     });
+
+    it('serializes the kept-files fileSummary on the deleted body (#1589)', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
+        outcome: 'deleted',
+        bookTitle: 'The Way of Kings',
+        fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
+
+      expect(res.statusCode).toBe(200);
+      // The route must carry the kept-files disclosure through to the client (AC).
+      expect(JSON.parse(res.payload)).toEqual({
+        success: true,
+        fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
+    });
+
+    it('omits fileSummary from the deleted body when the service did not return one', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
+    });
   });
 
   describe('GET /api/books/:id/files', () => {
