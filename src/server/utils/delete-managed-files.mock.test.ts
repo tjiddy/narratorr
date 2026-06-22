@@ -8,6 +8,9 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn().mockResolvedValue([]),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
+  // #1591: guarded mode now runs the symlink-aware realpath containment. Identity realpath (no
+  // symlinks) keeps the lexical-equivalent containment for the in-library paths these tests use.
+  realpath: vi.fn().mockImplementation(async (p: unknown) => String(p)),
 }));
 
 import { readdir, rm, rmdir } from 'node:fs/promises';
@@ -48,5 +51,8 @@ describe('deleteManagedBookFiles — error injection', () => {
     expect(base(result.deletedManaged)).toEqual(['free.mp3']);
     expect(result.preservedForeign).toEqual([]);
     expect(log.warn).toHaveBeenCalled();
+    // Folder-retention consequence (#1591): rmdir is attempted but the surviving failed-managed file
+    // makes it ENOTEMPTY, which is swallowed — the folder is NOT removed and the helper never throws.
+    expect(rmdir).toHaveBeenCalledWith('/lib/Book');
   });
 });

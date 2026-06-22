@@ -12,7 +12,7 @@ import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-
 import { ContentFailureError } from '../utils/import-helpers.js';
 import { MarkerPathConflictError } from '../utils/import-staging.js';
 import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ImportConfirmItem } from './library-scan.service.js';
@@ -36,18 +36,20 @@ vi.mock('./library-scan.helpers.js', () => ({
 // real implementation (passthrough); individual tests in the staged-swap cleanup
 // suite override them to simulate a vanished/permission-denied source removal or
 // an undersized copy. Restored to passthrough in that suite's beforeEach.
-type AnyFsFn = (...args: unknown[]) => Promise<void>;
+type AnyFsFn = (...args: unknown[]) => Promise<unknown>;
 const fsMocks = vi.hoisted(() => {
   const noop: AnyFsFn = () => Promise.resolve();
-  return { rm: vi.fn(), cp: vi.fn(), real: { rm: noop, cp: noop } };
+  return { rm: vi.fn(), cp: vi.fn(), readdir: vi.fn(), real: { rm: noop, cp: noop, readdir: noop } };
 });
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   fsMocks.real.rm = actual.rm as unknown as AnyFsFn;
   fsMocks.real.cp = actual.cp as unknown as AnyFsFn;
+  fsMocks.real.readdir = actual.readdir as unknown as AnyFsFn;
   fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
   fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
-  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp };
+  fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
+  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp, readdir: fsMocks.readdir };
 });
 
 function createMockLogger(): FastifyBaseLogger {
@@ -752,6 +754,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
   const enoent = (): NodeJS.ErrnoException => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
   const eperm = (): NodeJS.ErrnoException => Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+  const eacces = (): NodeJS.ErrnoException => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
 
   function buildDeps(): ImportPipelineDeps {
     return {
@@ -770,11 +773,13 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
 
   beforeEach(async () => {
-    // Restore both wrappers to passthrough so each test starts from real fs behavior.
+    // Restore all wrappers to passthrough so each test starts from real fs behavior.
     fsMocks.rm.mockReset();
     fsMocks.cp.mockReset();
+    fsMocks.readdir.mockReset();
     fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
     fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+    fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
 
     baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1291-orch-'));
     libraryRoot = join(baseDir, 'library');
@@ -860,6 +865,46 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     // Committed audio intact; the locked source file remains (rm rejected), source retained.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
+  });
+
+  it('a non-ENOENT cleanup error (readdir EACCES) does not fail the committed single-source move (#1591)', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    // After the swap commits new audio (target now holds new.mp3), the source-cleanup readdir
+    // rejects EACCES (a non-ENOENT error the helper does NOT swallow). The call-site try/catch
+    // (#1591) must keep the already-committed import successful; pre-swap readdirs pass through.
+    fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (String(p) === source && existsSync(join(target, 'new.mp3'))) throw eacces();
+      return fsMocks.real.readdir(p, opts);
+    });
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+  });
+
+  it('a non-ENOENT cleanup error (readdir EACCES) does not fail the committed multi-disc move (#1591)', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+
+    // Post-commit, the disc-1 source cleanup readdir rejects EACCES. Per-member try/catch (#1591)
+    // keeps the committed import successful and does not skip the remaining disc.
+    fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (String(p) === disc1 && existsSync(join(target, 'd1.mp3'))) throw eacces();
+      return fsMocks.real.readdir(p, opts);
+    });
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+    expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
   });
 
   it('still fails the import when copy verification falls below threshold (verification path untouched)', async () => {
