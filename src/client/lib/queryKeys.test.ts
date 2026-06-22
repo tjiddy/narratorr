@@ -35,3 +35,44 @@ describe('queryKeys.libraryBooks (#1132)', () => {
     expect(qc.getQueryState(libraryKey)?.isInvalidated).toBe(false);
   });
 });
+
+describe('queryKeys.bookSeries (#1561)', () => {
+  it('returns the singular `book`/`series` tuple', () => {
+    expect(queryKeys.bookSeries(7)).toEqual(['book', 7, 'series']);
+  });
+
+  it('bookSeriesSearch is a prefix-extension of bookSeries', () => {
+    expect(queryKeys.bookSeriesSearch(7, 'foo')).toEqual(['book', 7, 'series', 'search', 'foo']);
+  });
+
+  it('invalidating bookSeries also invalidates the in-flight series search (prefix match)', async () => {
+    const qc = new QueryClient();
+    const seriesKey = queryKeys.bookSeries(7);
+    const searchKey = queryKeys.bookSeriesSearch(7, 'foo');
+
+    qc.setQueryData(seriesKey, { series: null });
+    qc.setQueryData(searchKey, { candidates: [] });
+
+    expect(qc.getQueryState(seriesKey)?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(searchKey)?.isInvalidated).toBe(false);
+
+    await qc.invalidateQueries({ queryKey: queryKeys.bookSeries(7) });
+
+    expect(qc.getQueryState(seriesKey)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(searchKey)?.isInvalidated).toBe(true);
+  });
+
+  it('invalidating one book id does not touch another', async () => {
+    const qc = new QueryClient();
+    const key7 = queryKeys.bookSeries(7);
+    const key8 = queryKeys.bookSeries(8);
+
+    qc.setQueryData(key7, { series: null });
+    qc.setQueryData(key8, { series: null });
+
+    await qc.invalidateQueries({ queryKey: queryKeys.bookSeries(7) });
+
+    expect(qc.getQueryState(key7)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(key8)?.isInvalidated).toBe(false);
+  });
+});
