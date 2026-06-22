@@ -400,6 +400,42 @@ describe('useBookActions', () => {
       });
     });
 
+    it('appends the kept-files disclosure when foreign files were preserved (#1589)', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({
+        success: true,
+        fileSummary: { deletedManaged: 3, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: true });
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          'Removed book and deleted files from disk — kept 2 non-audio files (book.epub, notes.pdf)',
+        );
+      });
+    });
+
+    it('shows the plain files toast when deleteFiles=true preserved nothing', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({
+        success: true,
+        fileSummary: { deletedManaged: 4, preservedForeign: [] },
+      });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: true });
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Removed book and deleted files from disk');
+      });
+    });
+
     it('invalidates books query cache on successful delete', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
       const { queryClient, wrapper } = createTestHarness();
