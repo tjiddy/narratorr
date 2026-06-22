@@ -6,7 +6,7 @@ import { downloadClientTypeSchema } from './schemas/download-client.js';
 import { notifierTypeSchema } from './schemas/notifier.js';
 import { importListTypeSchema } from './schemas/import-list.js';
 import { downloadStatusSchema, DOWNLOAD_STATUSES, clientStatusSchema, CLIENT_STATUSES, pipelineStageSchema, PIPELINE_STAGES } from './schemas/activity.js';
-import { eventSourceSchema } from './schemas/event-history.js';
+import { eventSourceSchema, eventTypeSchema } from './schemas/event-history.js';
 import { INDEXER_REGISTRY, INDEXER_TYPES } from './indexer-registry.js';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-client-registry.js';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
@@ -104,6 +104,10 @@ describe('schema-DB alignment', () => {
 
     it('bookEvents.source DB column enum matches eventSourceSchema.options', () => {
       expect([...bookEvents.source.enumValues].sort()).toEqual([...eventSourceSchema.options].sort());
+    });
+
+    it('bookEvents.eventType DB column enum matches eventTypeSchema.options', () => {
+      expect([...bookEvents.eventType.enumValues].sort()).toEqual([...eventTypeSchema.options].sort());
     });
   });
 
