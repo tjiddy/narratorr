@@ -17,6 +17,12 @@ describe('describeKeptFiles (#1589)', () => {
     );
   });
 
+  it('reports +1 more at the first overflow boundary (four names)', () => {
+    expect(describeKeptFiles(['a.epub', 'b.pdf', 'c.txt', 'd.srt'])).toBe(
+      'kept 4 non-audio files (a.epub, b.pdf, c.txt, +1 more)',
+    );
+  });
+
   it('truncates the name list and reports the overflow count', () => {
     expect(describeKeptFiles(['a.epub', 'b.pdf', 'c.txt', 'd.srt', 'e.nfo'])).toBe(
       'kept 5 non-audio files (a.epub, b.pdf, c.txt, +2 more)',
