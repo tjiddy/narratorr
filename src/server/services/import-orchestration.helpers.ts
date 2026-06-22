@@ -14,6 +14,7 @@ import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
+import { deleteManagedBookFiles } from '../utils/delete-managed-files.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -129,12 +130,13 @@ export async function copyToLibrary(
       stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
     });
     if (mode === 'move') {
-      // Post-commit cleanup: the staged swap has already committed the new audio
-      // to the library, so a vanished/partial source (ENOENT) must not fail an
-      // already-successful import. `force: true` suppresses ENOENT only — a
-      // genuine EPERM/EBUSY still surfaces.
-      await rm(item.path, { recursive: true, force: true });
-      log.info({ source: item.path }, 'Source directory removed after move');
+      // Post-commit cleanup: the staged swap has already committed the new audio to the library.
+      // Delete only MANAGED files from the source download folder (#1589) so a bundled e-book/PDF
+      // is preserved, never blanket-wiped. The source is OUTSIDE the library root, so the
+      // containment guard is opted out; classification still protects foreign files. Nonfatal —
+      // a vanished source (ENOENT) is a no-op and a locked managed file is recorded, not thrown.
+      const cleanup = await deleteManagedBookFiles(item.path, librarySettings.path, log, { assertInsideLibrary: false });
+      log.info({ source: item.path, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Source managed files removed after move (foreign files preserved)');
     }
     return targetPath;
   }
@@ -198,14 +200,15 @@ async function copyDiscGroupToLibrary(
       stage: (stagingPath) => copyDiscGroup(memberPaths, stagingPath, onProgress),
     });
     if (mode === 'move') {
-      // Post-commit cleanup: the staged swap has already committed all discs'
-      // audio. A member whose source vanished (ENOENT) must not break the loop
-      // and orphan later members or fail the import. `force: true` suppresses
-      // ENOENT only — a genuine EPERM/EBUSY still surfaces.
+      // Post-commit cleanup: the staged swap has already committed all discs' audio. Delete only
+      // MANAGED files from each source disc folder (#1589) so a bundled e-book/PDF is preserved.
+      // Sources are OUTSIDE the library root → containment guard opted out. Nonfatal — a vanished
+      // member (ENOENT) is a no-op and a locked managed file is recorded, not thrown.
       for (const memberPath of memberPaths) {
-        await rm(memberPath, { recursive: true, force: true });
+        const cleanup = await deleteManagedBookFiles(memberPath, libraryRoot, log, { assertInsideLibrary: false });
+        log.debug({ source: memberPath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Disc source managed files removed after move');
       }
-      log.info({ discMembers: memberPaths.length }, 'Source disc folders removed after move');
+      log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
     }
     return targetPath;
   }

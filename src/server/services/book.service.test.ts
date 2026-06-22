@@ -17,13 +17,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rm: vi.fn(),
     rmdir: vi.fn(),
     readdir: vi.fn(),
+    // Default to the real stat so non-delete code paths are unaffected; the deleteBookFiles
+    // suite overrides this per-test to drive the managed-file helper (#1589).
+    stat: vi.fn((...args: unknown[]) => (actual.stat as (...a: unknown[]) => unknown)(...args)),
     writeFile: vi.fn(),
     rename: vi.fn(),
     unlink: vi.fn(),
   };
 });
 
-import { rm, rmdir, readdir, writeFile, rename, unlink } from 'node:fs/promises';
+import { rm, rmdir, readdir, stat, writeFile, rename, unlink } from 'node:fs/promises';
 import type { Mock } from 'vitest';
 
 const mockAuthor = createMockDbAuthor();
@@ -819,69 +822,90 @@ describe('BookService', () => {
   });
 
   describe('deleteBookFiles', () => {
+    // #1589: deleteBookFiles now deletes only MANAGED files (audio + cover sidecar) via the shared
+    // helper, preserves foreign files, returns a {deletedManaged, preservedForeign, failedManaged}
+    // summary, and still runs cleanEmptyParents. readdir is driven by `withFileTypes`: the helper
+    // sweep reads dirents; cleanEmptyParents reads a plain name list.
+    const dirent = (name: string, isDir = false) =>
+      ({ name, isFile: () => !isDir, isDirectory: () => isDir });
+    const baseName = (p: string) => p.split(/[\\/]/).pop();
+
     beforeEach(() => {
       vi.mocked(rm).mockReset();
+      vi.mocked(rmdir).mockReset();
       vi.mocked(readdir).mockReset();
+      vi.mocked(stat).mockReset();
+      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true, isFile: () => false } as never);
+      vi.mocked(rm).mockResolvedValue(undefined);
+      vi.mocked(rmdir).mockResolvedValue(undefined);
     });
 
-    it('deletes book directory recursively', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValue(['other-file.txt']);
+    it('deletes managed files, preserves foreign files, and returns the summary', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes
+          ? [dirent('ch1.mp3'), dirent('cover.jpg'), dirent('book.epub'), dirent('notes.pdf')]
+          : ['book.epub', 'notes.pdf']) as never);
+
+      const result = await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      expect(result.deletedManaged.map(baseName).sort()).toEqual(['ch1.mp3', 'cover.jpg']);
+      expect(result.preservedForeign.map(baseName).sort()).toEqual(['book.epub', 'notes.pdf']);
+      expect(result.failedManaged).toEqual([]);
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
+      expect(rm).not.toHaveBeenCalledWith(expect.stringContaining('book.epub'), expect.anything());
+    });
+
+    it('cleans up empty parent directories up to library root when only managed files existed', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('ch1.mp3')] : []) as never);
 
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
-      expect(rm).toHaveBeenCalledWith('/audiobooks/Author/Book', { recursive: true, force: true });
-    });
-
-    it('cleans up empty parent directories up to library root', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (rmdir as Mock).mockResolvedValue(undefined);
-      (readdir as Mock)
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([]);
-
-      await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
-
-      expect(rm).toHaveBeenCalledTimes(1);
-      expect(rmdir).toHaveBeenCalledTimes(1);
+      // Helper rmdirs the emptied book folder; cleanEmptyParents rmdirs the now-empty Author folder.
+      expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Book'));
       expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Author'));
     });
 
-    it('stops cleaning parents at non-empty directory', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValueOnce(['other-book']);
+    it('stops cleaning parents at a non-empty directory', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('ch1.mp3')] : ['other-book']) as never);
 
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
-      expect(rm).toHaveBeenCalledTimes(1);
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
+      // The non-empty Author parent is never removed (the emptied Book folder itself may be).
+      expect(rmdir).not.toHaveBeenCalledWith('/audiobooks/Author');
     });
 
     it('never deletes the library root', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValue([]);
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('a.mp3')] : []) as never);
 
       await service.deleteBookFiles('/audiobooks/Book', '/audiobooks');
 
-      expect(rm).toHaveBeenCalledTimes(1);
-      expect(rm).toHaveBeenCalledWith('/audiobooks/Book', { recursive: true, force: true });
+      expect(rmdir).not.toHaveBeenCalledWith('/audiobooks');
     });
 
-    it('throws when rm fails', async () => {
-      (rm as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
+    it('records a failed managed deletion in failedManaged without throwing', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('a.mp3')] : []) as never);
+      vi.mocked(rm).mockRejectedValue(new Error('EACCES: permission denied'));
 
-      await expect(
-        service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks'),
-      ).rejects.toThrow('EACCES: permission denied');
+      const result = await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      expect(result.failedManaged.map(baseName)).toEqual(['a.mp3']);
+      expect(result.deletedManaged).toEqual([]);
     });
 
-    it('happy path: in-library path triggers rm and parent cleanup (regression)', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValue(['other-file.txt']);
+    it('happy path: in-library path returns a summary and runs parent cleanup (regression)', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('ch1.mp3'), dirent('keep.txt')] : ['keep.txt']) as never);
 
-      await service.deleteBookFiles('/library/Author/Title', '/library');
+      const result = await service.deleteBookFiles('/library/Author/Title', '/library');
 
-      expect(rm).toHaveBeenCalledTimes(1);
-      expect(rm).toHaveBeenCalledWith('/library/Author/Title', { recursive: true, force: true });
+      expect(result.deletedManaged.map(baseName)).toEqual(['ch1.mp3']);
+      expect(result.preservedForeign.map(baseName)).toEqual(['keep.txt']);
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
       expect(readdir).toHaveBeenCalled();
     });
 

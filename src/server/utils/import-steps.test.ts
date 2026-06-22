@@ -7,6 +7,7 @@ vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
   readdir: vi.fn(),
   rm: vi.fn().mockResolvedValue(undefined),
+  rmdir: vi.fn().mockResolvedValue(undefined),
   statfs: vi.fn(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
@@ -34,7 +35,7 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, statfs, readdir, mkdir, rename, writeFile, open } from 'node:fs/promises';
+import { stat, rm, rmdir, statfs, readdir, mkdir, rename, writeFile, open } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize, ContentFailureError } from './import-helpers.js';
@@ -494,7 +495,24 @@ describe('recordImportEvent', () => {
 // ── cleanupOldBookPath ──────────────────────────────────────────────────
 
 describe('cleanupOldBookPath', () => {
-  it('rm()s and logs info on the in-library happy path', async () => {
+  // #1589: cleanupOldBookPath now deletes only MANAGED files (audio + cover) via the shared helper,
+  // preserving foreign files in the old folder. The helper sweep reads dirents from the old dir.
+  // Reset+default fs mocks here (clearAllMocks does NOT reset implementations) so a persistent
+  // mock can't leak into the next describe; tests use `*Once` for rejections.
+  beforeEach(() => {
+    vi.mocked(stat).mockReset();
+    vi.mocked(stat).mockResolvedValue({ isDirectory: () => true, isFile: () => false } as never);
+    vi.mocked(readdir).mockReset();
+    vi.mocked(readdir).mockResolvedValue([
+      { name: 'a.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    vi.mocked(rm).mockReset();
+    vi.mocked(rm).mockResolvedValue(undefined);
+    vi.mocked(rmdir).mockReset();
+    vi.mocked(rmdir).mockResolvedValue(undefined);
+  });
+
+  it('deletes managed files and logs info on the in-library happy path', async () => {
     const log = createMockLog();
     await cleanupOldBookPath({
       bookPath: '/library/Author/OldTitle',
@@ -502,10 +520,10 @@ describe('cleanupOldBookPath', () => {
       libraryRoot: '/library',
       log,
     });
-    expect(rm).toHaveBeenCalledWith('/library/Author/OldTitle', { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith(expect.stringContaining('a.mp3'), { force: true });
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ oldPath: '/library/Author/OldTitle', newPath: '/library/Author/NewTitle' }),
-      expect.stringMatching(/Deleted old book files/i),
+      expect.stringMatching(/Cleaned old book managed files/i),
     );
   });
 
@@ -556,19 +574,17 @@ describe('cleanupOldBookPath', () => {
     expect(rm).not.toHaveBeenCalled();
   });
 
-  it('swallows generic rm errors as warn (preserves existing nonfatal contract)', async () => {
+  it('keeps a managed-deletion failure nonfatal — recorded + logged, import continues', async () => {
     const log = createMockLog();
-    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-    await cleanupOldBookPath({
+    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+    await expect(cleanupOldBookPath({
       bookPath: '/library/Author/OldTitle',
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
-    });
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ oldPath: '/library/Author/OldTitle' }),
-      expect.stringMatching(/Failed to delete old book files/i),
-    );
+    })).resolves.toBeUndefined();
+    // The helper records the failed managed deletion and logs a warning; cleanup stays nonfatal.
+    expect(log.warn).toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
   });
 });
@@ -1160,22 +1176,33 @@ describe('handleImportFailure', () => {
   beforeEach(() => {
     // `mockReset()` first drains any `*Once()` stat queue a prior test left behind — the global
     // `beforeEach(clearAllMocks)` does NOT drain those queues (CLAUDE.md gotcha), so without
-    // this a leaked queued response would shadow the ENOENT default below (#1340 gap 6).
+    // this a leaked queued response would shadow the marker-aware default below (#1340 gap 6).
     vi.mocked(stat).mockReset();
-    // Default: NO commit-pending marker on disk → ordinary cleanup. Preservation now rides
-    // on the durable disk marker (#1336), not the error's identity, so the gate stats the
-    // marker; an absent marker (ENOENT) means "delete the disposable backup as before".
-    vi.mocked(stat).mockRejectedValue(enoent());
+    // Marker-aware default (#1336/#1589): the commit-pending marker reads ABSENT (ENOENT) so
+    // ordinary cleanup runs; any OTHER path (the target) reads as a directory so the managed-file
+    // sweep can enumerate it. A blanket reject would make the helper treat the target as missing.
+    vi.mocked(stat).mockImplementation(async (p: unknown) =>
+      (String(p).endsWith('.import-commit-pending')
+        ? Promise.reject(enoent())
+        : ({ isDirectory: () => true, isFile: () => false } as never)));
+    // Default to an EMPTY target dir; tests asserting managed-file removal set their own readdir.
+    vi.mocked(readdir).mockReset();
+    vi.mocked(readdir).mockResolvedValue([] as never);
+    vi.mocked(rmdir).mockReset();
+    vi.mocked(rmdir).mockResolvedValue(undefined);
   });
 
-  it('cleans up targetPath when set', async () => {
+  it('removes managed files from a disposable targetPath when set (#1589)', async () => {
     const log = createMockLog();
     const error = new Error('import broke');
+    vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
     await expect(handleImportFailure({
       error, targetPath: '/lib/book', db: mockDb as never,
       downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('import broke');
-    expect(rm).toHaveBeenCalledWith('/lib/book', { recursive: true, force: true });
+    // Managed audio removed per-file; the emptied scratch folder is then cleaned up.
+    expect(rm).toHaveBeenCalledWith(expect.stringContaining('partial.mp3'), { force: true });
+    expect(rmdir).toHaveBeenCalledWith('/lib/book');
   });
 
   it('skips cleanup when targetPath is undefined', async () => {
@@ -1187,13 +1214,15 @@ describe('handleImportFailure', () => {
     expect(rm).not.toHaveBeenCalled();
   });
 
-  it('logs warning when targetPath cleanup fails', async () => {
+  it('logs warning when a managed targetPath file cannot be deleted', async () => {
     const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
     vi.mocked(rm).mockRejectedValueOnce(new Error('rm fail'));
     await expect(handleImportFailure({
       error: new Error('fail'), targetPath: '/lib/book', db: mockDb as never,
       downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('fail');
+    // The managed-file helper records the failure and logs a warning; the import error still rethrows.
     expect(log.warn).toHaveBeenCalled();
   });
 
@@ -1399,15 +1428,38 @@ describe('handleImportFailure', () => {
     expect(rm).toHaveBeenCalledWith(`${target}.import-tmp`, { recursive: true, force: true });
   });
 
-  it('still removes a disposable (unprotected) target on failure — first import / move-path', async () => {
+  it('still removes a disposable (unprotected) scratch target on failure — first import / move-path', async () => {
     const log = createMockLog();
+    // Genuine scratch target holding only import-written audio → fully removed (folder gone).
+    vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
     await expect(handleImportFailure({
       error: new Error('fail'), targetPath: '/library/Author/Title',
       stagingPath: '/library/Author/Title.import-tmp', backupPath: '/library/Author/Title.import-bak',
       libraryRoot: '/library', protectTarget: false, db: mockDb as never,
       downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('fail');
-    expect(rm).toHaveBeenCalledWith('/library/Author/Title', { recursive: true, force: true });
+    expect(rm).toHaveBeenCalledWith(expect.stringContaining('partial.mp3'), { force: true });
+    expect(rmdir).toHaveBeenCalledWith('/library/Author/Title');
+  });
+
+  it('preserves a foreign file in a pre-existing/populated targetPath instead of blanket-wiping it (#1589)', async () => {
+    const log = createMockLog();
+    // Pre-commit failure into a target that pre-exists with a bundled e-book alongside partial audio:
+    // managed audio is removed, the foreign .epub is preserved, and the folder is retained.
+    vi.mocked(readdir).mockResolvedValue([
+      { name: 'partial.mp3', isFile: () => true, isDirectory: () => false },
+      { name: 'book.epub', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    vi.mocked(rmdir).mockRejectedValueOnce(Object.assign(new Error('ENOTEMPTY'), { code: 'ENOTEMPTY' }));
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/library/Author/Title',
+      stagingPath: '/library/Author/Title.import-tmp', backupPath: '/library/Author/Title.import-bak',
+      libraryRoot: '/library', protectTarget: false, db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow('fail');
+    // Managed audio removed; the foreign e-book was never touched.
+    expect(rm).toHaveBeenCalledWith(expect.stringContaining('partial.mp3'), { force: true });
+    expect(rm).not.toHaveBeenCalledWith(expect.stringContaining('book.epub'), expect.anything());
   });
 
   it('refuses to remove a target outside libraryRoot but still reverts DB statuses', async () => {

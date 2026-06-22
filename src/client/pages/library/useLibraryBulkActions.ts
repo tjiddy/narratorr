@@ -31,16 +31,24 @@ export function useLibraryBulkActions(visibleBooks: LibraryBookListItem[]) {
       );
       const succeeded = results.filter((r) => r.status === 'fulfilled').length;
       const failed = results.filter((r) => r.status === 'rejected').length;
-      return { succeeded, failed, total: results.length };
+      // #1589: aggregate the foreign files preserved across all on-disk deletions.
+      const preservedForeign = results.reduce(
+        (n, r) => (r.status === 'fulfilled' ? n + (r.value.fileSummary?.preservedForeign.length ?? 0) : n),
+        0,
+      );
+      return { succeeded, failed, total: results.length, preservedForeign, deleteFiles };
     },
-    onSuccess: ({ succeeded, failed, total }) => {
+    onSuccess: ({ succeeded, failed, total, preservedForeign, deleteFiles }) => {
+      const keptSuffix = deleteFiles && preservedForeign > 0
+        ? ` — kept ${preservedForeign} non-audio file${preservedForeign !== 1 ? 's' : ''}`
+        : '';
       if (failed === 0) {
-        toast.success(`Deleted ${succeeded} book${succeeded !== 1 ? 's' : ''}`);
+        toast.success(`Deleted ${succeeded} book${succeeded !== 1 ? 's' : ''}${keptSuffix}`);
       } else if (succeeded === 0) {
         const firstError = 'All deletions failed';
         toast.error(firstError);
       } else {
-        toast.success(`Deleted ${succeeded} of ${total} books — ${failed} failed`);
+        toast.success(`Deleted ${succeeded} of ${total} books — ${failed} failed${keptSuffix}`);
       }
       clearSelection();
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });

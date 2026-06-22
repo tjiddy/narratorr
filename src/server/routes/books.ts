@@ -88,7 +88,10 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       case 'file_deletion_failed':
         return reply.status(500).send({ error: result.error });
       case 'deleted':
-        return { success: true };
+        // #1589: surface what an on-disk delete preserved ("kept N files") when present.
+        return result.fileSummary
+          ? { success: true, fileSummary: result.fileSummary }
+          : { success: true };
       default:
         return result satisfies never;
     }
