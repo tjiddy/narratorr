@@ -81,7 +81,7 @@ async function runPostCommitRenameRetag(
 }
 
 export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps) {
-  const metadataService = deps.metadataService!;
+  const metadataService = deps.metadataService;
   app.post<{ Params: IdParam; Body: FixMatchRequest }>(
     '/api/books/:id/fix-match',
     { schema: { params: idParamSchema, body: fixMatchRequestSchema } },

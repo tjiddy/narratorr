@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { booksRoutes, type BookRouteDeps } from './books.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor, createMockDbBookEvent } from '../__tests__/factories.js';
@@ -57,6 +58,55 @@ const mockBook = {
   authors: [createMockDbAuthor()],
   narrators: [],
 };
+
+/**
+ * Build a complete `BookRouteDeps` with all 17 services mocked. Each call
+ * derives fresh `vi.fn()`-backed mocks from `createMockServices()`, so a test
+ * mutating the returned deps can't leak into a later call. Pass `overrides` to
+ * replace any field; omitted fields keep their default mock.
+ *
+ * Overrides is `Partial<BookRouteDeps>` rather than a bare-undefined-stripping
+ * shape: callers add or replace fields but never need to strip a default, so it
+ * compiles cleanly under `exactOptionalPropertyTypes` without explicit-`undefined`
+ * literals (see `fixture-builder-eopt-overrides`).
+ */
+function makeBookRouteDeps(overrides: Partial<BookRouteDeps> = {}): BookRouteDeps {
+  const s = createMockServices();
+  return {
+    bookService: s.book,
+    bookListService: s.bookList,
+    downloadService: s.download,
+    downloadOrchestrator: s.downloadOrchestrator,
+    settingsService: s.settings,
+    renameService: s.rename,
+    mergeService: s.merge,
+    taggingService: s.tagging,
+    eventHistory: s.eventHistory,
+    bookDeletionService: s.bookDeletion,
+    indexerSearchService: s.indexerSearch,
+    indexerService: s.indexer,
+    bookRejectionService: s.bookRejection,
+    blacklistService: s.blacklist,
+    eventBroadcaster: s.eventBroadcaster,
+    seriesCardService: s.seriesCard,
+    metadataService: s.metadata,
+    ...overrides,
+  };
+}
+
+/** Register only `booksRoutes` onto a fresh Fastify app, wired from the given
+ *  `BookRouteDeps`. Mirrors `createTestApp` but takes route deps directly so a
+ *  test can exercise the routes through a factory-built deps object. */
+async function createAppFromDeps(deps: BookRouteDeps) {
+  const app = Fastify({ logger: false, routerOptions: { maxParamLength: 2048 } }).withTypeProvider<ZodTypeProvider>();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+  await app.register(errorHandlerPlugin);
+  await booksRoutes(app, deps);
+  await app.ready();
+  return app;
+}
 
 describe('books routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -2929,37 +2979,69 @@ describe('POST /api/books/:id/cover', () => {
   });
 });
 
-describe('#514 books route — missing blacklistService guard', () => {
-  let app: Awaited<ReturnType<typeof createTestApp>>;
-  let services: Services;
+// #1558 — `BookRouteDeps` now marks all 17 services required, so the old
+// `#514` "absent blacklistService" test (which forced `services.blacklist =
+// undefined` and asserted search is NOT triggered) is no longer representable.
+// The positive required-deps path — search IS triggered for a `searchImmediately`
+// create on a `wanted` book — is covered by 'triggers search when
+// searchImmediately is true and status is wanted' in the POST /api/books block.
+describe('#1558 makeBookRouteDeps factory', () => {
+  const ALL_FIELDS: Array<keyof BookRouteDeps> = [
+    'bookService', 'bookListService', 'downloadService', 'downloadOrchestrator',
+    'settingsService', 'renameService', 'mergeService', 'taggingService',
+    'eventHistory', 'bookDeletionService', 'indexerSearchService', 'indexerService',
+    'bookRejectionService', 'blacklistService', 'eventBroadcaster', 'seriesCardService',
+    'metadataService',
+  ];
 
-  beforeAll(async () => {
-    services = createMockServices();
-    (services as unknown as Record<string, unknown>).blacklist = undefined;
-    app = await createTestApp(services);
+  it('returns a complete BookRouteDeps with all 17 fields defined', () => {
+    const deps = makeBookRouteDeps();
+    expect(ALL_FIELDS).toHaveLength(17);
+    for (const field of ALL_FIELDS) {
+      expect(deps[field], `expected ${field} to be defined`).toBeDefined();
+    }
   });
 
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
-    (services.book.create as Mock).mockResolvedValueOnce({ ...mockBook, status: 'wanted' });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/books',
-      payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+  it('replaces only the overridden field, leaving the other 16 as defaults', () => {
+    const customBookService = inject<BookRouteDeps['bookService']>({
+      getById: vi.fn().mockResolvedValue(mockBook),
     });
+    const deps = makeBookRouteDeps({ bookService: customBookService });
 
-    expect(res.statusCode).toBe(201);
+    expect(deps.bookService).toBe(customBookService);
+    for (const field of ALL_FIELDS) {
+      if (field === 'bookService') continue;
+      expect(deps[field], `expected default ${field} to be present`).toBeDefined();
+    }
+  });
 
-    // Wait for any fire-and-forget promise to settle
-    await new Promise(r => setTimeout(r, 50));
+  it('returns independent objects across calls — a mutation does not leak', () => {
+    const first = makeBookRouteDeps();
+    const second = makeBookRouteDeps();
 
-    // If the guard were absent, triggerImmediateSearch would call searchAllStreaming
-    expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
+    // Distinct mock instances per call (fresh createMockServices each time).
+    expect(first.bookService).not.toBe(second.bookService);
+
+    // Mutating one returned deps must not affect a later-built deps.
+    const sentinel = inject<BookRouteDeps['metadataService']>({ lookupForFixMatch: vi.fn() });
+    first.metadataService = sentinel;
+    expect(second.metadataService).not.toBe(sentinel);
+  });
+
+  it('routes wired from factory deps are reachable (GET /api/books/:id)', async () => {
+    const deps = makeBookRouteDeps({
+      bookService: inject<BookRouteDeps['bookService']>({
+        getById: vi.fn().mockResolvedValue({ ...mockBook, id: 7 }),
+      }),
+    });
+    const app = await createAppFromDeps(deps);
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/books/7' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ id: 7 });
+    } finally {
+      await app.close();
+    }
   });
 });
 
