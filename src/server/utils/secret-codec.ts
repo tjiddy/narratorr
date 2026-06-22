@@ -24,7 +24,6 @@ const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
 export type SecretEntity =
   | 'indexer'
   | 'downloadClient'
-  | 'prowlarr'
   | 'auth'
   | 'network'
   | 'metadata'
@@ -47,7 +46,6 @@ export type SecretEntity =
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   indexer: ['apiKey', 'apiUrl', 'flareSolverrUrl', 'mamId'],
   downloadClient: ['password', 'apiKey'],
-  prowlarr: ['apiKey'],
   auth: ['sessionSecret', 'apiKey'],
   network: ['proxyUrl'],
   metadata: ['hardcoverApiKey'],

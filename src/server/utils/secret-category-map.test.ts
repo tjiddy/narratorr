@@ -15,7 +15,7 @@ import {
  * hand-maintained homes that had to agree and had already drifted (`earwitness`
  * was absent from the migration list — see #1526). All three are now derived
  * from `SECRET_CATEGORY_MAP`; these tests fail if a category is added to one
- * derived view without the others, or if the prowlarr/auth carve-out regresses.
+ * derived view without the others, or if the auth carve-out regresses.
  */
 
 // Mirror of the route's mask view as a plain category set.
@@ -47,17 +47,14 @@ describe('#1567 settings-secret canonical map', () => {
     });
   });
 
-  describe('prowlarr/auth carve-out preserved', () => {
-    it('prowlarr and auth are present in the mask and migration views', () => {
-      for (const key of ['prowlarr', 'auth']) {
-        expect(maskKeys.has(key)).toBe(true);
-        expect(migrateKeys.has(key)).toBe(true);
-      }
+  describe('auth carve-out preserved', () => {
+    it('auth is present in the mask and migration views', () => {
+      expect(maskKeys.has('auth')).toBe(true);
+      expect(migrateKeys.has('auth')).toBe(true);
     });
 
-    it('prowlarr and auth are absent from the encrypt/decrypt view', () => {
-      // They are encrypted inline by Auth/Indexer services, not SettingsService.set().
-      expect(encryptKeys).not.toContain('prowlarr');
+    it('auth is absent from the encrypt/decrypt view', () => {
+      // It is encrypted inline by AuthService, not SettingsService.set().
       expect(encryptKeys).not.toContain('auth');
     });
 

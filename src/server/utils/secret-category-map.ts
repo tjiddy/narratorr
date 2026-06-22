@@ -19,19 +19,19 @@ import type { SecretEntity } from './secret-codec.js';
 // `managedBy` encodes the intentional carve-out (don't merge the lists blindly):
 //   - SettingsService — written through `SettingsService.set()`; key is a real
 //     `SettingsCategory`; encrypted/decrypted by SECRET_CATEGORIES.
-//   - AuthService / IndexerService — `prowlarr`/`auth` are stored as their own DB
-//     rows and encrypted/decrypted INLINE by those services, NOT through
-//     `SettingsService.set()`. Their keys are NOT `SettingsCategory` values, so
-//     they are deliberately ABSENT from the encrypt/decrypt view. They stay in
-//     the mask + migration views for defense-in-depth.
+//   - AuthService — `auth` is stored as its own DB row and encrypted/decrypted
+//     INLINE by that service, NOT through `SettingsService.set()`. Its key is NOT
+//     a `SettingsCategory` value, so it is deliberately ABSENT from the
+//     encrypt/decrypt view. It stays in the mask + migration views for
+//     defense-in-depth.
 //
-// Latent note: the `prowlarr`/`auth` entries in the mask view are effectively
-// no-ops against the real `GET /api/settings` body — `SettingsService.getAll()`
-// only iterates `SETTINGS_CATEGORIES`, and prowlarr/auth are not among them. They
-// are kept in the mask view for safety (so a future code path that does surface
-// them is masked by default), not because they currently appear in the response.
+// Latent note: the `auth` entry in the mask view is effectively a no-op against
+// the real `GET /api/settings` body — `SettingsService.getAll()` only iterates
+// `SETTINGS_CATEGORIES`, and `auth` is not among them. It is kept in the mask
+// view for safety (so a future code path that does surface it is masked by
+// default), not because it currently appears in the response.
 
-type ManagedBy = 'SettingsService' | 'AuthService' | 'IndexerService';
+type ManagedBy = 'SettingsService' | 'AuthService';
 
 interface SecretCategoryEntry {
   readonly key: string;
@@ -49,20 +49,19 @@ function settingsManaged(key: SettingsCategory, entity: SecretEntity): SecretCat
 }
 
 /**
- * Externally-managed entry (`prowlarr`/`auth`). The `key` stays a plain string —
- * these are NOT `SettingsCategory` values and are encrypted inline by
- * Auth/Indexer services, not by `SettingsService.set()`.
+ * Externally-managed entry (`auth`). The `key` stays a plain string — it is NOT a
+ * `SettingsCategory` value and is encrypted inline by AuthService, not by
+ * `SettingsService.set()`.
  */
 function externallyManaged(
   key: string,
   entity: SecretEntity,
-  managedBy: 'AuthService' | 'IndexerService',
+  managedBy: 'AuthService',
 ): SecretCategoryEntry {
   return { key, entity, managedBy };
 }
 
 export const SECRET_CATEGORY_MAP: readonly SecretCategoryEntry[] = [
-  externallyManaged('prowlarr', 'prowlarr', 'IndexerService'),
   externallyManaged('auth', 'auth', 'AuthService'),
   settingsManaged('network', 'network'),
   settingsManaged('metadata', 'metadata'),
@@ -73,7 +72,7 @@ export const SECRET_CATEGORY_MAP: readonly SecretCategoryEntry[] = [
 
 /**
  * Encrypt-on-write / decrypt-on-read view: only categories managed by
- * SettingsService (`set()`/`get()`/`getAll()`). Excludes prowlarr/auth by design.
+ * SettingsService (`set()`/`get()`/`getAll()`). Excludes auth by design.
  */
 export const SECRET_CATEGORIES: Partial<Record<SettingsCategory, SecretEntity>> =
   Object.fromEntries(
