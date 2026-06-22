@@ -24,6 +24,9 @@ vi.mock('node:fs/promises', () => ({
   rename: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
+  // #1591: cleanupOldBookPath / handleImportFailure now run the symlink-aware realpath containment.
+  // Identity realpath (no symlinks) → lexical-equivalent containment for these in-library paths.
+  realpath: vi.fn().mockImplementation(async (p: unknown) => String(p)),
   statfs: vi.fn().mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) }),
 }));
 

@@ -8,6 +8,9 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
+  // #1591: cleanupOldBookPath / handleImportFailure now run the symlink-aware realpath containment.
+  // Identity realpath (no symlinks) → lexical-equivalent containment for the in-library test paths.
+  realpath: vi.fn().mockImplementation(async (p: unknown) => String(p)),
   statfs: vi.fn(),
   mkdir: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
@@ -35,7 +38,7 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, rmdir, statfs, readdir, mkdir, rename, writeFile, open } from 'node:fs/promises';
+import { stat, rm, rmdir, statfs, readdir, mkdir, rename, writeFile, open, realpath } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize, ContentFailureError } from './import-helpers.js';
@@ -510,6 +513,9 @@ describe('cleanupOldBookPath', () => {
     vi.mocked(rm).mockResolvedValue(undefined);
     vi.mocked(rmdir).mockReset();
     vi.mocked(rmdir).mockResolvedValue(undefined);
+    // #1591: restore identity realpath each test (no symlinks); the escape test overrides it.
+    vi.mocked(realpath).mockReset();
+    vi.mocked(realpath).mockImplementation(async (p: unknown) => String(p));
   });
 
   it('deletes managed files and logs info on the in-library happy path', async () => {
@@ -550,6 +556,24 @@ describe('cleanupOldBookPath', () => {
       libraryRoot: '/library',
       log,
     })).resolves.toBeUndefined();
+  });
+
+  it('refuses + skips rm() when an in-library symlink resolves outside libraryRoot (#1591)', async () => {
+    const log = createMockLog();
+    // Lexically inside, but realpath escapes the root → realpath-aware guard must reject.
+    vi.mocked(realpath).mockImplementation(async (p: unknown) =>
+      (String(p) === '/library/Author/SymlinkBook' ? '/external/real' : String(p)));
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/SymlinkBook',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ bookPath: '/library/Author/SymlinkBook', libraryRoot: '/library' }),
+      expect.stringMatching(/outside library root/i),
+    );
   });
 
   it('skips rm() when bookPath is null', async () => {
@@ -1190,14 +1214,19 @@ describe('handleImportFailure', () => {
     vi.mocked(readdir).mockResolvedValue([] as never);
     vi.mocked(rmdir).mockReset();
     vi.mocked(rmdir).mockResolvedValue(undefined);
+    // #1591: identity realpath each test (no symlinks); the escape test overrides it.
+    vi.mocked(realpath).mockReset();
+    vi.mocked(realpath).mockImplementation(async (p: unknown) => String(p));
   });
 
   it('removes managed files from a disposable targetPath when set (#1589)', async () => {
     const log = createMockLog();
     const error = new Error('import broke');
     vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
+    // #1591: the blanket target managed-delete is now library-root-gated, so supply libraryRoot
+    // (matching the production invariant that a defined targetPath always has a defined libraryRoot).
     await expect(handleImportFailure({
-      error, targetPath: '/lib/book', db: mockDb as never,
+      error, targetPath: '/lib/book', libraryRoot: '/lib', db: mockDb as never,
       downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('import broke');
     // Managed audio removed per-file; the emptied scratch folder is then cleaned up.
@@ -1214,12 +1243,42 @@ describe('handleImportFailure', () => {
     expect(rm).not.toHaveBeenCalled();
   });
 
+  it('skips the blanket target managed-delete when libraryRoot is absent (#1591)', async () => {
+    const log = createMockLog();
+    // targetPath set, no libraryRoot, protectTarget/preserveBackup false → destructive cleanup is
+    // library-root-gated, so the managed sweep must NOT run (no rm of target contents).
+    vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/lib/book', db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow('fail');
+    // The marker cleanup still runs, but the managed-file sweep of target contents must NOT.
+    expect(rm).not.toHaveBeenCalledWith(expect.stringContaining('partial.mp3'), expect.anything());
+  });
+
+  it('refuses + skips the managed sweep when an in-library symlink target resolves outside libraryRoot (#1591)', async () => {
+    const log = createMockLog();
+    vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
+    vi.mocked(realpath).mockImplementation(async (p: unknown) =>
+      (String(p) === '/lib/book' ? '/external/real' : String(p)));
+    await expect(handleImportFailure({
+      error: new Error('fail'), targetPath: '/lib/book', libraryRoot: '/lib', db: mockDb as never,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
+    })).rejects.toThrow('fail');
+    expect(rm).not.toHaveBeenCalledWith(expect.stringContaining('partial.mp3'), expect.anything());
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: '/lib/book', libraryRoot: '/lib' }),
+      expect.stringMatching(/outside library root/i),
+    );
+  });
+
   it('logs warning when a managed targetPath file cannot be deleted', async () => {
     const log = createMockLog();
     vi.mocked(readdir).mockResolvedValue([{ name: 'partial.mp3', isFile: () => true, isDirectory: () => false }] as never);
     vi.mocked(rm).mockRejectedValueOnce(new Error('rm fail'));
+    // #1591: library-root-gated managed-delete → supply libraryRoot to exercise the path.
     await expect(handleImportFailure({
-      error: new Error('fail'), targetPath: '/lib/book', db: mockDb as never,
+      error: new Error('fail'), targetPath: '/lib/book', libraryRoot: '/lib', db: mockDb as never,
       downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('fail');
     // The managed-file helper records the failure and logs a warning; the import error still rethrows.

@@ -3,7 +3,7 @@ import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
-import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { serializeError } from './serialize-error.js';
 
 /**
@@ -24,10 +24,13 @@ export interface DeleteManagedFilesResult {
 
 export interface DeleteManagedFilesOptions {
   /**
-   * Assert `bookPath` is a true descendant of `libraryRoot` before deleting (default: true).
-   * Library-rooted sites (delete, rejection, cleanupOldBookPath, handleImportFailure) keep this
-   * ON. The import-move source-cleanup site deletes the download folder, which is intentionally
-   * OUTSIDE the library, and passes `false` — classification still protects foreign files there.
+   * Assert `bookPath` is a true descendant of `libraryRoot` before deleting (default: true),
+   * using the symlink-aware {@link assertRealPathInsideLibrary} so an in-library symlink whose
+   * realpath escapes the root is rejected (#1591). The guarded-mode site is the book delete
+   * (`book.service.ts`). `cleanupOldBookPath` and `handleImportFailure` pass `false` and run the
+   * same realpath pre-assert externally; the import-move source-cleanup sites delete the download
+   * folder, which is intentionally OUTSIDE the library, and pass `false` with no pre-assert.
+   * Classification still protects foreign files in every mode.
    */
   assertInsideLibrary?: boolean;
 }
@@ -37,9 +40,15 @@ export interface DeleteManagedFilesOptions {
  * {@link AUDIO_EXTENSIONS} set — never re-listed here) or the narratorr-generated cover sidecar
  * ({@link COVER_FILE_REGEX}). Matching is case-insensitive. Everything else (e-books, PDFs, NFOs,
  * subtitles, user images under non-cover names) is FOREIGN and preserved.
+ *
+ * Audio is managed at ANY depth (multi-disc audio lives in disc subfolders). The cover sidecar is
+ * managed ONLY at the book-folder root (`atRoot`): narratorr writes its cover only at the top level
+ * (`cover-upload.ts`/`cover-download.ts`), so a nested `Disc 1/cover.jpg` or `Extras/cover.png` is
+ * user/per-disc artwork — FOREIGN — and must be preserved (#1591).
  */
-function isManagedFile(name: string): boolean {
-  return AUDIO_EXTENSIONS.has(extname(name).toLowerCase()) || COVER_FILE_REGEX.test(name);
+function isManagedFile(name: string, atRoot: boolean): boolean {
+  if (AUDIO_EXTENSIONS.has(extname(name).toLowerCase())) return true;
+  return atRoot && COVER_FILE_REGEX.test(name);
 }
 
 /** Attempt to delete one managed file, recording success/failure; never throws. */
@@ -66,14 +75,20 @@ async function rmdirIfEmpty(dir: string, log: FastifyBaseLogger): Promise<void> 
   }
 }
 
-/** Recursively classify + delete inside a directory, removing now-empty subdirectories bottom-up. */
-async function sweepDir(dir: string, result: DeleteManagedFilesResult, log: FastifyBaseLogger): Promise<void> {
+/**
+ * Recursively classify + delete inside a directory, removing now-empty subdirectories bottom-up.
+ * `rootDir` is the original `bookPath`; cover classification is root-only (see {@link isManagedFile}).
+ * A symlinked subfolder reads as a non-directory `Dirent` (readdir does not follow it), so it falls
+ * through to the foreign branch and is never recursed — its target's files are left untouched (#1591).
+ */
+async function sweepDir(dir: string, rootDir: string, result: DeleteManagedFilesResult, log: FastifyBaseLogger): Promise<void> {
+  const atRoot = dir === rootDir;
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      await sweepDir(fullPath, result, log);
-    } else if (isManagedFile(entry.name)) {
+      await sweepDir(fullPath, rootDir, result, log);
+    } else if (isManagedFile(entry.name, atRoot)) {
       await deleteOneManaged(fullPath, result, log);
     } else {
       result.preservedForeign.push(fullPath);
@@ -107,7 +122,11 @@ export async function deleteManagedBookFiles(
   const assertInside = options?.assertInsideLibrary ?? true;
   if (assertInside) {
     try {
-      assertPathInsideLibrary(bookPath, libraryRoot);
+      // Symlink-aware containment (#1591): a book row whose `path` is an in-library symlink
+      // resolving OUTSIDE the root is rejected, so the sweep can't follow it and delete managed
+      // files under the target. The realpath guard swallows ENOENT, preserving the missing-path
+      // no-op below.
+      await assertRealPathInsideLibrary(bookPath, libraryRoot);
     } catch (error: unknown) {
       if (error instanceof PathOutsideLibraryError) {
         log.warn({ bookPath, libraryRoot }, 'Refusing to delete book path outside library root');
@@ -128,8 +147,8 @@ export async function deleteManagedBookFiles(
   }
 
   if (stats.isDirectory()) {
-    await sweepDir(bookPath, result, log);
-  } else if (isManagedFile(basename(bookPath))) {
+    await sweepDir(bookPath, bookPath, result, log);
+  } else if (isManagedFile(basename(bookPath), true)) {
     await deleteOneManaged(bookPath, result, log);
   } else {
     result.preservedForeign.push(bookPath);

@@ -31,7 +31,7 @@ import {
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
-import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { removeImportSibling, removeMarker, markerPresent } from './import-staging.js';
 import { deleteManagedBookFiles } from './delete-managed-files.js';
 
@@ -241,7 +241,9 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
   const { bookPath, targetPath, libraryRoot, log } = args;
   if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
   try {
-    assertPathInsideLibrary(bookPath, libraryRoot);
+    // Symlink-aware containment (#1591): an in-library symlink whose realpath escapes the root
+    // is rejected so the managed sweep can't follow it out of the library.
+    await assertRealPathInsideLibrary(bookPath, libraryRoot);
   } catch (gateError: unknown) {
     if (gateError instanceof PathOutsideLibraryError) {
       log.error({ bookPath, libraryRoot }, 'Refusing to delete old book path outside library root — leaving foreign path untouched');
@@ -400,7 +402,8 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   if (targetPath && !protectTarget && !preserveBackup) {
     if (libraryRoot) {
       try {
-        assertPathInsideLibrary(targetPath, libraryRoot);
+        // Symlink-aware containment (#1591): reject an in-library symlink whose realpath escapes.
+        await assertRealPathInsideLibrary(targetPath, libraryRoot);
       } catch (gateError: unknown) {
         if (gateError instanceof PathOutsideLibraryError) {
           log.error({ targetPath, libraryRoot }, 'Refusing to clean up target path outside library root — leaving foreign path untouched');
@@ -408,14 +411,22 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
         }
         throw gateError;
       }
+      // Delete only MANAGED files (#1589): a pre-existing/populated library target's foreign files
+      // (a bundled e-book/PDF) are preserved instead of being blanket-wiped, while a genuine scratch
+      // target containing only import-written audio is still fully removed (folder gone). Lives
+      // INSIDE the `if (libraryRoot)` block so `libraryRoot` narrows to `string` and is passed
+      // directly — no `?? targetPath` self-root footgun (#1591). Containment was asserted just
+      // above, so the helper runs without re-asserting. Nonfatal — a per-file failure is
+      // recorded+logged inside the helper; we still revertAndRethrow the original error.
+      await deleteManagedBookFiles(targetPath, libraryRoot, log, { assertInsideLibrary: false })
+        .catch((cleanupError) => log.warn({ error: serializeError(cleanupError), targetPath }, 'Failed to clean up target path after import failure'));
+    } else {
+      // No library root → no library-rooted blanket target cleanup. Unreachable in production:
+      // `import.service.ts` assigns `libraryRoot` before deriving `targetPath`, so a defined
+      // `targetPath` always implies a defined `libraryRoot`. Absent-root reaches here only via an
+      // early pre-flight throw that never set a target worth sweeping (#1591).
+      log.debug({ targetPath }, 'No library root for target cleanup — skipping blanket managed-file delete');
     }
-    // Delete only MANAGED files (#1589): a pre-existing/populated library target's foreign files
-    // (a bundled e-book/PDF) are preserved instead of being blanket-wiped, while a genuine scratch
-    // target containing only import-written audio is still fully removed (folder gone). Containment
-    // was asserted just above, so the helper runs without re-asserting. Nonfatal — a per-file
-    // failure is recorded+logged inside the helper; we still revertAndRethrow the original error.
-    await deleteManagedBookFiles(targetPath, libraryRoot ?? targetPath, log, { assertInsideLibrary: false })
-      .catch((cleanupError) => log.warn({ error: serializeError(cleanupError), targetPath }, 'Failed to clean up target path after import failure'));
   }
 
   return revertAndRethrow(args);

@@ -12,7 +12,7 @@ import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-
 import { ContentFailureError } from '../utils/import-helpers.js';
 import { MarkerPathConflictError } from '../utils/import-staging.js';
 import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ImportConfirmItem } from './library-scan.service.js';
@@ -36,18 +36,20 @@ vi.mock('./library-scan.helpers.js', () => ({
 // real implementation (passthrough); individual tests in the staged-swap cleanup
 // suite override them to simulate a vanished/permission-denied source removal or
 // an undersized copy. Restored to passthrough in that suite's beforeEach.
-type AnyFsFn = (...args: unknown[]) => Promise<void>;
+type AnyFsFn = (...args: unknown[]) => Promise<unknown>;
 const fsMocks = vi.hoisted(() => {
   const noop: AnyFsFn = () => Promise.resolve();
-  return { rm: vi.fn(), cp: vi.fn(), real: { rm: noop, cp: noop } };
+  return { rm: vi.fn(), cp: vi.fn(), readdir: vi.fn(), real: { rm: noop, cp: noop, readdir: noop } };
 });
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   fsMocks.real.rm = actual.rm as unknown as AnyFsFn;
   fsMocks.real.cp = actual.cp as unknown as AnyFsFn;
+  fsMocks.real.readdir = actual.readdir as unknown as AnyFsFn;
   fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
   fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
-  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp };
+  fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
+  return { ...actual, rm: fsMocks.rm, cp: fsMocks.cp, readdir: fsMocks.readdir };
 });
 
 function createMockLogger(): FastifyBaseLogger {
@@ -752,6 +754,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
   const enoent = (): NodeJS.ErrnoException => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
   const eperm = (): NodeJS.ErrnoException => Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+  const eacces = (): NodeJS.ErrnoException => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
 
   function buildDeps(): ImportPipelineDeps {
     return {
@@ -770,11 +773,13 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
 
   beforeEach(async () => {
-    // Restore both wrappers to passthrough so each test starts from real fs behavior.
+    // Restore all wrappers to passthrough so each test starts from real fs behavior.
     fsMocks.rm.mockReset();
     fsMocks.cp.mockReset();
+    fsMocks.readdir.mockReset();
     fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
     fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+    fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
 
     baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1291-orch-'));
     libraryRoot = join(baseDir, 'library');
@@ -860,6 +865,56 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     // Committed audio intact; the locked source file remains (rm rejected), source retained.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
+  });
+
+  it('a non-ENOENT cleanup error (readdir EACCES) does not fail the committed single-source move (#1591)', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    // After the swap commits new audio (target now holds new.mp3), the source-cleanup readdir
+    // rejects EACCES (a non-ENOENT error the helper does NOT swallow). The call-site try/catch
+    // (#1591) must keep the already-committed import successful; pre-swap readdirs pass through.
+    fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (String(p) === source && existsSync(join(target, 'new.mp3'))) throw eacces();
+      return fsMocks.real.readdir(p, opts);
+    });
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+  });
+
+  it('a non-ENOENT cleanup error (readdir EACCES) does not fail the committed multi-disc move (#1591)', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+
+    // Post-commit, the disc-1 source cleanup readdir rejects EACCES. Per-member try/catch (#1591)
+    // keeps the committed import successful and does not skip the remaining disc. The flatten renames
+    // members to sequential stems, so we can't key the post-swap window on a member filename in the
+    // target; instead key on the staged swap having replaced the target's `old.m4b` audio. Pre-swap
+    // reads of disc1 (size probe + copyDiscGroup staging) still see `old.m4b` and pass through.
+    fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (String(p) === disc1 && !existsSync(join(target, 'old.m4b'))) throw eacces();
+      return fsMocks.real.readdir(p, opts);
+    });
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+    expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    // F1: prove per-member continuation — disc-1 cleanup threw (its readdir EACCES'd, so d1.mp3
+    // survives), but the loop still reached disc 2 and swept it (d2.mp3 removed, empty folder gone).
+    // A single catch around the whole loop would skip disc 2, leaving it on disk — this assertion
+    // is what distinguishes per-member try/catch from loop-level.
+    expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(true);
+    expect(await pathExists(join(disc2, 'd2.mp3'))).toBe(false);
+    expect(await pathExists(disc2)).toBe(false);
   });
 
   it('still fails the import when copy verification falls below threshold (verification path untouched)', async () => {
