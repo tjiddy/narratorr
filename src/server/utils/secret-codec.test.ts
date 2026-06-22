@@ -402,9 +402,8 @@ describe('SecretCodec', () => {
       expect(masked.apiKey).toBeUndefined();
     });
 
-    it('maskFields preserves empty string across all six secret categories', () => {
+    it('maskFields preserves empty string across the secret entities', () => {
       expect(maskFields('network', { proxyUrl: '' }).proxyUrl).toBe('');
-      expect(maskFields('prowlarr', { apiKey: '' }).apiKey).toBe('');
       expect(maskFields('auth', { sessionSecret: '', apiKey: '' })).toEqual({ sessionSecret: '', apiKey: '' });
       expect(maskFields('indexer', { apiKey: '' }).apiKey).toBe('');
       expect(maskFields('downloadClient', { apiKey: '', password: '' })).toEqual({ apiKey: '', password: '' });

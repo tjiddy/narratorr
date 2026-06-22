@@ -118,20 +118,6 @@ describe('Secret Migration', () => {
       expect(db.insert).toHaveBeenCalled();
     });
 
-    it('encrypts prowlarr config apiKey', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      db.select.mockReturnValueOnce(mockDbChain([
-        createSettingsRow('prowlarr', { url: 'http://prowlarr', apiKey: 'prowlarr-key' }),
-      ]));
-      db.insert.mockReturnValue(mockDbChain());
-
-      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
-
-      expect(db.insert).toHaveBeenCalled();
-    });
-
     it('encrypts auth sessionSecret + apiKey', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([]));
