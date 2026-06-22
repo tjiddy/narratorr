@@ -147,29 +147,14 @@ describe('system routes', () => {
     });
   });
 
-  describe('POST /api/system/tasks/rss', () => {
-    it('returns 200 with RSS sync summary', async () => {
-      (services.settings.get as Mock).mockImplementation((cat: string) => {
-        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
-      });
-
+  // #1554 — the dedicated POST /api/system/tasks/rss route was removed; RSS is
+  // now triggered only through the generic POST /api/system/tasks/:name/run runner
+  // (covered against the real registry below). The dedicated path is a route-level 404.
+  describe('POST /api/system/tasks/rss (removed — #1554)', () => {
+    it('returns a route-level 404 (no dedicated handler matches)', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
 
-      expect(res.statusCode).toBe(200);
-
-      const payload = JSON.parse(res.payload);
-      expect(payload).toHaveProperty('polled');
-      expect(payload).toHaveProperty('matched');
-      expect(payload).toHaveProperty('grabbed');
-      expect(payload.polled).toBe(0);
-    });
-
-    it('returns 500 when RSS job throws', async () => {
-      (services.settings.get as Mock).mockRejectedValue(new Error('DB connection lost'));
-
-      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
-
-      expect(res.statusCode).toBe(500);
+      expect(res.statusCode).toBe(404);
     });
   });
 
@@ -251,7 +236,6 @@ describe('system routes', () => {
     const cases = [
       { url: '/api/system/tasks/search', task: 'search' },
       { url: '/api/system/tasks/search-all-wanted', task: 'search' },
-      { url: '/api/system/tasks/rss', task: 'rss' },
       { url: '/api/system/backups/create', task: 'backup' },
     ] as const;
 
@@ -319,22 +303,39 @@ describe('system routes', () => {
       await manualRun;
     });
 
+    // #1554 — retargeted from the removed dedicated /tasks/rss route to the
+    // surviving runExclusive-backed /tasks/search route, preserving #746 AC7 coverage.
     it('successful manual run updates lastRun via runExclusive side effect (AC7)', async () => {
-      realRegistry.register('rss', 'timeout', vi.fn().mockResolvedValue(undefined));
+      // Re-register to reset lastRun (the AC4 test above already exercised 'search').
+      realRegistry.register('search', 'timeout', vi.fn().mockResolvedValue(undefined));
       (realServices.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
       );
       (realServices.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
-      const before = realRegistry.getAll().find((t) => t.name === 'rss');
+      const before = realRegistry.getAll().find((t) => t.name === 'search');
       expect(before?.lastRun).toBeNull();
 
-      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/rss' });
+      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/search' });
       expect(res.statusCode).toBe(200);
 
-      const after = realRegistry.getAll().find((t) => t.name === 'rss');
+      const after = realRegistry.getAll().find((t) => t.name === 'search');
       expect(after?.lastRun).not.toBeNull();
       expect(new Date(after!.lastRun!).getTime()).toBeGreaterThan(0);
+    });
+
+    // #1554 — RSS stays reachable through the generic runner after the dedicated
+    // route's removal. The generic runner returns { ok: true } and discards the job
+    // summary (the dedicated route used to return { polled, matched, grabbed }).
+    it('generic POST /api/system/tasks/rss/run drives the registered rss task and returns { ok: true }', async () => {
+      const rssFn = vi.fn().mockResolvedValue(undefined);
+      realRegistry.register('rss', 'timeout', rssFn);
+
+      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/rss/run' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ ok: true });
+      expect(rssFn).toHaveBeenCalledOnce();
     });
   });
 
