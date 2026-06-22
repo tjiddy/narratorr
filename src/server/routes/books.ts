@@ -20,13 +20,13 @@ export interface BookRouteDeps {
   taggingService: TaggingService;
   eventHistory: EventHistoryService;
   bookDeletionService: BookDeletionService;
-  indexerSearchService?: IndexerSearchService;
-  indexerService?: IndexerService;
-  bookRejectionService?: BookRejectionService;
-  blacklistService?: BlacklistService;
-  eventBroadcaster?: EventBroadcasterService;
-  seriesCardService?: SeriesCardService;
-  metadataService?: MetadataService;
+  indexerSearchService: IndexerSearchService;
+  indexerService: IndexerService;
+  bookRejectionService: BookRejectionService;
+  blacklistService: BlacklistService;
+  eventBroadcaster: EventBroadcasterService;
+  seriesCardService: SeriesCardService;
+  metadataService: MetadataService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { z } from 'zod';
@@ -118,7 +118,7 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
 
       request.log.info({ title: body.title }, 'Book added');
 
-      if (body.searchImmediately && book.status === 'wanted' && deps.indexerSearchService && deps.blacklistService && deps.indexerService) {
+      if (body.searchImmediately && book.status === 'wanted') {
         const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService, indexerService, eventHistory } = deps;
         triggerImmediateSearch(book, { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, eventHistory }, request.log);
       }
@@ -157,12 +157,12 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       const searchSettings = await deps.settingsService.get('search');
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
       const result = await searchAndGrabForBook(book, {
-        indexerSearchService: deps.indexerSearchService!,
+        indexerSearchService: deps.indexerSearchService,
         downloadOrchestrator: deps.downloadOrchestrator,
         qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
         log: request.log,
-        blacklistService: deps.blacklistService!,
-        indexerService: deps.indexerService!,
+        blacklistService: deps.blacklistService,
+        indexerService: deps.indexerService,
         eventHistory: deps.eventHistory,
         broadcaster: deps.eventBroadcaster,
       });
@@ -251,7 +251,7 @@ function registerBookListRoutes(app: FastifyInstance, bookListService: BookRoute
 }
 
 export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
-  const { bookService, bookListService, renameService, mergeService, taggingService, indexerSearchService } = deps;
+  const { bookService, bookListService, renameService, mergeService, taggingService } = deps;
   registerBookListRoutes(app, bookListService);
 
   // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
@@ -336,9 +336,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  if (indexerSearchService) {
-    registerBookSearchRoute(app, deps);
-  }
+  registerBookSearchRoute(app, deps);
 
   // GET /api/books/:id/retag/preview — dry-run plan for the re-tag action
   app.get<{ Params: IdParam; Querystring: RetagPreviewQuery }>(
@@ -386,29 +384,23 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  if (deps.seriesCardService) {
-    registerSeriesRoutes(app, deps.bookService, deps.seriesCardService);
-  }
+  registerSeriesRoutes(app, deps.bookService, deps.seriesCardService);
 
   registerMergeRoutes(app, mergeService);
 
   // POST /api/books/:id/fix-match
-  if (deps.metadataService) {
-    registerFixMatchRoute(app, deps);
-  }
+  registerFixMatchRoute(app, deps);
 
   // POST /api/books/:id/wrong-release
-  if (deps.bookRejectionService) {
-    const bookRejectionService = deps.bookRejectionService;
-    app.post<{ Params: IdParam }>(
-      '/api/books/:id/wrong-release',
-      { schema: { params: idParamSchema } },
-      async (request) => {
-        const { id } = request.params;
-        await bookRejectionService.rejectAsWrongRelease(id);
-        request.log.info({ id }, 'Book marked as wrong release');
-        return { success: true };
-      },
-    );
-  }
+  const { bookRejectionService } = deps;
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/wrong-release',
+    { schema: { params: idParamSchema } },
+    async (request) => {
+      const { id } = request.params;
+      await bookRejectionService.rejectAsWrongRelease(id);
+      request.log.info({ id }, 'Book marked as wrong release');
+      return { success: true };
+    },
+  );
 }
