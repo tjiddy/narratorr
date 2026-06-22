@@ -90,7 +90,7 @@ export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatch
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       if (oldAsin) queryClient.invalidateQueries({ queryKey: queryKeys.metadata.book(oldAsin) });
       if (newAsin) queryClient.invalidateQueries({ queryKey: queryKeys.metadata.book(newAsin) });
-      queryClient.invalidateQueries({ queryKey: ['book', book.id, 'series'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.bookSeries(book.id) });
       toast.success('Match replaced');
       onClose();
     },

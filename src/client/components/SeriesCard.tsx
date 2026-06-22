@@ -7,6 +7,7 @@ import {
   type BookSeriesMemberCard,
   type RefreshBookSeriesResponse,
 } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { RefreshIcon, LoadingSpinner, PencilIcon } from '@/components/icons';
 import { FixSeriesModal } from '@/components/book/FixSeriesModal';
 
@@ -78,7 +79,7 @@ function MemberRow({ member, card }: MemberRowProps) {
 
 export function SeriesCard({ bookId }: SeriesCardProps) {
   const queryClient = useQueryClient();
-  const queryKey = ['book', bookId, 'series'] as const;
+  const queryKey = queryKeys.bookSeries(bookId);
   const [isFixOpen, setIsFixOpen] = useState(false);
 
   const { data, isLoading } = useQuery({

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AudioInfo } from '@/components/AudioInfo';
 import { SeriesCard } from '@/components/SeriesCard';
 import { api, type BookWithAuthor } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { BookDescription } from './BookDescription.js';
 import { BookLocationSection } from './BookLocationSection.js';
 import { FileList } from './FileList.js';
@@ -17,7 +18,7 @@ function useSidebarSignals(libraryBook: BookWithAuthor, merged: MergedData) {
   // Series card. (F9) The query is also issued inside SeriesCard, but
   // TanStack Query dedupes on the same key.
   const seriesQuery = useQuery({
-    queryKey: ['book', libraryBook.id, 'series'] as const,
+    queryKey: queryKeys.bookSeries(libraryBook.id),
     queryFn: () => api.getBookSeries(libraryBook.id),
   });
   const hasGenres = !!merged.genres && merged.genres.length > 0;

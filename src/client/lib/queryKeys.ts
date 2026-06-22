@@ -12,6 +12,11 @@ export const queryKeys = {
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
+  // Singular `book` namespace (distinct from the plural `books` list namespace above).
+  bookSeries: (id: number) => ['book', id, 'series'] as const,
+  // Prefix-extension of bookSeries(id) so invalidating the base key cascades to the
+  // in-flight series search (TanStack prefix matching).
+  bookSeriesSearch: (id: number, query: string) => ['book', id, 'series', 'search', query] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
   bulkRenamePreview: () => ['books', 'bulk', 'rename-preview'] as const,
   bookRetagPreview: (id: number, overrides?: RetagOverrides) =>

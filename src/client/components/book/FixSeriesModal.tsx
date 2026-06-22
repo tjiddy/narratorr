@@ -45,13 +45,13 @@ function CandidateRow({ candidate, onSelect, disabled }: { candidate: HardcoverS
 
 export function FixSeriesModal({ bookId, currentSeriesName, onClose }: FixSeriesModalProps) {
   const queryClient = useQueryClient();
-  const seriesQueryKey = ['book', bookId, 'series'] as const;
+  const seriesQueryKey = queryKeys.bookSeries(bookId);
   const [query, setQuery] = useState(currentSeriesName);
   const [submitted, setSubmitted] = useState<string | null>(currentSeriesName.trim() ? currentSeriesName.trim() : null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const search = useQuery({
-    queryKey: ['book', bookId, 'series', 'search', submitted],
+    queryKey: queryKeys.bookSeriesSearch(bookId, submitted ?? ''),
     queryFn: () => api.searchBookSeries(bookId, submitted!),
     enabled: submitted !== null && submitted.length > 0,
   });

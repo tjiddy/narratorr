@@ -246,7 +246,7 @@ describe('BookFixMatchModal (#1129)', () => {
     expect(calls).toContain(JSON.stringify(queryKeys.books()));
     expect(calls).toContain(JSON.stringify(queryKeys.metadata.book('B_OLD')));
     expect(calls).toContain(JSON.stringify(queryKeys.metadata.book('B_NEW')));
-    expect(calls).toContain(JSON.stringify(['book', 7, 'series']));
+    expect(calls).toContain(JSON.stringify(queryKeys.bookSeries(7)));
   });
 
   it('surfaces 409 collision error without closing modal', async () => {
