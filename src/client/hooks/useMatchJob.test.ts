@@ -39,7 +39,7 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'Book' }]);
+      await result.current.startMatching([{ path: '/a', title: 'Book' }]);
     });
 
     expect(result.current.isMatching).toBe(true);
@@ -59,12 +59,12 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]);
     });
 
     // Advance past poll interval
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
     expect(mockGetMatchJob).toHaveBeenCalledWith('job-1');
@@ -85,11 +85,11 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
     expect(result.current.isMatching).toBe(false);
@@ -97,7 +97,7 @@ describe('useMatchJob', () => {
     // Advance again — should NOT poll again
     mockGetMatchJob.mockClear();
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
     expect(mockGetMatchJob).not.toHaveBeenCalled();
   });
@@ -109,7 +109,7 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     act(() => {
@@ -122,7 +122,7 @@ describe('useMatchJob', () => {
     // Should not poll after cancel
     mockGetMatchJob.mockClear();
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
     expect(mockGetMatchJob).not.toHaveBeenCalled();
   });
@@ -134,13 +134,13 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-2' });
 
     await act(async () => {
-      result.current.startMatching([{ path: '/b', title: 'B' }]);
+      await result.current.startMatching([{ path: '/b', title: 'B' }]);
     });
 
     expect(mockCancelMatchJob).toHaveBeenCalledWith('job-1');
@@ -152,7 +152,7 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     expect(result.current.isMatching).toBe(false);
@@ -165,11 +165,11 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
     expect(result.current.isMatching).toBe(false);
@@ -181,7 +181,7 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     expect(result.current.error).toBe('Network error');
@@ -194,7 +194,7 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     expect(result.current.error).toBe('string-rejection');
@@ -208,11 +208,11 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
     expect(result.current.error).toBe('Job expired');
@@ -225,11 +225,11 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
     expect(result.current.error).toBe('string-rejection');
@@ -238,7 +238,7 @@ describe('useMatchJob', () => {
     // Confirm polling has stopped — another tick should not trigger a call
     mockGetMatchJob.mockClear();
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
     expect(mockGetMatchJob).not.toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
 
     expect(result.current.error).toBe('Network error');
@@ -257,7 +257,7 @@ describe('useMatchJob', () => {
     mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-2' });
 
     await act(async () => {
-      result.current.startMatching([{ path: '/b', title: 'B' }]);
+      await result.current.startMatching([{ path: '/b', title: 'B' }]);
     });
 
     expect(result.current.error).toBeNull();
@@ -276,10 +276,10 @@ describe('useMatchJob', () => {
     const { result } = renderHook(() => useMatchJob());
 
     await act(async () => {
-      result.current.startMatching([{ path: '/a', title: 'A' }]);
+      await result.current.startMatching([{ path: '/a', title: 'A' }]);
     });
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      await vi.advanceTimersByTimeAsync(2000);
     });
 
     expect(result.current.results).toHaveLength(1);
@@ -289,7 +289,7 @@ describe('useMatchJob', () => {
     mockCancelMatchJob.mockResolvedValue({ cancelled: true });
 
     await act(async () => {
-      result.current.startMatching([{ path: '/b', title: 'B' }]);
+      await result.current.startMatching([{ path: '/b', title: 'B' }]);
     });
 
     expect(result.current.results).toEqual([]);

@@ -9,7 +9,7 @@ interface UseMatchJobReturn {
   progress: { matched: number; total: number };
   isMatching: boolean;
   error: string | null;
-  startMatching: (candidates: MatchCandidate[]) => void;
+  startMatching: (candidates: MatchCandidate[]) => Promise<void>;
   cancel: () => void;
 }
 
