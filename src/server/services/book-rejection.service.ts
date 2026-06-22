@@ -81,7 +81,14 @@ export class BookRejectionService {
       try {
         await preserveBookCover(book.path, bookId, config.configPath, this.log);
         const librarySettings = await this.settingsService.get('library');
-        await this.bookService.deleteBookFiles(book.path, librarySettings.path);
+        const result = await this.bookService.deleteBookFiles(book.path, librarySettings.path);
+        // The helper records per-file `rm` failures in `failedManaged` and never throws on them, so the
+        // catch below no longer fires for a locked managed file. Surface rejection-context diagnostics
+        // (bookId + count) here — the value is a typed result, not a catch binding, so raw-error-logging
+        // does not apply. Nonfatal: the book was already reset to `wanted`/`path: null`, so it re-grabs.
+        if (result.failedManaged.length > 0) {
+          this.log.warn({ bookId, failed: result.failedManaged.length }, 'Wrong release: some managed files could not be deleted (continuing)');
+        }
       } catch (error: unknown) {
         if (error instanceof PathOutsideLibraryError) throw error;
         this.log.warn({ bookId, path: book.path, error: serializeError(error) }, 'Wrong release: failed to delete book files (continuing)');

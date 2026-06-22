@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { mkdir, rm, writeFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
-import type { BookService } from './book.service.js';
+import { BookService, type BookWithAuthor } from './book.service.js';
+import type { DeleteManagedFilesResult } from '../utils/delete-managed-files.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -26,6 +31,11 @@ vi.mock('../config.js', () => ({
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 
+const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+/** The empty three-bucket {@link DeleteManagedFilesResult} a successful no-foreign sweep returns. */
+const emptyDeleteResult = (): DeleteManagedFilesResult => ({ deletedManaged: [], preservedForeign: [], failedManaged: [] });
+
 function createService(opts?: {
   bookService?: Partial<BookService>;
   blacklistService?: Partial<BlacklistService>;
@@ -37,7 +47,7 @@ function createService(opts?: {
   const log = createMockLogger();
   const bookService = inject<BookService>(opts?.bookService ?? {
     getById: vi.fn(),
-    deleteBookFiles: vi.fn().mockResolvedValue(undefined),
+    deleteBookFiles: vi.fn().mockResolvedValue(emptyDeleteResult()),
   });
   const blacklistService = inject<BlacklistService>(opts?.blacklistService ?? {
     create: vi.fn().mockResolvedValue({}),
@@ -149,7 +159,7 @@ describe('BookRejectionService', () => {
       });
       (bookService.deleteBookFiles as Mock).mockImplementation(() => {
         callOrder.push('deleteBookFiles');
-        return Promise.resolve();
+        return Promise.resolve(emptyDeleteResult());
       });
 
       await service.rejectAsWrongRelease(42);
@@ -166,15 +176,82 @@ describe('BookRejectionService', () => {
       expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Author/Book', '/audiobooks');
     });
 
-    it('continues when file deletion throws (best-effort)', async () => {
-      const { service, bookService, db } = createService();
+    // #1592 part B — the helper records per-file rm failures in `failedManaged` and never throws on
+    // them (replacing the old generic-throw best-effort test, which exercised a path the post-#1589
+    // helper can no longer produce). Rejection must stay nonfatal AND emit rejection-context diagnostics.
+    it('continues and logs rejection-context diagnostics when deleteBookFiles reports failedManaged', async () => {
+      const { service, bookService, db, log, eventHistory } = createService();
       (bookService.getById as Mock).mockResolvedValue(importedBook);
-      (bookService.deleteBookFiles as Mock).mockRejectedValue(new Error('ENOENT'));
+      (bookService.deleteBookFiles as Mock).mockResolvedValue({
+        deletedManaged: ['/audiobooks/Author/Book/chapter1.mp3'],
+        preservedForeign: [],
+        failedManaged: ['/audiobooks/Author/Book/locked.mp3'],
+      } satisfies DeleteManagedFilesResult);
+
+      // Does not throw — the locked managed file is nonfatal.
+      await service.rejectAsWrongRelease(42);
+
+      // Diagnostics carry bookId + the failed count (the catch-level warn no longer fires for this path).
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, failed: 1 }),
+        expect.stringContaining('Wrong release'),
+      );
+      // Rejection still completes: DB reset ran and the event was recorded.
+      expect(db.update).toHaveBeenCalled();
+      expect(eventHistory.create).toHaveBeenCalled();
+    });
+
+    // #1592 part A — foreign-file-preservation contract at the rejection site (the one destructive,
+    // no-opt-in delete). A bundled foreign file in the result must not abort or alter the rejection flow.
+    it('completes rejection when deleteBookFiles preserves a foreign file', async () => {
+      const { service, bookService, db, eventHistory } = createService();
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      (bookService.deleteBookFiles as Mock).mockResolvedValue({
+        deletedManaged: ['/audiobooks/Author/Book/chapter1.mp3'],
+        preservedForeign: ['/audiobooks/Author/Book/bundled.pdf'],
+        failedManaged: [],
+      } satisfies DeleteManagedFilesResult);
 
       await service.rejectAsWrongRelease(42);
 
-      // DB update still happens
-      expect(db.update).toHaveBeenCalled();
+      // DB row reset to wanted/path null.
+      const setFn = (chain as Record<string, Mock>).set;
+      expect(setFn).toHaveBeenCalledWith(expect.objectContaining({ status: 'wanted', path: null }));
+      // wrong_release event recorded.
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'wrong_release' }));
+    });
+
+    // #1592 part A — real end-to-end proof: drive a true rejectAsWrongRelease against a real library
+    // root with a real BookService, and confirm a co-located foreign file survives on disk while the
+    // audio is removed (mirrors the helper's own tmpdir preservation test in delete-managed-files.test.ts).
+    it('preserves a co-located .pdf on disk through a real rejectAsWrongRelease run', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'narratorr-1592-'));
+      try {
+        const bookDir = join(root, 'Author', 'Book');
+        await mkdir(bookDir, { recursive: true });
+        await writeFile(join(bookDir, 'chapter1.mp3'), 'audio');
+        await writeFile(join(bookDir, 'bundled.pdf'), 'pdf');
+
+        // Real BookService: deleteBookFiles touches only the filesystem + logger (no DB), so the mock
+        // DB is unused there; getById is spied to return the staged book.
+        const realBookService = new BookService(inject<Db>(createMockDb()), inject<FastifyBaseLogger>(createMockLogger()));
+        vi.spyOn(realBookService, 'getById').mockResolvedValue({ ...importedBook, path: bookDir } as unknown as BookWithAuthor);
+
+        const { service } = createService({
+          bookService: realBookService,
+          settingsService: { get: vi.fn().mockResolvedValue({ path: root }) },
+        });
+
+        await service.rejectAsWrongRelease(42);
+
+        // Foreign file survives; managed audio is gone.
+        expect(await pathExists(join(bookDir, 'bundled.pdf'))).toBe(true);
+        expect(await pathExists(join(bookDir, 'chapter1.mp3'))).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     });
 
     it('rethrows PathOutsideLibraryError instead of swallowing as best-effort', async () => {
@@ -252,7 +329,7 @@ describe('BookRejectionService', () => {
       const { service } = createService({
         bookService: {
           getById: vi.fn().mockResolvedValue(importedBook),
-          deleteBookFiles: vi.fn().mockResolvedValue(undefined),
+          deleteBookFiles: vi.fn().mockResolvedValue(emptyDeleteResult()),
         },
         eventHistory: { create: vi.fn().mockRejectedValue(new Error('DB error')) },
       });
@@ -298,7 +375,7 @@ describe('BookRejectionService', () => {
       });
       (bookService.deleteBookFiles as Mock).mockImplementation(() => {
         callOrder.push('deleteBookFiles');
-        return Promise.resolve();
+        return Promise.resolve(emptyDeleteResult());
       });
 
       await service.rejectAsWrongRelease(42);
