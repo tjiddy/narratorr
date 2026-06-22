@@ -3,7 +3,6 @@ import type { Db } from '../../db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import { runSearchJob, searchAllWanted } from '../jobs/search.js';
-import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
 import { getVersion } from '../utils/version.js';
@@ -71,21 +70,6 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         services.indexer,
         services.eventHistory,
         services.eventBroadcaster,
-      ),
-    );
-  });
-
-  // POST /api/system/tasks/rss — manually trigger an RSS sync cycle
-  app.post('/api/system/tasks/rss', async (request) => {
-    return services.taskRegistry.runExclusive('rss', () =>
-      runRssJob(
-        services.settings,
-        services.bookList,
-        services.indexerSearch,
-        services.downloadOrchestrator,
-        services.blacklist,
-        services.indexer,
-        request.log,
       ),
     );
   });
