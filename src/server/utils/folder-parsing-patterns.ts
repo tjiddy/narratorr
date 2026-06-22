@@ -1,7 +1,7 @@
 // Pattern helpers for folder-parsing.ts (issue #1034). Extracted to keep the
 // main module under the file-size cap; behaviour is unchanged from inlining.
 
-import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing.js';
+import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing-primitives.js';
 import type { ParsedFolder } from './folder-parsing.js';
 
 /**

@@ -12,6 +12,17 @@ import {
   isPureReleaseTagBracket,
   isReleaseTagInner,
 } from './folder-parsing-patterns.js';
+import {
+  CODEC_TAGS,
+  CODEC_TEST_REGEX,
+  isEditionParen,
+  NARRATOR_PAREN_REGEX,
+  applyLastFirstSwap,
+} from './folder-parsing-primitives.js';
+
+// Re-export so the public import surface is unchanged (consumers import
+// CODEC_TEST_REGEX from this module — see folder-parsing.test.ts).
+export { CODEC_TEST_REGEX };
 
 /**
  * Strip a recognized audio extension from a path segment. Used for single-file
@@ -27,11 +38,8 @@ function stripAudioExtension(segment: string): string {
 
 // ─── Regex Constants ────────────────────────────────────────────────
 
-/** Codec/format tags to strip from folder names (case-insensitive, word-boundary). */
-const CODEC_TAGS = ['MP3', 'M4B', 'M4A', 'FLAC', 'OGG', 'AAC', 'Unabridged', 'Abridged'];
+/** Global codec regex (strips all matches). `CODEC_TAGS` / `CODEC_TEST_REGEX` live in primitives. */
 const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
-/** Non-global codec regex for `.test()` guards — no `lastIndex` state between calls. */
-export const CODEC_TEST_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'i');
 
 /** Matches a bare 4-digit year (1900–2099) at end of string. */
 const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
@@ -41,12 +49,6 @@ const SERIES_NUMBER_TITLE_REGEX = /^(.+?)\s*[–-]\s*(\d+)\s*[–-]\s*(.+)$/;
 
 /** Matches trailing ", Book NN", ", Vol NN", ", Volume NN" series markers. */
 const SERIES_MARKER_REGEX = /,\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
-
-/**
- * Matches trailing parenthetical containing a person's name (1-3 words).
- * Does NOT match: years (2020), codec tags (handled by CODEC_REGEX), or long subtitles (>3 words).
- */
-export const NARRATOR_PAREN_REGEX = /\s*\((?!(?:19|20)\d{2}\))(\S+(?:\s+\S+){0,2})\)\s*$/;
 
 /** Matches an Audible ASIN in brackets: B0 + 8 alphanumeric chars (case-insensitive). Non-global. */
 const ASIN_REGEX = /\[B0[A-Z0-9]{8}\]/i;
@@ -59,15 +61,6 @@ const NARRATOR_PREFIX_PAREN_REGEX = /\s*\((?:Read|Narrated)\s+by\b[^)]*\)\s*$/i;
  * stripping on year-prefix / ordinal-prefix / edition keyword.
  */
 const TRAILING_PAREN_REGEX = /\s*\(([^)]+)\)\s*$/;
-const EDITION_PAREN_YEAR_PREFIX = /^(?:19|20)\d{2}\b/;
-const EDITION_PAREN_ORDINAL_PREFIX = /^\d+(?:st|nd|rd|th)\b/i;
-const EDITION_PAREN_KEYWORD = /\b(?:Edition|Recording|Cut|Version|Mix)\b/i;
-
-export function isEditionParen(content: string): boolean {
-  return EDITION_PAREN_YEAR_PREFIX.test(content)
-    || EDITION_PAREN_ORDINAL_PREFIX.test(content)
-    || EDITION_PAREN_KEYWORD.test(content);
-}
 
 /** Extended series-marker regex used by `cleanTagTitle` only.
  * Catches comma-prefixed AND space-prefixed forms: `, Book 9`, ` book 1`,
@@ -84,16 +77,6 @@ const KEBAB_CASE_REGEX = /^[a-z]+(?:-[a-z]+)+$/;
 
 /** P10: `<words> NN - <subtitle>` — used for both precheck (before dash heuristic) and postprocess (on resolved title). */
 const WORDS_NUM_DASH_TITLE_REGEX = /^(.+?)\s+(\d+)\s*-\s*(.+)$/;
-
-/** P9: `Last, First` author convention — exactly two name-shaped tokens around a comma. */
-const LAST_FIRST_AUTHOR_REGEX = /^([\w'.-]+),\s*([\w'.-]+)$/;
-
-/** Apply P9 swap: `Last, First` → `First Last`. No-op if pattern doesn't match. */
-export function applyLastFirstSwap(author: string): string {
-  const match = author.match(LAST_FIRST_AUTHOR_REGEX);
-  if (match) return `${match[2]} ${match[1]}`;
-  return author;
-}
 
 /**
  * Match `regex` against `input` but only return the match when group 1 has no
