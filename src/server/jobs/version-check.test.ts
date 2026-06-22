@@ -316,6 +316,27 @@ describe('version check job', () => {
       expect(log.warn).not.toHaveBeenCalled();
     });
 
+    // Pins the `.nullish()` leniency the spec/learning require: each of these
+    // payloads must PARSE (not warn-and-preserve) and reach developHeadSha's
+    // 'develop' fallback. A regression to `.optional()` (rejects null) or a
+    // required `commits`/`sha` would turn these into compare-parse failures.
+    it.each([
+      { label: 'absent commits', payload: { ahead_by: 1, html_url: COMPARE_HTML_URL } },
+      { label: 'commits: null', payload: { ahead_by: 1, html_url: COMPARE_HTML_URL, commits: null } },
+      { label: 'head commit sha: null', payload: { ahead_by: 1, html_url: COMPARE_HTML_URL, commits: [{ sha: 'aaa1111' }, { sha: null }] } },
+    ])('ahead_by > 0 with $label → parses (nullish), falls back to the develop sentinel', async ({ payload }) => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(payload) });
+
+      await runCheck();
+
+      expect(getUpdateStatus()).toEqual({
+        latestVersion: 'develop',
+        releaseUrl: COMPARE_HTML_URL,
+        channel: 'develop',
+      });
+      expect(log.warn).not.toHaveBeenCalledWith('Version check: GitHub compare API returned unexpected response shape');
+    });
+
     it('head commit missing sha → parses (sha is lenient) and falls back to the develop sentinel', async () => {
       // The head commit lacks a string `sha`. The schema's `sha: z.string().nullish()`
       // must accept this so the payload PARSES and flows through to developHeadSha's
