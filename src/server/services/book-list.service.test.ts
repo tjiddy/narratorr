@@ -556,7 +556,7 @@ describe('BookListService', () => {
       ]);
       for (const k of expectedKeys) expect(row).toHaveProperty(k);
       // Trimmed keys absent
-      const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'goodreadsId', 'audibleId', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
+      const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
       for (const k of trimmedKeys) expect(row).not.toHaveProperty(k);
       // Author/narrator entries are name-only
       expect(row.authors).toEqual([{ name: 'Brandon Sanderson' }]);
@@ -711,7 +711,7 @@ describe('BookListService', () => {
         expect(keys).toContain(k);
       }
       // Trimmed columns
-      for (const k of ['description', 'genres', 'audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'goodreadsId', 'audibleId', 'isbn', 'asin', 'enrichmentStatus', 'importListId', 'publishedDate']) {
+      for (const k of ['description', 'genres', 'audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'enrichmentStatus', 'importListId', 'publishedDate']) {
         expect(keys).not.toContain(k);
       }
     });

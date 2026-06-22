@@ -25,8 +25,6 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     title: 'The Way of Kings',
     description: 'An epic fantasy' as string | null,
     coverUrl: null as string | null,
-    goodreadsId: null as string | null,
-    audibleId: null as string | null,
     asin: null as string | null,
     isbn: null as string | null,
     seriesName: null as string | null,

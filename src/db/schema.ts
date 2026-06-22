@@ -44,8 +44,6 @@ export const books = sqliteTable('books', {
   title: text('title').notNull(),
   description: text('description'),
   coverUrl: text('cover_url'),
-  goodreadsId: text('goodreads_id'),
-  audibleId: text('audible_id'),
   asin: text('asin'),
   isbn: text('isbn'),
   seriesName: text('series_name'),

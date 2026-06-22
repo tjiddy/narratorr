@@ -71,8 +71,6 @@ function makeBookRow(overrides: Record<string, unknown> = {}) {
       title: 'Test Book',
       description: null,
       coverUrl: null,
-      goodreadsId: null,
-      audibleId: null,
       asin: 'B001',
       isbn: null,
       seriesName: null,
