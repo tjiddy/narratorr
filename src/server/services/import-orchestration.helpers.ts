@@ -52,6 +52,57 @@ async function getTargetAudioSize(targetPath: string): Promise<number> {
   }
 }
 
+/**
+ * Per-site logging contract for the nonfatal post-commit source cleanup. The `context` carries
+ * the success log LEVEL and message plus the warn-on-failure message so the four call sites keep
+ * their distinct, test-asserted log behavior (#1591) while sharing one cleanup body.
+ */
+interface SourceCleanupContext {
+  successLevel: 'info' | 'debug';
+  successMessage: string;
+  errorMessage: string;
+}
+
+// Single-source (`copyToLibrary`) sites: success at `info`, the single-source warn message.
+const SINGLE_SOURCE_CLEANUP: SourceCleanupContext = {
+  successLevel: 'info',
+  successMessage: 'Source managed files removed after move (foreign files preserved)',
+  errorMessage: 'Failed to clean source after committed move — import already succeeded, continuing',
+};
+
+// Per-disc (`copyDiscGroupToLibrary`) sites: success at `debug`, the disc-specific warn message.
+const DISC_SOURCE_CLEANUP: SourceCleanupContext = {
+  successLevel: 'debug',
+  successMessage: 'Disc source managed files removed after move',
+  errorMessage: 'Failed to clean disc source after committed move — import already succeeded, continuing',
+};
+
+/**
+ * Post-commit cleanup of a single source folder/disc member after a committed move. Deletes only
+ * MANAGED files (#1589), preserving co-located foreign files; the source is OUTSIDE the library
+ * root so containment is opted out (`{ assertInsideLibrary: false }`) — classification still
+ * protects foreign files, and the helper's #1598 `lstat` hardening keeps a top-level symlinked
+ * source unfollowed.
+ *
+ * NONFATAL by contract (#1591): this runs AFTER the commit, so a cleanup throw — a source that
+ * vanished between stat and readdir (ENOENT) OR any non-ENOENT failure (EACCES/EPERM/EBUSY) — must
+ * not fail the already-committed import. The throw is swallowed into a `log.warn`. At the disc
+ * sites this is called per member inside the loop so one failing disc doesn't skip the rest.
+ */
+async function cleanupSourceManagedFilesNonfatal(
+  sourcePath: string,
+  libraryRoot: string,
+  log: FastifyBaseLogger,
+  context: SourceCleanupContext,
+): Promise<void> {
+  try {
+    const cleanup = await deleteManagedBookFiles(sourcePath, libraryRoot, log, { assertInsideLibrary: false });
+    log[context.successLevel]({ source: sourcePath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, context.successMessage);
+  } catch (cleanupError: unknown) {
+    log.warn({ error: serializeError(cleanupError), source: sourcePath }, context.errorMessage);
+  }
+}
+
 // `recoverInterruptedCommit` (the marker-gated recovery sequence run before the
 // populated-target gate, #1337) now lives in `utils/recover-interrupted-commit.ts` so the
 // rename and merge writers can share the same `assertMarkerPathWritable` +
@@ -131,18 +182,7 @@ export async function copyToLibrary(
     });
     if (mode === 'move') {
       // Post-commit cleanup: the staged swap has already committed the new audio to the library.
-      // Delete only MANAGED files from the source download folder (#1589) so a bundled e-book/PDF
-      // is preserved, never blanket-wiped. The source is OUTSIDE the library root, so the
-      // containment guard is opted out; classification still protects foreign files. Wrapped in
-      // try/catch (#1591): this runs AFTER the commit, so a cleanup throw — a source that vanished
-      // between stat and readdir (ENOENT) OR any non-ENOENT failure (EACCES/EPERM/EBUSY) — must not
-      // fail the already-committed import. Log and continue.
-      try {
-        const cleanup = await deleteManagedBookFiles(item.path, librarySettings.path, log, { assertInsideLibrary: false });
-        log.info({ source: item.path, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Source managed files removed after move (foreign files preserved)');
-      } catch (cleanupError: unknown) {
-        log.warn({ error: serializeError(cleanupError), source: item.path }, 'Failed to clean source after committed move — import already succeeded, continuing');
-      }
+      await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
     }
     return targetPath;
   }
@@ -164,16 +204,8 @@ export async function copyToLibrary(
     // Empty-target move cleanup (#1598): route source removal through the managed-file helper
     // instead of a blanket `rm(item.path, { recursive: true })`, so a co-located foreign file
     // (e.g. a bundled .epub/.pdf) is preserved (#1589) AND a top-level symlinked source is not
-    // followed (inherits the helper's #1598 `lstat` hardening). The source is OUTSIDE the library
-    // root → containment guard opted out; classification still protects foreign files. The copy
-    // above is already verified, so — matching the populated-target cleanup (:140-145) — wrap
-    // nonfatal: a cleanup throw (ENOENT race, EACCES/EPERM/EBUSY) must not fail the import. Log + continue.
-    try {
-      const cleanup = await deleteManagedBookFiles(item.path, librarySettings.path, log, { assertInsideLibrary: false });
-      log.info({ source: item.path, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Source managed files removed after move (foreign files preserved)');
-    } catch (cleanupError: unknown) {
-      log.warn({ error: serializeError(cleanupError), source: item.path }, 'Failed to clean source after committed move — import already succeeded, continuing');
-    }
+    // followed. The copy above is already verified, so this matches the populated-target cleanup.
+    await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
   }
 
   return targetPath;
@@ -221,16 +253,10 @@ async function copyDiscGroupToLibrary(
       // MANAGED files from each source disc folder (#1589) so a bundled e-book/PDF is preserved.
       // Sources are OUTSIDE the library root → containment guard opted out. Nonfatal — a vanished
       // member (ENOENT) is a no-op and a locked managed file is recorded, not thrown.
+      // Per-member (#1591): post-commit cleanup must not fail the already-committed import, and one
+      // failing disc must not skip the rest — `cleanupSourceManagedFilesNonfatal` swallows per call.
       for (const memberPath of memberPaths) {
-        // Wrapped per-member (#1591): post-commit cleanup must not fail the already-committed import,
-        // and one failing disc must not skip the rest. Log and continue on any throw (ENOENT race or
-        // a non-ENOENT EACCES/EPERM/EBUSY).
-        try {
-          const cleanup = await deleteManagedBookFiles(memberPath, libraryRoot, log, { assertInsideLibrary: false });
-          log.debug({ source: memberPath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Disc source managed files removed after move');
-        } catch (cleanupError: unknown) {
-          log.warn({ error: serializeError(cleanupError), source: memberPath }, 'Failed to clean disc source after committed move — import already succeeded, continuing');
-        }
+        await cleanupSourceManagedFilesNonfatal(memberPath, libraryRoot, log, DISC_SOURCE_CLEANUP);
       }
       log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
     }
@@ -250,17 +276,11 @@ async function copyDiscGroupToLibrary(
   if (mode === 'move') {
     // Empty-target multi-disc move cleanup (#1598): route each member through the managed-file
     // helper instead of a blanket `rm(memberPath, { recursive: true })`, mirroring the single-source
-    // empty-target path above so the two stay consistent. Preserves co-located foreign files (#1589)
-    // and is symlink-safe (#1598). Sources are OUTSIDE the library root → containment opted out.
-    // Wrapped per-member nonfatal (matching the populated-target multi-disc cleanup, :213-223): one
-    // failing disc must not fail the committed import or skip the remaining members.
+    // empty-target path above so the two stay consistent. Per-member nonfatal (matching the
+    // populated-target multi-disc cleanup): one failing disc must not fail the committed import or
+    // skip the remaining members.
     for (const memberPath of memberPaths) {
-      try {
-        const cleanup = await deleteManagedBookFiles(memberPath, libraryRoot, log, { assertInsideLibrary: false });
-        log.debug({ source: memberPath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Disc source managed files removed after move');
-      } catch (cleanupError: unknown) {
-        log.warn({ error: serializeError(cleanupError), source: memberPath }, 'Failed to clean disc source after committed move — import already succeeded, continuing');
-      }
+      await cleanupSourceManagedFilesNonfatal(memberPath, libraryRoot, log, DISC_SOURCE_CLEANUP);
     }
     log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
   }

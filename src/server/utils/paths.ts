@@ -20,6 +20,21 @@ export class PathOutsideLibraryError extends Error {
 }
 
 /**
+ * Containment decision shared by {@link assertPathInsideLibrary} (lexical relative) and
+ * {@link assertRealPathInsideLibrary} (realpath-canonicalized relative): a path is OUTSIDE the
+ * root when its already-computed relative path is empty (equals the root), starts with `..`
+ * (an upward escape or sibling-prefix attack), or is absolute (cross-drive on Windows). The
+ * caller computes `rel` — lexically or via realpath — so this predicate stays agnostic to how
+ * resolution happened and the two guards keep their distinct inputs while sharing one decision.
+ *
+ * NOT for `cleanEmptyParents` or the import-source-outside check: those answer the opposite
+ * (must-be-OUTSIDE) question with a different predicate — folding them in would be a wrong-merge.
+ */
+function isOutsideRoot(rel: string): boolean {
+  return rel === '' || rel.startsWith('..') || isAbsolute(rel);
+}
+
+/**
  * Throw `PathOutsideLibraryError` unless `bookPath` is a true descendant of `libraryRoot`.
  * Rejects equality, `..` escapes, sibling-prefix attacks, and (on Windows) cross-drive paths.
  */
@@ -27,7 +42,7 @@ export function assertPathInsideLibrary(bookPath: string, libraryRoot: string): 
   const normalizedRoot = normalize(resolve(libraryRoot));
   const normalizedBook = normalize(resolve(bookPath));
   const rel = relative(normalizedRoot, normalizedBook);
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+  if (isOutsideRoot(rel)) {
     throw new PathOutsideLibraryError(bookPath, libraryRoot);
   }
 }
@@ -66,7 +81,7 @@ export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot:
   }
 
   const rel = relative(realRoot, realBook);
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+  if (isOutsideRoot(rel)) {
     throw new PathOutsideLibraryError(bookPath, libraryRoot);
   }
 }
