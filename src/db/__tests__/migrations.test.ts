@@ -83,72 +83,14 @@ describe('drizzle baseline migration', () => {
     // The migrator records what it applied; the baseline must be present.
     expect(names.has('__drizzle_migrations')).toBe(true);
 
-    // Migration 0001 (#1303) drops the dead `suggestions.snooze_until` column.
-    // Pin the drop: assert the column is absent after running the production
-    // drizzle/ folder so a re-add (or a snapshot regression that regenerates it)
-    // fails this suite. A survivor column (`dismissed_at`) anchors the assertion
-    // so a typo'd table name can't make it pass vacuously.
+    // The flattened baseline never creates `suggestions.snooze_until` (a dead
+    // column that pre-flatten history added then dropped). Pin its absence so a
+    // schema regression that re-adds it fails this suite. A survivor column
+    // (`dismissed_at`) anchors the assertion so a typo'd table name can't make
+    // it pass vacuously.
     const suggestionColumns = await columnNames(dbPath, 'suggestions');
-    expect(suggestionColumns.has('snooze_until'), 'suggestions.snooze_until must stay dropped by migration 0001').toBe(false);
+    expect(suggestionColumns.has('snooze_until'), 'suggestions.snooze_until must not exist in the baseline schema').toBe(false);
     expect(suggestionColumns.has('dismissed_at'), 'expected survivor column suggestions.dismissed_at').toBe(true);
-  });
-
-  // #1445 — the backfill (migration 0003) must reproduce the exact inverse of
-  // deriveDisplayStatus for every legacy `status` value. Drive the real backfill
-  // SQL against a seeded post-0002 table shape and assert the resulting tuple.
-  it('0003 backfill maps every legacy status to the correct (client_status, pipeline_stage) tuple', async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-backfill-test-'));
-    const dbPath = join(tmpDir, 'test.db');
-
-    // The AC mapping table — hardcoded here so it is an independent regression
-    // guard, not a re-derivation of the production helper.
-    const EXPECTED: Record<string, { client: string; pipeline: string }> = {
-      queued: { client: 'queued', pipeline: 'idle' },
-      downloading: { client: 'downloading', pipeline: 'idle' },
-      paused: { client: 'paused', pipeline: 'idle' },
-      completed: { client: 'completed', pipeline: 'idle' },
-      failed: { client: 'failed', pipeline: 'idle' },
-      checking: { client: 'completed', pipeline: 'checking' },
-      pending_review: { client: 'completed', pipeline: 'pending_review' },
-      importing: { client: 'completed', pipeline: 'importing' },
-      imported: { client: 'completed', pipeline: 'imported' },
-    };
-
-    const client = createClient({ url: `file:${dbPath}` });
-    try {
-      // Reproduce the post-0002 table shape: legacy `status` plus the two new
-      // axis columns with their migration-0002 defaults.
-      await client.execute(
-        `CREATE TABLE downloads (
-           id INTEGER PRIMARY KEY,
-           status TEXT NOT NULL,
-           client_status TEXT NOT NULL DEFAULT 'queued',
-           pipeline_stage TEXT NOT NULL DEFAULT 'idle'
-         )`,
-      );
-      const legacyValues = Object.keys(EXPECTED);
-      for (let i = 0; i < legacyValues.length; i++) {
-        await client.execute({
-          sql: 'INSERT INTO downloads (id, status) VALUES (?, ?)',
-          args: [i + 1, legacyValues[i]!],
-        });
-      }
-
-      // Execute the real backfill SQL, statement by statement.
-      const sql = readFileSync(join(PROD_DRIZZLE, '0003_backfill_download_status_axes.sql'), 'utf-8');
-      for (const stmt of sql.split('--> statement-breakpoint')) {
-        const trimmed = stmt.replace(/^\s*--.*$/gm, '').trim();
-        if (trimmed) await client.execute(trimmed);
-      }
-
-      const rows = await client.execute('SELECT status, client_status, pipeline_stage FROM downloads');
-      for (const row of rows.rows) {
-        const legacy = row.status as string;
-        expect({ client: row.client_status, pipeline: row.pipeline_stage }).toEqual(EXPECTED[legacy]);
-      }
-    } finally {
-      client.close();
-    }
   });
 
   it('is idempotent — re-running the migrator is a no-op', async () => {
@@ -181,93 +123,6 @@ describe('drizzle baseline migration', () => {
       expect(Number(applied.rows[0]!.count)).toBe(journal.entries.length);
     } finally {
       client.close();
-    }
-  });
-});
-
-// Apply a single production migration file's statements directly (no journal
-// bookkeeping), so a test can stop *before* a given migration, seed legacy rows,
-// then apply just that migration the way a real upgrade would.
-async function applyMigrationRaw(dbPath: string, fileName: string): Promise<void> {
-  const sql = readFileSync(join(PROD_DRIZZLE, fileName), 'utf-8');
-  const statements = sql
-    .split('--> statement-breakpoint')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  const client = createClient({ url: `file:${dbPath}` });
-  try {
-    for (const statement of statements) {
-      await client.execute(statement);
-    }
-  } finally {
-    client.close();
-  }
-}
-
-// Regression guard for #1443 / F1: the baseline suite above only ever applies
-// migrations to an empty database, so it never exercised the upgrade path where
-// the five tables already hold rows. SQLite rejects `ADD <col> NOT NULL` on a
-// populated table without a non-null default, and a constant default would
-// collide with the new UNIQUE index — 0002 must add nullable, backfill prefixed
-// random ids, then enforce uniqueness.
-describe('migration 0005 — publicId backfill on populated tables (#1443)', () => {
-  let tmpDir: string;
-
-  afterEach(() => {
-    try {
-      rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // Windows: libsql file handles may linger briefly after close()
-    }
-  });
-
-  it('adds non-null prefixed publicId to pre-existing rows without violating uniqueness', async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-0002-test-'));
-    const dbPath = join(tmpDir, 'test.db');
-
-    // Reproduce an existing install: apply every migration BEFORE 0002, then seed
-    // rows the way a real upgrade would find them — without a publicId column yet.
-    await applyMigrationRaw(dbPath, '0000_perpetual_supernaut.sql');
-    await applyMigrationRaw(dbPath, '0001_magical_ronan.sql');
-
-    const seed = createClient({ url: `file:${dbPath}` });
-    try {
-      // Two authors prove the backfill produces distinct values (a constant
-      // default would fail the UNIQUE index).
-      await seed.execute("INSERT INTO authors (name, slug) VALUES ('A1', 'a1')");
-      await seed.execute("INSERT INTO authors (name, slug) VALUES ('A2', 'a2')");
-      await seed.execute("INSERT INTO books (title) VALUES ('B1')");
-      await seed.execute("INSERT INTO downloads (title) VALUES ('D1')");
-      await seed.execute("INSERT INTO narrators (name, slug) VALUES ('N1', 'n1')");
-      await seed.execute("INSERT INTO series (name, normalized_name) VALUES ('S1', 's1')");
-    } finally {
-      seed.close();
-    }
-
-    // The upgrade step under test — must not throw "Cannot add a NOT NULL column".
-    await expect(applyMigrationRaw(dbPath, '0005_third_iron_monger.sql')).resolves.not.toThrow();
-
-    const verify = createClient({ url: `file:${dbPath}` });
-    try {
-      const prefixes: Array<[string, string]> = [
-        ['books', 'bk_'],
-        ['downloads', 'dl_'],
-        ['narrators', 'nr_'],
-        ['series', 'sr_'],
-      ];
-      for (const [table, prefix] of prefixes) {
-        const r = await verify.execute(`SELECT public_id FROM ${table}`);
-        const id = r.rows[0]!.public_id as string | null;
-        expect(id, `${table}.public_id must be backfilled`).not.toBeNull();
-        expect(id!.startsWith(prefix), `${table}.public_id must start with ${prefix}`).toBe(true);
-      }
-      // Both seeded authors get a distinct, non-null au_ id.
-      const authorRows = await verify.execute('SELECT public_id FROM authors ORDER BY id');
-      const authorIds = authorRows.rows.map((row) => row.public_id as string | null);
-      expect(authorIds.every((id) => id !== null && id.startsWith('au_'))).toBe(true);
-      expect(new Set(authorIds).size).toBe(authorIds.length);
-    } finally {
-      verify.close();
     }
   });
 });

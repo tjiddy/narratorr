@@ -5,57 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1780072995413,
-      "tag": "0000_perpetual_supernaut",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1781070935418,
-      "tag": "0001_magical_ronan",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1781344370233,
-      "tag": "0002_dashing_gladiator",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1781344378615,
-      "tag": "0003_backfill_download_status_axes",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1781344418822,
-      "tag": "0004_awesome_epoch",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1781386499497,
-      "tag": "0005_third_iron_monger",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1781491048728,
-      "tag": "0006_lumpy_sunset_bain",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1782086158743,
-      "tag": "0007_ancient_red_wolf",
+      "when": 1782197050209,
+      "tag": "0000_jittery_xorn",
       "breakpoints": true
     }
   ]

@@ -1,5 +1,6 @@
 CREATE TABLE `authors` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`public_id` text NOT NULL,
 	`name` text NOT NULL,
 	`slug` text NOT NULL,
 	`asin` text,
@@ -7,6 +8,7 @@ CREATE TABLE `authors` (
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `authors_public_id_unique` ON `authors` (`public_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `authors_slug_unique` ON `authors` (`slug`);--> statement-breakpoint
 CREATE TABLE `blacklist` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -67,11 +69,10 @@ CREATE TABLE `book_narrators` (
 CREATE INDEX `idx_book_narrators_narrator_id` ON `book_narrators` (`narrator_id`);--> statement-breakpoint
 CREATE TABLE `books` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`public_id` text NOT NULL,
 	`title` text NOT NULL,
 	`description` text,
 	`cover_url` text,
-	`goodreads_id` text,
-	`audible_id` text,
 	`asin` text,
 	`isbn` text,
 	`series_name` text,
@@ -101,10 +102,22 @@ CREATE TABLE `books` (
 	FOREIGN KEY (`import_list_id`) REFERENCES `import_lists`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `books_public_id_unique` ON `books` (`public_id`);--> statement-breakpoint
 CREATE INDEX `idx_books_status` ON `books` (`status`);--> statement-breakpoint
 CREATE INDEX `idx_books_path` ON `books` (`path`);--> statement-breakpoint
 CREATE INDEX `idx_books_enrichment_status` ON `books` (`enrichment_status`);--> statement-breakpoint
 CREATE UNIQUE INDEX `idx_books_asin_unique` ON `books` (`asin`) WHERE asin IS NOT NULL;--> statement-breakpoint
+CREATE TABLE `connectors` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`name` text NOT NULL,
+	`type` text NOT NULL,
+	`enabled` integer DEFAULT true NOT NULL,
+	`settings` text NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_connectors_enabled` ON `connectors` (`enabled`);--> statement-breakpoint
 CREATE TABLE `download_clients` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
@@ -118,6 +131,7 @@ CREATE TABLE `download_clients` (
 CREATE INDEX `idx_download_clients_enabled` ON `download_clients` (`enabled`);--> statement-breakpoint
 CREATE TABLE `downloads` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`public_id` text NOT NULL,
 	`book_id` integer,
 	`indexer_id` integer,
 	`download_client_id` integer,
@@ -127,7 +141,8 @@ CREATE TABLE `downloads` (
 	`download_url` text,
 	`size` integer,
 	`seeders` integer,
-	`status` text DEFAULT 'queued' NOT NULL,
+	`client_status` text DEFAULT 'queued' NOT NULL,
+	`pipeline_stage` text DEFAULT 'idle' NOT NULL,
 	`progress` real DEFAULT 0 NOT NULL,
 	`external_id` text,
 	`error_message` text,
@@ -143,8 +158,9 @@ CREATE TABLE `downloads` (
 	FOREIGN KEY (`download_client_id`) REFERENCES `download_clients`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-CREATE INDEX `idx_downloads_status` ON `downloads` (`status`);--> statement-breakpoint
-CREATE INDEX `idx_downloads_status_completed` ON `downloads` (`status`,`completed_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `downloads_public_id_unique` ON `downloads` (`public_id`);--> statement-breakpoint
+CREATE INDEX `idx_downloads_status` ON `downloads` (`client_status`,`pipeline_stage`);--> statement-breakpoint
+CREATE INDEX `idx_downloads_status_completed` ON `downloads` (`client_status`,`completed_at`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_book_id` ON `downloads` (`book_id`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_pending_cleanup` ON `downloads` (`pending_cleanup`);--> statement-breakpoint
 CREATE TABLE `import_jobs` (
@@ -194,11 +210,13 @@ CREATE TABLE `indexers` (
 CREATE INDEX `idx_indexers_enabled` ON `indexers` (`enabled`);--> statement-breakpoint
 CREATE TABLE `narrators` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`public_id` text NOT NULL,
 	`name` text NOT NULL,
 	`slug` text NOT NULL,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `narrators_public_id_unique` ON `narrators` (`public_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `narrators_slug_unique` ON `narrators` (`slug`);--> statement-breakpoint
 CREATE TABLE `notifiers` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -224,6 +242,7 @@ CREATE TABLE `remote_path_mappings` (
 CREATE INDEX `idx_remote_path_mappings_client` ON `remote_path_mappings` (`download_client_id`);--> statement-breakpoint
 CREATE TABLE `series` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`public_id` text NOT NULL,
 	`hardcover_series_id` integer,
 	`name` text NOT NULL,
 	`normalized_name` text NOT NULL,
@@ -235,6 +254,7 @@ CREATE TABLE `series` (
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `series_public_id_unique` ON `series` (`public_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `idx_series_hardcover_series_id_unique` ON `series` (`hardcover_series_id`) WHERE hardcover_series_id IS NOT NULL;--> statement-breakpoint
 CREATE INDEX `idx_series_normalized_name` ON `series` (`normalized_name`);--> statement-breakpoint
 CREATE TABLE `series_members` (
@@ -290,7 +310,6 @@ CREATE TABLE `suggestions` (
 	`status` text DEFAULT 'pending' NOT NULL,
 	`refreshed_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`dismissed_at` integer,
-	`snooze_until` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
