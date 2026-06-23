@@ -278,6 +278,24 @@ function setupMergeFiles(durations: number[] = [300, 300, 300]) {
   });
 }
 
+/**
+ * Seed a default ffprobe (execFile) result reporting no embedded video/cover stream,
+ * so the convert path's cover-art detection (detectCoverArtSource → execFileAsync)
+ * resolves instead of hanging on an unmocked callback. Cover-art tests override this
+ * with mockExecFileWithStreams(...). Convert-path tests that don't go through
+ * setupConvertFile()/setupMergeFiles() (which seed their own execFile impl) must call
+ * this, or they stay order-coupled on whatever execFile impl leaked through clearAllMocks.
+ */
+function seedNoCoverFfprobe() {
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+    if (typeof cb === 'function') {
+      cb(null, { stdout: 'audio\n', stderr: '' });
+    }
+    return {} as never;
+  });
+}
+
 /** Setup helpers for convert path tests. */
 function setupConvertFile() {
   mockReaddir.mockResolvedValue([
@@ -289,16 +307,7 @@ function setupConvertFile() {
   mockReadChapterSources.mockResolvedValue([
     { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
   ]);
-  // Seed a default ffprobe result (no embedded video/cover stream) so the convert
-  // path's cover-art detection (detectCoverArtSource → execFileAsync) resolves and
-  // doesn't hang. Cover-art tests override this with mockExecFileWithStreams(...).
-  mockExecFile.mockImplementation((...args: unknown[]) => {
-    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
-    if (typeof cb === 'function') {
-      cb(null, { stdout: 'audio\n', stderr: '' });
-    }
-    return {} as never;
-  });
+  seedNoCoverFfprobe();
 }
 
 describe('processAudioFiles', () => {
@@ -320,6 +329,7 @@ describe('processAudioFiles', () => {
     mockReadChapterSources.mockResolvedValue([
       { filePath: join('/lib/book', 'book.m4b'), title: 'Ch 1', trackNumber: 1 },
     ]);
+    seedNoCoverFfprobe();
     mockSpawnSuccess();
 
     const config: ProcessingConfig = { ...defaultConfig, outputFormat: 'mp3' };
@@ -499,6 +509,7 @@ describe('processAudioFiles', () => {
       .mockReturnValueOnce('Introduction')
       .mockReturnValueOnce('The Journey');
 
+    seedNoCoverFfprobe();
     // spawn called once per file (2 convert calls)
     let spawnCallCount = 0;
     mockSpawn.mockImplementation(() => {
@@ -558,6 +569,7 @@ describe('processAudioFiles', () => {
       .mockReturnValueOnce('Introduction')
       .mockReturnValueOnce('The Journey');
 
+    seedNoCoverFfprobe();
     mockSpawn.mockImplementation(() => {
       const child = new MockChildProcess();
       process.nextTick(() => child.emit('close', 0));
@@ -595,6 +607,7 @@ describe('processAudioFiles', () => {
       .mockReturnValueOnce('Ch A')
       .mockReturnValueOnce('Ch B');
 
+    seedNoCoverFfprobe();
     mockSpawn.mockImplementation(() => {
       const child = new MockChildProcess();
       process.nextTick(() => child.emit('close', 0));
@@ -640,6 +653,7 @@ describe('processAudioFiles', () => {
       .mockReturnValueOnce('D2T1')
       .mockReturnValueOnce('D2T2');
 
+    seedNoCoverFfprobe();
     mockSpawn.mockImplementation(() => {
       const child = new MockChildProcess();
       process.nextTick(() => child.emit('close', 0));
