@@ -34,6 +34,14 @@ export default defineConfig({
         test: {
           name: 'server',
           environment: 'node',
+          // Server integration tests build a full Fastify app (swagger + route
+          // registration + Zod compilers) in beforeAll. Under the full suite's
+          // parallelism the CPU saturates and that setup can exceed the 10s default
+          // hookTimeout, surfacing as an intermittent beforeAll failure (observed on
+          // the v1 openapi spec suite) that passes in isolation. Give legitimately-
+          // heavy setup headroom — a genuine hang still fails, just later.
+          testTimeout: 15000,
+          hookTimeout: 30000,
           include: [
             'src/server/**/*.test.ts',
             'src/shared/**/*.test.ts',
