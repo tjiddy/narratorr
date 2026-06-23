@@ -1104,4 +1104,136 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
   });
 });
 
+// The nonfatal source-cleanup blocks were consolidated into one shared helper
+// (`cleanupSourceManagedFilesNonfatal`, #1605). The helper's whole point is to preserve each call
+// site's distinct, observable log behavior via its `context` — single-source success at `info`,
+// disc success at `debug`, and the two site-specific warn-on-failure messages — so these pin those
+// strings/levels directly (the behavior-preservation contract the consolidation must not break).
+describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#1605)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+  let log: FastifyBaseLogger;
+
+  const eacces = (): NodeJS.ErrnoException => Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log,
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
+
+  beforeEach(async () => {
+    fsMocks.rm.mockReset();
+    fsMocks.cp.mockReset();
+    fsMocks.readdir.mockReset();
+    fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+    fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+    fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
+
+    log = createMockLogger();
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1605-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsMocks.real.rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('single-source success logs at `info` with the single-source message', async () => {
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ source, deleted: expect.any(Number), preservedForeign: expect.any(Number) }),
+      'Source managed files removed after move (foreign files preserved)',
+    );
+  });
+
+  it('single-source cleanup failure logs the single-source warn message and does not fail the import', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    // Post-commit (after the staged swap puts new.mp3 in the target), the source-cleanup readdir
+    // rejects EACCES — a non-ENOENT error the deletion helper does NOT swallow, so it throws into
+    // the consolidated helper's catch. Pre-swap reads pass through.
+    fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (String(p) === source && existsSync(join(target, 'new.mp3'))) throw eacces();
+      return fsMocks.real.readdir(p, opts);
+    });
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ source, error: expect.anything() }),
+      'Failed to clean source after committed move — import already succeeded, continuing',
+    );
+  });
+
+  it('disc-member success logs at `debug` with the disc-source message', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ source: disc1, deleted: expect.any(Number), preservedForeign: expect.any(Number) }),
+      'Disc source managed files removed after move',
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ source: disc2 }),
+      'Disc source managed files removed after move',
+    );
+  });
+
+  it('disc-member cleanup failure logs the disc-source warn message per member without failing the import', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+
+    // Post-commit (old.m4b replaced), disc-1 cleanup readdir EACCES'es; disc 2 still sweeps.
+    fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
+      if (String(p) === disc1 && !existsSync(join(target, 'old.m4b'))) throw eacces();
+      return fsMocks.real.readdir(p, opts);
+    });
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ source: disc1, error: expect.anything() }),
+      'Failed to clean disc source after committed move — import already succeeded, continuing',
+    );
+  });
+});
+
 
