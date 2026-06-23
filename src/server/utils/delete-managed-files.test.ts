@@ -148,7 +148,10 @@ describe('deleteManagedBookFiles', () => {
       await writeFile(join(external, 'book.epub'), 'b');
       // An in-library book row whose path is a symlink resolving OUTSIDE the library.
       const link = join(root, 'EscapeBook');
-      await symlink(external, link, 'dir');
+      // Windows can't create 'dir' symlinks without elevation/Developer Mode (EPERM);
+      // junctions need no privilege and Node reports them as isSymbolicLink()===true /
+      // isDirectory()===false with realpath resolving to the target — same semantics here.
+      await symlink(external, link, process.platform === 'win32' ? 'junction' : 'dir');
 
       await expect(deleteManagedBookFiles(link, root, makeLog())).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
@@ -169,7 +172,8 @@ describe('deleteManagedBookFiles', () => {
       await mkdir(book, { recursive: true });
       await writeFile(join(book, 'real.mp3'), 'r'); // real managed file at root
       // A disc subfolder that is actually a symlink pointing outside the library.
-      await symlink(external, join(book, 'Disc 1'), 'dir');
+      // Junction on Windows (no elevation needed); reads as a non-directory Dirent like a 'dir' symlink.
+      await symlink(external, join(book, 'Disc 1'), process.platform === 'win32' ? 'junction' : 'dir');
 
       const result = await deleteManagedBookFiles(book, root, makeLog());
 
