@@ -191,9 +191,15 @@ describe('BookRejectionService', () => {
       // Does not throw — the locked managed file is nonfatal.
       await service.rejectAsWrongRelease(42);
 
-      // Diagnostics carry bookId + the failed count (the catch-level warn no longer fires for this path).
+      // Diagnostics carry bookId + the failed count + the failed paths (#1598 Gap 3), so an operator
+      // can find the orphaned managed audio after the DB path is nulled (the catch-level warn no
+      // longer fires for this path).
       expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 42, failed: 1 }),
+        expect.objectContaining({
+          bookId: 42,
+          failed: 1,
+          failedPaths: ['/audiobooks/Author/Book/locked.mp3'],
+        }),
         expect.stringContaining('Wrong release'),
       );
       // Rejection still completes: DB reset ran and the event was recorded.
@@ -204,7 +210,7 @@ describe('BookRejectionService', () => {
     // #1592 part A — foreign-file-preservation contract at the rejection site (the one destructive,
     // no-opt-in delete). A bundled foreign file in the result must not abort or alter the rejection flow.
     it('completes rejection when deleteBookFiles preserves a foreign file', async () => {
-      const { service, bookService, db, eventHistory } = createService();
+      const { service, bookService, db, log, eventHistory } = createService();
       (bookService.getById as Mock).mockResolvedValue(importedBook);
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
@@ -221,6 +227,11 @@ describe('BookRejectionService', () => {
       expect(setFn).toHaveBeenCalledWith(expect.objectContaining({ status: 'wanted', path: null }));
       // wrong_release event recorded.
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'wrong_release' }));
+      // #1598 Gap 3: with no failed managed deletes, the failed-files diagnostic warn does NOT fire.
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('some managed files could not be deleted'),
+      );
     });
 
     // #1592 part A — real end-to-end proof: drive a true rejectAsWrongRelease against a real library

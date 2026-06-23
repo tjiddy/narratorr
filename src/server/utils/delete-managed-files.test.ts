@@ -188,6 +188,31 @@ describe('deleteManagedBookFiles', () => {
     }
   }));
 
+  it('classifies a top-level directory symlink as a link — does not follow it or delete its target (#1598)', withTmp(async (root) => {
+    const external = mkdtempSync(join(tmpdir(), 'narratorr-1598-ext-'));
+    try {
+      await writeFile(join(external, 'track.mp3'), 'a');   // managed audio under the symlink target
+      await writeFile(join(external, 'book.epub'), 'b');    // foreign file under the symlink target
+      // The unguarded move-cleanup source: `item.path` is itself a top-level directory symlink/junction.
+      const link = join(root, 'LinkedSource');
+      await symlink(external, link, process.platform === 'win32' ? 'junction' : 'dir');
+
+      const result = await deleteManagedBookFiles(link, root, makeLog(), { assertInsideLibrary: false });
+
+      // The symlink is preserved as a link; the helper never recursed into the target.
+      expect(result.deletedManaged).toEqual([]);
+      expect(base(result.preservedForeign)).toEqual(['LinkedSource']);
+      expect(result.failedManaged).toEqual([]);
+      // The target's files — managed AND foreign — are untouched (no traversal-delete).
+      expect(await pathExists(join(external, 'track.mp3'))).toBe(true);
+      expect(await pathExists(join(external, 'book.epub'))).toBe(true);
+      // The link itself is left in place (lstat path → never rm'd).
+      expect(await pathExists(link)).toBe(true);
+    } finally {
+      await rm(external, { recursive: true, force: true });
+    }
+  }));
+
   it('does not throw for an external source path in non-containment mode but only deletes managed files', withTmp(async (root) => {
     // A sibling directory OUTSIDE the library root.
     const external = join(root, '..', `narratorr-1589-ext-${process.pid}`);

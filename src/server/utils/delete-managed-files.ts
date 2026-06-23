@@ -1,4 +1,4 @@
-import { readdir, rm, rmdir, stat } from 'node:fs/promises';
+import { readdir, rm, rmdir, lstat } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -139,14 +139,23 @@ export async function deleteManagedBookFiles(
 
   let stats;
   try {
-    stats = await stat(bookPath);
+    // `lstat` (NOT `stat`): the top-level `bookPath` must be classified WITHOUT following a symlink,
+    // mirroring how symlinked *children* are left foreign via `Dirent.isSymbolicLink()` in `sweepDir`
+    // (#1591). A top-level directory symlink whose target holds managed audio must never be traversed
+    // and deleted through — that delete-through-symlink data-loss path (#1598) is closed defensively
+    // for EVERY caller, guarded or not.
+    stats = await lstat(bookPath);
   } catch (error: unknown) {
     // A missing path is a no-op (matches the prior `force: true` ENOENT suppression).
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return result;
     throw error;
   }
 
-  if (stats.isDirectory()) {
+  if (stats.isSymbolicLink()) {
+    // A top-level symlink (#1598): it is not a managed file, so preserve it and do NOT recurse into
+    // or delete the link's target — `lstat` above kept us from following it.
+    result.preservedForeign.push(bookPath);
+  } else if (stats.isDirectory()) {
     await sweepDir(bookPath, bookPath, result, log);
   } else if (isManagedFile(basename(bookPath), true)) {
     await deleteOneManaged(bookPath, result, log);

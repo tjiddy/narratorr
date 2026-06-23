@@ -4,7 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // delete-managed-files.test.ts; this file injects rm failures the real fs can't reliably produce
 // when the test runner is root). Defaults: a directory stat, a flat readdir, rm/rmdir resolve.
 vi.mock('node:fs/promises', () => ({
-  stat: vi.fn().mockResolvedValue({ isDirectory: () => true, isFile: () => false }),
+  // #1598: the helper now classifies the top-level bookPath via `lstat` (not `stat`) so a symlinked
+  // source is never followed. Default it to a non-symlink directory; `isSymbolicLink: () => false`
+  // keeps these injection cases on the directory-sweep path.
+  lstat: vi.fn().mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false }),
   readdir: vi.fn().mockResolvedValue([]),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
