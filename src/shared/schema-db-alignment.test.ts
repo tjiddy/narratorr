@@ -11,9 +11,11 @@ import { INDEXER_REGISTRY, INDEXER_TYPES } from './indexer-registry.js';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-client-registry.js';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from './import-list-registry.js';
-import { blacklistReasonSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
+import { blacklistReasonSchema, blacklistTypeSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
 import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents } from '../db/schema.js';
+import { connectorTypeSchema } from './schemas/connector.js';
+import { importJobTypeSchema, importJobStatusSchema, importJobPhaseSchema } from './schemas/import-job.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -108,6 +110,29 @@ describe('schema-DB alignment', () => {
 
     it('bookEvents.eventType DB column enum matches eventTypeSchema.options', () => {
       expect([...bookEvents.eventType.enumValues].sort()).toEqual([...eventTypeSchema.options].sort());
+    });
+
+    it('connectors.type DB column enum matches connectorTypeSchema.options', () => {
+      expect([...connectors.type.enumValues].sort()).toEqual([...connectorTypeSchema.options].sort());
+    });
+
+    it('importJobs.type DB column enum matches importJobTypeSchema.options', () => {
+      expect([...importJobs.type.enumValues].sort()).toEqual([...importJobTypeSchema.options].sort());
+    });
+
+    it('importJobs.status DB column enum matches importJobStatusSchema.options', () => {
+      expect([...importJobs.status.enumValues].sort()).toEqual([...importJobStatusSchema.options].sort());
+    });
+
+    it('importJobs.phase DB column enum matches importJobPhaseSchema.options', () => {
+      expect([...importJobs.phase.enumValues].sort()).toEqual([...importJobPhaseSchema.options].sort());
+    });
+
+    // blacklist.blacklistType inlines its enum literal (schema.ts) rather than
+    // importing blacklistTypeSchema, so the two can genuinely drift — this is the
+    // only guard. (SQLite text-enums emit no DB CHECK: drizzle-sqlite-text-enum-no-db-check.)
+    it('blacklist.blacklistType DB column enum matches blacklistTypeSchema.options', () => {
+      expect([...blacklist.blacklistType.enumValues].sort()).toEqual([...blacklistTypeSchema.options].sort());
     });
   });
 
