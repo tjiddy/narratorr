@@ -5,6 +5,10 @@ import type { FastifyBaseLogger } from 'fastify';
 // Mock dependencies before imports
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
+  // #1598: deleteManagedBookFiles classifies the top-level bookPath via `lstat` (not `stat`) so a
+  // symlinked source is never followed. The cleanupOldBookPath / handleImportFailure suites configure
+  // it per-describe to report a non-symlink directory (the symlink branch is covered in delete-managed-files.test.ts).
+  lstat: vi.fn(),
   readdir: vi.fn(),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
@@ -38,7 +42,7 @@ vi.mock('./import-helpers.js', async (importOriginal) => {
   };
 });
 
-import { stat, rm, rmdir, statfs, readdir, mkdir, rename, writeFile, open, realpath } from 'node:fs/promises';
+import { stat, lstat, rm, rmdir, statfs, readdir, mkdir, rename, writeFile, open, realpath } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { getPathSize, getAudioPathSize, ContentFailureError } from './import-helpers.js';
@@ -505,6 +509,10 @@ describe('cleanupOldBookPath', () => {
   beforeEach(() => {
     vi.mocked(stat).mockReset();
     vi.mocked(stat).mockResolvedValue({ isDirectory: () => true, isFile: () => false } as never);
+    // #1598: the helper classifies the top-level bookPath via `lstat` — a non-symlink directory keeps
+    // the old-path cleanup on the directory-sweep path.
+    vi.mocked(lstat).mockReset();
+    vi.mocked(lstat).mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false } as never);
     vi.mocked(readdir).mockReset();
     vi.mocked(readdir).mockResolvedValue([
       { name: 'a.mp3', isFile: () => true, isDirectory: () => false },
@@ -1209,6 +1217,13 @@ describe('handleImportFailure', () => {
       (String(p).endsWith('.import-commit-pending')
         ? Promise.reject(enoent())
         : ({ isDirectory: () => true, isFile: () => false } as never)));
+    // #1598: the helper classifies the top-level targetPath via `lstat` — mirror the marker-aware
+    // stat default and report a non-symlink directory so the managed-file sweep enumerates the target.
+    vi.mocked(lstat).mockReset();
+    vi.mocked(lstat).mockImplementation(async (p: unknown) =>
+      (String(p).endsWith('.import-commit-pending')
+        ? Promise.reject(enoent())
+        : ({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false } as never)));
     // Default to an EMPTY target dir; tests asserting managed-file removal set their own readdir.
     vi.mocked(readdir).mockReset();
     vi.mocked(readdir).mockResolvedValue([] as never);

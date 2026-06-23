@@ -2,7 +2,7 @@
  * Bulk import pipeline — accepts user-confirmed items and queues them for the
  * import worker. Extracted for consistency with quality-gate helpers.
  */
-import { mkdir, cp, rm, stat } from 'node:fs/promises';
+import { mkdir, cp, stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 import { streamCopyWithProgress } from './streaming-copy.helpers.js';
 import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
@@ -161,8 +161,19 @@ export async function copyToLibrary(
   assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
-    await rm(item.path, { recursive: true });
-    log.info({ source: item.path }, 'Source directory removed after move');
+    // Empty-target move cleanup (#1598): route source removal through the managed-file helper
+    // instead of a blanket `rm(item.path, { recursive: true })`, so a co-located foreign file
+    // (e.g. a bundled .epub/.pdf) is preserved (#1589) AND a top-level symlinked source is not
+    // followed (inherits the helper's #1598 `lstat` hardening). The source is OUTSIDE the library
+    // root → containment guard opted out; classification still protects foreign files. The copy
+    // above is already verified, so — matching the populated-target cleanup (:140-145) — wrap
+    // nonfatal: a cleanup throw (ENOENT race, EACCES/EPERM/EBUSY) must not fail the import. Log + continue.
+    try {
+      const cleanup = await deleteManagedBookFiles(item.path, librarySettings.path, log, { assertInsideLibrary: false });
+      log.info({ source: item.path, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Source managed files removed after move (foreign files preserved)');
+    } catch (cleanupError: unknown) {
+      log.warn({ error: serializeError(cleanupError), source: item.path }, 'Failed to clean source after committed move — import already succeeded, continuing');
+    }
   }
 
   return targetPath;
@@ -237,10 +248,21 @@ async function copyDiscGroupToLibrary(
   assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
+    // Empty-target multi-disc move cleanup (#1598): route each member through the managed-file
+    // helper instead of a blanket `rm(memberPath, { recursive: true })`, mirroring the single-source
+    // empty-target path above so the two stay consistent. Preserves co-located foreign files (#1589)
+    // and is symlink-safe (#1598). Sources are OUTSIDE the library root → containment opted out.
+    // Wrapped per-member nonfatal (matching the populated-target multi-disc cleanup, :213-223): one
+    // failing disc must not fail the committed import or skip the remaining members.
     for (const memberPath of memberPaths) {
-      await rm(memberPath, { recursive: true });
+      try {
+        const cleanup = await deleteManagedBookFiles(memberPath, libraryRoot, log, { assertInsideLibrary: false });
+        log.debug({ source: memberPath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, 'Disc source managed files removed after move');
+      } catch (cleanupError: unknown) {
+        log.warn({ error: serializeError(cleanupError), source: memberPath }, 'Failed to clean disc source after committed move — import already succeeded, continuing');
+      }
     }
-    log.info({ discMembers: memberPaths.length }, 'Source disc folders removed after move');
+    log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
   }
 
   return targetPath;

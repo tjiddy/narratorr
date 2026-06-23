@@ -19,6 +19,13 @@ vi.mock('node:fs/promises', () => ({
     String(p).endsWith('.import-commit-pending')
       ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
       : { isFile: () => false, isDirectory: () => true, size: 1024 }),
+  // #1598: deleteManagedBookFiles classifies the top-level bookPath via `lstat` (not `stat`) so a
+  // symlinked source is never followed. Mirror the marker-aware stat impl and report a non-symlink
+  // directory so the cleanup flows here stay on the directory-sweep path.
+  lstat: vi.fn().mockImplementation(async (p: unknown) =>
+    String(p).endsWith('.import-commit-pending')
+      ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+      : { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),

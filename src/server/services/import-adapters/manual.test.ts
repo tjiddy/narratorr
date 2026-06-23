@@ -55,6 +55,15 @@ vi.mock('../../utils/safe-emit.js', () => ({
   safeEmit: vi.fn(),
 }));
 
+// #1598: empty-target move cleanup now routes through deleteManagedBookFiles (preserves foreign
+// files + symlink-safe) instead of a blanket fs.rm. Mock it here so the adapter↔helper move-cleanup
+// seam is asserted by the helper invocation — the real helper would lstat these fake paths to ENOENT.
+// Its foreign-preservation/symlink behavior is covered against real tmpdirs in delete-managed-files.test.ts
+// and import-orchestration.helpers.test.ts.
+vi.mock('../../utils/delete-managed-files.js', () => ({
+  deleteManagedBookFiles: vi.fn().mockResolvedValue({ deletedManaged: [], preservedForeign: [], failedManaged: [] }),
+}));
+
 function createMockLogger(): FastifyBaseLogger {
   return {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -263,8 +272,8 @@ describe('ManualImportAdapter', () => {
       );
     });
 
-    it('mode=move: calls fs.rm on source after copy verification', async () => {
-      const fs = await import('node:fs/promises');
+    it('mode=move: routes source cleanup through deleteManagedBookFiles after copy verification (#1598)', async () => {
+      const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'move',
@@ -272,7 +281,10 @@ describe('ManualImportAdapter', () => {
       const job = makeJob({ metadata: JSON.stringify(payload) });
       await adapter.process(job, ctx);
 
-      expect(vi.mocked(fs.rm)).toHaveBeenCalledWith('/audiobooks/Author/Title', { recursive: true });
+      // #1598: managed-file cleanup (foreign-preserving, symlink-safe) replaces the blanket fs.rm.
+      expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
+        '/audiobooks/Author/Title', expect.any(String), expect.anything(), { assertInsideLibrary: false },
+      );
     });
 
     it('pointer mode: metadata mode is undefined — skips copy phase and streamCopyWithProgress', async () => {
@@ -364,9 +376,9 @@ describe('ManualImportAdapter', () => {
         ]);
       });
 
-      it('mode=move: removes every reconstructed member folder after copy', async () => {
+      it('mode=move: cleans every reconstructed member folder via deleteManagedBookFiles after copy (#1598)', async () => {
         await mockDiscSiblings();
-        const fs = await import('node:fs/promises');
+        const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
         const { getAudioPathSize } = await import('../../utils/import-helpers.js');
         vi.mocked(getAudioPathSize)
           .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
@@ -377,8 +389,11 @@ describe('ManualImportAdapter', () => {
         };
         await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
 
+        // #1598: each member is swept by the managed-file helper (foreign-preserving, symlink-safe).
         for (const member of MEMBER_PATHS) {
-          expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(member, { recursive: true });
+          expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
+            member, expect.any(String), expect.anything(), { assertInsideLibrary: false },
+          );
         }
         // AC2: move-mode runs the same full-member copy verification before the rm sweep —
         // every member size is read, then the target, not item.path alone.
@@ -562,7 +577,6 @@ describe('ManualImportAdapter', () => {
       });
 
       it('mode=move + file-path payload: persists target dir + size and removes the source file', async () => {
-        const fs = await import('node:fs/promises');
         const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
         const { getAudioStats } = await import('../library-scan.helpers.js');
         vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 33_333 });
@@ -583,10 +597,10 @@ describe('ManualImportAdapter', () => {
           expect.any(Function),
         );
 
-        // Move removes the original source file after copy verification
-        expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(
-          '/audiobooks/Doctor Sleep.m4b',
-          { recursive: true },
+        // #1598: move cleans the original source via the managed-file helper after copy verification.
+        const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
+        expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
+          '/audiobooks/Doctor Sleep.m4b', expect.any(String), expect.anything(), { assertInsideLibrary: false },
         );
 
         const persisted = findPathSizeUpdate();

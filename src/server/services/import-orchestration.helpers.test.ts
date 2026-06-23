@@ -11,7 +11,7 @@ import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { ContentFailureError } from '../utils/import-helpers.js';
 import { MarkerPathConflictError } from '../utils/import-staging.js';
-import { mkdir, writeFile, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -977,6 +977,130 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
     await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+  });
+});
+
+describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
+
+  beforeEach(async () => {
+    // Restore the module-level fs wrappers to passthrough (the #1287/#1337 suites mutate them).
+    fsMocks.rm.mockReset();
+    fsMocks.cp.mockReset();
+    fsMocks.readdir.mockReset();
+    fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+    fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+    fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
+
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1598-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsMocks.real.rm(baseDir, { recursive: true, force: true });
+  });
+
+  // Gap 2 — the empty-target move now routes source cleanup through the managed-file helper instead
+  // of a blanket `rm`, so a co-located foreign file survives (the original #1589 scenario, in the
+  // one move branch it never covered).
+  it('preserves a co-located foreign file on an empty-target single-source move', async () => {
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+    await writeFile(join(source, 'bundled.epub'), Buffer.from('EBOOK'));
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    // Empty target → direct-copy fast path copies the whole source tree, so the target holds the
+    // audio (the foreign file is copied verbatim too — pre-existing fast-path behavior, not the fix).
+    expect(await pathExists(join(target, 'new.mp3'))).toBe(true);
+    // The fix: source CLEANUP now preserves the foreign file — audio removed, e-book kept, folder retained.
+    expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
+    expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
+    expect(await pathExists(source)).toBe(true);
+  });
+
+  it('removes the source folder on an empty-target single-source move when only managed files exist', async () => {
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(500, 2));
+
+    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect((await readdir(target)).sort()).toEqual(['a.mp3']);
+    // Only managed files existed → the emptied source folder is removed.
+    expect(await pathExists(source)).toBe(false);
+  });
+
+  it('preserves a co-located foreign file in a disc member on an empty-target multi-disc move', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc1, 'liner-notes.pdf'), Buffer.from('PDF'));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    // Empty target → direct disc-group flatten; both discs flattened into the target.
+    expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    // Disc-1 audio removed but its bundled PDF preserved (folder retained); disc-2 fully removed.
+    expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(false);
+    expect(await pathExists(join(disc1, 'liner-notes.pdf'))).toBe(true);
+    expect(await pathExists(disc2)).toBe(false);
+  });
+
+  // Gap 1 — a top-level symlinked source on a populated-target (staged-swap) move: the import reads
+  // through the link to stage the audio, but the post-commit cleanup must NOT follow the link and
+  // delete the managed audio under its target (the #1591 delete-through-symlink class, in the
+  // unguarded cleanup path #1591 didn't cover).
+  it('does not delete through a top-level symlinked source during populated-target move cleanup', async () => {
+    const external = mkdtempSync(join(tmpdir(), 'narratorr-1598-ext-'));
+    try {
+      await writeFile(join(external, 'new.mp3'), Buffer.alloc(500, 2));
+      await writeFile(join(external, 'bundled.epub'), Buffer.from('EBOOK'));
+      // item.path is a directory symlink/junction to the external source.
+      const linkedSource = join(baseDir, 'downloads', 'linked-release');
+      await symlink(external, linkedSource, process.platform === 'win32' ? 'junction' : 'dir');
+      // Populated target routes through the staged swap.
+      await mkdir(target, { recursive: true });
+      await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+
+      const linkedItem: ImportConfirmItem = { path: linkedSource, title: 'Title', authorName: 'Author' };
+      await expect(copyToLibrary(linkedItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+      // New audio committed over the old edition.
+      expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+      // The symlink target's files — managed AND foreign — survive: cleanup never followed the link.
+      expect(await pathExists(join(external, 'new.mp3'))).toBe(true);
+      expect(await pathExists(join(external, 'bundled.epub'))).toBe(true);
+    } finally {
+      await fsMocks.real.rm(external, { recursive: true, force: true });
+    }
   });
 });
 

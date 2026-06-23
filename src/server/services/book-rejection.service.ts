@@ -87,7 +87,9 @@ export class BookRejectionService {
         // (bookId + count) here — the value is a typed result, not a catch binding, so raw-error-logging
         // does not apply. Nonfatal: the book was already reset to `wanted`/`path: null`, so it re-grabs.
         if (result.failedManaged.length > 0) {
-          this.log.warn({ bookId, failed: result.failedManaged.length }, 'Wrong release: some managed files could not be deleted (continuing)');
+          // Carry the failed paths (#1598 Gap 3), not just the count: an operator needs to know
+          // WHICH managed audio is orphaned after the DB path is nulled, to find/remove it by hand.
+          this.log.warn({ bookId, failed: result.failedManaged.length, failedPaths: result.failedManaged }, 'Wrong release: some managed files could not be deleted (continuing)');
         }
       } catch (error: unknown) {
         if (error instanceof PathOutsideLibraryError) throw error;
