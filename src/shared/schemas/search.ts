@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { protocolSchema } from './download-protocol.js';
 
 // ============================================================================
 // Search schemas
@@ -37,7 +38,7 @@ export const searchQuerySchema = z.object({
 export const grabSchema = z.object({
   downloadUrl: z.string().trim().min(1, 'Download URL is required'),
   title: z.string().trim().min(1, 'Title is required'),
-  protocol: z.enum(['torrent', 'usenet']).default('torrent'),
+  protocol: protocolSchema.default('torrent'),
   bookId: z.number().int().positive().optional(),
   indexerId: z.number().int().positive().optional(),
   size: z.number().int().nonnegative().optional(),

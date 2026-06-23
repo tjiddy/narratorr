@@ -1,4 +1,6 @@
-export type DownloadProtocol = 'torrent' | 'usenet';
+import type { DownloadProtocol } from '../../shared/schemas/download-protocol.js';
+
+export type { DownloadProtocol };
 
 export interface SearchResult {
   title: string;

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { clientStatusSchema, pipelineStageSchema, downloadStatusSchema, type ClientStatus, type PipelineStage } from '../activity.js';
 import { deriveDisplayStatus } from '../../download-status-registry.js';
 import { v1PaginationParamsSchema } from './common.js';
+import { protocolSchema, type DownloadProtocol } from '../download-protocol.js';
 
 // ============================================================================
 // Public API v1 — Downloads / activity (read) (S5 — #1451)
@@ -50,7 +51,7 @@ export const downloadV1Schema = z
     clientStatus: clientStatusSchema,
     pipelineStage: pipelineStageSchema,
     book: downloadV1BookSchema,
-    protocol: z.enum(['torrent', 'usenet']),
+    protocol: protocolSchema,
     progress: z.number(),
     addedAt: z.string().datetime(),
     completedAt: z.string().datetime().nullable(),
@@ -92,7 +93,7 @@ export interface DownloadV1Source {
   title: string;
   clientStatus: ClientStatus;
   pipelineStage: PipelineStage;
-  protocol: 'torrent' | 'usenet';
+  protocol: DownloadProtocol;
   progress: number;
   addedAt: Date;
   completedAt: Date | null;

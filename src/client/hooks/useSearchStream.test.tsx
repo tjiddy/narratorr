@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useSearchStream } from './useSearchStream';
+import type { DownloadProtocol } from '../../core/indexers/types.js';
 
 // Mock api — streams authenticate via a minted stream token (#1453), not the API key.
 vi.mock('@/lib/api', () => ({
@@ -202,7 +203,7 @@ describe('useSearchStream', () => {
     type Fixture = {
       title: string;
       indexer: string;
-      protocol: 'torrent' | 'usenet';
+      protocol: DownloadProtocol;
       infoHash?: string;
       guid?: string;
     };

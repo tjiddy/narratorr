@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { v1ListResponseSchema } from './common.js';
+import { protocolSchema, type DownloadProtocol } from '../download-protocol.js';
 
 // ============================================================================
 // Public API v1 — Action endpoints: search + grab (S6 — #1452)
@@ -43,7 +44,7 @@ export const releaseTokenPayloadSchema = z
   .object({
     downloadUrl: z.string(),
     title: z.string(),
-    protocol: z.enum(['torrent', 'usenet']),
+    protocol: protocolSchema,
     guid: z.string().optional(),
     infoHash: z.string().optional(),
     indexerId: z.number().int().optional(),
@@ -118,7 +119,7 @@ export const releaseV1Schema = z
     title: z.string(),
     author: z.string().nullable(),
     narrator: z.string().nullable(),
-    protocol: z.enum(['torrent', 'usenet']),
+    protocol: protocolSchema,
     size: z.number().nullable(),
     seeders: z.number().nullable(),
     indexer: z.string(),
@@ -164,7 +165,7 @@ export interface ReleaseV1Source {
   title: string;
   author?: string | undefined;
   narrator?: string | undefined;
-  protocol: 'torrent' | 'usenet';
+  protocol: DownloadProtocol;
   downloadUrl?: string | undefined;
   infoHash?: string | undefined;
   guid?: string | undefined;
