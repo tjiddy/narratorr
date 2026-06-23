@@ -283,6 +283,22 @@ function setupConvertFile() {
   mockReaddir.mockResolvedValue([
     { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
   ] as never);
+  // Seed a default single-source result so convert-path tests are self-contained
+  // and don't depend on a mockResolvedValue leaked from an earlier test through
+  // clearAllMocks. Tests needing a different set override this after calling the helper.
+  mockReadChapterSources.mockResolvedValue([
+    { filePath: join('/lib/book', 'book.mp3'), title: 'Ch 1', trackNumber: 1 },
+  ]);
+  // Seed a default ffprobe result (no embedded video/cover stream) so the convert
+  // path's cover-art detection (detectCoverArtSource → execFileAsync) resolves and
+  // doesn't hang. Cover-art tests override this with mockExecFileWithStreams(...).
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+    if (typeof cb === 'function') {
+      cb(null, { stdout: 'audio\n', stderr: '' });
+    }
+    return {} as never;
+  });
 }
 
 describe('processAudioFiles', () => {
