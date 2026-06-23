@@ -67,7 +67,6 @@ type LibraryBooksListQuery = z.infer<typeof libraryBooksListQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 
 import { refreshScanBook } from '../services/refresh-scan.service.js';
-import { analyzeBookAttribution } from '../services/attribution-analysis.service.js';
 
 
 async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
@@ -371,18 +370,6 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     async (request) => {
       const { id } = request.params;
       const result = await refreshScanBook(id, deps.bookService, deps.settingsService, request.log);
-      return result;
-    },
-  );
-
-  // POST /api/books/:id/analyse-attribution — manual earwitness attribution run
-  app.post<{ Params: IdParam }>(
-    '/api/books/:id/analyse-attribution',
-    { schema: { params: idParamSchema } },
-    async (request) => {
-      const { id } = request.params;
-      const result = await analyzeBookAttribution(id, deps.bookService, deps.settingsService, deps.eventHistory, request.log);
-      request.log.info({ id, outcome: result.outcome }, 'earwitness attribution analysis recorded');
       return result;
     },
   );

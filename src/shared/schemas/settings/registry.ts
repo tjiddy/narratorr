@@ -11,7 +11,6 @@ import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
 import { systemSettingsSchema } from './system.js';
 import { discoverySettingsSchema } from './discovery.js';
-import { earwitnessSettingsSchema } from './earwitness.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -97,10 +96,6 @@ export const settingsRegistry = {
   discovery: defineCategory({
     schema: discoverySettingsSchema,
     defaults: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
-  }),
-  earwitness: defineCategory({
-    schema: earwitnessSettingsSchema,
-    defaults: { enabled: false, baseUrl: '', apiKey: '' },
   }),
 };
 

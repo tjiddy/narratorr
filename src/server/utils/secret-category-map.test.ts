@@ -12,10 +12,10 @@ import {
  * #1567 — lockstep guard over the canonical settings-secret category map.
  *
  * Before this, the encrypt/decrypt, mask, and migration lists were three
- * hand-maintained homes that had to agree and had already drifted (`earwitness`
- * was absent from the migration list — see #1526). All three are now derived
- * from `SECRET_CATEGORY_MAP`; these tests fail if a category is added to one
- * derived view without the others, or if the auth carve-out regresses.
+ * hand-maintained homes that had to agree and had already drifted (a category
+ * absent from the migration list while present in encrypt + mask). All three are
+ * now derived from `SECRET_CATEGORY_MAP`; these tests fail if a category is added
+ * to one derived view without the others, or if the auth carve-out regresses.
  */
 
 // Mirror of the route's mask view as a plain category set.
@@ -34,16 +34,9 @@ describe('#1567 settings-secret canonical map', () => {
     });
 
     it('every encrypt-on-write category is also covered by the startup migration', () => {
-      // Regression of the #1526 bug (earwitness absent from migration) fails here.
       for (const key of encryptKeys) {
         expect(migrateKeys.has(key)).toBe(true);
       }
-    });
-
-    it('earwitness is consistently covered across encrypt, mask, and migrate', () => {
-      expect(encryptKeys).toContain('earwitness');
-      expect(maskKeys.has('earwitness')).toBe(true);
-      expect(migrateKeys.has('earwitness')).toBe(true);
     });
   });
 

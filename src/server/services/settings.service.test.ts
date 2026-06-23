@@ -295,64 +295,6 @@ describe('SettingsService', () => {
     });
   });
 
-  // #1526 — earwitness encryption-at-rest. These service-level assertions are the
-  // load-bearing proof that earwitness is in SECRET_CATEGORIES: omitting that map
-  // would store the apiKey in plaintext while the route still masks the response
-  // (a silent at-rest leak). Route tests mock SettingsService and cannot catch it.
-  describe('earwitness.apiKey encryption (#1526)', () => {
-    it('set("earwitness") encrypts apiKey before storing and leaves baseUrl/enabled plaintext', async () => {
-      db.select.mockReturnValue(mockDbChain([])); // no existing row
-      db.insert.mockReturnValue(mockDbChain());
-
-      await service.set('earwitness', { enabled: true, baseUrl: 'https://host:8080', apiKey: 'sk-plain-1234' });
-
-      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = chain.values.mock.calls[0]![0]!.value;
-      expect(isEncrypted(storedValue.apiKey as string)).toBe(true);
-      // baseUrl is NOT a secret — stored verbatim
-      expect(storedValue.baseUrl).toBe('https://host:8080');
-      expect(storedValue.enabled).toBe(true);
-    });
-
-    it('get("earwitness") decrypts the stored apiKey so the attribution client reads plaintext', async () => {
-      const { encrypt } = await import('../utils/secret-codec.js');
-      const encrypted = encrypt('sk-roundtrip-7777', TEST_KEY);
-      db.select.mockReturnValue(mockDbChain([{ key: 'earwitness', value: { enabled: true, baseUrl: 'https://host', apiKey: encrypted } }]));
-
-      const result = await service.get('earwitness');
-
-      expect(result.apiKey).toBe('sk-roundtrip-7777');
-      expect(result.baseUrl).toBe('https://host');
-    });
-
-    it('set("earwitness") with sentinel apiKey preserves the existing ciphertext (not the sentinel literal)', async () => {
-      const { encrypt } = await import('../utils/secret-codec.js');
-      const existingEncrypted = encrypt('sk-existing-9999', TEST_KEY);
-      db.select.mockReturnValue(mockDbChain([{ key: 'earwitness', value: { enabled: true, baseUrl: 'https://host', apiKey: existingEncrypted } }]));
-      db.insert.mockReturnValue(mockDbChain());
-
-      await service.set('earwitness', { enabled: true, baseUrl: 'https://host', apiKey: '********' });
-
-      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = chain.values.mock.calls[0]![0]!.value;
-      expect(storedValue.apiKey).toBe(existingEncrypted);
-    });
-
-    it('set("earwitness") with a new plaintext key replaces the previously-stored ciphertext', async () => {
-      const { encrypt } = await import('../utils/secret-codec.js');
-      const oldEncrypted = encrypt('sk-old', TEST_KEY);
-      db.select.mockReturnValue(mockDbChain([{ key: 'earwitness', value: { enabled: true, baseUrl: 'https://host', apiKey: oldEncrypted } }]));
-      db.insert.mockReturnValue(mockDbChain());
-
-      await service.set('earwitness', { enabled: true, baseUrl: 'https://host', apiKey: 'sk-new' });
-
-      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = chain.values.mock.calls[0]![0]!.value;
-      expect(isEncrypted(storedValue.apiKey as string)).toBe(true);
-      expect(storedValue.apiKey).not.toBe(oldEncrypted);
-    });
-  });
-
   describe('update deep-merge', () => {
     it('preserves other fields when updating a single field in a category', async () => {
       const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };

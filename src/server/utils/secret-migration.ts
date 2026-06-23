@@ -57,7 +57,7 @@ export async function migrateSecretsToEncrypted(
     migratedCount++;
   }
 
-  // 4. Settings rows (auth, network, metadata, earwitness)
+  // 4. Settings rows (auth, network, metadata)
   const allSettings = await db.select().from(settings);
   for (const category of SECRET_SETTINGS_CATEGORIES) {
     const row = allSettings.find((r) => r.key === category.key);

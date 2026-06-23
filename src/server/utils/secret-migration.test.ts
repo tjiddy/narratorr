@@ -132,28 +132,6 @@ describe('Secret Migration', () => {
       expect(db.insert).toHaveBeenCalled();
     });
 
-    // #1567: the migration list previously omitted earwitness (the #1526 drift) —
-    // a plaintext earwitness.apiKey row must now be encrypted by the backfill.
-    it('#1567 encrypts plaintext earwitness.apiKey on startup', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
-      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
-      db.select.mockReturnValueOnce(mockDbChain([])); // notifiers
-      db.select.mockReturnValueOnce(mockDbChain([
-        createSettingsRow('earwitness', { enabled: true, baseUrl: 'https://host', apiKey: 'ew-plain-key' }),
-      ]));
-      db.insert.mockReturnValue(mockDbChain());
-
-      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
-
-      expect(db.insert).toHaveBeenCalled();
-      const insertChain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
-      const storedValue = insertChain.values.mock.calls[0]![0]!.value;
-      expect(isEncrypted(storedValue.apiKey as string)).toBe(true);
-      // baseUrl is NOT a secret for earwitness — stored verbatim
-      expect(storedValue.baseUrl).toBe('https://host');
-      expect(storedValue.enabled).toBe(true);
-    });
-
     // F2 (PR #1135 review): startup encryption loop covers metadata.hardcoverApiKey
     it('#1133 encrypts plaintext metadata.hardcoverApiKey on startup', async () => {
       db.select.mockReturnValueOnce(mockDbChain([])); // indexers

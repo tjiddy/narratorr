@@ -102,101 +102,6 @@ function GrabFailedDetails({ reason }: { reason: Record<string, unknown> }) {
   );
 }
 
-// --- Earwitness attribution analysis (#1528) ---------------------------------
-// `reason.detected`/per-field strings are untrusted provider text: rendered as
-// React string children (auto-escaped), never via dangerouslySetInnerHTML.
-
-/** Neutral status pill. `partial` and `unknown` are intentionally NOT styled as
- * errors — only `mismatch` is a contradiction signal. */
-function statusPillClass(status: string | undefined): string {
-  switch (status) {
-    case 'match': return 'bg-success/10 text-success';
-    case 'mismatch': return 'bg-destructive/10 text-destructive';
-    default: return 'bg-muted text-muted-foreground'; // partial, unknown, anything else
-  }
-}
-
-function AttributionStatusPill({ status }: { status: string | undefined }) {
-  if (!status) return null;
-  return (
-    <span className={`text-[11px] px-1.5 py-0.5 rounded-md font-medium ${statusPillClass(status)}`}>
-      {capitalize(status)}
-    </span>
-  );
-}
-
-function toDisplay(value: unknown): string {
-  if (value == null) return '—';
-  if (Array.isArray(value)) return value.length ? value.join(', ') : '—';
-  return String(value);
-}
-
-function AttributionFieldRow({ label, field }: { label: string; field: Record<string, unknown> | undefined }) {
-  if (!field) return null;
-  const status = field.status as string | undefined;
-  return (
-    <div className="flex flex-col gap-0.5 text-xs leading-relaxed border-t border-border/40 pt-1.5 first:border-0 first:pt-0">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground/70 w-16 shrink-0">{label}</span>
-        <AttributionStatusPill status={status} />
-      </div>
-      <KeyValueRow label="Expected" value={toDisplay(field.expected)} />
-      <KeyValueRow label="Heard" value={toDisplay(field.detected)} />
-    </div>
-  );
-}
-
-function AttributionAnalysisDetails({ reason }: { reason: Record<string, unknown> }) {
-  const outcome = reason.outcome as string | undefined;
-
-  if (outcome === 'permanent_failure') {
-    // Surface earwitness's message verbatim — tells the human re-rip vs path issue.
-    return (
-      <div className="space-y-1">
-        <KeyValueRow label="Result" value="Couldn't process" />
-        <ErrorDetails reason={{ error: reason.message }} />
-      </div>
-    );
-  }
-
-  if (outcome === 'transient_failure') {
-    return (
-      <div className="space-y-1">
-        <div className="flex items-start gap-2 text-xs text-amber-400">
-          <AlertCircleIcon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-          <span className="break-all">earwitness temporarily unavailable — try again. {toDisplay(reason.message)}</span>
-        </div>
-      </div>
-    );
-  }
-
-  const attributionPresent = reason.attributionPresent as boolean | undefined;
-  const confidence = reason.confidence as number | undefined;
-  const comparisonStatus = reason.comparisonStatus as string | undefined;
-  const fields = reason.fields as Record<string, Record<string, unknown>> | null | undefined;
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-muted-foreground/70 w-16 shrink-0">Overall</span>
-        {attributionPresent === false ? (
-          <span className="text-[11px] px-1.5 py-0.5 rounded-md font-medium bg-muted text-muted-foreground">Unverified</span>
-        ) : (
-          <AttributionStatusPill status={comparisonStatus} />
-        )}
-      </div>
-      {confidence != null && <KeyValueRow label="Confidence" value={`${Math.round(confidence * 100)}%`} />}
-      {attributionPresent !== false && fields && (
-        <div className="space-y-1.5">
-          <AttributionFieldRow label="Title" field={fields.title} />
-          <AttributionFieldRow label="Authors" field={fields.authors} />
-          <AttributionFieldRow label="Narrators" field={fields.narrators} />
-        </div>
-      )}
-    </div>
-  );
-}
-
 function GenericDetails({ reason }: { reason: Record<string, unknown> }) {
   const entries = Object.entries(reason).filter(([, v]) => v != null);
   if (entries.length === 0) return null;
@@ -222,7 +127,6 @@ const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown
   download_failed: ({ reason }) => <ErrorDetails reason={reason} />,
   held_for_review: ({ reason }) => <HeldForReviewDetails reason={reason} />,
   grab_failed: ({ reason }) => <GrabFailedDetails reason={reason} />,
-  attribution_analysis: ({ reason }) => <AttributionAnalysisDetails reason={reason} />,
 };
 
 /** Renders formatted event reason details based on event type. */

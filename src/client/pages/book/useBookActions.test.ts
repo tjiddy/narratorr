@@ -526,7 +526,6 @@ describe('useBookActions', () => {
     });
   });
 
-  // #1528 — analyseAttributionMutation + earwitnessEnabled
   // #445 — uploadCoverMutation
   describe('uploadCoverMutation', () => {
     const testFile = new File(['data'], 'cover.jpg', { type: 'image/jpeg' });

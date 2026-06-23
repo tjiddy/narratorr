@@ -20,11 +20,6 @@ export interface HardcoverTestResult {
   message: string;
 }
 
-export interface EarwitnessTestResult {
-  success: boolean;
-  message?: string;
-}
-
 export const settingsApi = {
   getSettings: () => fetchApi<Settings>('/settings'),
   updateSettings: (data: UpdateSettingsInput) =>
@@ -46,10 +41,5 @@ export const settingsApi = {
     fetchApi<HardcoverTestResult>('/settings/metadata/hardcover/test', {
       method: 'POST',
       body: JSON.stringify({ apiKey }),
-    }),
-  testEarwitness: (data: { baseUrl: string; apiKey?: string }) =>
-    fetchApi<EarwitnessTestResult>('/settings/earwitness/test', {
-      method: 'POST',
-      body: JSON.stringify(data),
     }),
 };

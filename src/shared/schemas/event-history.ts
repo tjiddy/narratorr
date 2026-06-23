@@ -14,12 +14,11 @@ export const eventTypeSchema = z.enum([
   'book_added',
   'metadata_fixed',
   'grab_failed',
-  'attribution_analysis',
 ]);
 
 export type EventType = z.infer<typeof eventTypeSchema>;
 
-export const eventSourceSchema = z.enum(['manual', 'rss', 'scheduled', 'auto', 'import_list', 'earwitness']);
+export const eventSourceSchema = z.enum(['manual', 'rss', 'scheduled', 'auto', 'import_list']);
 
 export type EventSource = z.infer<typeof eventSourceSchema>;
 

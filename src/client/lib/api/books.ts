@@ -225,12 +225,6 @@ export interface RefreshScanResult {
   narratorsUpdated: boolean;
 }
 
-export interface AttributionAnalysisResult {
-  bookId: number;
-  outcome: 'ok' | 'permanent_failure' | 'transient_failure';
-  eventId: number;
-}
-
 export interface MergeResult {
   bookId: number;
   outputFile: string;
@@ -390,8 +384,6 @@ export const booksApi = {
   },
   refreshScanBook: (id: number) =>
     fetchApi<RefreshScanResult>(`/books/${id}/refresh-scan`, { method: 'POST' }),
-  analyseBookAttribution: (id: number) =>
-    fetchApi<AttributionAnalysisResult>(`/books/${id}/analyse-attribution`, { method: 'POST' }),
   searchBook: (id: number) =>
     fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
   mergeBookToM4b: (id: number) =>
