@@ -37,11 +37,12 @@ export type SecretEntity =
 //   webhook:  url, headers           discord:  webhookUrl
 //   slack:    webhookUrl             telegram: botToken
 //   email:    smtpPass               pushover: pushoverToken, pushoverUser
-//   gotify:   gotifyToken            ntfy:     ntfyTopic
+//   gotify:   gotifyToken            ntfy:     ntfyTopic, ntfyAccessToken
 //   (script: no secrets in current schema)
 // pushoverUser (a documented-private user key) and ntfyTopic (the topic name IS
 // the publish/subscribe capability on public ntfy servers) are credential-shaped
 // and registered here so they are encrypted at rest and masked in responses (#1307).
+// ntfyAccessToken is the Bearer token for protected ntfy topics (#1607).
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   indexer: ['apiKey', 'apiUrl', 'flareSolverrUrl', 'mamId'],
   downloadClient: ['password', 'apiKey'],
@@ -49,7 +50,7 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   network: ['proxyUrl'],
   metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
-  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'],
+  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'ntfyAccessToken', 'headers'],
   // baseUrl is registered alongside apiKey/token per the issue spec: connector
   // apiKey/token/baseUrl are encrypted at rest and masked in responses,
   // consistent with operator-configured integrations like indexer apiUrl (#1491).

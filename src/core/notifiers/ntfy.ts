@@ -8,6 +8,8 @@ import { getErrorMessage } from '../../shared/error-message.js';
 export interface NtfyConfig {
   topic: string;
   serverUrl?: string | undefined;
+  accessToken?: string | undefined;
+  priority?: string | undefined;
 }
 
 export class NtfyNotifier implements NotifierAdapter {
@@ -19,12 +21,16 @@ export class NtfyNotifier implements NotifierAdapter {
     const baseUrl = this.config.serverUrl?.replace(/\/+$/, '') || 'https://ntfy.sh';
     const url = `${baseUrl}/${this.config.topic}`;
 
+    const headers: Record<string, string> = {
+      Title: EVENT_TITLES[event],
+    };
+    if (this.config.accessToken) headers.Authorization = `Bearer ${this.config.accessToken}`;
+    if (this.config.priority) headers.Priority = this.config.priority;
+
     try {
       const response = await fetchWithTimeout(url, {
         method: 'POST',
-        headers: {
-          Title: EVENT_TITLES[event],
-        },
+        headers,
         body: formatEventMessage(event, payload),
       }, NOTIFIER_TIMEOUT_MS);
 

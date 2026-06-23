@@ -58,6 +58,8 @@ const TYPED_FACTORIES: { [K in NotifierType]: (settings: NotifierSettingsMap[K])
   ntfy: (s) => new NtfyNotifier({
     topic: s.ntfyTopic,
     serverUrl: s.ntfyServer,
+    accessToken: s.ntfyAccessToken,
+    priority: s.ntfyPriority,
   }),
   gotify: (s) => new GotifyNotifier({
     serverUrl: s.gotifyUrl,

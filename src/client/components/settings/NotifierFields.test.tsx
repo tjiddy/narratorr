@@ -122,10 +122,31 @@ describe('NotifierFields', () => {
     expect(screen.getByText('User Key')).toBeInTheDocument();
   });
 
-  it('renders ntfy fields with topic and optional server', () => {
+  it('renders ntfy fields with topic, server, access token and priority', () => {
     render(<FieldWrapper type="ntfy" />);
     expect(screen.getByText('Topic')).toBeInTheDocument();
     expect(screen.getByText('Server URL')).toBeInTheDocument();
+    expect(screen.getByLabelText('Access Token')).toBeInTheDocument();
+    expect(screen.getByLabelText('Priority')).toBeInTheDocument();
+  });
+
+  it('ntfy access token is a masked/password input (#1607)', () => {
+    render(<FieldWrapper type="ntfy" />);
+    expect(screen.getByLabelText('Access Token')).toHaveAttribute('type', 'password');
+  });
+
+  it('ntfy fields accept access token and priority input (#1607)', async () => {
+    const user = userEvent.setup();
+    render(<FieldWrapper type="ntfy" />);
+
+    const token = screen.getByLabelText('Access Token');
+    await user.type(token, 'tk_secret');
+    expect(token).toHaveValue('tk_secret');
+
+    const priority = screen.getByLabelText('Priority') as HTMLSelectElement;
+    expect(priority.value).toBe('');
+    await user.selectOptions(priority, 'high');
+    expect(priority.value).toBe('high');
   });
 
   it('renders gotify fields with server URL and app token', () => {

@@ -839,6 +839,39 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
     const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
     expect(payloadSettings).toHaveProperty('includeCover', true);
   });
+
+  // #1607 — an ntfy row with a stored (masked) access token and a priority must hydrate both into
+  // the edit Test payload. The access token arrives as the masked sentinel (the server resolves it
+  // against the entity id, injected downstream by the shared hook), and the priority carries through.
+  it('#1607 ntfy edit Test payload carries the masked access token sentinel and priority', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const ntfyRow: Notifier = createMockNotifier({
+      id: 212,
+      name: 'Protected Ntfy',
+      type: 'ntfy',
+      settings: { ntfyTopic: '********', ntfyServer: 'https://ntfy.example.com', ntfyAccessToken: '********', ntfyPriority: 'high' },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={ntfyRow}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+    expect(payloadSettings).toHaveProperty('ntfyAccessToken', '********');
+    expect(payloadSettings).toHaveProperty('ntfyPriority', 'high');
+  });
 });
 
 // #908 — schema-alignment guard. The `settingsFromNotifier` own-keys filter uses each type's
