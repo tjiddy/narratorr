@@ -20,13 +20,16 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     // Default to the real stat so non-delete code paths are unaffected; the deleteBookFiles
     // suite overrides this per-test to drive the managed-file helper (#1589).
     stat: vi.fn((...args: unknown[]) => (actual.stat as (...a: unknown[]) => unknown)(...args)),
+    // #1598: deleteManagedBookFiles classifies the top-level bookPath via `lstat` (not `stat`) so a
+    // symlinked source is never followed. Default to real lstat; the deleteBookFiles suite overrides it.
+    lstat: vi.fn((...args: unknown[]) => (actual.lstat as (...a: unknown[]) => unknown)(...args)),
     writeFile: vi.fn(),
     rename: vi.fn(),
     unlink: vi.fn(),
   };
 });
 
-import { rm, rmdir, readdir, stat, writeFile, rename, unlink } from 'node:fs/promises';
+import { rm, rmdir, readdir, stat, lstat, writeFile, rename, unlink } from 'node:fs/promises';
 import type { Mock } from 'vitest';
 
 const mockAuthor = createMockDbAuthor();
@@ -836,6 +839,10 @@ describe('BookService', () => {
       vi.mocked(readdir).mockReset();
       vi.mocked(stat).mockReset();
       vi.mocked(stat).mockResolvedValue({ isDirectory: () => true, isFile: () => false } as never);
+      // #1598: the helper now classifies the top-level bookPath via `lstat`. A non-symlink directory
+      // keeps these tests on the directory-sweep path (the symlink branch is covered in delete-managed-files.test.ts).
+      vi.mocked(lstat).mockReset();
+      vi.mocked(lstat).mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false } as never);
       vi.mocked(rm).mockResolvedValue(undefined);
       vi.mocked(rmdir).mockResolvedValue(undefined);
     });
