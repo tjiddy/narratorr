@@ -62,7 +62,7 @@ describe('settingsRegistry', () => {
     });
 
     it('exports exactly the expected category keys', () => {
-      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss', 'system', 'discovery', 'earwitness'];
+      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss', 'system', 'discovery'];
       expect(SETTINGS_CATEGORIES.sort()).toEqual(expected.sort());
     });
 

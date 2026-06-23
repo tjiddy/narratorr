@@ -165,69 +165,6 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('My.Book.MP3')).toBeInTheDocument();
     expect(screen.getByText('Connection refused')).toBeInTheDocument();
   });
-
-  // #1528 — attribution_analysis renderer
-  const okPartialReason = {
-    outcome: 'ok',
-    attributionPresent: true,
-    confidence: 0.82,
-    comparisonStatus: 'partial',
-    expected: { title: 'The Way of Kings', authors: ['Brandon Sanderson'], narrators: ['Michael Kramer', 'Kate Reading'] },
-    detected: { title: 'The Way of Kings', authors: ['Brandon Sanderson'], narrators: ['Michael Kramer'] },
-    fields: {
-      title: { status: 'match', expected: 'The Way of Kings', detected: 'The Way of Kings', reason: 'exact' },
-      authors: { status: 'match', expected: ['Brandon Sanderson'], detected: ['Brandon Sanderson'], reason: 'ok' },
-      narrators: { status: 'partial', expected: ['Michael Kramer', 'Kate Reading'], detected: ['Michael Kramer'], missingExpected: ['Kate Reading'], unexpectedDetected: [], reason: 'lead only' },
-    },
-  };
-
-  it('attribution_analysis — shows per-field status, heard-vs-expected, and confidence', () => {
-    render(<EventReasonDetails eventType="attribution_analysis" reason={okPartialReason} indexerMap={emptyMap} />);
-    expect(screen.getByText('Confidence:')).toBeInTheDocument();
-    expect(screen.getByText('82%')).toBeInTheDocument();
-    // per-field rows
-    expect(screen.getByText('Title')).toBeInTheDocument();
-    expect(screen.getByText('Narrators')).toBeInTheDocument();
-    expect(screen.getByText(/Kate Reading/)).toBeInTheDocument(); // expected narrators (joined)
-    // partial is rendered neutrally (no destructive styling) — both the overall
-    // and narrators pills read "Partial"
-    const partialPills = screen.getAllByText('Partial');
-    expect(partialPills.length).toBeGreaterThan(0);
-    for (const pill of partialPills) {
-      expect(pill.className).not.toMatch(/destructive/);
-      expect(pill.className).toMatch(/muted/);
-    }
-  });
-
-  it('attribution_analysis — attributionPresent:false renders as Unverified, not a mismatch', () => {
-    render(<EventReasonDetails eventType="attribution_analysis" reason={{ outcome: 'ok', attributionPresent: false, confidence: 0.1, comparisonStatus: 'unknown', fields: null }} indexerMap={emptyMap} />);
-    expect(screen.getByText('Unverified')).toBeInTheDocument();
-    expect(screen.queryByText('Mismatch')).not.toBeInTheDocument();
-  });
-
-  it('attribution_analysis — permanent_failure surfaces the message verbatim', () => {
-    render(<EventReasonDetails eventType="attribution_analysis" reason={{ outcome: 'permanent_failure', status: 422, message: 'unprocessable audio: re-rip the file' }} indexerMap={emptyMap} />);
-    expect(screen.getByText('unprocessable audio: re-rip the file')).toBeInTheDocument();
-  });
-
-  it('attribution_analysis — transient_failure shows a try-again message', () => {
-    render(<EventReasonDetails eventType="attribution_analysis" reason={{ outcome: 'transient_failure', message: 'busy' }} indexerMap={emptyMap} />);
-    expect(screen.getByText(/temporarily unavailable/i)).toBeInTheDocument();
-  });
-
-  it('attribution_analysis — renders untrusted detected text as escaped string, not markup', () => {
-    const html = '<img src=x onerror=alert(1)>';
-    const { container } = render(
-      <EventReasonDetails
-        eventType="attribution_analysis"
-        reason={{ outcome: 'ok', attributionPresent: true, confidence: 0.5, comparisonStatus: 'mismatch', fields: { title: { status: 'mismatch', expected: 'Clean', detected: html, reason: 'x' }, authors: { status: 'unknown', expected: [], detected: [], reason: '' }, narrators: { status: 'unknown', expected: [], detected: [], reason: '' } } }}
-        indexerMap={emptyMap}
-      />,
-    );
-    // The string is shown as text, and no <img> element is created from it.
-    expect(screen.getByText(html)).toBeInTheDocument();
-    expect(container.querySelector('img')).toBeNull();
-  });
 });
 
 // #1305 — held_for_review reason blob is schema-validated before the QualityComparisonPanel cast.

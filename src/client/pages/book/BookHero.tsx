@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { resolveCoverUrl } from '@/lib/url-utils';
 import { SUPPORTED_COVER_ACCEPT } from '../../../shared/mime.js';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon, AlertTriangleIcon, HeadphonesIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon, XCircleIcon, MoreVerticalIcon, UploadIcon, CheckIcon, XIcon, AlertTriangleIcon } from '@/components/icons';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 
 interface BookHeroProps {
@@ -30,9 +30,6 @@ interface BookHeroProps {
   onRefreshScanClick?: (() => void) | undefined;
   isRefreshingScanning?: boolean | undefined;
   showRefreshScan?: boolean | undefined;
-  onAnalyseAttributionClick?: (() => void) | undefined;
-  isAnalysingAttribution?: boolean | undefined;
-  showAnalyseAttribution?: boolean | undefined;
   onMergeClick: () => void;
   isMerging: boolean;
   mergePhase?: string | undefined;
@@ -67,7 +64,6 @@ export function BookHero({
   hasPath, onBackClick, onSearchClick, onEditClick, onFixMatchClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
   onRefreshScanClick, isRefreshingScanning, showRefreshScan,
-  onAnalyseAttributionClick, isAnalysingAttribution, showAnalyseAttribution,
   onMergeClick, isMerging, mergePhase, canMerge, mergeDisabled, mergeTooltip,
   onRemoveClick, isRemoving,
   showWrongRelease, onWrongReleaseClick, isWrongReleasing,
@@ -287,12 +283,6 @@ export function BookHero({
                     <button role="menuitem" type="button" onClick={() => { if (!isRefreshingScanning) onRefreshScanClick(); }} disabled={isRefreshingScanning} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
                       <RefreshIcon className={`w-3.5 h-3.5 ${isRefreshingScanning ? 'animate-spin' : ''}`} />
                       {isRefreshingScanning ? 'Scanning...' : 'Refresh & Scan'}
-                    </button>
-                  )}
-                  {showAnalyseAttribution && onAnalyseAttributionClick && (
-                    <button role="menuitem" type="button" onClick={() => { if (!isAnalysingAttribution) onAnalyseAttributionClick(); }} disabled={isAnalysingAttribution} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
-                      <HeadphonesIcon className={`w-3.5 h-3.5 ${isAnalysingAttribution ? 'animate-spin' : ''}`} />
-                      {isAnalysingAttribution ? 'Analysing...' : 'Analyse with earwitness'}
                     </button>
                   )}
                   {hasPath && canMerge && (

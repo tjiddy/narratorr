@@ -3,7 +3,7 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import { booksRoutes, type BookRouteDeps } from './books.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { DEFAULT_LIMITS } from '../../shared/schemas.js';
-import { createMockDbBook, createMockDbAuthor, createMockDbBookEvent } from '../__tests__/factories.js';
+import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
@@ -43,15 +43,7 @@ vi.mock('../config.js', () => ({
   config: { configPath: '/test-config' },
 }));
 
-// Only `analyzeAttribution` is stubbed; schemas/types from the same module are
-// preserved so the rest of the attribution adapter stays real.
-vi.mock('../../core/attribution/attribution.js', async (importOriginal) => {
-  const actual = await importOriginal() as Record<string, unknown>;
-  return { ...actual, analyzeAttribution: vi.fn() };
-});
-
 import { serveCoverFromCache } from '../utils/cover-cache.js';
-import { analyzeAttribution } from '../../core/attribution/attribution.js';
 
 const mockBook = {
   ...createMockDbBook(),
@@ -3585,203 +3577,6 @@ describe('#1071 series routes', () => {
         expect(services.rename.renameBook).toHaveBeenCalledWith(7);
         expect(services.tagging.retagBook).toHaveBeenCalledWith(7, expect.any(Set), {});
       });
-    });
-  });
-
-  // #1528 — manual "Analyse with earwitness" book action
-  describe('POST /api/books/:id/analyse-attribution', () => {
-    const LIBRARY_ROOT = '/library';
-    const bookInLibrary = {
-      ...createMockDbBook(),
-      id: 1,
-      title: 'The Way of Kings',
-      path: '/library/Sanderson/The Way of Kings',
-      status: 'imported',
-      authors: [createMockDbAuthor({ name: 'Brandon Sanderson' })],
-      narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }, { id: 2, name: 'Kate Reading', slug: 'kate-reading' }],
-    };
-
-    /** Configure settings.get to return a configured earwitness + library root. */
-    function configureEarwitness(over?: { earwitness?: Record<string, unknown>; libraryPath?: string | null }) {
-      (services.settings.get as Mock).mockImplementation((cat: string) => {
-        if (cat === 'library') return Promise.resolve({ path: over?.libraryPath === undefined ? LIBRARY_ROOT : over.libraryPath });
-        if (cat === 'earwitness') return Promise.resolve({ enabled: true, baseUrl: 'http://earwitness:8080', apiKey: 'secret-key', ...over?.earwitness });
-        return Promise.resolve({});
-      });
-    }
-
-    beforeEach(() => {
-      (analyzeAttribution as Mock).mockReset();
-      (services.eventHistory.create as Mock).mockResolvedValue(createMockDbBookEvent({ id: 42, eventType: 'attribution_analysis', source: 'earwitness' }));
-    });
-
-    const partialComparison = {
-      status: 'partial' as const,
-      fields: {
-        title: { status: 'match', expected: 'The Way of Kings', detected: 'The Way of Kings', reason: 'exact' },
-        authors: { status: 'match', expected: ['Brandon Sanderson'], detected: ['Brandon Sanderson'], matched: [], missingExpected: [], unexpectedDetected: [], reason: 'ok' },
-        narrators: { status: 'partial', expected: ['Michael Kramer', 'Kate Reading'], detected: ['Michael Kramer'], matched: [], missingExpected: ['Kate Reading'], unexpectedDetected: [], reason: 'audio named only the lead narrator' },
-      },
-    };
-
-    it('records an attribution_analysis event with per-field detail on a successful (partial) run', async () => {
-      (services.book.getById as Mock).mockResolvedValue(bookInLibrary);
-      configureEarwitness();
-      (analyzeAttribution as Mock).mockResolvedValue({
-        kind: 'ok',
-        requestId: 'r1',
-        detection: { attributionPresent: true, detected: { title: 'The Way of Kings', authors: ['Brandon Sanderson'], narrators: ['Michael Kramer'] }, evidence: {}, confidence: 0.87 },
-        comparison: partialComparison,
-      });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toMatchObject({ bookId: 1, outcome: 'ok', eventId: 42 });
-
-      expect(services.eventHistory.create).toHaveBeenCalledTimes(1);
-      const eventArg = (services.eventHistory.create as Mock).mock.calls[0]![0];
-      expect(eventArg).toMatchObject({ bookId: 1, eventType: 'attribution_analysis', source: 'earwitness' });
-      const reason = eventArg.reason;
-      expect(reason.outcome).toBe('ok');
-      expect(reason.comparisonStatus).toBe('partial');
-      expect(reason.confidence).toBe(0.87);
-      expect(reason.fields.title.status).toBe('match');
-      expect(reason.fields.authors.status).toBe('match');
-      expect(reason.fields.narrators.status).toBe('partial');
-      expect(reason.fields.narrators.missingExpected).toEqual(['Kate Reading']);
-      expect(reason.detected.narrators).toEqual(['Michael Kramer']);
-      expect(reason.expected.narrators).toEqual(['Michael Kramer', 'Kate Reading']);
-
-      // Read-only: no book metadata mutation.
-      expect(services.book.update).not.toHaveBeenCalled();
-    });
-
-    it('sends a library-relative POSIX path (Windows backslashes normalized) and flat name arrays', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...bookInLibrary, path: '/library/Sanderson\\The Way of Kings' });
-      configureEarwitness();
-      (analyzeAttribution as Mock).mockResolvedValue({
-        kind: 'ok', requestId: null,
-        detection: { attributionPresent: true, detected: { title: null, authors: [], narrators: [] }, evidence: {}, confidence: 0.5 },
-      });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(200);
-      const callArg = (analyzeAttribution as Mock).mock.calls[0]![0];
-      expect(callArg.path).toBe('Sanderson/The Way of Kings');
-      expect(callArg.path).not.toContain('\\');
-      expect(callArg.baseUrl).toBe('http://earwitness:8080');
-      expect(callArg.apiKey).toBe('secret-key');
-      expect(callArg.expected).toEqual({
-        title: 'The Way of Kings',
-        authors: ['Brandon Sanderson'],
-        narrators: ['Michael Kramer', 'Kate Reading'],
-      });
-    });
-
-    it('returns 404 for an unknown book id', async () => {
-      (services.book.getById as Mock).mockResolvedValue(null);
-      configureEarwitness();
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/999/analyse-attribution' });
-
-      expect(res.statusCode).toBe(404);
-      expect(analyzeAttribution).not.toHaveBeenCalled();
-      expect(services.eventHistory.create).not.toHaveBeenCalled();
-    });
-
-    it('rejects with 400 and records no event when the book has no path', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...bookInLibrary, path: null });
-      configureEarwitness();
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(400);
-      expect(analyzeAttribution).not.toHaveBeenCalled();
-      expect(services.eventHistory.create).not.toHaveBeenCalled();
-    });
-
-    it('rejects with 400 when the book path resolves outside the library root', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...bookInLibrary, path: '/etc/secrets/book' });
-      configureEarwitness();
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(400);
-      expect(analyzeAttribution).not.toHaveBeenCalled();
-      expect(services.eventHistory.create).not.toHaveBeenCalled();
-    });
-
-    // Windows cross-drive: `relative()` returns an absolute path caught by
-    // `assertPathInsideLibrary`'s `isAbsolute(rel)` branch on win32. On a POSIX
-    // CI runner the same cross-root input is rejected via the `..` branch — the
-    // assertion (400, no client call, no event) holds on both platforms; the
-    // point is the route routes through the guarded helper, never a partial check.
-    it('rejects with 400 for a cross-drive / different-root path', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...bookInLibrary, path: 'D:\\Audiobooks\\Sanderson\\The Way of Kings' });
-      configureEarwitness({ libraryPath: 'C:\\Library' });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(400);
-      expect(analyzeAttribution).not.toHaveBeenCalled();
-      expect(services.eventHistory.create).not.toHaveBeenCalled();
-    });
-
-    it('rejects with 400 when the library path is unset', async () => {
-      (services.book.getById as Mock).mockResolvedValue(bookInLibrary);
-      configureEarwitness({ libraryPath: '' });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(400);
-      expect(analyzeAttribution).not.toHaveBeenCalled();
-      expect(services.eventHistory.create).not.toHaveBeenCalled();
-    });
-
-    it('rejects with 400 (configuration error) when enabled but baseUrl/apiKey are blank', async () => {
-      (services.book.getById as Mock).mockResolvedValue(bookInLibrary);
-      configureEarwitness({ earwitness: { enabled: true, baseUrl: '', apiKey: '' } });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.payload).error).toMatch(/configured/i);
-      expect(analyzeAttribution).not.toHaveBeenCalled();
-      expect(services.eventHistory.create).not.toHaveBeenCalled();
-    });
-
-    it('records a permanent_failure event carrying the verbatim message, without retrying', async () => {
-      (services.book.getById as Mock).mockResolvedValue(bookInLibrary);
-      configureEarwitness();
-      (analyzeAttribution as Mock).mockResolvedValue({ kind: 'permanent_failure', status: 422, message: 'unprocessable audio: corrupt frames at 00:03:11' });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).outcome).toBe('permanent_failure');
-      expect(analyzeAttribution).toHaveBeenCalledTimes(1); // route adds no retry
-      const reason = (services.eventHistory.create as Mock).mock.calls[0]![0].reason;
-      expect(reason.outcome).toBe('permanent_failure');
-      expect(reason.status).toBe(422);
-      expect(reason.message).toBe('unprocessable audio: corrupt frames at 00:03:11');
-    });
-
-    it('records a transient_failure event without adding its own retry', async () => {
-      (services.book.getById as Mock).mockResolvedValue(bookInLibrary);
-      configureEarwitness();
-      (analyzeAttribution as Mock).mockResolvedValue({ kind: 'transient_failure', message: 'service unavailable', retryAfterMs: 5000 });
-
-      const res = await app.inject({ method: 'POST', url: '/api/books/1/analyse-attribution' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload).outcome).toBe('transient_failure');
-      expect(analyzeAttribution).toHaveBeenCalledTimes(1);
-      const reason = (services.eventHistory.create as Mock).mock.calls[0]![0].reason;
-      expect(reason.outcome).toBe('transient_failure');
-      expect(reason.message).toBe('service unavailable');
-      expect(reason.retryAfterMs).toBe(5000);
     });
   });
 });

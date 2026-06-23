@@ -11,7 +11,6 @@ import {
   ListIcon,
   ZapIcon,
   RefreshIcon,
-  HeadphonesIcon,
 } from '@/components/icons';
 import { GeneralSettings } from './GeneralSettings.js';
 import { PostProcessingSettings } from './PostProcessingSettings.js';
@@ -24,7 +23,6 @@ import { BlacklistSettings } from './BlacklistSettings.js';
 import { SecuritySettings } from './SecuritySettings.js';
 import { ImportListsSettings } from './ImportListsSettings.js';
 import { SystemSettings } from './SystemSettings.js';
-import { EarwitnessSettings } from './EarwitnessSettings.js';
 
 export interface SettingsPageEntry {
   /** Route path segment (empty string = index route) */
@@ -44,7 +42,6 @@ export const settingsPageRegistry: readonly SettingsPageEntry[] = [
   { path: 'search', label: 'Search', icon: CompassIcon, component: SearchSettingsPage },
   { path: 'notifications', label: 'Notifications', icon: BellIcon, component: NotificationsSettings },
   { path: 'connectors', label: 'Connectors', icon: RefreshIcon, component: ConnectorsSettings },
-  { path: 'earwitness', label: 'earwitness', icon: HeadphonesIcon, component: EarwitnessSettings },
   { path: 'blacklist', label: 'Blacklist', icon: ShieldBanIcon, component: BlacklistSettings },
   { path: 'security', label: 'Security', icon: ShieldIcon, component: SecuritySettings },
   { path: 'import-lists', label: 'Import Lists', icon: ListIcon, component: ImportListsSettings },

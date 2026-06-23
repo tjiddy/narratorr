@@ -9,7 +9,7 @@ export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
 export type { Connector, ConnectorTarget, ConnectorTestResult, ConnectorTargetsResponse } from './connectors.js';
 export type { BlacklistEntry } from './blacklist.js';
-export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult, HardcoverTestResult, EarwitnessTestResult } from './settings.js';
+export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult, HardcoverTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig, StreamToken } from './auth.js';
 export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult } from './library-scan.js';
 export type { BrowseResult } from './filesystem.js';

@@ -11,10 +11,10 @@ import type { SecretEntity } from './secret-codec.js';
 //   SECRET_SETTINGS_CATEGORIES → secret-migration.ts startup plaintext→encrypted backfill
 //
 // Before #1567 these were three hand-maintained lists that had to agree and had
-// already drifted (`earwitness` was missing from the migration list — #1526
-// added it to encrypt + mask but not migrate). Deriving all three from this one
-// map closes that class of drift; the lockstep test (secret-category-map.test.ts)
-// fails if a category is added to one view without the others.
+// already drifted (a category present in encrypt + mask but missing from the
+// migration list). Deriving all three from this one map closes that class of
+// drift; the lockstep test (secret-category-map.test.ts) fails if a category is
+// added to one view without the others.
 //
 // `managedBy` encodes the intentional carve-out (don't merge the lists blindly):
 //   - SettingsService — written through `SettingsService.set()`; key is a real
@@ -65,7 +65,6 @@ export const SECRET_CATEGORY_MAP: readonly SecretCategoryEntry[] = [
   externallyManaged('auth', 'auth', 'AuthService'),
   settingsManaged('network', 'network'),
   settingsManaged('metadata', 'metadata'),
-  settingsManaged('earwitness', 'earwitness'),
 ];
 
 // ─── Derived views ───────────────────────────────────────────────────────────
