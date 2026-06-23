@@ -58,6 +58,10 @@ export const pushoverSettingsSchema = z.object({
   pushoverUser: z.string().trim().min(1),
 }).strict();
 
+// ntfy's documented Priority header tokens (min|low|default|high|max). Empty/unset
+// means "send no Priority header" (server default applies).
+export const NTFY_PRIORITIES = ['min', 'low', 'default', 'high', 'max'] as const;
+
 export const ntfySettingsSchema = z.object({
   // Sentinel passthrough: registered secret (#1307) — the masked '********' must
   // pass validation. Safe today only because this is a bare `.trim().min(1)`. Any
@@ -65,6 +69,14 @@ export const ntfySettingsSchema = z.object({
   // sentinel round-trips on save will silently 400. See pushoverUser above.
   ntfyTopic: z.string().trim().min(1),
   ntfyServer: z.string().trim().optional(),
+  // Sentinel passthrough: registered secret (#1607) — the masked '********' must
+  // pass validation. Safe today only because this is a bare optional `.trim()`. Any
+  // future format constraint must explicitly admit the sentinel literal. See above.
+  ntfyAccessToken: z.string().trim().optional(),
+  // Optional enum that can also arrive as '' — the unselected <select> and the
+  // registry default both produce ''. `.enum([...]).optional()` would reject a
+  // present '', so admit the empty literal explicitly alongside absent.
+  ntfyPriority: z.enum(NTFY_PRIORITIES).or(z.literal('')).optional(),
 }).strict();
 
 export const gotifySettingsSchema = z.object({
@@ -192,6 +204,8 @@ export const createNotifierFormSchema = z.object({
     // ntfy
     ntfyTopic: z.string().trim().optional(),
     ntfyServer: z.string().trim().optional(),
+    ntfyAccessToken: z.string().trim().optional(),
+    ntfyPriority: z.enum(NTFY_PRIORITIES).or(z.literal('')).optional(),
     // Gotify
     gotifyUrl: z.string().trim().optional(),
     gotifyToken: z.string().trim().optional(),

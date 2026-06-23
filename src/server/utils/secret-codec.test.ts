@@ -23,9 +23,10 @@ import {
 } from './secret-codec.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 
-// Heuristic for detecting secret-shaped notifier field names. Today's 9
+// Heuristic for detecting secret-shaped notifier field names. Today's 10
 // registered notifier secrets all match: `url`, `webhookUrl`, `headers`,
-// `*Token` (botToken / pushoverToken / gotifyToken), `*Pass` (smtpPass),
+// `*Token` (botToken / pushoverToken / gotifyToken / ntfyAccessToken),
+// `*Pass` (smtpPass),
 // `*User` (pushoverUser), `*Topic` (ntfyTopic). The `*User` / `*Topic` suffixes
 // were added in #1307; the `*Key` / `*Secret` / `*Password` suffixes were added
 // in #1357 (anticipatory widening — every other SECRET_FIELDS entity already
@@ -433,7 +434,7 @@ describe('SecretCodec', () => {
   describe('#731 notifier secret fields', () => {
     it('getSecretFieldNames("notifier") returns the union of per-type secret fields', () => {
       const fields = getSecretFieldNames('notifier');
-      const expected = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'headers'];
+      const expected = ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'ntfyAccessToken', 'headers'];
       expect([...fields].sort()).toEqual([...expected].sort());
     });
 
@@ -528,6 +529,33 @@ describe('SecretCodec', () => {
       expect(decryptFields('notifier', { ...encrypted }, TEST_KEY).pushoverUser).toBe('brand-new-user');
     });
 
+    it('#1607 encrypts and masks ntfyAccessToken, leaves ntfyPriority/ntfyServer plaintext', () => {
+      const encrypted = encryptFields(
+        'notifier',
+        { ntfyTopic: 't', ntfyAccessToken: 'tk_secret', ntfyPriority: 'high', ntfyServer: 'https://ntfy.sh' },
+        TEST_KEY,
+      );
+      expect(isEncrypted(encrypted.ntfyAccessToken as string)).toBe(true);
+      expect(encrypted.ntfyPriority).toBe('high');
+      expect(encrypted.ntfyServer).toBe('https://ntfy.sh');
+      expect(decryptFields('notifier', { ...encrypted }, TEST_KEY).ntfyAccessToken).toBe('tk_secret');
+
+      const masked = maskFields('notifier', { ntfyAccessToken: 'tk_secret', ntfyPriority: 'high', ntfyServer: 'https://ntfy.sh' });
+      expect(masked.ntfyAccessToken).toBe('********');
+      expect(masked.ntfyPriority).toBe('high');
+      expect(masked.ntfyServer).toBe('https://ntfy.sh');
+    });
+
+    it('#1607 sentinel-passthrough retains existing ciphertext for ntfyAccessToken', () => {
+      const allow = getSecretFieldNames('notifier');
+      const existing = { ntfyAccessToken: encrypt('real-token', TEST_KEY) };
+      const resolved = resolveSentinelFields({ ntfyAccessToken: '********' }, existing, allow);
+      expect(resolved.ntfyAccessToken).toBe(existing.ntfyAccessToken);
+      const reEncrypted = encryptFields('notifier', { ...resolved } as Record<string, unknown>, TEST_KEY);
+      expect(reEncrypted.ntfyAccessToken).toBe(existing.ntfyAccessToken);
+      expect(decryptFields('notifier', { ...reEncrypted }, TEST_KEY).ntfyAccessToken).toBe('real-token');
+    });
+
     it('every per-type schema secret field is registered (drift guard)', () => {
       const registered = new Set(getSecretFieldNames('notifier'));
       const unregistered = findUnregisteredNotifierSecrets(notifierSettingsSchemas, registered);
@@ -538,7 +566,7 @@ describe('SecretCodec', () => {
       ).toEqual([]);
     });
 
-    it('heuristic against real notifier schemas flags exactly today\'s 9 secret fields with subtype mappings', () => {
+    it('heuristic against real notifier schemas flags exactly today\'s secret fields with subtype mappings', () => {
       // Locks in the heuristic's positive output — without this, removing one of
       // the exact-name regex alternatives (`url`, `webhookUrl`, `headers`) would
       // not surface in any other test on this file, because those fields are
@@ -551,6 +579,7 @@ describe('SecretCodec', () => {
         { type: 'discord', field: 'webhookUrl' },
         { type: 'email', field: 'smtpPass' },
         { type: 'gotify', field: 'gotifyToken' },
+        { type: 'ntfy', field: 'ntfyAccessToken' },
         { type: 'ntfy', field: 'ntfyTopic' },
         { type: 'pushover', field: 'pushoverToken' },
         { type: 'pushover', field: 'pushoverUser' },
