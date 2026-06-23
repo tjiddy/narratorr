@@ -15,6 +15,7 @@ import { blacklistReasonSchema, blacklistTypeSchema, BLACKLIST_REASONS } from '.
 import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.js';
 import { connectorTypeSchema } from './schemas/connector.js';
 import { importJobTypeSchema, importJobStatusSchema, importJobPhaseSchema } from './schemas/import-job.js';
+import { protocolSchema, PROTOCOLS } from './schemas/download-protocol.js';
 import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
@@ -100,6 +101,13 @@ describe('schema-DB alignment', () => {
       expect([...downloads.pipelineStage.enumValues].sort()).toEqual([...PIPELINE_STAGES].sort());
     });
 
+    // #1599: PROTOCOLS is the single source for the torrent/usenet enum across the
+    // Zod schemas, the DownloadProtocol type, and this DB column. SQLite text-enums
+    // emit no DB CHECK, so this set-equality test is the guard against drift.
+    it('downloads.protocol DB column enum matches protocolSchema.options', () => {
+      expect([...downloads.protocol.enumValues].sort()).toEqual([...protocolSchema.options].sort());
+    });
+
     it('suggestions.reason DB column enum matches SUGGESTION_REASONS', () => {
       expect([...suggestions.reason.enumValues].sort()).toEqual([...SUGGESTION_REASONS].sort());
     });
@@ -156,6 +164,10 @@ describe('schema-DB alignment', () => {
     it('PIPELINE_STAGES equals pipelineStageSchema.options', () => {
       expect([...PIPELINE_STAGES].sort()).toEqual([...pipelineStageSchema.options].sort());
     });
+
+    it('PROTOCOLS equals protocolSchema.options', () => {
+      expect([...PROTOCOLS].sort()).toEqual([...protocolSchema.options].sort());
+    });
   });
 
   describe('backward compatibility — all original values preserved', () => {
@@ -192,6 +204,11 @@ describe('schema-DB alignment', () => {
     it('import list type values match original hardcoded enum', () => {
       const original = ['abs', 'nyt', 'hardcover'];
       expect([...importListTypeSchema.options].sort()).toEqual(original.sort());
+    });
+
+    it('protocol values match original hardcoded enum', () => {
+      const original = ['torrent', 'usenet'];
+      expect([...protocolSchema.options].sort()).toEqual(original.sort());
     });
   });
 });

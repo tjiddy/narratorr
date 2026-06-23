@@ -10,6 +10,7 @@ import { NOTIFIER_TYPES } from '../shared/notifier-registry';
 import { IMPORT_LIST_TYPES } from '../shared/import-list-registry';
 import { CONNECTOR_TYPES } from '../shared/connector-registry';
 import { IMPORT_JOB_TYPES, IMPORT_JOB_STATUSES, IMPORT_JOB_PHASES } from '../shared/schemas/import-job';
+import { PROTOCOLS } from '../shared/schemas/download-protocol';
 import type { NotificationEvent } from '../shared/notification-events';
 
 // ============ LIBRARY ============
@@ -265,7 +266,7 @@ export const downloads = sqliteTable('downloads', {
   indexerId: integer('indexer_id').references(() => indexers.id, { onDelete: 'set null' }),
   downloadClientId: integer('download_client_id').references(() => downloadClients.id, { onDelete: 'set null' }),
   title: text('title').notNull(),
-  protocol: text('protocol', { enum: ['torrent', 'usenet'] }).notNull().default('torrent'),
+  protocol: text('protocol', { enum: PROTOCOLS }).notNull().default('torrent'),
   infoHash: text('info_hash'),
   downloadUrl: text('download_url'),
   size: integer('size'),
