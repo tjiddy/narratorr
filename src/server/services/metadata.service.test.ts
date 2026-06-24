@@ -2162,3 +2162,111 @@ describe('isRejectedByWords (shared predicate)', () => {
     expect(kept).toHaveLength(2);
   });
 });
+
+// ── #1622 resolveBook — shared ASIN-fast-path → search-fallback resolver ──
+describe('MetadataService.resolveBook', () => {
+  let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAudibleProvider.searchBooks.mockReset().mockResolvedValue({ books: [] });
+    mockAudnexus.getBook.mockReset().mockResolvedValue(null);
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
+  });
+
+  const audiobook: BookMetadata = {
+    asin: 'B0AUDIO', title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }],
+    narrators: ['Michael Kramer'], duration: 2700,
+  };
+
+  it('ASIN resolves via enrichBook → returns the ASIN match; search NOT called', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(audiobook);
+
+    const result = await service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' });
+
+    expect(result).toEqual(audiobook);
+    expect(mockAudnexus.getBook).toHaveBeenCalledWith('B0AUDIO');
+    expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+  });
+
+  it('ASIN present but enrichBook returns null → falls back to search → returns validated candidate', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null); // print/Kindle ASIN 404s on Audnexus
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [audiobook] });
+
+    const result = await service.resolveBook({ asin: '1338589016', title: 'The Way of Kings', author: 'Brandon Sanderson' });
+
+    expect(result).toEqual(audiobook); // carries the real audiobook ASIN it found
+    expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
+  });
+
+  it('no ASIN → search → returns validated candidate', async () => {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [audiobook] });
+
+    const result = await service.resolveBook({ title: 'The Way of Kings', author: 'Brandon Sanderson' });
+
+    expect(result).toEqual(audiobook);
+    expect(mockAudnexus.getBook).not.toHaveBeenCalled();
+  });
+
+  it("empty-string and whitespace ASINs are treated as absent → straight to search (enrichBook NOT called)", async () => {
+    mockAudibleProvider.searchBooks.mockResolvedValue({ books: [audiobook] });
+
+    await service.resolveBook({ asin: '', title: 'The Way of Kings', author: 'Brandon Sanderson' });
+    await service.resolveBook({ asin: '   ', title: 'The Way of Kings', author: 'Brandon Sanderson' });
+
+    expect(mockAudnexus.getBook).not.toHaveBeenCalled();
+    expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(2);
+  });
+
+  it('ASIN miss + search miss → null', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
+
+    const result = await service.resolveBook({ asin: 'B_DEAD', title: 'Obscure', author: 'Nobody' });
+    expect(result).toBeNull();
+  });
+
+  it('ASIN miss + non-matching top candidate → validation rejects → null', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
+    // Wrong author → matchPassesValidation rejects.
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+      books: [{ title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' }],
+    });
+
+    const result = await service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' });
+    expect(result).toBeNull();
+  });
+
+  it('author absent → query is built from title alone (no literal "undefined" appended)', async () => {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'Standalone', authors: [{ name: 'X' }] }] });
+
+    await service.resolveBook({ title: 'Standalone' });
+
+    expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Standalone');
+  });
+
+  it('provider RateLimitError on the enrichBook path → re-throws (NOT swallowed to null)', async () => {
+    mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+
+    await expect(
+      service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+  });
+
+  it('F5: provider RateLimitError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(30000, 'Audible.com'));
+
+    await expect(
+      service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+  });
+
+  it('the public search() still swallows a search rate limit to [] (resolver does not change discovery behavior)', async () => {
+    mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(30000, 'Audible.com'));
+    const result = await service.search('The Way of Kings');
+    expect(result.books).toEqual([]);
+  });
+});

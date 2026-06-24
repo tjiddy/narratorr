@@ -666,6 +666,35 @@ describe('BookService', () => {
       );
     });
 
+    it('passes enrichmentStatus to the insert payload when supplied (#1622)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Unresolvable Book', authors: [], enrichmentStatus: 'failed' });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ enrichmentStatus: 'failed' }),
+      );
+    });
+
+    it('leaves enrichmentStatus undefined (DB default applies) when not supplied (#1622)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Default Book', authors: [] });
+
+      const valuesArg = insertChain.values.mock.calls[0][0] as Record<string, unknown>;
+      expect(valuesArg.enrichmentStatus).toBeUndefined();
+    });
+
     it('writes a bk_-prefixed publicId to the books insert payload (#1443)', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))

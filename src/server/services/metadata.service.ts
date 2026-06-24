@@ -21,7 +21,9 @@ import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
+import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
+export type { ResolveBookInput } from './metadata-resolve-book.js';
 
 
 const DEFAULT_THROTTLE_MS = 200;
@@ -371,6 +373,27 @@ export class MetadataService {
       this.log.warn({ error: serializeError(error), asin }, 'Audnexus enrichment lookup failed');
       return null;
     }
+  }
+
+  /**
+   * Robust audiobook resolution shared by the import-list add flow and the
+   * background enrichment job (ASIN fast path → title/author search fallback +
+   * validation; rate limits propagate). See {@link runResolveBook} for the full
+   * contract — the orchestration lives there so this file stays under its
+   * `max-lines` budget while reusing the throttle/rate-limit/provider internals.
+   */
+  resolveBook(input: ResolveBookInput): Promise<BookMetadata | null> {
+    return runResolveBook({
+      provider: this.providers[0],
+      enrichBook: (asin) => this.enrichBook(asin),
+      acquireThrottle: () => this.throttle.acquire(),
+      isRateLimited: (name) => this.isRateLimited(name),
+      getRateLimitRemainingMs: (name) => this.getRateLimitRemainingMs(name),
+      setRateLimited: (name, ms) => this.setRateLimited(name, ms),
+      applyBookFilters: (books) => this.applyBookFilters(books),
+      logParseDrop: (result, name) => this.logParseDrop(result, name),
+      log: this.log,
+    }, input);
   }
 
   async testProviders(): Promise<{ name: string; type: string; success: boolean; message?: string }[]> {
