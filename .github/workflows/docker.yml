@@ -60,6 +60,7 @@ jobs:
   docker:
     needs: [quality-gates]
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # buildx/cache/QEMU can wedge with no cap (run 28070407209 hung ~90m); fail fast instead
 
     permissions:
       contents: write   # create GitHub Release on the semver-tag (release) path
