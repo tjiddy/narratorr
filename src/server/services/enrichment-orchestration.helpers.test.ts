@@ -246,6 +246,25 @@ describe('applyAudnexusEnrichment', () => {
     expect(setArg).toMatchObject({ asin: 'B002', enrichmentStatus: 'enriched' });
   });
 
+  it('(F2) alternate ASIN collides — ASIN write skipped, fields kept + enriched, warn logged, NOT failed', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValueOnce(null).mockResolvedValueOnce({ duration: 7200 });
+    mockFindCollision(deps).mockResolvedValueOnce({ conflictBookId: 9, conflictTitle: 'Other' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book' }, { ...deps, db });
+
+    expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B002');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ duration: 7200, enrichmentStatus: 'enriched' });
+    expect(setArg).not.toHaveProperty('asin');
+    expect(setArg.enrichmentStatus).not.toBe('failed');
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, conflictBookId: 9 }),
+      expect.stringContaining('collides'),
+    );
+  });
+
   it('all ASINs miss → search fallback hits with a new ASIN, written back', async () => {
     const { db, updateChain } = dbWithUpdateChain();
     mockEnrichBook(deps).mockResolvedValue(null);
@@ -358,6 +377,32 @@ describe('applyAudnexusEnrichment', () => {
     expect(setArg).not.toHaveProperty('subtitle');
     expect(setArg).not.toHaveProperty('publisher');
     expect(deps.bookService.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildBackgroundAudnexusConfig (#1625 — search-fallback title/author threading)', () => {
+  // AC2: title/author must be threaded from the import payload into the config so the
+  // production manual-import path can call resolveBook after the ASIN loop misses.
+  it('threads title/author from the import payload onto the config', async () => {
+    const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const item = { path: '/x', title: 'Mistborn', authorName: 'Brandon Sanderson', asin: 'B001' };
+    const extracted = extractImportMetadata(item);
+
+    const config = buildBackgroundAudnexusConfig(item, extracted, null);
+
+    expect(config.title).toBe('Mistborn');
+    expect(config.author).toBe('Brandon Sanderson');
+  });
+
+  it('leaves author null when the payload omits authorName (title still threaded)', async () => {
+    const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const item = { path: '/x', title: 'Mistborn' };
+    const extracted = extractImportMetadata(item);
+
+    const config = buildBackgroundAudnexusConfig(item, extracted, null);
+
+    expect(config.title).toBe('Mistborn');
+    expect(config.author).toBeNull();
   });
 });
 
