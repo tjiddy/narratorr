@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { RateLimitError, TransientError } from '../../core/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -7,6 +8,21 @@ import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
 import { runEnrichment } from './enrichment.js';
+
+// Serialize a Drizzle SQL predicate (the arg passed to `.where()`) to raw SQL +
+// bound params, so we assert the REAL captured-ASIN guard shape instead of just
+// "`.where()` was called" — a regression to `where(eq(books.id, ...))` only
+// would leave `"asin"` out of the SQL and the captured value out of the params.
+// Mirrors discovery.service.test.ts / blacklist.service.test.ts.
+const dialect = new SQLiteSyncDialect();
+function whereSql(expr: unknown): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).sql;
+}
+function whereParams(expr: unknown): unknown[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).params;
+}
 
 describe('enrichment job', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -1104,7 +1120,10 @@ describe('enrichment job', () => {
 
       // Built with the captured-ASIN guard + .returning({ id }); 0 rows → stale-drop, not failed.
       const failedChain = db.update();
-      expect(failedChain.where).toHaveBeenCalled();
+      const collisionWhere = failedChain.where.mock.calls[0]![0];
+      expect(whereSql(collisionWhere)).toContain('"id"');
+      expect(whereSql(collisionWhere)).toContain('"asin"');     // captured-ASIN guard, not id-only
+      expect(whereParams(collisionWhere)).toEqual([1, 'B_OLD']); // candidate.id + capturedAsin
       expect(failedChain.returning.mock.calls[0]![0]).toHaveProperty('id');
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
@@ -1126,6 +1145,10 @@ describe('enrichment job', () => {
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
+      const noMatchWhere = db.update().where.mock.calls[0]![0];
+      expect(whereSql(noMatchWhere)).toContain('"id"');
+      expect(whereSql(noMatchWhere)).toContain('"asin"');     // captured-ASIN guard, not id-only
+      expect(whereParams(noMatchWhere)).toEqual([1, 'B_OLD']);
       expect(db.update().returning.mock.calls[0]![0]).toHaveProperty('id');
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
@@ -1173,6 +1196,46 @@ describe('enrichment job', () => {
       expect(log.warn).toHaveBeenCalledWith({ bookId: 2, asin: 'B_TWO' }, 'Book enrichment failed');
     });
 
+    it('unique-constraint recovery: detects the violation when the ASIN UNIQUE text is only in error.cause.message', async () => {
+      // Drizzle/libSQL nests the SQLite message under `.cause` — the top-level
+      // message is generic. If isAsinUniqueViolation only checked error.message,
+      // this would rethrow and abort the batch instead of recovering.
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: 'B_OLD', title: 'Race', author: 'Author' },
+          { id: 2, asin: 'B_TWO', title: 'Next', author: 'Author' },
+        ]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Race', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing (candidate 1)
+
+      metadataService.resolveBook
+        .mockResolvedValueOnce({ asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }], description: 'desc' })
+        .mockResolvedValueOnce(null);  // candidate 2 → no-match
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+
+      // Generic top-level message; the ASIN UNIQUE text lives only under .cause.
+      const nestedCauseError = new Error('SQLITE_CONSTRAINT: constraint failed');
+      (nestedCauseError as Error & { cause?: unknown }).cause = {
+        message: 'UNIQUE constraint failed: books.asin',
+      };
+      const recoveryChain = mockDbChain([{ id: 1 }]);
+      db.update
+        .mockReturnValueOnce(mockDbChain([], { error: nestedCauseError }))  // scalar write throws nested-cause unique error
+        .mockReturnValueOnce(recoveryChain)                                 // recovery → mark failed
+        .mockReturnValueOnce(mockDbChain([{ id: 2 }]));                     // candidate 2 no-match write
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Nested-cause violation was recognized → guarded recovery marked failed.
+      const recoverySet = recoveryChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(recoverySet).toHaveProperty('enrichmentStatus', 'failed');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, resolvedAsin: 'B_OWNED', error: expect.any(Object) }),
+        'Resolved ASIN hit a unique-constraint race — marking failed',
+      );
+      // Batch continued rather than aborting on the nested-cause error.
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+    });
+
     it('unique-constraint recovery stale-drop: drops the failed-mark when Fix Match swapped the identity after the throw', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([
@@ -1194,6 +1257,11 @@ describe('enrichment job', () => {
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
+      // The guarded recovery write is scoped to the captured ASIN, not id-only.
+      const recoveryWhere = recoveryChain.where.mock.calls[0]![0];
+      expect(whereSql(recoveryWhere)).toContain('"id"');
+      expect(whereSql(recoveryWhere)).toContain('"asin"');
+      expect(whereParams(recoveryWhere)).toEqual([1, 'B_OLD']);
       expect(recoveryChain.returning.mock.calls[0]![0]).toHaveProperty('id');
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
