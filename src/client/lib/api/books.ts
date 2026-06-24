@@ -94,8 +94,12 @@ export interface UpdateBookPayload {
   title?: string | undefined;
   authors?: { name: string; asin?: string | undefined }[] | undefined;
   narrators?: string[] | undefined;
-  description?: string | undefined;
-  coverUrl?: string | undefined;
+  // `null` clears the stored column (detail page falls back to provider value);
+  // `undefined`/omitted = unchanged. Mirrors `updateBookBodySchema` (#1609).
+  description?: string | null | undefined;
+  coverUrl?: string | null | undefined;
+  publishedDate?: string | null | undefined;
+  genres?: string[] | null | undefined;
   status?: BookStatus | undefined;
   seriesName?: string | null | undefined;
   seriesPosition?: number | null | undefined;
