@@ -59,6 +59,91 @@ function asinMatches(capturedAsin: string | null) {
   return capturedAsin === null ? isNull(books.asin) : eq(books.asin, capturedAsin);
 }
 
+// `books.asin` carries a partial unique index (`idx_books_asin_unique` on the
+// non-null column). A concurrent writer (Fix Match / import-list create) can
+// take the resolved ASIN between `findAsinCollision` and the writeback, so the
+// scalar UPDATE can still throw a UNIQUE violation. Detect it the way
+// book-import.service.ts does — both the index-name and column-message forms,
+// checking `error.cause?.message` first since Drizzle/libSQL nests the SQLite
+// message under `.cause`.
+const ASIN_UNIQUE_VIOLATION = /UNIQUE constraint failed.*(?:idx_books_asin_unique|books\.asin)/;
+
+function isAsinUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const causeMsg = (error as Error & { cause?: { message?: string } }).cause?.message ?? '';
+  if (ASIN_UNIQUE_VIOLATION.test(causeMsg)) return true;
+  return ASIN_UNIQUE_VIOLATION.test(error.message ?? '');
+}
+
+/**
+ * Mark a candidate `failed`, scoped `WHERE id = ? AND asin <matches captured>`
+ * so a Fix Match that re-identified the row mid-flight drops the stale write
+ * atomically (rather than clobbering the new identity's `enrichmentStatus`).
+ * Returns true when a row was updated; on zero rows logs a stale-drop with the
+ * caller's `pathTag` and returns false — the row was swapped, leave it alone.
+ */
+async function markFailedGuarded(
+  db: Db,
+  log: FastifyBaseLogger,
+  bookId: number,
+  capturedAsin: string | null,
+  pathTag: string,
+): Promise<boolean> {
+  const rows = await db
+    .update(books)
+    .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
+    .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
+    .returning({ id: books.id });
+  if (rows.length === 0) {
+    log.debug({ bookId, asin: capturedAsin }, `stale enrichment dropped (${pathTag})`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Apply the success scalar UPDATE, scoped `WHERE id = ? AND asin <matches
+ * captured>` so a Fix Match that swapped the row's identity between fetch and
+ * writeback drops the stale write atomically (null-safe via `asinMatches`).
+ *
+ * On a UNIQUE violation — a concurrent writer (Fix Match / import-list create)
+ * took the resolved ASIN between `findAsinCollision` and this write — run the
+ * guarded recovery write to mark the candidate `failed` instead of letting the
+ * throw abort the rest of the batch, and return true so the caller `continue`s.
+ * Non-unique errors are genuine faults and rethrow, preserving existing
+ * crash/log behavior. Returns false on the normal path (including a scalar
+ * stale-drop) so the caller falls through to the success log.
+ */
+async function applyScalarWrite(
+  db: Db,
+  log: FastifyBaseLogger,
+  bookId: number,
+  capturedAsin: string | null,
+  updates: Record<string, unknown>,
+  resolvedAsin: string | null,
+): Promise<boolean> {
+  let scalarResult;
+  try {
+    scalarResult = await db
+      .update(books)
+      .set(updates)
+      .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
+      .returning({ id: books.id });
+  } catch (error: unknown) {
+    if (!isAsinUniqueViolation(error)) throw error;
+    log.warn(
+      { bookId, resolvedAsin, error: serializeError(error) },
+      'Resolved ASIN hit a unique-constraint race — marking failed',
+    );
+    await markFailedGuarded(db, log, bookId, capturedAsin, 'unique recovery');
+    return true;
+  }
+  if (scalarResult.length === 0) {
+    log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
+  }
+  return false;
+}
+
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
 function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknown>): Record<string, unknown> {
   const fields: Array<keyof ExistingBookFields> = ['subtitle', 'description', 'publisher', 'coverUrl', 'publishedDate'];
@@ -198,14 +283,12 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
       if (asinChanged) {
         const collision = await bookService.findAsinCollision(candidate.id, resolvedAsin);
         if (collision) {
-          await db
-            .update(books)
-            .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
-            .where(eq(books.id, candidate.id));
-          log.warn(
-            { bookId: candidate.id, resolvedAsin, conflictBookId: collision.conflictBookId },
-            'Resolved ASIN collides with an existing book — marking failed',
-          );
+          if (await markFailedGuarded(db, log, candidate.id, capturedAsin, 'collision')) {
+            log.warn(
+              { bookId: candidate.id, resolvedAsin, conflictBookId: collision.conflictBookId },
+              'Resolved ASIN collides with an existing book — marking failed',
+            );
+          }
           continue;
         }
       }
@@ -292,24 +375,16 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
       // the stale write atomically. Null-safe: a captured-null row matches via
       // `asin IS NULL` (a plain `asin = NULL` predicate never matches, which
       // would silently drop the writeback for a search-rescued null-ASIN book).
-      const scalarResult = await db
-        .update(books)
-        .set(updates)
-        .where(and(eq(books.id, candidate.id), asinMatches(capturedAsin)))
-        .returning({ id: books.id });
-      if (scalarResult.length === 0) {
-        log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
+      if (await applyScalarWrite(db, log, candidate.id, capturedAsin, updates, resolvedAsin)) {
+        continue; // unique-constraint race recovered → candidate marked failed
       }
 
       enrichedCount++;
       log.info({ bookId: candidate.id, asin: resolvedAsin ?? capturedAsin }, 'Book enriched successfully');
     } else {
-      await db
-        .update(books)
-        .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
-        .where(eq(books.id, candidate.id));
-
-      log.warn({ bookId: candidate.id, asin: capturedAsin }, 'Book enrichment failed');
+      if (await markFailedGuarded(db, log, candidate.id, capturedAsin, 'no-match')) {
+        log.warn({ bookId: candidate.id, asin: capturedAsin }, 'Book enrichment failed');
+      }
     }
   }
 
