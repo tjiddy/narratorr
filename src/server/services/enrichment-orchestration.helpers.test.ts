@@ -17,7 +17,7 @@ import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helpers.js';
 import { mockDbChain } from '../__tests__/helpers.js';
-import { RateLimitError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
 
 /** A db whose `update().set().where()` chain resolves; returns the captured chain for assertions. */
 function dbWithUpdateChain() {
@@ -358,6 +358,36 @@ describe('applyAudnexusEnrichment', () => {
     await expect(
       applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db }),
     ).rejects.toBeInstanceOf(RateLimitError);
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+  });
+
+  // #1628 — a transient (non-rate-limit) error on the supplementary post-import
+  // search fallback is a NON-FATAL miss: the import completes, nothing is written,
+  // the book stays pending for the scheduled job to retry. (Contrast the
+  // RateLimitError case above, which still propagates and fails the import.)
+  it('#1628: TransientError on the search fallback is a non-fatal miss (no throw, no writes)', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
+
+    // Resolves without throwing — the manual import must not be failed by a
+    // transient during supplementary enrichment.
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, title: 'My Book' }),
+      expect.stringContaining('transient'),
+    );
+  });
+
+  it('#1628: a generic Error on the search fallback is also a non-fatal miss (no throw, no writes)', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockRejectedValueOnce(new Error('Network error'));
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
   });

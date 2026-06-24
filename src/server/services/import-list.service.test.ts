@@ -4,7 +4,7 @@ import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
-import { RateLimitError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
@@ -937,6 +937,61 @@ describe('ImportListService', () => {
           expect.objectContaining({ title: 'Rate Limited Book', provider: 'Audible.com' }),
           expect.stringContaining('rate limited'),
         );
+      });
+
+      // #1628 — a transient provider failure during the fallback search is NOT a
+      // no-match: the book is still created but left pending (no 'failed' status),
+      // so the background job retries it. Mirrors the rate-limit case above.
+      it('transient error during resolution: book left pending (not failed), warn logged', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockRejectedValue(new TransientError('Audible.com', 'HTTP 503')),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Transient Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Transient Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Transient Book', provider: 'Audible.com' }),
+          expect.stringContaining('transient'),
+        );
+      });
+
+      // #1628 — a generic (non-typed) error during resolution is also treated as
+      // transient: book created but left pending, not failed.
+      it('generic error during resolution: book left pending (not failed)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockRejectedValue(new Error('Network error')),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Network Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Network Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
       });
 
       // #1119 AC test #4 — Search-candidate validation success: metadata identity wins at create payload

@@ -107,10 +107,21 @@ export async function applyAudnexusEnrichment(
 
   // Search fallback — every ASIN missed (or there were none). When every embedded
   // ASIN is a print/Kindle ASIN (or 404s), a title+author search re-finds the real
-  // audiobook. Skipped with no title (never called with an empty query). A
-  // RateLimitError from resolveBook propagates by design (not swallowed as a miss).
+  // audiobook. Skipped with no title (never called with an empty query).
   if (!title) return;
-  const resolved = await deps.metadataService.resolveBook({ title, author: opts.author?.trim() || undefined });
+  let resolved;
+  try {
+    resolved = await deps.metadataService.resolveBook({ title, author: opts.author?.trim() || undefined });
+  } catch (error: unknown) {
+    // A RateLimitError propagates by design (the manual adapter treats it as a
+    // retryable import). Any OTHER thrown error is a transient provider failure
+    // during a SUPPLEMENTARY post-import fetch — treat it as a non-fatal miss so
+    // the import still completes and the book stays pending for the scheduled job
+    // to retry. Mirrors the ASIN-recovery loop's catch above.
+    if (error instanceof RateLimitError) throw error;
+    deps.log.warn({ error: serializeError(error), bookId, title }, 'Audnexus search fallback failed (transient) — leaving book pending');
+    return;
+  }
   if (resolved) {
     await applyEnrichmentData(bookId, resolved.asin, resolved, opts, deps);
   }
