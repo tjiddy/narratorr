@@ -55,6 +55,15 @@ describe('SearchSettingsPage', () => {
     expect(screen.getByLabelText('RSS Interval (minutes)')).toBeInTheDocument();
   });
 
+  it('renders the New Book Defaults card (moved here from General settings)', async () => {
+    renderWithProviders(<SearchSettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('When a New Book Is Added')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+  });
+
   it('renders Filtering card with all expected fields', async () => {
     renderWithProviders(<SearchSettingsPage />);
 
@@ -84,18 +93,19 @@ describe('SearchSettingsPage', () => {
     expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
   });
 
-  it('renders four separate cards with independent forms', async () => {
+  it('renders five separate cards with independent forms', async () => {
     renderWithProviders(<SearchSettingsPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Search')).toBeInTheDocument();
     });
+    expect(screen.getByText('When a New Book Is Added')).toBeInTheDocument();
     expect(screen.getByText('Metadata')).toBeInTheDocument();
     expect(screen.getByText('Filtering')).toBeInTheDocument();
     expect(screen.getByText('Quality')).toBeInTheDocument();
 
     const forms = document.querySelectorAll('form');
-    expect(forms).toHaveLength(4);
+    expect(forms).toHaveLength(5);
   });
 
   it('Metadata card appears before Filtering card in document order', async () => {
