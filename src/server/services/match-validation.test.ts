@@ -52,6 +52,94 @@ describe('matchPassesValidation', () => {
     });
   });
 
+  describe('verbose/subtitle title containment (author present, #1636)', () => {
+    it('accepts a verbose item title against a short candidate (containment, not dice)', () => {
+      // The dice branch CANNOT carry this — assert it sits below the gate so the
+      // case proves the significant-token containment branch is what passed.
+      expect(diceCoefficient('The Hobbit, or There and Back Again', 'The Hobbit')).toBeLessThan(
+        TITLE_MATCH_THRESHOLD,
+      );
+      const result = matchPassesValidation(
+        { title: 'The Hobbit, or There and Back Again', author: 'J.R.R. Tolkien' },
+        candidate({ title: 'The Hobbit', authors: [{ name: 'J.R.R. Tolkien' }] }),
+      );
+      expect(result).toBe(true);
+    });
+
+    it('accepts a short item title against a verbose candidate (containment is bidirectional)', () => {
+      const result = matchPassesValidation(
+        { title: 'The Hobbit', author: 'Tolkien' },
+        candidate({ title: 'The Hobbit, or There and Back Again', authors: [{ name: 'J.R.R. Tolkien' }] }),
+      );
+      expect(result).toBe(true);
+    });
+
+    it('accepts a same-work different-edition title (documented wrong-edition tolerance)', () => {
+      // Different audio production, same book — acceptable per #1636 and
+      // recoverable via Fix Match. dice is below the gate; containment carries it.
+      expect(diceCoefficient('The Hobbit', 'The Hobbit: 50th Anniversary Edition')).toBeLessThan(
+        TITLE_MATCH_THRESHOLD,
+      );
+      const result = matchPassesValidation(
+        { title: 'The Hobbit', author: 'Tolkien' },
+        candidate({ title: 'The Hobbit: 50th Anniversary Edition', authors: [{ name: 'J.R.R. Tolkien' }] }),
+      );
+      expect(result).toBe(true);
+    });
+
+    it('rejects a different work by the same author (no shared significant tokens)', () => {
+      // dice is also below the gate, so neither branch can carry it.
+      expect(diceCoefficient('The Hobbit', 'The Silmarillion')).toBeLessThan(TITLE_MATCH_THRESHOLD);
+      const result = matchPassesValidation(
+        { title: 'The Hobbit', author: 'Tolkien' },
+        candidate({ title: 'The Silmarillion', authors: [{ name: 'J.R.R. Tolkien' }] }),
+      );
+      expect(result).toBe(false);
+    });
+
+    it('rejects a contained title by a different author (author is confirmed first)', () => {
+      // "hobbit" IS contained in "The History of The Hobbit", but the author
+      // check (Rateliff ≠ Tolkien) rejects before containment can apply —
+      // proves containment never bypasses author corroboration.
+      const result = matchPassesValidation(
+        { title: 'The Hobbit', author: 'J.R.R. Tolkien' },
+        candidate({ title: 'The History of The Hobbit', authors: [{ name: 'John Rateliff' }] }),
+      );
+      expect(result).toBe(false);
+    });
+
+    it('does not treat a stopword-only title as a subset of everything', () => {
+      // "The And" reduces to an empty significant-token set; an empty set must
+      // NOT satisfy containment, and dice is below the gate → reject.
+      expect(diceCoefficient('The And', 'The Hobbit')).toBeLessThan(TITLE_MATCH_THRESHOLD);
+      const result = matchPassesValidation(
+        { title: 'The And', author: 'Tolkien' },
+        candidate({ title: 'The Hobbit', authors: [{ name: 'J.R.R. Tolkien' }] }),
+      );
+      expect(result).toBe(false);
+    });
+
+    it('does not let a single-character token drive containment', () => {
+      // A lone "x" is the item's only token; without the single-char guard it
+      // would be a subset of {x, marks, spot}. dice('X', …) is 0, so a reject
+      // here proves the guard dropped the single-char token.
+      expect(diceCoefficient('X', 'X Marks the Spot')).toBeLessThan(TITLE_MATCH_THRESHOLD);
+      const result = matchPassesValidation(
+        { title: 'X', author: 'Tolkien' },
+        candidate({ title: 'X Marks the Spot', authors: [{ name: 'J.R.R. Tolkien' }] }),
+      );
+      expect(result).toBe(false);
+    });
+
+    it('normalizes punctuation and case (item differing only in punctuation/case passes)', () => {
+      const result = matchPassesValidation(
+        { title: '  the WAY of kings!!! ', author: 'Brandon Sanderson' },
+        candidate({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] }),
+      );
+      expect(result).toBe(true);
+    });
+  });
+
   describe('no-author path — tightened threshold (#1629)', () => {
     it('exposes a stricter no-author threshold than the loose title gate', () => {
       expect(NO_AUTHOR_TITLE_MATCH_THRESHOLD).toBeGreaterThan(TITLE_MATCH_THRESHOLD);
