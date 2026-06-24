@@ -1044,16 +1044,27 @@ describe('startJobs', () => {
     );
 
     it('reports a fixed-time cron (0 2 * * *) more than a minute out — guards the old "≈now" fallback', async () => {
-      const { scheduleCron } = await import('./index.js');
-      const reg = new TaskRegistry();
-      reg.register('version-check', 'cron', vi.fn().mockResolvedValue(undefined), '0 2 * * *');
+      // Freeze the clock to an instant well away from 02:00 (#1611): a daily 02:00 cron's
+      // real next-run legitimately drops under 60s when the suite runs in the 01:59–02:00
+      // window, which flaked this assertion (observed 32s at 01:59). Fake ONLY `Date` so
+      // croner computes next-run against the frozen time while its real scheduling timers
+      // stay untouched; restore real timers in finally so the afterEach cleanup is unaffected.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2024-06-15T12:00:00'));
+      try {
+        const { scheduleCron } = await import('./index.js');
+        const reg = new TaskRegistry();
+        reg.register('version-check', 'cron', vi.fn().mockResolvedValue(undefined), '0 2 * * *');
 
-      const job = scheduleCron(reg, 'version-check', '0 2 * * *', log);
-      cronInstances.push(job);
+        const job = scheduleCron(reg, 'version-check', '0 2 * * *', log);
+        cronInstances.push(job);
 
-      const task = reg.getAll().find((t) => t.name === 'version-check');
-      const deltaMs = new Date(task!.nextRun!).getTime() - Date.now();
-      expect(deltaMs).toBeGreaterThan(60 * 1000);
+        const task = reg.getAll().find((t) => t.name === 'version-check');
+        const deltaMs = new Date(task!.nextRun!).getTime() - Date.now();
+        expect(deltaMs).toBeGreaterThan(60 * 1000);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('refreshes nextRun after each fire via the callback finally-block', async () => {
