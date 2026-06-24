@@ -34,11 +34,11 @@ import { toast } from 'sonner';
 
 const mockList: ImportList = {
   id: 1,
-  name: 'My ABS List',
-  type: 'abs',
+  name: 'My NYT List',
+  type: 'nyt',
   enabled: true,
   syncIntervalMinutes: 1440,
-  settings: { serverUrl: 'http://abs.local', apiKey: '***', libraryId: 'lib-1' },
+  settings: { apiKey: '***', list: 'audio-fiction' },
   lastRunAt: null,
   nextRunAt: null,
   lastSyncError: null,
@@ -58,8 +58,8 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="view" onSubmit={noop} />
       );
 
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
-      expect(screen.getByText(/Audiobookshelf/)).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
+      expect(screen.getByText(/NYT Bestsellers/)).toBeInTheDocument();
       expect(screen.getByText(/every 1440m/)).toBeInTheDocument();
     });
 
@@ -69,7 +69,7 @@ describe('ImportListCard', () => {
       );
 
       // Green check circle for enabled
-      const toggleButton = screen.getByText('My ABS List').closest('.flex')!.querySelector('button')!;
+      const toggleButton = screen.getByText('My NYT List').closest('.flex')!.querySelector('button')!;
       expect(toggleButton.querySelector('.text-green-500')).not.toBeNull();
     });
 
@@ -78,7 +78,7 @@ describe('ImportListCard', () => {
         <ImportListCard list={{ ...mockList, enabled: false }} mode="view" onSubmit={noop} />
       );
 
-      const toggleButton = screen.getByText('My ABS List').closest('.flex')!.querySelector('button')!;
+      const toggleButton = screen.getByText('My NYT List').closest('.flex')!.querySelector('button')!;
       expect(toggleButton.querySelector('.text-muted-foreground')).not.toBeNull();
     });
 
@@ -89,7 +89,7 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="view" onSubmit={noop} />
       );
 
-      const toggleButton = screen.getByText('My ABS List').closest('.flex')!.querySelector('button')!;
+      const toggleButton = screen.getByText('My NYT List').closest('.flex')!.querySelector('button')!;
       await user.click(toggleButton);
 
       await waitFor(() => {
@@ -104,7 +104,7 @@ describe('ImportListCard', () => {
         <ImportListCard list={{ ...mockList, enabled: false }} mode="view" onSubmit={noop} />
       );
 
-      const toggleButton = screen.getByText('My ABS List').closest('.flex')!.querySelector('button')!;
+      const toggleButton = screen.getByText('My NYT List').closest('.flex')!.querySelector('button')!;
       await user.click(toggleButton);
 
       await waitFor(() => {
@@ -119,7 +119,7 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="view" onSubmit={noop} />
       );
 
-      const toggleButton = screen.getByText('My ABS List').closest('.flex')!.querySelector('button')!;
+      const toggleButton = screen.getByText('My NYT List').closest('.flex')!.querySelector('button')!;
       await user.click(toggleButton);
 
       await waitFor(() => {
@@ -171,8 +171,8 @@ describe('ImportListCard', () => {
       expect(screen.getByLabelText('Name')).toBeInTheDocument();
       expect(screen.getByLabelText('Provider Type')).toBeInTheDocument();
       expect(screen.getByLabelText('Sync Interval (minutes)')).toBeInTheDocument();
-      // ABS fields shown by default
-      expect(screen.getByLabelText('Server URL')).toBeInTheDocument();
+      // NYT fields shown by default (nyt is the default provider)
+      expect(screen.getByLabelText('Bestseller List')).toBeInTheDocument();
     });
 
     it('sync interval input uses integer step', () => {
@@ -193,7 +193,7 @@ describe('ImportListCard', () => {
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
       expect(onFormTest).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'abs',
+        type: 'nyt',
         enabled: true,
       }));
     });
@@ -326,7 +326,7 @@ describe('ImportListCard', () => {
 
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Test List',
-        type: 'abs',
+        type: 'nyt',
       }));
     });
 
@@ -365,7 +365,7 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="edit" onSubmit={noop} />
       );
 
-      expect(screen.getByDisplayValue('My ABS List')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('My NYT List')).toBeInTheDocument();
       expect(screen.getByDisplayValue('1440')).toBeInTheDocument();
     });
 
@@ -423,14 +423,14 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="edit" onSubmit={onSubmit} />
       );
 
-      const nameInput = screen.getByDisplayValue('My ABS List');
+      const nameInput = screen.getByDisplayValue('My NYT List');
       await user.clear(nameInput);
       await user.type(nameInput, 'Updated List');
       await user.click(screen.getByText('Update', { selector: 'button[type="submit"]' }));
 
       expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Updated List',
-        type: 'abs',
+        type: 'nyt',
       }));
     });
 
@@ -446,7 +446,7 @@ describe('ImportListCard', () => {
 
       await waitFor(() => expect(api.previewImportList).toHaveBeenCalled());
       expect(api.previewImportList).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, type: 'abs' }),
+        expect.objectContaining({ id: 1, type: 'nyt' }),
       );
     });
   });
@@ -463,21 +463,22 @@ describe('ImportListCard', () => {
   // this payload pattern. Regress the guard by removing the `setSettings` reset in
   // `handleTypeChange` and these assertions go red.
   describe('#908 — ImportListCard handleTypeChange registry reset (no foreign-type leak)', () => {
-    it('abs → nyt switch drops abs-only keys from the Test payload', async () => {
+    it('hardcover → nyt switch drops hardcover-only keys from the Test payload', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();
       renderWithProviders(
         <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
       );
 
-      // Populate abs-only settings before switching, so the reset is proven to drop
-      // real stored values — not merely empty registry defaults. The apiKey sentinel makes the
-      // `apiKey: ''` assertion below non-vacuous: it reds the `{ ...defaults, apiKey:
-      // settings.apiKey }` same-named-key carryover mutation (apiKey exists on all three types,
-      // so the strict per-type schema cannot 400 it — the test is the only guard).
-      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
-      await user.type(screen.getByLabelText('API Key'), 'abs-secret-key');
-      await user.type(screen.getByLabelText('Library'), 'lib-42');
+      // Start on hardcover and populate hardcover-only settings before switching, so the reset
+      // is proven to drop real stored values — not merely empty registry defaults. The apiKey
+      // sentinel makes the `apiKey: ''` assertion below non-vacuous: it reds the `{ ...defaults,
+      // apiKey: settings.apiKey }` same-named-key carryover mutation (apiKey exists on both
+      // surviving types, so the strict per-type schema cannot 400 it — the test is the only guard).
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      await user.type(screen.getByLabelText('API Key'), 'hc-secret-key');
+      await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
+      await user.type(await screen.findByLabelText('Shelf ID'), '42');
 
       // Switch provider type — handleTypeChange resets settings to nyt defaults.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
@@ -489,10 +490,10 @@ describe('ImportListCard', () => {
       expect(onFormTest).toHaveBeenCalled();
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // No key from any non-nyt provider may survive the switch — covers abs (serverUrl/
-      // libraryId) AND hardcover (listType), matching the full no-foreign-keys contract.
+      // No key from any non-nyt provider may survive the switch — covers hardcover (listType),
+      // matching the full no-foreign-keys contract.
       const foreignKeys = foreignImportListKeys('nyt');
-      expect(foreignKeys).toEqual(expect.arrayContaining(['serverUrl', 'libraryId', 'listType']));
+      expect(foreignKeys).toEqual(expect.arrayContaining(['listType']));
       for (const key of foreignKeys) {
         expect(payloadSettings).not.toHaveProperty(key);
       }
@@ -502,48 +503,47 @@ describe('ImportListCard', () => {
       expect(payloadSettings).not.toHaveProperty('shelfId');
 
       // nyt defaults MUST be present (value-checked so the reset is confirmed). apiKey reset to
-      // '' proves the typed `abs-secret-key` did not carry across the switch.
+      // '' proves the typed `hc-secret-key` did not carry across the switch.
       expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
       expect(payloadSettings).toHaveProperty('apiKey', '');
     });
 
-    it('nyt → abs switch drops the nyt-only list key from the Test payload', async () => {
+    it('nyt → hardcover switch drops the nyt-only list key from the Test payload', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();
       renderWithProviders(
         <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
       );
 
-      // Switch to nyt and set a non-default Bestseller List value.
-      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+      // nyt is the default provider; set a non-default Bestseller List value.
       await user.selectOptions(screen.getByLabelText('Bestseller List'), 'audio-nonfiction');
 
-      // Switch back to abs — handleTypeChange resets settings to abs defaults.
-      await user.selectOptions(screen.getByLabelText('Provider Type'), 'abs');
-      // Await the abs-specific field render so the reset has flushed before we click Test.
-      await screen.findByLabelText('Server URL');
+      // Switch to hardcover — handleTypeChange resets settings to hardcover defaults.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+      // Await the hardcover-specific field render so the reset has flushed before we click Test.
+      await screen.findByLabelText('List Type');
 
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
       expect(onFormTest).toHaveBeenCalled();
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // No key from any non-abs provider may survive the switch — covers nyt (list) AND
-      // hardcover (listType), matching the full no-foreign-keys contract.
-      const foreignKeys = foreignImportListKeys('abs');
-      expect(foreignKeys).toEqual(expect.arrayContaining(['list', 'listType']));
+      // No key from any non-hardcover provider may survive the switch — covers nyt (list),
+      // matching the full no-foreign-keys contract.
+      const foreignKeys = foreignImportListKeys('hardcover');
+      expect(foreignKeys).toEqual(expect.arrayContaining(['list']));
       for (const key of foreignKeys) {
         expect(payloadSettings).not.toHaveProperty(key);
       }
 
-      // abs defaults MUST be present.
-      expect(payloadSettings).toHaveProperty('serverUrl', '');
-      expect(payloadSettings).toHaveProperty('libraryId', '');
+      // hardcover defaults MUST be present.
+      expect(payloadSettings).toHaveProperty('listType', 'trending');
+      expect(payloadSettings).toHaveProperty('apiKey', '');
     });
 
     // Hardcover's `shelfId` is minted dynamically by ImportListProviderSettings.tsx (only when
     // List Type === 'shelf') and is absent from the registry defaults, so foreignImportListKeys
-    // can never see it. This third case mints a real shelfId, switches away to abs, and proves
+    // can never see it. This third case mints a real shelfId, switches away to nyt, and proves
     // handleTypeChange's reset drops it from the Test payload — the leak the registry-derived
     // helper alone would miss.
     it('hardcover shelfId minted then switched away is dropped from the Test payload', async () => {
@@ -558,9 +558,9 @@ describe('ImportListCard', () => {
       await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
       await user.type(await screen.findByLabelText('Shelf ID'), '42');
 
-      // Switch away to abs — handleTypeChange resets settings to abs defaults, dropping shelfId.
-      await user.selectOptions(screen.getByLabelText('Provider Type'), 'abs');
-      await screen.findByLabelText('Server URL');
+      // Switch away to nyt — handleTypeChange resets settings to nyt defaults, dropping shelfId.
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+      await screen.findByLabelText('Bestseller List');
 
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
@@ -569,7 +569,7 @@ describe('ImportListCard', () => {
 
       expect(payloadSettings).not.toHaveProperty('shelfId');
       expect(payloadSettings).not.toHaveProperty('listType');
-      expect(payloadSettings).toHaveProperty('serverUrl', '');
+      expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
     });
   });
 });

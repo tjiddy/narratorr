@@ -24,7 +24,7 @@ export function ImportListsSettings() {
       addLabel="Add Import List"
       emptyIcon={<ListIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />}
       emptyTitle="No import lists configured"
-      emptySubtitle="Add an import list to automatically discover books from Audiobookshelf, NYT, or Hardcover"
+      emptySubtitle="Add an import list to automatically discover books from NYT or Hardcover"
       deleteTitle="Delete Import List"
       renderCard={(list, handlers) => (
         <ImportListCard

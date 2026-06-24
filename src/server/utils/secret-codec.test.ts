@@ -908,10 +908,10 @@ describe('makeTestSchema', () => {
   describe('importList', () => {
     const schema = makeTestSchema(createImportListSchema, 'importList');
 
-    it('accepts sentinel for apiKey on abs', () => {
+    it('accepts sentinel for apiKey on nyt', () => {
       const r = schema.safeParse({
-        name: 'abs', type: 'abs', enabled: true, syncIntervalMinutes: 1440,
-        settings: { serverUrl: 'http://abs', apiKey: '********', libraryId: 'lib-1' },
+        name: 'nyt', type: 'nyt', enabled: true, syncIntervalMinutes: 1440,
+        settings: { apiKey: '********', list: 'audio-fiction' },
       });
       expect(r.success).toBe(true);
     });

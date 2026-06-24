@@ -60,10 +60,10 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
 export function createMockDbImportList(overrides?: Record<string, unknown>) {
   return {
     id: 1,
-    name: 'My ABS List',
-    type: 'abs' as const,
+    name: 'My NYT List',
+    type: 'nyt' as const,
     enabled: true,
-    settings: { serverUrl: 'http://abs.local', apiKey: 'test-key', libraryId: 'lib-1' },
+    settings: { apiKey: 'test-key', list: 'audio-fiction' },
     syncIntervalMinutes: 1440,
     lastRunAt: null as Date | null,
     nextRunAt: null as Date | null,

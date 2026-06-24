@@ -202,7 +202,7 @@ describe('schema-DB alignment', () => {
     });
 
     it('import list type values match original hardcoded enum', () => {
-      const original = ['abs', 'nyt', 'hardcover'];
+      const original = ['nyt', 'hardcover'];
       expect([...importListTypeSchema.options].sort()).toEqual(original.sort());
     });
 

@@ -19,7 +19,7 @@ import type { IdTestResult } from './SettingsCardShell';
 
 export type ImportListFormData = {
   name: string;
-  type: 'abs' | 'nyt' | 'hardcover';
+  type: 'nyt' | 'hardcover';
   enabled: boolean;
   syncIntervalMinutes: number;
   settings: Record<string, unknown>;
@@ -43,7 +43,7 @@ interface ImportListCardProps {
 }
 
 function getDefaults(initial?: ImportList) {
-  const type = initial?.type ?? 'abs';
+  const type = initial?.type ?? 'nyt';
   return {
     type,
     name: initial?.name ?? '',
@@ -242,7 +242,7 @@ function ImportListForm({
         <input id="il-syncInterval" type="number" value={syncInterval} onChange={(e) => setSyncInterval(Number(e.target.value))} min={5} step={1} className={inputClass} />
       </div>
 
-      <ProviderSettings type={type} settings={settings} onChange={setSettings} editingId={initial?.id} />
+      <ProviderSettings type={type} settings={settings} onChange={setSettings} />
 
       <ImportListFormToolbar
         isTesting={isTesting}
