@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "49aea599-be95-49b4-9ae1-e48a8efa1311",
+  "id": "e3b2ef07-f65f-44d2-9c84-79ed26b709d0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -522,8 +522,22 @@
           "notNull": true,
           "autoincrement": false
         },
+        "subtitle": {
+          "name": "subtitle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "description": {
           "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "publisher": {
+          "name": "publisher",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

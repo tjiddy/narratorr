@@ -91,6 +91,13 @@ describe('drizzle baseline migration', () => {
     const suggestionColumns = await columnNames(dbPath, 'suggestions');
     expect(suggestionColumns.has('snooze_until'), 'suggestions.snooze_until must not exist in the baseline schema').toBe(false);
     expect(suggestionColumns.has('dismissed_at'), 'expected survivor column suggestions.dismissed_at').toBe(true);
+
+    // The flattened baseline must fold in the #1614 subtitle/publisher columns
+    // (originally shipped as a 0001 ADD COLUMN migration before the re-flatten).
+    // Pin their presence so a future re-flatten that drops them fails here.
+    const bookColumns = await columnNames(dbPath, 'books');
+    expect(bookColumns.has('subtitle'), 'expected books.subtitle in the baseline schema').toBe(true);
+    expect(bookColumns.has('publisher'), 'expected books.publisher in the baseline schema').toBe(true);
   });
 
   it('is idempotent — re-running the migrator is a no-op', async () => {
