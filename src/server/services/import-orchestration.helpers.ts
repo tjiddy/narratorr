@@ -2,9 +2,8 @@
  * Bulk import pipeline — accepts user-confirmed items and queues them for the
  * import worker. Extracted for consistency with quality-gate helpers.
  */
-import { mkdir, cp, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
-import { streamCopyWithProgress } from './streaming-copy.helpers.js';
 import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -187,13 +186,16 @@ export async function copyToLibrary(
     return targetPath;
   }
 
-  await mkdir(targetPath, { recursive: true });
+  // Empty-target fast path (#1602): import AUDIO ONLY by reusing the SAME copier the populated-target
+  // staged swap uses (`stageSourceAudio`/`copyToLibrary`), so the foreign-file outcome can no longer
+  // diverge between the two paths. It branches directory-vs-file internally: a directory source drops
+  // non-audio members (co-located `.epub`/`.pdf`/`.nfo`/images), an audio single-file source is copied
+  // (file-path manual imports stay supported), and a non-audio single-file source is rejected with
+  // `ContentFailureError`. It also mkdir's the target itself, so the standalone `mkdir` + whole-tree
+  // `cp`/`streamCopyWithProgress` (which copied foreign files verbatim) are gone.
+  const sourceStats = await stat(item.path);
   log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
-  if (onProgress) {
-    await streamCopyWithProgress(item.path, targetPath, onProgress);
-  } else {
-    await cp(item.path, targetPath, { recursive: true, errorOnExist: false });
-  }
+  await stageSourceAudio({ sourcePath: item.path, targetPath, sourceStats, log, onProgress });
 
   const sourceSize = await getAudioPathSize(item.path);
   const targetSize = await getAudioPathSize(targetPath);

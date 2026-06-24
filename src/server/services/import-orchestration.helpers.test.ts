@@ -1034,10 +1034,12 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toBe(toPosix(target));
 
-    // Empty target → direct-copy fast path copies the whole source tree, so the target holds the
-    // audio (the foreign file is copied verbatim too — pre-existing fast-path behavior, not the fix).
+    // Empty target → audio-only fast path (#1602): the target holds the audio but NOT the foreign
+    // file (the whole-tree verbatim copy is gone — both import paths now stage audio only).
     expect(await pathExists(join(target, 'new.mp3'))).toBe(true);
-    // The fix: source CLEANUP now preserves the foreign file — audio removed, e-book kept, folder retained.
+    expect(await pathExists(join(target, 'bundled.epub'))).toBe(false);
+    // Source CLEANUP (#1598) still preserves the foreign file — audio removed, e-book kept, folder
+    // retained — and with #1602 it is no longer DUPLICATED into the library.
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
     expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
     expect(await pathExists(source)).toBe(true);
@@ -1100,6 +1102,172 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
       expect(await pathExists(join(external, 'bundled.epub'))).toBe(true);
     } finally {
       await fsMocks.real.rm(external, { recursive: true, force: true });
+    }
+  });
+});
+
+// #1602: the empty-target fast path now imports AUDIO ONLY via the same `stageSourceAudio` copier the
+// populated-target staged swap uses, so a co-located foreign file (ebook/PDF/NFO) no longer lands in
+// the library — and the directory-vs-file branching keeps single-audio-file imports working while
+// rejecting a single non-audio file. Real-tmpdir filesystem behavior, mirroring the #1598 suite.
+describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({}),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author' });
+
+  beforeEach(async () => {
+    // Restore the module-level fs wrappers to passthrough (other suites mutate them).
+    fsMocks.rm.mockReset();
+    fsMocks.cp.mockReset();
+    fsMocks.readdir.mockReset();
+    fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
+    fsMocks.cp.mockImplementation((...args: unknown[]) => fsMocks.real.cp(...args));
+    fsMocks.readdir.mockImplementation((...args: unknown[]) => fsMocks.real.readdir(...args));
+
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1602-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fsMocks.real.rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('directory source, COPY, no progress: copies audio only — the co-located .epub is excluded from the library', async () => {
+    await writeFile(join(source, 'book.mp3'), Buffer.alloc(500, 2));
+    await writeFile(join(source, 'book.epub'), Buffer.from('EBOOK'));
+
+    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(await pathExists(join(target, 'book.mp3'))).toBe(true);
+    expect(await pathExists(join(target, 'book.epub'))).toBe(false);
+    // copy mode leaves the source intact, foreign file included.
+    expect(await pathExists(join(source, 'book.epub'))).toBe(true);
+  });
+
+  it('directory source, COPY, with onProgress: audio only in target, foreign excluded, progress reported', async () => {
+    await writeFile(join(source, 'book.mp3'), Buffer.alloc(500, 2));
+    await writeFile(join(source, 'info.nfo'), Buffer.from('NFO'));
+
+    const progress: Array<{ current: number; total: number }> = [];
+    const onProgress = (_p: number, byteCounter: { current: number; total: number }): void => {
+      progress.push(byteCounter);
+    };
+
+    await expect(copyToLibrary(item(), null, 'copy', buildDeps(), onProgress)).resolves.toBe(toPosix(target));
+
+    expect(await pathExists(join(target, 'book.mp3'))).toBe(true);
+    expect(await pathExists(join(target, 'info.nfo'))).toBe(false);
+    // Distinct (streaming) code path from the no-progress branch — assert it actually reported bytes.
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress.at(-1)).toEqual({ current: 500, total: 500 });
+  });
+
+  it('disc-group source, COPY: a foreign file co-located in a disc member is excluded from the library', async () => {
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc1, 'liner-notes.pdf'), Buffer.from('PDF'));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).resolves.toBe(toPosix(target));
+
+    const targetEntries = await readdir(target);
+    expect(targetEntries.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    expect(targetEntries.some((f) => f.endsWith('.pdf'))).toBe(false);
+    // copy mode leaves the disc member's bundled PDF in place.
+    expect(await pathExists(join(disc1, 'liner-notes.pdf'))).toBe(true);
+  });
+
+  it('foreign-only directory source (zero audio): nothing is copied — the target is created but empty', async () => {
+    await writeFile(join(source, 'cover.jpg'), Buffer.from('IMG'));
+    await writeFile(join(source, 'readme.txt'), Buffer.from('TXT'));
+
+    // The manual-import fast path does not run validateSource/containsAudioFiles, so a zero-audio
+    // source reaches the copier; copyAudioFiles writes nothing and assertCopyVerified(0, 0) passes.
+    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(await pathExists(target)).toBe(true);
+    expect(await readdir(target)).toEqual([]);
+  });
+
+  it('single audio-file source, COPY, no progress: the file lands in the library target', async () => {
+    const file = join(baseDir, 'downloads', 'Doctor Sleep.m4b');
+    await writeFile(file, Buffer.alloc(500, 2));
+    const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
+
+    await expect(copyToLibrary(fileItem, null, 'copy', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
+  });
+
+  it('single audio-file source, COPY, with onProgress: file lands in the library and progress is reported', async () => {
+    const file = join(baseDir, 'downloads', 'Doctor Sleep.m4b');
+    await writeFile(file, Buffer.alloc(500, 2));
+    const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
+
+    const progress: Array<{ current: number; total: number }> = [];
+    const onProgress = (_p: number, byteCounter: { current: number; total: number }): void => {
+      progress.push(byteCounter);
+    };
+
+    await expect(copyToLibrary(fileItem, null, 'copy', buildDeps(), onProgress)).resolves.toBe(toPosix(target));
+
+    expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress.at(-1)).toEqual({ current: 500, total: 500 });
+  });
+
+  it('single audio-file source, MOVE: file lands in the library and the source file is removed', async () => {
+    const file = join(baseDir, 'downloads', 'Doctor Sleep.m4b');
+    await writeFile(file, Buffer.alloc(500, 2));
+    const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
+
+    await expect(copyToLibrary(fileItem, null, 'move', buildDeps())).resolves.toBe(toPosix(target));
+
+    expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
+    // Move cleanup removes the (managed) audio source file.
+    expect(await pathExists(file)).toBe(false);
+  });
+
+  it('single non-audio file source: rejected with ContentFailureError, no foreign file written to the library', async () => {
+    const file = join(baseDir, 'downloads', 'notes.pdf');
+    await writeFile(file, Buffer.from('PDF'));
+    const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
+
+    await expect(copyToLibrary(fileItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+
+    // stageSourceAudio mkdir's the target before extension-checking, so the dir may exist — the
+    // invariant is that the foreign file was NOT copied in (F4).
+    expect(await pathExists(join(target, 'notes.pdf'))).toBe(false);
+    if (await pathExists(target)) {
+      expect(await readdir(target)).toEqual([]);
     }
   });
 });
