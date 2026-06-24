@@ -351,8 +351,13 @@ export class MetadataService {
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {
     if (this.isRateLimited('Audnexus')) {
+      // An active backoff is a rate-limit state, NOT a miss — throw (like the
+      // fresh-429 path below) so callers (resolveBook → import-list/enrichment
+      // job) keep it distinct from a genuine no-match and leave the book
+      // resolvable later instead of marking it failed. `null` is reserved for a
+      // real Audnexus miss or a non-rate-limit error.
       this.log.warn({ asin }, 'Enrichment skipped — Audnexus rate limited');
-      return null;
+      throw new RateLimitError(this.getRateLimitRemainingMs('Audnexus'), 'Audnexus');
     }
 
     try {

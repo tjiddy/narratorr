@@ -1384,12 +1384,13 @@ describe('MetadataService', () => {
       expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('123');
     });
 
-    it('skips enrichBook during Audnexus backoff window', async () => {
+    it('throws during the Audnexus backoff window (rate-limit state stays distinct from a miss)', async () => {
       mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
       await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
 
-      const result = await service.enrichBook('B000SECOND');
-      expect(result).toBeNull();
+      // A second lookup during the active backoff must also throw (not return
+      // null), and must NOT hit the provider again — the backoff is pre-emptive.
+      await expect(service.enrichBook('B000SECOND')).rejects.toThrow(RateLimitError);
       expect(mockAudnexus.getBook).toHaveBeenCalledTimes(1);
     });
 
@@ -2253,6 +2254,25 @@ describe('MetadataService.resolveBook', () => {
     await expect(
       service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
+  });
+
+  it('F1/B5: ASIN path propagates the rate limit even when Audnexus is ALREADY in backoff (not treated as a miss)', async () => {
+    // Trip the Audnexus backoff window via a fresh 429.
+    mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
+    await expect(
+      service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+
+    // Audnexus is now in an active backoff. A subsequent resolve must STILL
+    // throw rather than fall through to search and return a `null` no-match —
+    // and must not hit either provider (pre-emptive backoff, no fallback search).
+    mockAudnexus.getBook.mockClear();
+    mockAudibleProvider.searchBooks.mockClear();
+    await expect(
+      service.resolveBook({ asin: 'B0AUDIO2', title: 'Words of Radiance', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+    expect(mockAudnexus.getBook).not.toHaveBeenCalled();
+    expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
   });
 
   it('F5: provider RateLimitError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
