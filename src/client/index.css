@@ -193,6 +193,13 @@
   textarea {
     caret-color: currentColor;
   }
+
+  /* Native checkboxes/radios use the brand amber accent instead of the browser-default
+     blue (parity with narratorr-request). One rule covers every checkbox app-wide. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: hsl(var(--primary));
+  }
 }
 
 @layer components {
