@@ -4,7 +4,7 @@ import { type TestResult } from './settings.js';
 export interface ImportList {
   id: number;
   name: string;
-  type: 'abs' | 'nyt' | 'hardcover';
+  type: 'nyt' | 'hardcover';
   enabled: boolean;
   syncIntervalMinutes: number;
   settings: Record<string, unknown>;
@@ -27,11 +27,6 @@ export interface ImportListPreview {
 }
 
 type ImportListInput = Omit<ImportList, 'id' | 'createdAt' | 'lastRunAt' | 'nextRunAt' | 'lastSyncError'>;
-
-export interface AbsLibrary {
-  id: string;
-  name: string;
-}
 
 export const importListsApi = {
   getImportLists: () => fetchApi<ImportList[]>('/import-lists'),
@@ -56,11 +51,6 @@ export const importListsApi = {
     }),
   previewImportList: (data: ImportListInput & { id?: number }) =>
     fetchApi<ImportListPreview>('/import-lists/preview', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  fetchAbsLibraries: (data: { serverUrl: string; apiKey: string; id?: number }) =>
-    fetchApi<{ libraries: AbsLibrary[] }>('/import-lists/abs/libraries', {
       method: 'POST',
       body: JSON.stringify(data),
     }),

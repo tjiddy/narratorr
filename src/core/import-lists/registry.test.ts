@@ -17,12 +17,6 @@ vi.mock('./hardcover-provider.js', () => ({
   }),
 }));
 
-vi.mock('./abs-provider.js', () => ({
-  AbsProvider: vi.fn(function (this: Record<string, unknown>) {
-    return Object.assign(this, makeMockProvider());
-  }),
-}));
-
 import { IMPORT_LIST_ADAPTER_FACTORIES } from './registry.js';
 import { NytProvider } from './nyt-provider.js';
 import { HardcoverProvider } from './hardcover-provider.js';
@@ -31,7 +25,6 @@ describe('Import List IMPORT_LIST_ADAPTER_FACTORIES', () => {
   const types = importListTypeSchema.options;
 
   const configs: Record<string, ImportListSettings> = {
-    abs: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
     nyt: { apiKey: 'nytkey' },
     hardcover: { apiKey: 'hckey' },
   };

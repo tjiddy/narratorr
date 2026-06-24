@@ -61,14 +61,6 @@ describe('IMPORT_LIST_REGISTRY', () => {
   });
 
   describe('viewSubtitle fallback branches', () => {
-    it('abs viewSubtitle returns abs when serverUrl is empty', () => {
-      expect(IMPORT_LIST_REGISTRY.abs.viewSubtitle({ serverUrl: '' })).toBe('abs');
-    });
-
-    it('abs viewSubtitle returns serverUrl when populated', () => {
-      expect(IMPORT_LIST_REGISTRY.abs.viewSubtitle({ serverUrl: 'http://my-abs.local' })).toBe('http://my-abs.local');
-    });
-
     it('nyt viewSubtitle returns audio-fiction when list is empty', () => {
       expect(IMPORT_LIST_REGISTRY.nyt.viewSubtitle({ list: '' })).toBe('audio-fiction');
     });

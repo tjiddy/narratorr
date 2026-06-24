@@ -9,15 +9,6 @@ export const importListTypeSchema = z.enum(IMPORT_LIST_TYPES);
 
 // ── Per-adapter settings schemas (strict — rejects unknown fields) ──────────
 
-const ABS_LIBRARY_ID_REGEX = /^[A-Za-z0-9_-]+$/;
-const ABS_LIBRARY_ID_MESSAGE = 'Library ID must contain only letters, numbers, underscores, and hyphens';
-
-export const absSettingsSchema = z.object({
-  serverUrl: z.string().trim().min(1),
-  apiKey: z.string().trim().min(1),
-  libraryId: z.string().trim().min(1).regex(ABS_LIBRARY_ID_REGEX, ABS_LIBRARY_ID_MESSAGE),
-}).strict();
-
 export const nytSettingsSchema = z.object({
   apiKey: z.string().trim().min(1),
   list: z.string().trim().optional(),
@@ -35,12 +26,10 @@ export const hardcoverSettingsSchema = z.object({
 
 // ── Settings types and dispatch map ─────────────────────────────────────────
 
-export type AbsSettings = z.infer<typeof absSettingsSchema>;
 export type NytSettings = z.infer<typeof nytSettingsSchema>;
 export type HardcoverSettings = z.infer<typeof hardcoverSettingsSchema>;
 
 export type ImportListSettingsMap = {
-  abs: AbsSettings;
   nyt: NytSettings;
   hardcover: HardcoverSettings;
 };
@@ -48,7 +37,6 @@ export type ImportListSettingsMap = {
 export type ImportListSettings = ImportListSettingsMap[ImportListType];
 
 export const importListSettingsSchemas: Record<ImportListType, z.ZodTypeAny> = {
-  abs: absSettingsSchema,
   nyt: nytSettingsSchema,
   hardcover: hardcoverSettingsSchema,
 };
@@ -112,10 +100,8 @@ export const createImportListFormSchema = z.object({
   enabled: z.boolean(),
   syncIntervalMinutes: z.number().int().min(5, 'Sync interval must be at least 5 minutes'),
   settings: z.object({
-    // ABS
-    serverUrl: z.string().optional(),
+    // Shared
     apiKey: z.string().optional(),
-    libraryId: z.string().trim().regex(ABS_LIBRARY_ID_REGEX, ABS_LIBRARY_ID_MESSAGE).optional(),
     // NYT
     list: z.string().optional(),
     // Hardcover
