@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -1179,6 +1179,54 @@ describe('enrichment job', () => {
         expect.objectContaining({ provider: 'Audible.com', retryAfterMs: 30000 }),
         'Rate limited during enrichment — remaining candidates stay pending',
       );
+    });
+
+    it('#1628: a transient resolveBook error leaves the candidate unchanged (NOT failed) and continues the batch', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: null, title: 'A', isbn: null, author: null },
+          { id: 2, asin: null, title: 'B', isbn: null, author: null },
+        ]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'B', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing fields for book 2
+
+      // First candidate throws a transient provider failure; second succeeds.
+      metadataService.resolveBook
+        .mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'))
+        .mockResolvedValueOnce({ title: 'B', authors: [{ name: 'Found' }], duration: 100 });
+      const updateChain = mockDbChain([{ id: 2 }]);
+      db.update.mockReturnValue(updateChain);
+
+      // The batch must NOT throw — a transient is not a fatal error.
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Both candidates attempted (continue, not break); the transient row was
+      // never marked failed (no update set enrichmentStatus 'failed').
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+      const failedSets = updateChain.set.mock.calls.filter(
+        (c: unknown[]) => (c[0] as Record<string, unknown>).enrichmentStatus === 'failed',
+      );
+      expect(failedSets).toHaveLength(0);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        'Transient provider error during enrichment — leaving candidate for next cycle',
+      );
+    });
+
+    it('#1628: a generic resolveBook error is also transient — candidate not failed, batch does not throw', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'A', isbn: null, author: null }]));  // candidates
+
+      metadataService.resolveBook.mockRejectedValueOnce(new Error('Network error'));
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // No 'failed' write for the transiently-erroring row.
+      const failedSets = updateChain.set.mock.calls.filter(
+        (c: unknown[]) => (c[0] as Record<string, unknown>).enrichmentStatus === 'failed',
+      );
+      expect(failedSets).toHaveLength(0);
     });
   });
 

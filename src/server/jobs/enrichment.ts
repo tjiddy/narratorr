@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, bookNarrators, bookAuthors, authors } from '../../db/schema.js';
 import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
+import { serializeError } from '../utils/serialize-error.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
@@ -176,7 +177,13 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         log.warn({ provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Rate limited during enrichment — remaining candidates stay pending');
         break; // Remaining candidates stay pending for next cycle (includes fallback-search rate limits)
       }
-      throw error;
+      // Any other thrown error from resolveBook is a transient provider failure
+      // (timeout / 5xx / malformed JSON), NOT a no-match — a real no-match returns
+      // `null` (handled in the `else` below) and never throws. Leave this candidate
+      // unchanged (still retryable next cycle) and continue the batch rather than
+      // crashing it; do NOT mark the row `failed`.
+      log.warn({ bookId: candidate.id, asin: capturedAsin, error: serializeError(error) }, 'Transient provider error during enrichment — leaving candidate for next cycle');
+      continue;
     }
 
     if (result) {

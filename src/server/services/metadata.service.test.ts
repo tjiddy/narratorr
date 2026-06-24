@@ -2326,4 +2326,49 @@ describe('MetadataService.resolveBook', () => {
     const result = await service.search('The Way of Kings');
     expect(result.books).toEqual([]);
   });
+
+  it('#1628: provider TransientError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudibleProvider.searchBooks.mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
+
+    // A transient provider failure must be distinguishable from a real no-match:
+    // it propagates so callers leave the book pending, not `failed`.
+    await expect(
+      service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(TransientError);
+  });
+
+  it('#1628: a generic Error on the FALLBACK SEARCH path → re-throws (any caught fallback error is transient)', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('Network error'));
+
+    await expect(
+      service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
+    ).rejects.toThrow('Network error');
+  });
+
+  it('#1628: an empty fallback search result is still a no-match → null (NOT a throw)', async () => {
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] }); // provider responded, genuinely zero books
+
+    const result = await service.resolveBook({ asin: 'B_DEAD', title: 'Obscure', author: 'Nobody' });
+    expect(result).toBeNull();
+  });
+
+  it('#1628: a fallback RateLimitError records the backoff (setRateLimited) so a later resolve is pre-empted', async () => {
+    mockAudnexus.getBook.mockResolvedValue(null); // always miss → fall back to search
+    mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60000, 'Audible.com'));
+
+    await expect(
+      service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+
+    // The fallback catch must call setRateLimited before re-throwing, so the next
+    // resolve is pre-empted by the active backoff without hitting the provider.
+    mockAudibleProvider.searchBooks.mockClear();
+    await expect(
+      service.resolveBook({ title: 'Words of Radiance', author: 'Brandon Sanderson' }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+    expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+  });
 });

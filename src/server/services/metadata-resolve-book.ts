@@ -59,10 +59,14 @@ export interface ResolveBookDeps {
  * 3. Returns the matched {@link BookMetadata} (carrying the correct audiobook
  *    ASIN it resolved) or `null` when genuinely unresolvable.
  *
- * Rate limits propagate: a provider {@link RateLimitError} is re-thrown (on BOTH
- * the `enrichBook` path and the fallback search via {@link searchBooksThrowing})
- * so the caller can distinguish a transient provider state from a real no-match.
- * An empty search result is a no-match (`null`); a rate limit throws.
+ * Transient failures propagate: a provider {@link RateLimitError} is re-thrown
+ * (on BOTH the `enrichBook` path and the fallback search via
+ * {@link searchBooksThrowing}), and any OTHER error caught during the fallback
+ * search (timeout / 5xx / malformed JSON — a provider `TransientError`) is also
+ * re-thrown, so the caller can distinguish a transient provider state from a
+ * real no-match. `null` is reserved for a genuine no-match: an empty search
+ * result (or no provider configured). Any thrown error means "transient, retry
+ * later", never "no such book".
  */
 export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput): Promise<BookMetadata | null> {
   const asin = input.asin?.trim();
@@ -82,11 +86,15 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
 }
 
 /**
- * Provider search that PROPAGATES `RateLimitError` instead of swallowing it to
- * `[]` like the public `search`/`searchBooks` (which exist for discovery/UI
- * where a rate limit is just an incomplete result). Used only by
- * {@link resolveBook}, where a rate limit must be distinguishable from a real
- * no-match (an empty result still returns `[]`; only the rate limit throws).
+ * Provider search that PROPAGATES transient failures instead of swallowing them
+ * to `[]` like the public `search`/`searchBooks` (which exist for discovery/UI
+ * where a provider wobble is just an incomplete result). Used only by
+ * {@link resolveBook}, where a transient provider failure must be
+ * distinguishable from a real no-match: a `RateLimitError` re-throws (after
+ * recording the rate-limit state) and ANY other caught error (timeout / 5xx /
+ * malformed JSON — a provider `TransientError`, or a generic `Error`) also
+ * re-throws. `[]` is reserved for the genuine no-match cases only — no provider
+ * configured, or a provider that returns an empty `books` array.
  */
 async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promise<BookMetadata[]> {
   const { provider } = deps;
@@ -104,9 +112,12 @@ async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promis
   } catch (error: unknown) {
     if (error instanceof RateLimitError) {
       deps.setRateLimited(error.provider, error.retryAfterMs);
-      throw error;
+    } else {
+      deps.log.warn({ query, error: serializeError(error) }, 'Resolver fallback search failed (transient)');
     }
-    deps.log.warn({ query, error: serializeError(error) }, 'Resolver fallback search failed');
-    return [];
+    // A caught fallback-search error is transient by default — propagate it so
+    // callers leave the book pending/retryable. Only a genuinely empty result
+    // (or no provider) is a no-match; that path returns `[]` above.
+    throw error;
   }
 }

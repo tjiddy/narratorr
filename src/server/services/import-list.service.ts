@@ -6,7 +6,7 @@ import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js'
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/types.js';
-import { RateLimitError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { BookService } from './book.service.js';
@@ -241,6 +241,13 @@ export class ImportListService {
         // Transient provider state, NOT a no-match — leave the book resolvable
         // later (pending), do not mark it failed.
         this.log.warn({ title: item.title, provider: error.provider }, 'Metadata resolution rate limited; leaving book pending');
+        return { match: null, enrichmentStatus: undefined };
+      }
+      if (error instanceof TransientError) {
+        // Transient provider failure (timeout / 5xx / malformed JSON) during the
+        // fallback search — NOT a no-match. Leave the book pending so the
+        // background job retries it, same as the rate-limit branch above.
+        this.log.warn({ title: item.title, provider: error.provider }, 'Metadata resolution hit a transient provider error; leaving book pending');
         return { match: null, enrichmentStatus: undefined };
       }
       this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
