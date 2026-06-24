@@ -214,3 +214,70 @@ describe('updateBookBodySchema — nullable metadata fields (#1609)', () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe('updateBookBodySchema — subtitle/publisher (#1614)', () => {
+  it('accepts a string subtitle and publisher (set)', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: 'A Subtitle', publisher: 'Tor Books' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.subtitle).toBe('A Subtitle');
+      expect(result.data.publisher).toBe('Tor Books');
+    }
+  });
+
+  it('accepts null for subtitle and publisher (clear)', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: null, publisher: null });
+    expect(result.success).toBe(true);
+  });
+
+  it('omitting subtitle/publisher still validates (unchanged)', () => {
+    const result = updateBookBodySchema.safeParse({ title: 'Just a title' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string subtitle', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-string publisher', () => {
+    const result = updateBookBodySchema.safeParse({ publisher: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects an unknown key via .strict()', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: 'A Subtitle', bogus: true });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('createBookBodySchema — subtitle/publisher (#1614)', () => {
+  it('accepts optional subtitle and publisher strings', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 'A Subtitle', publisher: 'Tor Books' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.subtitle).toBe('A Subtitle');
+      expect(result.data.publisher).toBe('Tor Books');
+    }
+  });
+
+  it('omitting subtitle/publisher is valid', () => {
+    const result = createBookBodySchema.safeParse(validBook);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string subtitle', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-string publisher', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, publisher: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects an unknown key via .strict()', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 'A Subtitle', bogus: true });
+    expect(result.success).toBe(false);
+  });
+});

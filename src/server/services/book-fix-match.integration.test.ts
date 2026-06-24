@@ -52,8 +52,10 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
   async function seedBookA(svc: BookService): Promise<number> {
     const created = await svc.create({
       title: 'Old Title',
+      subtitle: 'Old Subtitle',
       authors: [{ name: 'Old Author', asin: 'OLDAUTH' }],
       narrators: ['Old Narrator'],
+      publisher: 'Old Publisher',
       asin: 'B_OLD',
       seriesName: 'Old Series',
       seriesPosition: 1,
@@ -83,9 +85,11 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const updated = await svc.fixMatch(bookId, {
       asin: 'B_NEW',
       title: 'New Title',
+      subtitle: 'New Subtitle',
       authors: [{ name: 'New Author', asin: 'NEWAUTH' }],
       narrators: ['New Narrator'],
       description: 'New description',
+      publisher: 'New Publisher',
       coverUrl: 'https://example.com/new.jpg',
       duration: 1200,
       publishedDate: '2024-05-01',
@@ -101,6 +105,10 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.asin).toBe('B_NEW');
     expect(row!.title).toBe('New Title');
+    // Regression guard (#1614): subtitle was declared on FixMatchReplacement but
+    // never written by buildFixMatchScalarUpdates; publisher wasn't projected at all.
+    expect(row!.subtitle).toBe('New Subtitle');
+    expect(row!.publisher).toBe('New Publisher');
     expect(row!.description).toBe('New description');
     expect(row!.coverUrl).toBe('https://example.com/new.jpg');
     expect(row!.duration).toBe(1200);
@@ -167,6 +175,10 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.seriesName).toBeNull();
     expect(row!.seriesPosition).toBeNull();
     expect(row!.asin).toBe('B_STANDALONE');
+    // Full-overwrite semantics (#1614): a replacement without subtitle/publisher
+    // nulls the previously-stored values (intentional, unlike enrichment).
+    expect(row!.subtitle).toBeNull();
+    expect(row!.publisher).toBeNull();
 
     // No membership rows remain for the book
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));

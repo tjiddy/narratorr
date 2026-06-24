@@ -537,6 +537,49 @@ describe('enrichment job', () => {
     });
   });
 
+  // ── #1614 subtitle/publisher fill-empty guard ─────────────────────────
+  describe('subtitle/publisher fill-empty (#1614)', () => {
+    it('fills blank subtitle and publisher from the enrichment result', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // no-asin
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_FILL_SP' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: ['x'], title: 'Some Book', subtitle: null, description: null, publisher: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing: blank subtitle/publisher
+
+      metadataService.enrichBook.mockResolvedValueOnce({
+        title: 'Some Book', authors: [{ name: 'Author' }],
+        subtitle: 'Filled Subtitle', publisher: 'Filled Publisher',
+      });
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' }),
+      );
+    });
+
+    it('does NOT overwrite an existing non-empty subtitle/publisher', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // no-asin
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_KEEP_SP' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: ['x'], title: 'Some Book', subtitle: 'Existing Subtitle', description: null, publisher: 'Existing Publisher', coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing: both set
+
+      metadataService.enrichBook.mockResolvedValueOnce({
+        title: 'Some Book', authors: [{ name: 'Author' }],
+        subtitle: 'Provider Subtitle', publisher: 'Provider Publisher',
+      });
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).not.toHaveProperty('subtitle');
+      expect(setArg).not.toHaveProperty('publisher');
+    });
+  });
+
   // ── #398 Title normalization (ALL CAPS guard) ─────────────────────────
   describe('title normalization (#398)', () => {
     const allFields = { duration: null, genres: null, title: 'PROJECT HAIL MARY', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null };

@@ -29,6 +29,10 @@ const mockLibraryBook = createMockBook({
   asin: 'B00ABC1234',
   narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }, { id: 2, name: 'Kate Reading', slug: 'kate-reading' }],
   duration: 872,
+  // subtitle/publisher are now stored columns on the library book (#1614) — they
+  // render on first paint and survive a provider-lookup failure.
+  subtitle: 'Book One of the Stormlight Archive',
+  publisher: 'Macmillan Audio',
   authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A00SAND1234' }],
 });
 
@@ -95,11 +99,15 @@ describe('BookPage', () => {
     expect(screen.getByText(/The Stormlight Archive #1/)).toBeInTheDocument();
     expect(screen.getByText(/14h 32m/)).toBeInTheDocument();
 
-    // Metadata enrichment: subtitle arrives on a second query cycle
+    // Subtitle + publisher are stored columns now (#1614) — they render from the
+    // library book on first paint, no second query cycle required.
+    expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
+    expect(screen.getByText(/Macmillan Audio/)).toBeInTheDocument();
+
+    // Metadata enrichment: genres still merge from the provider lookup
     await waitFor(() => {
-      expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
+      expect(screen.getByText('Fantasy')).toBeInTheDocument();
     });
-    expect(screen.getByText('Fantasy')).toBeInTheDocument();
     expect(screen.getByText('Epic')).toBeInTheDocument();
 
     // Status badge
@@ -146,8 +154,10 @@ describe('BookPage', () => {
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
     expect(screen.getByText(/Michael Kramer, Kate Reading/)).toBeInTheDocument();
 
-    // Subtitle from metadata is not present since it failed
-    expect(screen.queryByText('Book One of the Stormlight Archive')).not.toBeInTheDocument();
+    // Durability guard (#1614): stored subtitle + publisher still render even
+    // though the provider lookup failed — they no longer depend on the merge.
+    expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
+    expect(screen.getByText(/Macmillan Audio/)).toBeInTheDocument();
   });
 
   it('navigates back to library when back button is clicked', async () => {

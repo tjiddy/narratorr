@@ -724,6 +724,41 @@ describe('BookService', () => {
 
       expect(result.title).toBe('The Way of Kings');
     });
+
+    it('persists subtitle and publisher to the books insert (#1614)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        title: 'Subtitled Book',
+        authors: [],
+        subtitle: 'A Grand Subtitle',
+        publisher: 'Macmillan Audio',
+      });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ subtitle: 'A Grand Subtitle', publisher: 'Macmillan Audio' }),
+      );
+    });
+
+    it('stores undefined subtitle/publisher (no value → column left null) (#1614)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Bare Book', authors: [] });
+
+      const valuesArg = insertChain.values.mock.calls[0][0] as Record<string, unknown>;
+      expect(valuesArg.subtitle).toBeUndefined();
+      expect(valuesArg.publisher).toBeUndefined();
+    });
   });
 
   describe('create with metadataService', () => {

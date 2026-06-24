@@ -9,6 +9,8 @@ type EditProps = ComponentProps<typeof MetadataEditFields>;
 const defaultProps: EditProps = {
   title: 'The Way of Kings',
   onTitleChange: vi.fn(),
+  subtitle: 'Book One of the Stormlight Archive',
+  onSubtitleChange: vi.fn(),
   author: 'Brandon Sanderson',
   onAuthorChange: vi.fn(),
   seriesName: 'The Stormlight Archive',
@@ -24,8 +26,8 @@ const defaultProps: EditProps = {
   onPublishedDateChange: vi.fn(),
   genres: 'Fantasy, Epic',
   onGenresChange: vi.fn(),
-  coverUrl: 'https://example.com/cover.jpg',
-  onCoverUrlChange: vi.fn(),
+  publisher: 'Macmillan Audio',
+  onPublisherChange: vi.fn(),
   renameFiles: false,
   onRenameFilesChange: vi.fn(),
   hasPath: true,
@@ -43,7 +45,7 @@ describe('MetadataEditFields', () => {
   describe('form fields', () => {
     it('renders title input with current value', () => {
       renderFields();
-      expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
+      expect(screen.getByLabelText(/^title/i)).toHaveValue('The Way of Kings');
     });
 
     it('renders series name input with current value', () => {
@@ -76,9 +78,33 @@ describe('MetadataEditFields', () => {
       expect(screen.getByLabelText(/genres/i)).toHaveValue('Fantasy, Epic');
     });
 
-    it('renders cover URL input with current value', () => {
+    it('does not render a Cover URL input (#1614)', () => {
       renderFields();
-      expect(screen.getByLabelText(/cover url/i)).toHaveValue('https://example.com/cover.jpg');
+      expect(screen.queryByLabelText(/cover url/i)).not.toBeInTheDocument();
+    });
+
+    it('renders subtitle input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/subtitle/i)).toHaveValue('Book One of the Stormlight Archive');
+    });
+
+    it('renders publisher input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/publisher/i)).toHaveValue('Macmillan Audio');
+    });
+
+    it('calls onSubtitleChange when subtitle input changes', async () => {
+      const onSubtitleChange = vi.fn();
+      renderFields({ onSubtitleChange });
+      await userEvent.type(screen.getByLabelText(/subtitle/i), '!');
+      expect(onSubtitleChange).toHaveBeenCalled();
+    });
+
+    it('calls onPublisherChange when publisher input changes', async () => {
+      const onPublisherChange = vi.fn();
+      renderFields({ onPublisherChange });
+      await userEvent.type(screen.getByLabelText(/publisher/i), '!');
+      expect(onPublisherChange).toHaveBeenCalled();
     });
 
     it('renders description input with current value', () => {
@@ -89,8 +115,8 @@ describe('MetadataEditFields', () => {
     it('calls onTitleChange when title input changes', async () => {
       const onTitleChange = vi.fn();
       renderFields({ onTitleChange });
-      await userEvent.clear(screen.getByLabelText(/title/i));
-      await userEvent.type(screen.getByLabelText(/title/i), 'New');
+      await userEvent.clear(screen.getByLabelText(/^title/i));
+      await userEvent.type(screen.getByLabelText(/^title/i), 'New');
       expect(onTitleChange).toHaveBeenCalled();
     });
 
@@ -139,9 +165,14 @@ describe('MetadataEditFields', () => {
       expect(screen.queryByText('Search for metadata')).not.toBeInTheDocument();
     });
 
-    it('documents that subtitle/publisher/duration are not editable here', () => {
+    it('no longer claims subtitle/publisher are non-editable (#1614)', () => {
       renderFields();
-      expect(screen.getByText(/Subtitle and publisher come from the matched metadata/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Subtitle and publisher come from the matched metadata/i)).not.toBeInTheDocument();
+    });
+
+    it('documents that duration is read from the audio files', () => {
+      renderFields();
+      expect(screen.getByText(/Duration is read from the audio files/i)).toBeInTheDocument();
     });
   });
 });

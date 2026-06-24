@@ -769,6 +769,7 @@ describe('ImportListService', () => {
             series: [{ name: 'Broader Universe', position: 99, asin: 'UNI1' }],
             duration: 36000, publishedDate: '2020-01-01', genres: ['Fantasy'],
             description: 'rich description', coverUrl: 'http://audnexus/cover.jpg',
+            subtitle: 'Audnexus Subtitle', publisher: 'Audnexus Publisher',
           }),
           search: vi.fn(),
         } as unknown as MetadataService;
@@ -798,6 +799,8 @@ describe('ImportListService', () => {
           authors: [{ name: 'Audnexus Author' }],
           asin: 'B002',
           narrators: ['Narrator A', 'Narrator B'],
+          subtitle: 'Audnexus Subtitle',
+          publisher: 'Audnexus Publisher',
           seriesName: 'Real Series',
           seriesPosition: 3,
           seriesAsin: 'SER1',
