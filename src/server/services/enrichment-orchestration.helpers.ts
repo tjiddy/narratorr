@@ -27,6 +27,8 @@ export interface AudnexusConfig {
   existingNarrator?: string | null | undefined;
   existingDuration?: number | null | undefined;
   existingGenres?: string[] | null | undefined;
+  existingSubtitle?: string | null | undefined;
+  existingPublisher?: string | null | undefined;
 }
 
 export interface EnrichmentDeps {
@@ -97,17 +99,23 @@ export async function applyAudnexusEnrichment(
 async function applyEnrichmentData(
   bookId: number,
   asin: string,
-  data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined },
-  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined },
+  data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined; subtitle?: string | undefined; publisher?: string | undefined },
+  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined; existingSubtitle?: string | null | undefined; existingPublisher?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
 ): Promise<void> {
-  const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; updatedAt: Date }> = {
+  const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; subtitle: string; publisher: string; updatedAt: Date }> = {
     enrichmentStatus: 'enriched',
     updatedAt: new Date(),
   };
   if (asin !== opts.primaryAsin) updates.asin = asin;
   if (!opts.existingDuration && data.duration) {
     updates.duration = data.duration;
+  }
+  if (!opts.existingSubtitle && data.subtitle) {
+    updates.subtitle = data.subtitle;
+  }
+  if (!opts.existingPublisher && data.publisher) {
+    updates.publisher = data.publisher;
   }
   await deps.db.update(books).set(updates).where(eq(books.id, bookId));
   if (!opts.existingNarrator && data.narrators?.length) {
@@ -150,7 +158,7 @@ export function buildEnrichmentBookInput(
 export function buildAudnexusConfig(
   item: { asin?: string | null },
   meta: BookMetadata | null,
-  book: { narrators?: Array<{ name: string }> | null; duration?: number | null; genres?: string[] | null },
+  book: { narrators?: Array<{ name: string }> | null; duration?: number | null; genres?: string[] | null; subtitle?: string | null; publisher?: string | null },
 ): AudnexusConfig {
   return {
     primaryAsin: item.asin || meta?.asin,
@@ -158,6 +166,8 @@ export function buildAudnexusConfig(
     existingNarrator: book.narrators?.[0]?.name ?? null,
     existingDuration: book.duration ?? null,
     existingGenres: book.genres ?? null,
+    existingSubtitle: book.subtitle ?? null,
+    existingPublisher: book.publisher ?? null,
   };
 }
 
@@ -214,6 +224,7 @@ export function buildBackgroundAudnexusConfig(
   item: { asin?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
   existingGenres: string[] | null,
+  existing?: { subtitle?: string | null | undefined; publisher?: string | null | undefined } | undefined,
 ): AudnexusConfig {
   return {
     primaryAsin: item.asin || extracted.meta?.asin,
@@ -221,6 +232,8 @@ export function buildBackgroundAudnexusConfig(
     existingNarrator: extracted.narratorName,
     existingDuration: extracted.bookInput.duration,
     existingGenres,
+    existingSubtitle: existing?.subtitle ?? null,
+    existingPublisher: existing?.publisher ?? null,
   };
 }
 
@@ -250,7 +263,9 @@ export function buildBookCreatePayload(
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,
+    subtitle: meta?.subtitle,
     description: meta?.description,
+    publisher: meta?.publisher,
     duration: meta?.duration,
     publishedDate: meta?.publishedDate,
     genres: meta?.genres,

@@ -44,7 +44,9 @@ function makeBookService(overrides: {
     id: 100,
     publicId: 'bk_test000000000000000',
     title: data.title,
+    subtitle: null,
     description: null,
+    publisher: null,
     coverUrl: null,
     asin: null,
     isbn: null,
@@ -480,7 +482,7 @@ describe('ImportListService', () => {
      */
     const createdBook = (id: number, title: string): BookWithAuthor => ({
       id, publicId: `bk_test`, title,
-      description: null, coverUrl: null,
+      subtitle: null, description: null, publisher: null, coverUrl: null,
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,
       status: 'wanted', enrichmentStatus: 'pending',
@@ -767,6 +769,7 @@ describe('ImportListService', () => {
             series: [{ name: 'Broader Universe', position: 99, asin: 'UNI1' }],
             duration: 36000, publishedDate: '2020-01-01', genres: ['Fantasy'],
             description: 'rich description', coverUrl: 'http://audnexus/cover.jpg',
+            subtitle: 'Audnexus Subtitle', publisher: 'Audnexus Publisher',
           }),
           search: vi.fn(),
         } as unknown as MetadataService;
@@ -796,6 +799,8 @@ describe('ImportListService', () => {
           authors: [{ name: 'Audnexus Author' }],
           asin: 'B002',
           narrators: ['Narrator A', 'Narrator B'],
+          subtitle: 'Audnexus Subtitle',
+          publisher: 'Audnexus Publisher',
           seriesName: 'Real Series',
           seriesPosition: 3,
           seriesAsin: 'SER1',

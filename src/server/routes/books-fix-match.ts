@@ -45,6 +45,7 @@ function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   copyOptional(out, 'subtitle', meta.subtitle);
   copyOptional(out, 'narrators', meta.narrators);
   copyOptional(out, 'description', meta.description);
+  copyOptional(out, 'publisher', meta.publisher);
   copyOptional(out, 'coverUrl', meta.coverUrl);
   copyOptional(out, 'duration', meta.duration);
   copyOptional(out, 'publishedDate', meta.publishedDate);

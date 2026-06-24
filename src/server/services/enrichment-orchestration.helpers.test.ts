@@ -16,6 +16,7 @@ vi.mock('../../core/utils/ffprobe-path.js', () => ({
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helpers.js';
+import { mockDbChain } from '../__tests__/helpers.js';
 
 const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
 const mockResolveFfprobePath = vi.mocked(resolveFfprobePathFromSettings);
@@ -180,6 +181,30 @@ describe('applyAudnexusEnrichment', () => {
       'Audnexus enrichment failed',
     );
   });
+
+  it('fills blank subtitle/publisher from the enrichment data (#1614)', async () => {
+    const updateChain = mockDbChain();
+    const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+
+    expect(updateChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' }),
+    );
+  });
+
+  it('does NOT overwrite an existing subtitle/publisher (#1614)', async () => {
+    const updateChain = mockDbChain();
+    const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Provider Subtitle', publisher: 'Provider Publisher' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: 'Kept Subtitle', existingPublisher: 'Kept Publisher' }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('subtitle');
+    expect(setArg).not.toHaveProperty('publisher');
+  });
 });
 
 describe('extractImportMetadata (#1028)', () => {
@@ -257,6 +282,24 @@ describe('buildBookCreatePayload (#1028)', () => {
       'importing',
     );
     expect(payload.narrators).toEqual(['Stephen Fry']);
+  });
+
+  it('snapshots subtitle and publisher from the provider meta (#1614)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], subtitle: 'A Subtitle', publisher: 'Macmillan Audio' },
+      'importing',
+    );
+    expect(payload.subtitle).toBe('A Subtitle');
+    expect(payload.publisher).toBe('Macmillan Audio');
+  });
+
+  it('leaves subtitle/publisher undefined when meta is null', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload({ path: '/x', title: 'T' }, null, 'importing');
+    expect(payload.subtitle).toBeUndefined();
+    expect(payload.publisher).toBeUndefined();
   });
 
   it('meta.series[0].position: 0 wins over item.seriesPosition (provider-truth, regression guard for falsy)', async () => {

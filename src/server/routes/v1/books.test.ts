@@ -45,9 +45,11 @@ function metaBook(overrides?: Record<string, unknown>) {
   return {
     asin: 'B0ASIN12345',
     title: 'The Way of Kings',
+    subtitle: 'Book One of the Stormlight Archive',
     authors: [{ name: 'Brandon Sanderson' }],
     narrators: ['Michael Kramer', 'Kate Reading'],
     description: 'An epic fantasy',
+    publisher: 'Macmillan Audio',
     coverUrl: 'https://example.test/cover.jpg',
     isbn: '9780765326355',
     seriesPrimary: { name: 'Stormlight', position: 1, asin: 'B0SERIES000' },
@@ -321,9 +323,11 @@ describe('v1 books routes', () => {
       // fail here, not silently survive.
       expect(payload).toEqual({
         title: 'The Way of Kings',
+        subtitle: 'Book One of the Stormlight Archive',
         authors: [{ name: 'Brandon Sanderson' }],
         narrators: ['Michael Kramer', 'Kate Reading'],
         description: 'An epic fantasy',
+        publisher: 'Macmillan Audio',
         coverUrl: 'https://example.test/cover.jpg',
         asin: ASIN, // provider asin present → persisted as-is
         isbn: '9780765326355',

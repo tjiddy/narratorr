@@ -13,7 +13,9 @@ const mockBook = createMockBook({
   path: '/library/Brandon Sanderson/The Way of Kings',
   status: 'imported',
   authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+  subtitle: 'Book One of the Stormlight Archive',
   description: 'An epic fantasy novel.',
+  publisher: 'Macmillan Audio',
   coverUrl: 'https://example.com/cover.jpg',
   publishedDate: '2010-08-31',
   genres: ['Fantasy', 'Epic'],
@@ -44,13 +46,14 @@ describe('BookMetadataModal', () => {
     it('opens with current metadata pre-filled', () => {
       renderModal();
 
-      expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
+      expect(screen.getByLabelText(/^title/i)).toHaveValue('The Way of Kings');
       expect(screen.getByLabelText(/^author$/i)).toHaveValue('Brandon Sanderson');
       expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
       expect(screen.getByLabelText(/position/i)).toHaveValue('1');
       expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer');
       expect(screen.getByLabelText(/description/i)).toHaveValue('An epic fantasy novel.');
-      expect(screen.getByLabelText(/cover url/i)).toHaveValue('https://example.com/cover.jpg');
+      expect(screen.getByLabelText(/subtitle/i)).toHaveValue('Book One of the Stormlight Archive');
+      expect(screen.getByLabelText(/publisher/i)).toHaveValue('Macmillan Audio');
       expect(screen.getByLabelText(/published date/i)).toHaveValue('2010-08-31');
       expect(screen.getByLabelText(/genres/i)).toHaveValue('Fantasy, Epic');
     });
@@ -60,7 +63,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Words of Radiance');
 
@@ -99,7 +102,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
 
       await waitFor(() => {
@@ -196,7 +199,7 @@ describe('BookMetadataModal', () => {
       await user.type(posInput, 'abc');
 
       // Change title so onSave gets called with some data
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
 
@@ -315,7 +318,7 @@ describe('BookMetadataModal', () => {
 
       await user.clear(screen.getByLabelText(/^author$/i));
       // Change title so save still fires with a payload
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
       await user.click(screen.getByText('Save'));
@@ -358,17 +361,54 @@ describe('BookMetadataModal', () => {
       });
     });
 
-    it('sends edited coverUrl and null when cleared', async () => {
+    it('does not render a Cover URL input (#1614)', () => {
+      renderModal();
+      expect(screen.queryByLabelText(/cover url/i)).not.toBeInTheDocument();
+    });
+
+    it('sends edited subtitle and null when cleared', async () => {
       const onSave = vi.fn();
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      const coverInput = screen.getByLabelText(/cover url/i);
-      await user.clear(coverInput);
+      const subtitleInput = screen.getByLabelText(/subtitle/i);
+      await user.clear(subtitleInput);
+      await user.type(subtitleInput, 'A New Subtitle');
       await user.click(screen.getByText('Save'));
 
       await waitFor(() => {
-        expect(onSave.mock.calls[0]![0].coverUrl).toBeNull();
+        expect(onSave.mock.calls[0]![0].subtitle).toBe('A New Subtitle');
+      });
+
+      onSave.mockClear();
+      await user.clear(screen.getByLabelText(/subtitle/i));
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].subtitle).toBeNull();
+      });
+    });
+
+    it('sends edited publisher and null when cleared', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const publisherInput = screen.getByLabelText(/publisher/i);
+      await user.clear(publisherInput);
+      await user.type(publisherInput, 'Tor Books');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].publisher).toBe('Tor Books');
+      });
+
+      onSave.mockClear();
+      await user.clear(screen.getByLabelText(/publisher/i));
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].publisher).toBeNull();
       });
     });
 
@@ -393,7 +433,7 @@ describe('BookMetadataModal', () => {
       renderModal({ onSave });
 
       // Touch a different field so save fires with a payload
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
       await user.click(screen.getByText('Save'));
@@ -459,8 +499,9 @@ describe('BookMetadataModal', () => {
         const payload = onSave.mock.calls[0]![0];
         expect(payload).toHaveProperty('authors');
         expect(payload).not.toHaveProperty('title');
+        expect(payload).not.toHaveProperty('subtitle');
         expect(payload).not.toHaveProperty('description');
-        expect(payload).not.toHaveProperty('coverUrl');
+        expect(payload).not.toHaveProperty('publisher');
         expect(payload).not.toHaveProperty('publishedDate');
         expect(payload).not.toHaveProperty('genres');
         expect(payload).not.toHaveProperty('narrators');

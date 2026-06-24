@@ -283,7 +283,9 @@ export class ImportListService {
       title: enriched.title,
       authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
       narrators: enriched.narrators,
+      subtitle: enriched.subtitle,
       description: enriched.description,
+      publisher: enriched.publisher,
       coverUrl: enriched.coverUrl,
       asin: enriched.asin,
       isbn: enriched.isbn,
@@ -367,7 +369,9 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     title: match.title,
     authorName: match.authors[0]?.name,
     coverUrl: item.coverUrl ?? match.coverUrl,
+    subtitle: match.subtitle,
     description: item.description ?? match.description,
+    publisher: match.publisher,
     seriesName: primarySeries?.name,
     seriesPosition: primarySeries?.position,
     seriesAsin: primarySeries?.asin,
@@ -387,7 +391,9 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
 interface EnrichedItem {
   title: string;
   coverUrl?: string | undefined;
+  subtitle?: string | undefined;
   description?: string | undefined;
+  publisher?: string | undefined;
   seriesName?: string | undefined;
   seriesPosition?: number | undefined;
   seriesAsin?: string | undefined;

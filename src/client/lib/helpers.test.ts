@@ -6,6 +6,7 @@ import type { BookMetadata, BookWithAuthor, BookIdentifier } from './api/index.j
 describe('mapBookMetadataToPayload', () => {
   const fullBook: BookMetadata = {
     title: 'The Way of Kings',
+    subtitle: 'Book One of the Stormlight Archive',
     asin: 'B003P2WO5E',
     authors: [
       { name: 'Brandon Sanderson', asin: 'B001IGFHW6' },
@@ -17,6 +18,7 @@ describe('mapBookMetadataToPayload', () => {
       { name: 'Cosmere', position: 5 },
     ],
     description: 'Epic fantasy',
+    publisher: 'Macmillan Audio',
     coverUrl: 'https://example.com/cover.jpg',
     duration: 2700,
     genres: ['Fantasy', 'Epic'],
@@ -27,9 +29,11 @@ describe('mapBookMetadataToPayload', () => {
     const payload = mapBookMetadataToPayload(fullBook);
     expect(payload).toEqual({
       title: 'The Way of Kings',
+      subtitle: 'Book One of the Stormlight Archive',
       authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }, { name: 'Co-Author', asin: 'B999' }],
       narrators: ['Michael Kramer', 'Kate Reading'],
       description: 'Epic fantasy',
+      publisher: 'Macmillan Audio',
       coverUrl: 'https://example.com/cover.jpg',
       asin: 'B003P2WO5E',
       seriesName: 'The Stormlight Archive',
@@ -38,6 +42,12 @@ describe('mapBookMetadataToPayload', () => {
       genres: ['Fantasy', 'Epic'],
       providerId: 'audnexus',
     });
+  });
+
+  it('maps subtitle and publisher from the provider metadata (#1614)', () => {
+    const payload = mapBookMetadataToPayload(fullBook);
+    expect(payload.subtitle).toBe('Book One of the Stormlight Archive');
+    expect(payload.publisher).toBe('Macmillan Audio');
   });
 
   it('includes all authors as array', () => {

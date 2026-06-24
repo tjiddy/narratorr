@@ -178,4 +178,45 @@ describe('mergeBookData', () => {
       expect(result.metaDots).toContain('Discworld #9');
     });
   });
+
+  // #1614 — subtitle/publisher are stored columns; the library row wins and the
+  // provider value is only a fallback (so they survive a provider-lookup failure).
+  describe('stored subtitle/publisher precedence (#1614)', () => {
+    it('reads subtitle from the library book when set', () => {
+      const book = createMockBook({ subtitle: 'Stored Subtitle' });
+      const result = mergeBookData(book, { subtitle: 'Provider Subtitle' });
+      expect(result.subtitle).toBe('Stored Subtitle');
+    });
+
+    it('falls back to the provider subtitle when the library subtitle is null', () => {
+      const book = createMockBook({ subtitle: null });
+      const result = mergeBookData(book, { subtitle: 'Provider Subtitle' });
+      expect(result.subtitle).toBe('Provider Subtitle');
+    });
+
+    it('renders the stored subtitle even when no provider metadata is available', () => {
+      const book = createMockBook({ subtitle: 'Stored Subtitle' });
+      const result = mergeBookData(book, null);
+      expect(result.subtitle).toBe('Stored Subtitle');
+    });
+
+    it('reads publisher from the library book when set', () => {
+      const book = createMockBook({ publisher: 'Stored Publisher' });
+      const result = mergeBookData(book, { publisher: 'Provider Publisher' });
+      expect(result.metaDots).toContain('Stored Publisher');
+      expect(result.metaDots).not.toContain('Provider Publisher');
+    });
+
+    it('falls back to the provider publisher when the library publisher is null', () => {
+      const book = createMockBook({ publisher: null });
+      const result = mergeBookData(book, { publisher: 'Provider Publisher' });
+      expect(result.metaDots).toContain('Provider Publisher');
+    });
+
+    it('renders the stored publisher even when no provider metadata is available', () => {
+      const book = createMockBook({ publisher: 'Stored Publisher' });
+      const result = mergeBookData(book, null);
+      expect(result.metaDots).toContain('Stored Publisher');
+    });
+  });
 });

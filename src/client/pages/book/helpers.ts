@@ -27,7 +27,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const seriesName = libraryBook.seriesName || primaryMetaSeries?.name;
   const seriesPosition = libraryBook.seriesPosition ?? primaryMetaSeries?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
-  const publisher = metadataBook?.publisher;
+  const publisher = libraryBook.publisher || metadataBook?.publisher;
   const year = formatYear(libraryBook.publishedDate || metadataBook?.publishedDate);
   const status = requireDefined(
     bookStatusConfig[libraryBook.status],
@@ -52,7 +52,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     statusLabel: status.label,
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
-    subtitle: metadataBook?.subtitle,
+    subtitle: libraryBook.subtitle || metadataBook?.subtitle,
     authorName: libraryBook.authors[0]?.name,
     authorAsin: libraryBook.authors[0]?.asin,
   };

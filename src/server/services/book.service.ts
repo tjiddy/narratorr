@@ -34,6 +34,7 @@ export interface FixMatchReplacement {
   authors: { name: string; asin?: string | undefined }[];
   narrators?: string[] | undefined;
   description?: string | undefined;
+  publisher?: string | undefined;
   coverUrl?: string | undefined;
   duration?: number | undefined;
   publishedDate?: string | undefined;
@@ -48,7 +49,9 @@ export interface FixMatchReplacement {
 function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof books.$inferInsert> {
   return {
     title: r.title,
+    subtitle: r.subtitle ?? null,
     description: r.description ?? null,
+    publisher: r.publisher ?? null,
     coverUrl: r.coverUrl ?? null,
     asin: r.asin ?? null,
     isbn: r.isbn ?? null,
@@ -265,7 +268,9 @@ export class BookService {
     title: string;
     authors: { name: string; asin?: string | undefined }[];
     narrators?: string[] | undefined;
+    subtitle?: string | undefined;
     description?: string | undefined;
+    publisher?: string | undefined;
     coverUrl?: string | undefined;
     asin?: string | undefined;
     isbn?: string | undefined;
@@ -300,7 +305,9 @@ export class BookService {
         .values({
           publicId: generatePublicId('bk'),
           title: data.title,
+          subtitle: data.subtitle,
           description: data.description,
+          publisher: data.publisher,
           coverUrl: data.coverUrl,
           asin: enrichedAsin,
           isbn: data.isbn,

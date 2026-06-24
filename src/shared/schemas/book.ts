@@ -112,7 +112,9 @@ export const createBookBodySchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   authors: z.array(bookAuthorInputSchema).default([]),
   narrators: z.array(z.string().trim().min(1, 'Narrator name cannot be empty')).optional(),
+  subtitle: z.string().optional(),
   description: z.string().optional(),
+  publisher: z.string().optional(),
   coverUrl: z.string().optional(),
   asin: z.string().optional(),
   isbn: z.string().optional(),
@@ -138,7 +140,9 @@ export const updateBookBodySchema = z.object({
   // `.nullable()` so an emptied field can send `null` to CLEAR the stored column
   // (the detail page then falls back to the merged provider value). `undefined`/
   // omitted = unchanged, `null` = clear, value = set — matching `seriesName` below.
+  subtitle: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
+  publisher: z.string().nullable().optional(),
   coverUrl: z.string().nullable().optional(),
   // Raw `published_date` string (year `2010` or full date `2010-08-31`) — never
   // year-truncated. `genres` clears with `null` (NOT `[]`): `mergeBookData` merges
