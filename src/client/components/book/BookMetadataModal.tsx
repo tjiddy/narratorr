@@ -121,7 +121,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
   };
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
+    <Modal onClose={onClose} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
       <div
         role="dialog"
         aria-modal="true"
