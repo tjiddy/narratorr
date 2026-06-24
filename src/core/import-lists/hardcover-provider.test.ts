@@ -135,13 +135,32 @@ describe('HardcoverProvider', () => {
       expect(postCount).toBe(1);
     });
 
-    it('skips the second query and returns [] when ids is null/missing (AC3)', async () => {
+    it('skips the second query and returns [] when ids is null (AC3)', async () => {
       let postCount = 0;
       server.use(http.post(GQL_URL, async ({ request }) => {
         postCount += 1;
         const body = await request.json() as GqlBody;
         if (isBooksByIdsQuery(body.query)) throw new Error('second query must not run for null ids');
         return HttpResponse.json({ data: { books_trending: { ids: null } } });
+      }));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+
+      expect(items).toEqual([]);
+      expect(postCount).toBe(1);
+    });
+
+    // Distinct from the null case: `ids` absent entirely (the field is omitted, not
+    // explicitly null). A schema regression from `.nullish()` to nullable-only would
+    // let the null case pass while this one threw instead of returning [] (F1).
+    it('skips the second query and returns [] when ids is missing entirely (AC3)', async () => {
+      let postCount = 0;
+      server.use(http.post(GQL_URL, async ({ request }) => {
+        postCount += 1;
+        const body = await request.json() as GqlBody;
+        if (isBooksByIdsQuery(body.query)) throw new Error('second query must not run for missing ids');
+        return HttpResponse.json({ data: { books_trending: {} } });
       }));
 
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
