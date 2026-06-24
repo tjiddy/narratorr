@@ -118,7 +118,7 @@ export class ManualImportAdapter implements ImportAdapter {
         bookId, finalPath,
         buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
         enrichmentDeps,
-        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, { subtitle: currentBook?.subtitle ?? null, publisher: currentBook?.publisher ?? null }),
+        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
       );
 
       await transitionBookStatus(db, bookId, { status: 'imported' });

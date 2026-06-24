@@ -224,7 +224,7 @@ export function buildBackgroundAudnexusConfig(
   item: { asin?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
   existingGenres: string[] | null,
-  existing?: { subtitle?: string | null | undefined; publisher?: string | null | undefined },
+  existing?: { subtitle?: string | null | undefined; publisher?: string | null | undefined } | undefined,
 ): AudnexusConfig {
   return {
     primaryAsin: item.asin || extracted.meta?.asin,
