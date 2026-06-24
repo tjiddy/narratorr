@@ -2248,6 +2248,43 @@ describe('MetadataService.resolveBook', () => {
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Standalone');
   });
 
+  it('#1629: validates beyond books[0] — a later candidate is returned when the top one fails', async () => {
+    // applyBookFilters preserves provider order (no relevance rank), so the
+    // resolver must scan a top-N window, not just books[0].
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+      books: [
+        { title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' }, // fails author check
+        audiobook, // passes
+      ],
+    });
+
+    const result = await service.resolveBook({ title: 'The Way of Kings', author: 'Brandon Sanderson' });
+    expect(result).toEqual(audiobook);
+  });
+
+  it('#1629: whitespace-only author is normalized to absent — title-only query, no junk appended', async () => {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [audiobook] });
+
+    const result = await service.resolveBook({ title: 'The Way of Kings', author: '   ' });
+
+    // Query carries the title only (no trailing whitespace), and the near-exact
+    // title clears the no-author path.
+    expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings');
+    expect(result).toEqual(audiobook);
+  });
+
+  it('#1629: a 0.70–0.84 title-only match is rejected → null (no fuzzy ASIN to write back)', async () => {
+    // 'The Lost Hero' vs 'The Last Hero' → dice ≈ 0.83: clears the loose 0.7 gate
+    // but not the stricter no-author 0.85 gate, so no ASIN is returned to be
+    // written back onto the row by any of the three writeback surfaces.
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({
+      books: [{ title: 'The Last Hero', authors: [{ name: 'Whoever' }], asin: 'B_FUZZY' }],
+    });
+
+    const result = await service.resolveBook({ title: 'The Lost Hero' });
+    expect(result).toBeNull();
+  });
+
   it('provider RateLimitError on the enrichBook path → re-throws (NOT swallowed to null)', async () => {
     mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
 

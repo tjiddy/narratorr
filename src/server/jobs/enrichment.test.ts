@@ -23,9 +23,9 @@ describe('enrichment job', () => {
 
   it('selects null-ASIN pending books and routes them through resolveBook (no longer skipped)', async () => {
     // A pending book WITHOUT an asin is now a candidate; its title + joined
-    // primary author + isbn are passed to resolveBook, which resolves via search.
+    // primary author are passed to resolveBook, which resolves via search.
     db.select
-      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'No ASIN Book', isbn: null, author: 'Some Author' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'No ASIN Book', author: 'Some Author' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'No ASIN Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
     metadataService.resolveBook.mockResolvedValueOnce({ title: 'No ASIN Book', authors: [{ name: 'Some Author' }], duration: 600 });
@@ -33,13 +33,13 @@ describe('enrichment job', () => {
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-    expect(metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'No ASIN Book', author: 'Some Author', isbn: undefined });
+    expect(metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'No ASIN Book', author: 'Some Author' });
     expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Books without ASIN marked as skipped');
   });
 
   it('calls resolveBook title-only when the candidate has no author row', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'Authorless Book', isbn: null, author: null }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'Authorless Book', author: null }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Authorless Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
     metadataService.resolveBook.mockResolvedValueOnce({ title: 'Authorless Book', authors: [{ name: 'Found' }], duration: 600 });
@@ -47,7 +47,7 @@ describe('enrichment job', () => {
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-    expect(metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'Authorless Book', author: undefined, isbn: undefined });
+    expect(metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'Authorless Book', author: undefined });
   });
 
   it('enriches book with ASIN successfully', async () => {

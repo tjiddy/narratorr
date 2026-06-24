@@ -134,10 +134,11 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   // the books the search fallback in resolveBook is meant to rescue. The primary
   // (position-0) author is sourced from the book_authors/authors join (left-join
   // so authorless books are still selected; the resolver is then called
-  // title-only). title + isbn feed the resolver's search.
+  // title-only). Only the title (plus the author when present) feeds the
+  // resolver's search — it searches title+author only, so no ISBN is passed.
   const retryThreshold = new Date(Date.now() - RETRY_AFTER_MS);
   const candidates = await db
-    .select({ id: books.id, asin: books.asin, title: books.title, isbn: books.isbn, author: authors.name })
+    .select({ id: books.id, asin: books.asin, title: books.title, author: authors.name })
     .from(books)
     .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
     .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
@@ -169,7 +170,6 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         asin: capturedAsin ?? undefined,
         title: candidate.title,
         author: candidate.author ?? undefined,
-        isbn: candidate.isbn ?? undefined,
       });
     } catch (error: unknown) {
       if (error instanceof RateLimitError) {

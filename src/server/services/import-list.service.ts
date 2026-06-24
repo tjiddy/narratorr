@@ -228,7 +228,6 @@ export class ImportListService {
         asin: item.asin,
         title: item.title,
         author: item.author,
-        isbn: item.isbn,
       });
       if (match) {
         this.logIdentityMismatch(item, match);
