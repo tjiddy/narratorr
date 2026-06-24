@@ -580,6 +580,61 @@ describe('BookService', () => {
     });
   });
 
+  describe('update() scalar + JSON field persistence (#1609)', () => {
+    it('passes publishedDate, genres, description, and coverUrl through to .set()', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, {
+        description: 'A revised description.',
+        coverUrl: 'https://example.com/new.jpg',
+        publishedDate: '2015-03-14',
+        genres: ['Science Fiction', 'Horror'],
+      });
+
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({
+        description: 'A revised description.',
+        coverUrl: 'https://example.com/new.jpg',
+        publishedDate: '2015-03-14',
+        genres: ['Science Fiction', 'Horror'],
+      }));
+    });
+
+    it('passes null clears through to .set() for description/coverUrl/publishedDate/genres', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, {
+        description: null,
+        coverUrl: null,
+        publishedDate: null,
+        genres: null,
+      });
+
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({
+        description: null,
+        coverUrl: null,
+        publishedDate: null,
+        genres: null,
+      }));
+    });
+
+    it('does not include an omitted field in the .set() payload', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, { publishedDate: '2015-03-14' });
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).not.toHaveProperty('description');
+      expect(setArg).not.toHaveProperty('genres');
+      expect(setArg.publishedDate).toBe('2015-03-14');
+    });
+  });
+
   describe('create', () => {
     it('creates book without authors', async () => {
       db.select.mockReturnValue(

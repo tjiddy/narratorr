@@ -2488,6 +2488,74 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     }));
   });
 
+  it('accepts the extended metadata body (publishedDate/genres/nullable description+coverUrl) and delegates to the service (#1609)', async () => {
+    const updatedBook = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(updatedBook);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: {
+        description: null,
+        coverUrl: null,
+        publishedDate: '2010-08-31',
+        genres: ['Fantasy', 'Epic'],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(services.book.update).toHaveBeenCalledWith(1, {
+      description: null,
+      coverUrl: null,
+      publishedDate: '2010-08-31',
+      genres: ['Fantasy', 'Epic'],
+    });
+  });
+
+  it('passes null clears for publishedDate and genres through to the service (#1609)', async () => {
+    const updatedBook = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(updatedBook);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { publishedDate: null, genres: null },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(services.book.update).toHaveBeenCalledWith(1, { publishedDate: null, genres: null });
+  });
+
+  it('rejects an invalid publishedDate type (number) with 400 (#1609)', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { publishedDate: 123 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid genres type (string) with 400 (#1609)', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { genres: 'Fantasy' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.update).not.toHaveBeenCalled();
+  });
+
   describe('POST /api/books/:id/merge-to-m4b', () => {
     it('returns 202 with { status: started, bookId } when slot available', async () => {
       (services.merge.enqueueMerge as Mock).mockResolvedValue({ status: 'started', bookId: 1 });

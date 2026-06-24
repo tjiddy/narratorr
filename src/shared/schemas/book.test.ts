@@ -167,3 +167,50 @@ describe('createBookBodySchema / updateBookBodySchema — removed monitorForUpgr
     expect(result.success).toBe(false);
   });
 });
+
+describe('updateBookBodySchema — nullable metadata fields (#1609)', () => {
+  it('accepts null for description, coverUrl, publishedDate, and genres (clear)', () => {
+    const result = updateBookBodySchema.safeParse({
+      description: null,
+      coverUrl: null,
+      publishedDate: null,
+      genres: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a genres string array and a publishedDate string (set)', () => {
+    const result = updateBookBodySchema.safeParse({
+      genres: ['Fantasy', 'Epic'],
+      publishedDate: '2010-08-31',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.genres).toEqual(['Fantasy', 'Epic']);
+      expect(result.data.publishedDate).toBe('2010-08-31');
+    }
+  });
+
+  it('accepts a string description and coverUrl (set)', () => {
+    const result = updateBookBodySchema.safeParse({
+      description: 'A great book.',
+      coverUrl: 'https://example.com/cover.jpg',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string publishedDate', () => {
+    const result = updateBookBodySchema.safeParse({ publishedDate: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-array genres value', () => {
+    const result = updateBookBodySchema.safeParse({ genres: 'Fantasy' });
+    expect(result.success).toBe(false);
+  });
+
+  it('omitting the fields entirely still validates (unchanged)', () => {
+    const result = updateBookBodySchema.safeParse({ title: 'Just a title' });
+    expect(result.success).toBe(true);
+  });
+});
