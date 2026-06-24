@@ -194,6 +194,28 @@ describe('NtfyNotifier', () => {
     expect(capturedBody).toContain('Path not found');
   });
 
+  it('on_failure body includes the book title', async () => {
+    let capturedBody = '';
+
+    server.use(
+      http.post('https://ntfy.sh/my-topic', async ({ request }) => {
+        capturedBody = await request.text();
+        return new HttpResponse('ok');
+      }),
+    );
+
+    const notifier = new NtfyNotifier({ topic: 'my-topic' });
+    await notifier.send('on_failure', {
+      event: 'on_failure',
+      book: { title: 'Wool', author: 'Hugh Howey' },
+      error: { message: 'Duplicate filename found', stage: 'import' },
+    });
+
+    expect(capturedBody).toContain('Wool');
+    expect(capturedBody).toContain('Duplicate filename found');
+    expect(capturedBody).toContain('(import)');
+  });
+
   it('test() sends a test notification', async () => {
     server.use(
       http.post('https://ntfy.sh/my-topic', () => new HttpResponse('ok')),

@@ -72,10 +72,10 @@ const EVENT_FORMATTERS: Record<NotificationEvent, EventFormatter> = {
     bookInfo ? `Download complete: ${bookInfo}` : 'Download complete',
   on_import: (_payload, bookInfo) =>
     bookInfo ? `Imported: ${bookInfo}` : 'Import complete',
-  on_failure: (payload) =>
+  on_failure: (payload, bookInfo) =>
     payload.error
-      ? `Failure: ${payload.error.message}${payload.error.stage ? ` (${payload.error.stage})` : ''}`
-      : 'Failure occurred',
+      ? `Failure${bookInfo ? ` — ${bookInfo}` : ''}: ${payload.error.message}${payload.error.stage ? ` (${payload.error.stage})` : ''}`
+      : `Failure occurred${bookInfo ? ` — ${bookInfo}` : ''}`,
   on_health_issue: (payload) => {
     const h = payload.health;
     if (!h) return 'Health issue detected';
