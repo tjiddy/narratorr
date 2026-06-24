@@ -13,8 +13,15 @@ export interface ResolveBookInput {
   asin?: string | undefined;
   title: string;
   author?: string | undefined;
-  isbn?: string | undefined;
 }
+
+/**
+ * How many top candidates {@link resolveBook} validates before giving up.
+ * `applyBookFilters` preserves provider order and does NOT relevance-rank
+ * (metadata.service.ts), so `books[0]` is not reliably the best match for a
+ * keyword query — validate a small window and take the first that passes.
+ */
+const VALIDATION_WINDOW = 5;
 
 /**
  * Collaborators {@link resolveBook} needs from {@link MetadataService}. Mirrors
@@ -43,9 +50,12 @@ export interface ResolveBookDeps {
  * 1. A (trimmed, non-empty) `asin` is tried first via `enrichBook` — the precise
  *    identity fast path. A blank/whitespace ASIN is treated as absent.
  * 2. On miss (or no ASIN) it falls back to a **title + author** search and
- *    validates the top candidate with {@link matchPassesValidation}. Amazon
+ *    validates the top candidates (up to {@link VALIDATION_WINDOW}) with
+ *    {@link matchPassesValidation}, returning the first that passes. Amazon
  *    assigns a separate ASIN per format, so a print/Kindle ASIN 404s on the
  *    audiobook-only Audnexus service — the search re-finds the real audiobook.
+ *    A whitespace-only `author` is normalized to absent so the query stays
+ *    title-only and validation does not run author overlap against junk.
  * 3. Returns the matched {@link BookMetadata} (carrying the correct audiobook
  *    ASIN it resolved) or `null` when genuinely unresolvable.
  *
@@ -61,13 +71,14 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
     if (match) return match;
   }
 
-  const query = input.author ? `${input.title} ${input.author}` : input.title;
+  const author = input.author?.trim() || undefined;
+  const query = author ? `${input.title} ${author}` : input.title;
   const books = await searchBooksThrowing(deps, query);
-  const candidate = books[0];
-  if (!candidate) return null;
-  return matchPassesValidation({ title: input.title, author: input.author }, candidate)
-    ? candidate
-    : null;
+  return (
+    books
+      .slice(0, VALIDATION_WINDOW)
+      .find((candidate) => matchPassesValidation({ title: input.title, author }, candidate)) ?? null
+  );
 }
 
 /**
