@@ -282,6 +282,7 @@ export class BookService {
     publishedDate?: string | undefined;
     genres?: string[] | undefined;
     status?: BookRow['status'] | undefined;
+    enrichmentStatus?: BookRow['enrichmentStatus'] | undefined;
     providerId?: string | undefined;
     importListId?: number | undefined;
   }): Promise<BookWithAuthor> {
@@ -317,6 +318,7 @@ export class BookService {
           publishedDate: data.publishedDate,
           genres: data.genres,
           status: data.status || 'wanted',
+          enrichmentStatus: data.enrichmentStatus,
           importListId: data.importListId,
         })
         .returning();

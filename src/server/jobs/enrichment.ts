@@ -1,7 +1,7 @@
-import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
+import { eq, and, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, bookNarrators } from '../../db/schema.js';
+import { books, bookNarrators, bookAuthors, authors } from '../../db/schema.js';
 import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import type { MetadataService } from '../services/metadata.service.js';
@@ -33,8 +33,12 @@ function isAllCaps(title: string): boolean {
  * start. Drops writebacks whose target book has been re-identified mid-flight
  * (the Fix Match path swaps `books.asin` so the original enrichment payload no
  * longer applies to the row).
+ *
+ * `capturedAsin` is `string | null`: the candidate set now includes null-ASIN
+ * rows (rescued via the search fallback), so the captured value can be null.
+ * The JS `===` comparison handles `null === null` correctly.
  */
-async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string): Promise<boolean> {
+async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string | null): Promise<boolean> {
   const rows = await db
     .select({ asin: books.asin })
     .from(books)
@@ -42,6 +46,16 @@ async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string): Pr
     .limit(1);
   const current = rows[0]?.asin ?? null;
   return current === capturedAsin;
+}
+
+/**
+ * Null-safe SQL predicate matching `books.asin` against the captured value.
+ * `eq(books.asin, null)` compiles to `books.asin = NULL`, which never matches —
+ * so a row whose captured ASIN was null would silently drop the writeback. Use
+ * `isNull` when the captured value is null, `eq` otherwise.
+ */
+function asinMatches(capturedAsin: string | null) {
+  return capturedAsin === null ? isNull(books.asin) : eq(books.asin, capturedAsin);
 }
 
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
@@ -114,33 +128,20 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   let filledGenres = 0;
   let filledTitle = 0;
   let filledDescription = 0;
-  // Skip books without ASIN → set to 'skipped'
-  const noAsinBooks = await db
-    .select({ id: books.id })
-    .from(books)
-    .where(and(
-      eq(books.enrichmentStatus, 'pending'),
-      sql`${books.asin} IS NULL`,
-    ));
 
-  if (noAsinBooks.length > 0) {
-    const ids = noAsinBooks.map((b) => b.id);
-    for (const id of ids) {
-      await db
-        .update(books)
-        .set({ enrichmentStatus: 'skipped', updatedAt: new Date() })
-        .where(eq(books.id, id));
-    }
-    log.info({ count: ids.length }, 'Books without ASIN marked as skipped');
-  }
-
-  // Get books to enrich: pending with ASIN, or failed older than 1 hour
+  // Candidates: pending (with OR without an ASIN), or failed older than 1 hour.
+  // Null-ASIN rows are no longer short-circuited to 'skipped' — they're exactly
+  // the books the search fallback in resolveBook is meant to rescue. The primary
+  // (position-0) author is sourced from the book_authors/authors join (left-join
+  // so authorless books are still selected; the resolver is then called
+  // title-only). title + isbn feed the resolver's search.
   const retryThreshold = new Date(Date.now() - RETRY_AFTER_MS);
   const candidates = await db
-    .select({ id: books.id, asin: books.asin })
+    .select({ id: books.id, asin: books.asin, title: books.title, isbn: books.isbn, author: authors.name })
     .from(books)
-    .where(and(
-      isNotNull(books.asin),
+    .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+    .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
+    .where(
       or(
         eq(books.enrichmentStatus, 'pending'),
         and(
@@ -148,7 +149,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           sql`${books.updatedAt} < ${Math.floor(retryThreshold.getTime() / 1000)}`,
         ),
       ),
-    ))
+    )
     .limit(BATCH_LIMIT);
 
   if (candidates.length === 0) {
@@ -159,25 +160,54 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   log.info({ count: candidates.length }, 'Enriching books');
 
   for (const candidate of candidates) {
-    const asin = candidate.asin!;
-    log.debug({ bookId: candidate.id, asin }, 'Enriching book');
+    const capturedAsin = candidate.asin; // string | null — null-ASIN rows are now eligible
+    log.debug({ bookId: candidate.id, asin: capturedAsin }, 'Enriching book');
 
     let result;
     try {
-      result = await metadataService.enrichBook(asin);
+      result = await metadataService.resolveBook({
+        asin: capturedAsin ?? undefined,
+        title: candidate.title,
+        author: candidate.author ?? undefined,
+        isbn: candidate.isbn ?? undefined,
+      });
     } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         log.warn({ provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Rate limited during enrichment — remaining candidates stay pending');
-        break; // Remaining candidates stay pending for next cycle
+        break; // Remaining candidates stay pending for next cycle (includes fallback-search rate limits)
       }
       throw error;
     }
 
     if (result) {
+      // The resolver may have recovered the real audiobook ASIN via search. If it
+      // differs from the captured value, write it back so the next cycle stops
+      // retrying the dead ASIN — but only after a collision check, since
+      // `books.asin` is uniquely indexed. On collision we skip the ASIN write,
+      // mark the row failed, and continue (never crash the batch).
+      const resolvedAsin = result.asin ?? null;
+      const asinChanged = resolvedAsin !== null && resolvedAsin !== capturedAsin;
+
+      if (asinChanged) {
+        const collision = await bookService.findAsinCollision(candidate.id, resolvedAsin);
+        if (collision) {
+          await db
+            .update(books)
+            .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
+            .where(eq(books.id, candidate.id));
+          log.warn(
+            { bookId: candidate.id, resolvedAsin, conflictBookId: collision.conflictBookId },
+            'Resolved ASIN collides with an existing book — marking failed',
+          );
+          continue;
+        }
+      }
+
       const updates: Record<string, unknown> = {
         enrichmentStatus: 'enriched',
         updatedAt: new Date(),
       };
+      if (asinChanged) updates.asin = resolvedAsin;
 
       // Only fill in fields that are currently empty
       const existing = await db
@@ -210,11 +240,11 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         // identity was swapped under us (Fix Match). The genres path commits
         // through bookService.update(), which has no capturedAsin scope.
         if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
-          if (await isStillSameAsin(db, candidate.id, asin)) {
+          if (await isStillSameAsin(db, candidate.id, capturedAsin)) {
             await bookService.update(candidate.id, { genres: result.genres });
             filledGenres++;
           } else {
-            log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (genres)');
+            log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (genres)');
           }
         }
       }
@@ -229,8 +259,8 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           .where(eq(bookNarrators.bookId, candidate.id))
           .limit(1);
         if (existingNarrators.length === 0) {
-          if (!(await isStillSameAsin(db, candidate.id, asin))) {
-            log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (narrators)');
+          if (!(await isStillSameAsin(db, candidate.id, capturedAsin))) {
+            log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (narrators)');
           } else {
             filledNarrators++;
             for (let i = 0; i < result.narrators.length; i++) {
@@ -250,27 +280,29 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         }
       }
 
-      // Scalar UPDATE: scope `WHERE id = ? AND asin = capturedAsin` so a Fix
+      // Scalar UPDATE: scope `WHERE id = ? AND asin <matches captured>` so a Fix
       // Match that swapped the row's identity between fetch and writeback drops
-      // the stale write atomically.
+      // the stale write atomically. Null-safe: a captured-null row matches via
+      // `asin IS NULL` (a plain `asin = NULL` predicate never matches, which
+      // would silently drop the writeback for a search-rescued null-ASIN book).
       const scalarResult = await db
         .update(books)
         .set(updates)
-        .where(and(eq(books.id, candidate.id), eq(books.asin, asin)))
+        .where(and(eq(books.id, candidate.id), asinMatches(capturedAsin)))
         .returning({ id: books.id });
       if (scalarResult.length === 0) {
-        log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (scalar update)');
+        log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
       }
 
       enrichedCount++;
-      log.info({ bookId: candidate.id, asin }, 'Book enriched successfully');
+      log.info({ bookId: candidate.id, asin: resolvedAsin ?? capturedAsin }, 'Book enriched successfully');
     } else {
       await db
         .update(books)
         .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
         .where(eq(books.id, candidate.id));
 
-      log.warn({ bookId: candidate.id, asin }, 'Book enrichment failed');
+      log.warn({ bookId: candidate.id, asin: capturedAsin }, 'Book enrichment failed');
     }
   }
 

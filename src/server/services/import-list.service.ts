@@ -6,7 +6,7 @@ import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js'
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/types.js';
-import { diceCoefficient } from '../../core/utils/similarity.js';
+import { RateLimitError } from '../../core/index.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { BookService } from './book.service.js';
@@ -201,48 +201,51 @@ export class ImportListService {
   }
 
   /**
-   * Resolve the rich metadata for an import-list item.
+   * Resolve the rich metadata for an import-list item via the shared
+   * {@link MetadataService.resolveBook} resolver (ASIN fast path → title/author
+   * search fallback + validation), then build the enriched payload.
    *
-   * Two paths:
-   * - **ASIN-identity** — when `item.asin` is present, hit Audnexus directly
-   *   (`enrichBook(asin)`). Identity lookup, no fuzzy validation. The metadata
-   *   is treated as canonical identity: a successful match wins title/authors
-   *   over the raw provider fields.
-   * - **Search-candidate** — when `item.asin` is absent, run a metadata search
-   *   and validate the top candidate via {@link matchPassesValidation}. Failed
-   *   validation drops the match (raw provider fields fall through).
-   *
-   * Either path can return `source: 'none'` (no metadata service, lookup
-   * failed, search empty, validation rejected) — callers then fall back to raw
-   * item fields with no metadata side fields populated. Provider-first
-   * precedence still applies to cover/description/asin/isbn even on the
-   * matched branches; only title/authorName flip to metadata-first.
+   * The resolver carries the **correct audiobook ASIN** it found, so a bad
+   * print/Kindle provider ASIN is transparently replaced by the audiobook ASIN
+   * the search recovers (see {@link buildMatchedEnriched}). Returns the
+   * intermediate payload plus the `enrichmentStatus` to persist:
+   * - match adopted → `undefined` (default `'pending'`; rich metadata flows).
+   * - genuine no-match → `'failed'` (book still created so the import isn't
+   *   dropped; the background job retries it via search after 1h).
+   * - rate limit / transient error / no metadata service → `undefined`
+   *   (`'pending'`; raw provider fields, resolvable later — a rate limit is NOT
+   *   a no-match).
    */
-  private async enrichItem(item: ImportListItem): Promise<EnrichedItem> {
-    const resolved = await this.resolveMatch(item);
-    return buildEnrichedItem(item, resolved);
+  private async enrichItem(item: ImportListItem): Promise<{ enriched: EnrichedItem; enrichmentStatus: 'failed' | undefined }> {
+    const { match, enrichmentStatus } = await this.resolveMatch(item);
+    return { enriched: buildEnrichedItem(item, match), enrichmentStatus };
   }
 
-  private async resolveMatch(item: ImportListItem): Promise<ResolvedMatch> {
-    if (!this.metadata) return { match: null, source: 'none' };
+  private async resolveMatch(item: ImportListItem): Promise<{ match: BookMetadata | null; enrichmentStatus: 'failed' | undefined }> {
+    if (!this.metadata) return { match: null, enrichmentStatus: undefined };
     try {
-      if (item.asin) {
-        // ASIN-identity path: trust Audnexus's response, no fuzzy validation
-        const match = await this.metadata.enrichBook(item.asin);
-        if (!match) return { match: null, source: 'none' };
+      const match = await this.metadata.resolveBook({
+        asin: item.asin,
+        title: item.title,
+        author: item.author,
+        isbn: item.isbn,
+      });
+      if (match) {
         this.logIdentityMismatch(item, match);
-        return { match, source: 'asin' };
+        return { match, enrichmentStatus: undefined };
       }
-      const query = item.author ? `${item.title} ${item.author}` : item.title;
-      const searchResults = await this.metadata.search(query);
-      const candidate = searchResults.books[0];
-      if (!candidate) return { match: null, source: 'none' };
-      return matchPassesValidation(item, candidate)
-        ? { match: candidate, source: 'search' }
-        : { match: null, source: 'none' };
+      // Genuine no-match: still create the book (don't silently drop the import)
+      // but mark it failed so the background job retries via search after 1h.
+      return { match: null, enrichmentStatus: 'failed' };
     } catch (error: unknown) {
+      if (error instanceof RateLimitError) {
+        // Transient provider state, NOT a no-match — leave the book resolvable
+        // later (pending), do not mark it failed.
+        this.log.warn({ title: item.title, provider: error.provider }, 'Metadata resolution rate limited; leaving book pending');
+        return { match: null, enrichmentStatus: undefined };
+      }
       this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
-      return { match: null, source: 'none' };
+      return { match: null, enrichmentStatus: undefined };
     }
   }
 
@@ -270,7 +273,7 @@ export class ImportListService {
   }
 
   private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
-    const enriched = await this.enrichItem(item);
+    const { enriched, enrichmentStatus } = await this.enrichItem(item);
 
     const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
     const duplicate = await this.bookService.findDuplicate(enriched.title, authorList, enriched.asin);
@@ -296,6 +299,7 @@ export class ImportListService {
       publishedDate: enriched.publishedDate,
       genres: enriched.genres,
       status: 'wanted',
+      enrichmentStatus,
       importListId: list.id,
     });
 
@@ -320,36 +324,22 @@ export class ImportListService {
 }
 
 /**
- * Outcome of resolving rich metadata for an import-list item.
+ * Build the intermediate enriched payload from `(item, match)`.
  *
- * `source` tags which path produced the match so {@link buildEnrichedItem}
- * can apply source-aware precedence: matched paths (`'asin'` / `'search'`)
- * adopt metadata identity (title/authorName); the `'none'` path falls back
- * to raw provider fields with no metadata side fields.
- */
-type ResolvedMatch =
-  | { match: BookMetadata; source: 'asin' | 'search' }
-  | { match: null; source: 'none' };
-
-/**
- * Build the intermediate enriched payload from `(item, resolved)`.
- *
- * Source-aware precedence:
- * - `'asin'` / `'search'` — metadata wins for `title` and `authorName` (the
- *   match is treated as canonical identity). `BookMetadataSchema` requires
- *   `title` and a non-empty `authors`, so no per-field fallback is needed
- *   inside a successful branch. Provider-first still applies to
- *   cover/description/asin/isbn (raw item value is a hint).
- * - `'none'` — raw item fields only; no metadata side fields populated.
- *
- * `seriesPrimary` wins over `series[0]` (#1088 / #1097).
+ * - `match` present — metadata wins for `title` and `authorName` (the resolved
+ *   record is canonical identity). `BookMetadataSchema` requires `title` and a
+ *   non-empty `authors`, so no per-field fallback is needed. Provider-first
+ *   still applies to cover/description/isbn (raw item value is a hint), but the
+ *   resolved **audiobook ASIN wins** over the raw provider ASIN (which may be a
+ *   print/Kindle ASIN). `seriesPrimary` wins over `series[0]` (#1088 / #1097).
+ * - `match` null — raw item fields only; no metadata side fields populated.
  *
  * Lives outside the class so its many `??`/`?.` operators don't accumulate
  * cyclomatic complexity in `enrichItem`.
  */
-function buildEnrichedItem(item: ImportListItem, resolved: ResolvedMatch): EnrichedItem {
-  if (resolved.source === 'none') return buildRawEnriched(item);
-  return buildMatchedEnriched(item, resolved.match);
+function buildEnrichedItem(item: ImportListItem, match: BookMetadata | null): EnrichedItem {
+  if (!match) return buildRawEnriched(item);
+  return buildMatchedEnriched(item, match);
 }
 
 function buildRawEnriched(item: ImportListItem): EnrichedItem {
@@ -379,7 +369,11 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     duration: match.duration,
     publishedDate: match.publishedDate,
     genres: match.genres,
-    asin: item.asin ?? match.asin,
+    // Resolved audiobook ASIN wins: when the search fallback recovered the real
+    // audiobook, `match.asin` is the correct ASIN to persist — NOT the raw
+    // provider ASIN (which may be a print/Kindle ASIN that 404s on Audnexus).
+    // On the ASIN fast path `match.asin` echoes `item.asin`, so this is a no-op.
+    asin: match.asin ?? item.asin,
     isbn: item.isbn ?? match.isbn,
   };
 }
@@ -404,37 +398,4 @@ interface EnrichedItem {
   asin?: string | undefined;
   isbn?: string | undefined;
   authorName?: string | undefined;
-}
-
-/** Title fuzzy threshold for search-candidate path (Dice coefficient). */
-const TITLE_MATCH_THRESHOLD = 0.7;
-
-/**
- * AND-gate for adopting a search match (search-candidate path only).
- *
- * Title check: dice(item.title, candidate.title) ≥ threshold (always required).
- * Author check: case-insensitive overlap (full or last-name token), only
- * required when `item.author` is present.
- *
- * If either required check fails → reject. Mirrors AC §4: prevents "Golden Son
- * by Pierce Brown" cover/series getting attached to a NYT entry that's actually
- * "Golden Son by Some Romance Author".
- */
-function matchPassesValidation(item: ImportListItem, candidate: BookMetadata): boolean {
-  if (diceCoefficient(item.title, candidate.title) < TITLE_MATCH_THRESHOLD) return false;
-  if (!item.author) return true;
-  const candidateAuthors = candidate.authors?.map((a) => a.name).filter(Boolean) ?? [];
-  if (candidateAuthors.length === 0) return false;
-  return candidateAuthors.some((name) => authorOverlap(item.author!, name));
-}
-
-function authorOverlap(a: string, b: string): boolean {
-  const aLower = a.trim().toLowerCase();
-  const bLower = b.trim().toLowerCase();
-  if (!aLower || !bLower) return false;
-  if (aLower === bLower) return true;
-  // Last-name overlap (last whitespace-delimited token)
-  const aLast = aLower.split(/\s+/).pop()!;
-  const bLast = bLower.split(/\s+/).pop()!;
-  return aLast.length > 1 && aLast === bLast;
 }
