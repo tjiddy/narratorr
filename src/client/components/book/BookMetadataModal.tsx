@@ -59,6 +59,7 @@ function diffSeriesPosition(input: string, stored: number | null | undefined): {
  */
 export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true }: BookMetadataModalProps) {
   const [title, setTitle] = useState(book.title);
+  const [subtitle, setSubtitle] = useState(book.subtitle ?? '');
   const [author, setAuthor] = useState(book.authors.map((a) => a.name).join(', '));
   const [seriesName, setSeriesName] = useState(book.seriesName ?? '');
   const [seriesPosition, setSeriesPosition] = useState(book.seriesPosition?.toString() ?? '');
@@ -66,7 +67,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
   const [description, setDescription] = useState(book.description ?? '');
   const [publishedDate, setPublishedDate] = useState(book.publishedDate ?? '');
   const [genres, setGenres] = useState((book.genres ?? []).join(', '));
-  const [coverUrl, setCoverUrl] = useState(book.coverUrl ?? '');
+  const [publisher, setPublisher] = useState(book.publisher ?? '');
   const [renameFiles, setRenameFiles] = useState(false);
 
   if (!isOpen) return null;
@@ -83,6 +84,9 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
     const data: UpdateBookPayload = {};
 
     if (title.trim() !== book.title) data.title = title.trim();
+
+    const sub = diffTrimmedNullable(subtitle, book.subtitle);
+    if (sub !== undefined) data.subtitle = sub;
 
     // authors.min(1) — when the field is blanked, omit `authors` entirely rather
     // than sending `[]` (which would 400). A required author cannot be cleared here.
@@ -104,14 +108,14 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
     const desc = diffDescription(description, book.description);
     if (desc !== undefined) data.description = desc;
 
-    const cover = diffTrimmedNullable(coverUrl, book.coverUrl);
-    if (cover !== undefined) data.coverUrl = cover;
-
     const pubDate = diffTrimmedNullable(publishedDate, book.publishedDate);
     if (pubDate !== undefined) data.publishedDate = pubDate;
 
     const newGenres = diffGenres(genres, book.genres);
     if (newGenres !== undefined) data.genres = newGenres;
+
+    const pub = diffTrimmedNullable(publisher, book.publisher);
+    if (pub !== undefined) data.publisher = pub;
 
     onSave(data, renameFiles);
   };
@@ -144,6 +148,8 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
         <MetadataEditFields
           title={title}
           onTitleChange={setTitle}
+          subtitle={subtitle}
+          onSubtitleChange={setSubtitle}
           author={author}
           onAuthorChange={setAuthor}
           seriesName={seriesName}
@@ -159,8 +165,8 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
           onPublishedDateChange={setPublishedDate}
           genres={genres}
           onGenresChange={setGenres}
-          coverUrl={coverUrl}
-          onCoverUrlChange={setCoverUrl}
+          publisher={publisher}
+          onPublisherChange={setPublisher}
           renameFiles={renameFiles}
           onRenameFilesChange={setRenameFiles}
           hasPath={hasPath}

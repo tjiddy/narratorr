@@ -84,7 +84,9 @@ function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): Cre
     seriesProvider: 'audible',
   };
   copyOptional(out, 'narrators', meta.narrators);
+  copyOptional(out, 'subtitle', meta.subtitle);
   copyOptional(out, 'description', meta.description);
+  copyOptional(out, 'publisher', meta.publisher);
   copyOptional(out, 'coverUrl', meta.coverUrl);
   copyOptional(out, 'isbn', meta.isbn);
   copyOptional(out, 'seriesName', primarySeries?.name);

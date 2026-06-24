@@ -1,6 +1,8 @@
 interface MetadataEditFieldsProps {
   title: string;
   onTitleChange: (value: string) => void;
+  subtitle: string;
+  onSubtitleChange: (value: string) => void;
   author: string;
   onAuthorChange: (value: string) => void;
   seriesName: string;
@@ -16,8 +18,8 @@ interface MetadataEditFieldsProps {
   onPublishedDateChange: (value: string) => void;
   genres: string;
   onGenresChange: (value: string) => void;
-  coverUrl: string;
-  onCoverUrlChange: (value: string) => void;
+  publisher: string;
+  onPublisherChange: (value: string) => void;
   renameFiles: boolean;
   onRenameFilesChange: (value: boolean) => void;
   hasPath: boolean;
@@ -50,9 +52,8 @@ function TextField({ id, label, value, onChange, placeholder }: {
 }
 
 // Edit Metadata is a pure MANUAL field editor (#1609). It edits only the stored,
-// author-supplied columns the detail page renders. Intentionally excluded:
-//   - subtitle / publisher — no editable `books` column; read-only from the
-//     matched provider metadata (`mergeBookData`). Re-point via Fix Match.
+// author-supplied columns the detail page renders (now including subtitle and
+// publisher, promoted to stored columns in #1614). Intentionally excluded:
 //   - duration — scanner-derived from the audio files (import/scan), not
 //     author-supplied; manual edits would desync it from the files.
 // Re-matching a book to different provider metadata is Fix Match's job (it
@@ -62,6 +63,8 @@ function TextField({ id, label, value, onChange, placeholder }: {
 export function MetadataEditFields({
   title,
   onTitleChange,
+  subtitle,
+  onSubtitleChange,
   author,
   onAuthorChange,
   seriesName,
@@ -77,8 +80,8 @@ export function MetadataEditFields({
   onPublishedDateChange,
   genres,
   onGenresChange,
-  coverUrl,
-  onCoverUrlChange,
+  publisher,
+  onPublisherChange,
   renameFiles,
   onRenameFilesChange,
   hasPath,
@@ -98,6 +101,8 @@ export function MetadataEditFields({
           autoFocus
         />
       </div>
+
+      <TextField id="edit-subtitle" label="Subtitle" value={subtitle} onChange={onSubtitleChange} placeholder="e.g. Book One of the Stormlight Archive" />
 
       <TextField id="edit-author" label="Author" value={author} onChange={onAuthorChange} placeholder="e.g. Brandon Sanderson" />
 
@@ -129,7 +134,7 @@ export function MetadataEditFields({
         <TextField id="edit-genres" label="Genres" value={genres} onChange={onGenresChange} placeholder="e.g. Fantasy, Epic" />
       </div>
 
-      <TextField id="edit-cover-url" label="Cover URL" value={coverUrl} onChange={onCoverUrlChange} placeholder="https://…" />
+      <TextField id="edit-publisher" label="Publisher" value={publisher} onChange={onPublisherChange} placeholder="e.g. Macmillan Audio" />
 
       <div>
         <label htmlFor="edit-description" className={LABEL_CLASS}>
@@ -144,12 +149,10 @@ export function MetadataEditFields({
         />
       </div>
 
-      {/* Subtitle and publisher come from the matched provider metadata, not manual
-          entry — use Fix Match to re-point a book. Duration is read from the audio
-          files. None are editable here (#1609). */}
+      {/* Duration is scanner-derived from the audio files, not author-supplied, so
+          it is intentionally not editable here (#1609 / #1614). */}
       <p className="text-xs text-muted-foreground/50">
-        Subtitle and publisher come from the matched metadata (use Fix Match to re-point);
-        duration is read from the audio files.
+        Duration is read from the audio files.
       </p>
 
       {hasPath && (

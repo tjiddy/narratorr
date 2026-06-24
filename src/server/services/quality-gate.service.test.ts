@@ -34,7 +34,7 @@ const baseBook = {
   id: 1, publicId: 'bk_test000000000000000', title: 'Test Book', status: 'imported' as const,
   narrators: [{ name: 'John Smith' }], size: 400_000_000, duration: 600,
   audioTotalSize: null, audioDuration: 36000, path: '/library/test',
-  asin: null, isbn: null, coverUrl: null, description: null,
+  asin: null, isbn: null, coverUrl: null, subtitle: null, description: null,
   publishedDate: null, publisher: null, language: null,
   seriesName: null, seriesPosition: null, genres: null, tags: null,
   rating: null, ratingCount: null, pageCount: null,

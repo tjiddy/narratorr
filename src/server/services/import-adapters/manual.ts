@@ -112,13 +112,13 @@ export class ManualImportAdapter implements ImportAdapter {
 
       await ctx.setPhase('fetching_metadata');
 
-      const [currentBook] = await db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
+      const [currentBook] = await db.select({ genres: books.genres, subtitle: books.subtitle, publisher: books.publisher }).from(books).where(eq(books.id, bookId)).limit(1);
 
       await orchestrateBookEnrichment(
         bookId, finalPath,
         buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
         enrichmentDeps,
-        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null),
+        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, { subtitle: currentBook?.subtitle ?? null, publisher: currentBook?.publisher ?? null }),
       );
 
       await transitionBookStatus(db, bookId, { status: 'imported' });

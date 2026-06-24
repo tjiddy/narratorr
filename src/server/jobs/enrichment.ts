@@ -15,7 +15,9 @@ interface ExistingBookFields {
   duration: number | null;
   genres: string[] | null;
   title: string;
+  subtitle: string | null;
   description: string | null;
+  publisher: string | null;
   coverUrl: string | null;
   publishedDate: string | null;
   seriesName: string | null;
@@ -44,7 +46,7 @@ async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string): Pr
 
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
 function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknown>): Record<string, unknown> {
-  const fields: Array<keyof ExistingBookFields> = ['description', 'coverUrl', 'publishedDate'];
+  const fields: Array<keyof ExistingBookFields> = ['subtitle', 'description', 'publisher', 'coverUrl', 'publishedDate'];
   const updates: Record<string, unknown> = {};
   for (const field of fields) {
     if (!book[field] && result[field]) updates[field] = result[field];
@@ -77,7 +79,7 @@ function fillSeriesFields(
 /** Build the scalar updates and return fill counts for batch logging. */
 function buildMetadataUpdates(
   book: ExistingBookFields,
-  result: { title?: string | null | undefined; description?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
+  result: { title?: string | null | undefined; subtitle?: string | null | undefined; description?: string | null | undefined; publisher?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
 ) {
   const updates: Record<string, unknown> = {};
   let filledDuration = 0;
@@ -183,7 +185,9 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           duration: books.duration,
           genres: books.genres,
           title: books.title,
+          subtitle: books.subtitle,
           description: books.description,
+          publisher: books.publisher,
           coverUrl: books.coverUrl,
           publishedDate: books.publishedDate,
           seriesName: books.seriesName,

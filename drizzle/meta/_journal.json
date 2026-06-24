@@ -8,6 +8,13 @@
       "when": 1782197050209,
       "tag": "0000_jittery_xorn",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1782280503603,
+      "tag": "0001_quiet_mentor",
+      "breakpoints": true
     }
   ]
 }

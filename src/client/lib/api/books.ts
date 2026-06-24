@@ -26,7 +26,9 @@ export interface BookWithAuthor {
   title: string;
   authors: Author[];
   narrators: Narrator[];
+  subtitle?: string | null;
   description?: string | null;
+  publisher?: string | null;
   coverUrl?: string | null;
   asin?: string | null;
   isbn?: string | null;
@@ -62,7 +64,9 @@ export interface CreateBookPayload {
   title: string;
   authors?: { name: string; asin?: string | undefined }[] | undefined;
   narrators?: string[] | undefined;
+  subtitle?: string | undefined;
   description?: string | undefined;
+  publisher?: string | undefined;
   coverUrl?: string | undefined;
   asin?: string | undefined;
   isbn?: string | undefined;
@@ -96,7 +100,9 @@ export interface UpdateBookPayload {
   narrators?: string[] | undefined;
   // `null` clears the stored column (detail page falls back to provider value);
   // `undefined`/omitted = unchanged. Mirrors `updateBookBodySchema` (#1609).
+  subtitle?: string | null | undefined;
   description?: string | null | undefined;
+  publisher?: string | null | undefined;
   coverUrl?: string | null | undefined;
   publishedDate?: string | null | undefined;
   genres?: string[] | null | undefined;
