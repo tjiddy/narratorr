@@ -313,8 +313,9 @@ export class ImportListService {
       bookId: created.id,
       bookTitle: created.title,
       authorName: enriched.authorName ?? null,
-      eventType: 'grabbed',
+      eventType: 'book_added',
       source: 'import_list',
+      reason: { importListName: list.name },
     });
 
     this.log.info({ bookId: created.id, title: created.title, listName: list.name }, 'Book added from import list');
