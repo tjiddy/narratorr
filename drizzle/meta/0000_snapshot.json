@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e3b2ef07-f65f-44d2-9c84-79ed26b709d0",
+  "id": "c0868cc2-e2eb-4cf8-9cde-1d0a9a39b979",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -614,6 +614,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'pending'"
+        },
+        "enrichment_attempts": {
+          "name": "enrichment_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         },
         "path": {
           "name": "path",

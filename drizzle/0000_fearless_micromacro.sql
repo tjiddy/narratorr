@@ -84,6 +84,7 @@ CREATE TABLE `books` (
 	`genres` text,
 	`status` text DEFAULT 'wanted' NOT NULL,
 	`enrichment_status` text DEFAULT 'pending' NOT NULL,
+	`enrichment_attempts` integer DEFAULT 0 NOT NULL,
 	`path` text,
 	`size` integer,
 	`audio_codec` text,
