@@ -84,6 +84,17 @@ describe('isUniqueViolation (shared)', () => {
     expect(isUniqueViolation(error, PATTERN)).toBe(true);
   });
 
+  it('matches a top-level message independently of a present, nonmatching cause.message', () => {
+    // The inverse of the nested-cause case: proves the top-level path is
+    // load-bearing even when a cause.message exists but does NOT match. A
+    // collapse to getErrorMessageWithCause's cause-OR-message semantics (cause
+    // wins) would test only the nonmatching cause string and return false here.
+    const error = Object.assign(new Error('UNIQUE constraint failed: tbl.col'), {
+      cause: { message: 'SQLITE_BUSY: database is locked' },
+    });
+    expect(isUniqueViolation(error, PATTERN)).toBe(true);
+  });
+
   it('matches both the index-name form and the table.column form', () => {
     expect(isUniqueViolation(new Error('UNIQUE constraint failed: idx_x'), PATTERN)).toBe(true);
     expect(isUniqueViolation(new Error('UNIQUE constraint failed: tbl.col'), PATTERN)).toBe(true);
