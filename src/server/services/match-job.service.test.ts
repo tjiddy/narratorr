@@ -3375,5 +3375,123 @@ describe('MatchJobService', () => {
       // ASIN kill-shot returns before the planner — no search fired.
       expect(metadataService.searchBooks).not.toHaveBeenCalled();
     });
+
+    // ── #1652 hardening ────────────────────────────────────────────────
+    const CAP_LOG = 'Narrator wrong-edition cap fired';
+
+    it('#1652: does NOT cap on punctuation-only narrators (lone hyphen vs period — no signal)', async () => {
+      // The headline bug: file tag `-` and edition `.` both normalize to empty.
+      // The old looser file-side guard let this through as a spurious mismatch;
+      // now it is "no signal" and the high-confidence match is preserved.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: '-' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['.'], asin: 'B002V1BVK4' }),
+      ]);
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('high');
+      expect(result.reason).toBeUndefined();
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining(CAP_LOG));
+    });
+
+    it('#1652 (item 3a): a duration-capped medium with a MISMATCHING narrator keeps its duration reason (no-op, no cap log)', async () => {
+      // Top duration 600min vs 443min scan → 35% off → medium with a duration
+      // reason. The mismatching narrator must NOT override it (downgrade-only /
+      // no-op-on-non-high): confidence stays medium, the duration reason is kept,
+      // and the cap-firing log does NOT fire (no high→medium transition).
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], duration: 600, asin: 'B002V1BVK4' }),
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], duration: 620, asin: 'B0OTHEREDN' }),
+      ]);
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('medium');
+      expect(result.reason).toContain('Duration mismatch');
+      expect(result.reason).not.toContain('Narrator mismatch');
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining(CAP_LOG));
+    });
+
+    it('#1652 (item 5): logs the cap once with matchSource + durationVerified on a tag-pass demotion (F6: exact/ASIN duration-matched → durationVerified true)', async () => {
+      // ASIN kill-shot (source 'asin-tag', maxConfidence 'high'). The scanned
+      // 443min runtime matches the edition's 443min → isDurationVerified === true,
+      // even though capBypassedByDuration is false (it is gated on medium attempts).
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt', tagAsin: 'B002V1BVK4' }),
+      );
+      vi.mocked(metadataService.getBook).mockResolvedValue(
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], duration: 443, asin: 'B002V1BVK4' }),
+      );
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('medium');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          matchSource: 'asin-tag',
+          durationVerified: true,
+          fileNarrator: 'Adriel Brandt',
+          editionNarrators: ['Michael York'],
+        }),
+        expect.stringContaining(CAP_LOG),
+      );
+    });
+
+    it('#1652 (item 5): the filename-single branch logs matchSource "filename-single" with durationVerified false', async () => {
+      // No tagTitle/tagAuthor → Pass 1 falls through; Pass 2 single result is the
+      // filename-derived high. The filename-single branch runs no duration check.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], asin: 'B002V1BVK4' }),
+      ]);
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('medium');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ matchSource: 'filename-single', durationVerified: false }),
+        expect.stringContaining(CAP_LOG),
+      );
+    });
+
+    it('#1652 (item 5): the filename duration-resolved multi-result branch logs matchSource "filename-duration-resolved" with durationVerified true', async () => {
+      // No tagTitle/tagAuthor → Pass 1 falls through. Pass 2 returns MULTIPLE
+      // results; the top edition's 443min runtime matches the 443min scan, so
+      // resolveConfidenceFromDuration returns 'high' (duration-verified). The
+      // mismatching narrator then demotes high → medium, and the cap log must
+      // carry the multi-result filename source with durationVerified: true.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], duration: 443, asin: 'B002V1BVK4' }),
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Some Reader'], duration: 500, asin: 'B0OTHEREDN' }),
+      ]);
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('medium');
+      expect(result.reason).toContain('Narrator mismatch');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ matchSource: 'filename-duration-resolved', durationVerified: true }),
+        expect.stringContaining(CAP_LOG),
+      );
+    });
+
+    it('#1652 (item 5): a matching narrator does NOT fire the cap log', async () => {
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Michael York' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], asin: 'B002V1BVK4' }),
+      ]);
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('high');
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining(CAP_LOG));
+    });
   });
 });

@@ -1,9 +1,11 @@
 import { basename } from 'node:path';
+import type { FastifyBaseLogger } from 'fastify';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import { diceCoefficient, normalizeNarrator, narratorsFuzzyMatch, scoreResult, tokenizeNarrators } from '../../core/utils/similarity.js';
+import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
+import type { MatchSource } from './tag-search-planner.js';
 
 const DURATION_THRESHOLD_STRICT = 0.05;
 const DURATION_THRESHOLD_RELAXED = 0.15;
@@ -134,7 +136,11 @@ function normalizeForTitleCompare(s: string): string {
 function resolveTagSearchTitle(rawTitle: string, rawAlbum: string | undefined): string | null {
   const cleanedTitle = cleanTagTitle(rawTitle).trim();
   const cleanedAlbum = rawAlbum?.trim() ? cleanTagTitle(rawAlbum).trim() : '';
-  const usableAlbum = cleanedAlbum.length > 0;
+  // Shape-check the album the same way the title is checked (#1652): a bare
+  // volume marker (`Book 5`) is no more usable as a search title than a bare
+  // volume-marker title, so it must not survive `cleanTagTitle` and become the
+  // search query.
+  const usableAlbum = cleanedAlbum.length > 0 && !isPureVolumeMarker(rawAlbum!.trim());
 
   if (isPureVolumeMarker(rawTitle)) {
     return usableAlbum ? cleanedAlbum : null;
@@ -298,20 +304,34 @@ export function parsePublishedYear(date: string | undefined): number | undefined
  * the wrong edition; return a user-facing reason so the central cap can
  * downgrade `high → medium` (Review).
  *
- * Fuzzy, via the shared `narratorsFuzzyMatch` primitive — spelling/punctuation
- * variants at or above the `0.8` dice threshold are NOT a mismatch. Returns
- * `null` (no cap) whenever either side lacks a narrator signal: an absent file
- * tag or an edition with no `narrators` is "no signal", not a mismatch.
+ * Delegates the signal-presence AND match decision to the shared core
+ * `compareNarratorSignals` predicate (#1652) so the file side and the primitive
+ * can no longer disagree about emptiness: a punctuation-only narrator (`'-'`
+ * vs `'.'`) normalizes to no usable signal on both sides → `'no-signal'` → no
+ * cap, NOT a spurious mismatch. Spelling/punctuation variants at or above the
+ * `0.8` dice threshold are `'match'` (no cap); an absent file tag or an edition
+ * with no usable `narrators` is `'no-signal'` (no cap). Only a genuine
+ * `'mismatch'` returns a user-facing reason. Exported for direct unit tests.
  */
-function narratorMismatchReason(
+export function narratorMismatchReason(
   fileNarratorRaw: string | undefined,
   editionNarrators: string[] | undefined,
 ): string | null {
-  if (!fileNarratorRaw || tokenizeNarrators(fileNarratorRaw).length === 0) return null;
-  const editions = (editionNarrators ?? []).filter(n => n.trim().length > 0);
-  if (editions.length === 0) return null;
-  if (narratorsFuzzyMatch(fileNarratorRaw, editionNarrators)) return null;
-  return `Narrator mismatch — file: ${fileNarratorRaw.trim()} · matched edition: ${editions.join(', ')}`;
+  if (compareNarratorSignals(fileNarratorRaw, editionNarrators) !== 'mismatch') return null;
+  const editions = (editionNarrators ?? []).map(n => n.trim()).filter(n => n.length > 0);
+  return `Narrator mismatch — file: ${(fileNarratorRaw ?? '').trim()} · matched edition: ${editions.join(', ')}`;
+}
+
+/**
+ * Explicit context the cap needs to emit its observability log (#1652). The
+ * `MatchResult` alone carries no `matchSource`/`durationVerified` — those live
+ * branch-locally at the call site, so the caller threads them in here.
+ */
+export interface NarratorCapContext {
+  log: FastifyBaseLogger;
+  matchSource: MatchSource;
+  /** True when the scanned runtime independently corroborated the chosen edition (the `/import-uat` signal). */
+  durationVerified: boolean;
 }
 
 /**
@@ -322,10 +342,32 @@ function narratorMismatchReason(
  * an existing duration/attempt cap (a result already at `medium`/`none` is left
  * untouched). Fires even when duration verified the match — narrator is the
  * discriminator duration lacks, so it must not be bypassed by `isDurationVerified`.
+ *
+ * On an actual `high → medium` demotion it emits a single observability log
+ * (#1652) carrying the book identity, the file/edition narrators, the match
+ * source, and whether duration corroborated the edition — the instrument the
+ * next `/import-uat` run reads. The log fires ONLY on the transition, never on
+ * the no-op/non-high/no-signal paths above.
  */
-export function applyNarratorCap(result: MatchResult, audioResult: AudioScanResult | null): MatchResult {
+export function applyNarratorCap(
+  result: MatchResult,
+  audioResult: AudioScanResult | null,
+  ctx: NarratorCapContext,
+): MatchResult {
   if (result.confidence !== 'high' || !result.bestMatch) return result;
   const reason = narratorMismatchReason(audioResult?.tagNarrator, result.bestMatch.narrators);
   if (reason === null) return result;
+  ctx.log.info(
+    {
+      path: result.path,
+      bestTitle: result.bestMatch.title,
+      asin: result.bestMatch.asin,
+      fileNarrator: audioResult?.tagNarrator,
+      editionNarrators: result.bestMatch.narrators,
+      matchSource: ctx.matchSource,
+      durationVerified: ctx.durationVerified,
+    },
+    'Narrator wrong-edition cap fired — high → medium (Review)',
+  );
   return { ...result, confidence: 'medium', reason };
 }

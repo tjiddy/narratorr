@@ -5,6 +5,13 @@ import type { SearchResult } from '../../core/index.js';
 /** Optional narrator-priority config for auto-grab scoring. */
 export interface NarratorPriority {
   bookNarrators: string[];
+  /**
+   * Test-only seam (#1650/#1652): overrides the `0.8` dice threshold passed
+   * through to `narratorsFuzzyMatch`. `buildNarratorPriority` never assigns it
+   * in production, so the default always applies at runtime — it exists purely
+   * so `similarity.test.ts` can exercise the exact-boundary and relaxed-bar
+   * cases. Do NOT drop it as dead code.
+   */
   threshold?: number;
 }
 
