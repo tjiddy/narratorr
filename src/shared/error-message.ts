@@ -23,3 +23,21 @@ export function getErrorMessageWithCause(error: unknown): string {
   const str = String(error);
   return str || 'Unknown error';
 }
+
+/**
+ * Detect a SQLite UNIQUE-constraint violation by testing `pattern` against the
+ * error's nested `cause.message` first, then its top-level `message`.
+ *
+ * Drizzle/libSQL nests the real SQLite diagnostic under `.cause`, so the cause
+ * message is tested independently — a match there returns true regardless of
+ * `error.message`, and vice versa. This is deliberately NOT
+ * `getErrorMessageWithCause` (which returns cause OR message as a single
+ * string): both paths are load-bearing for the constraint detectors. Callers
+ * pass their own table/index-specific `pattern`.
+ */
+export function isUniqueViolation(error: unknown, pattern: RegExp): boolean {
+  if (!(error instanceof Error)) return false;
+  const causeMsg = (error as Error & { cause?: { message?: string } }).cause?.message ?? '';
+  if (pattern.test(causeMsg)) return true;
+  return pattern.test(error.message ?? '');
+}
