@@ -1,0 +1,1 @@
+ALTER TABLE `books` ADD `enrichment_attempts` integer DEFAULT 0 NOT NULL;

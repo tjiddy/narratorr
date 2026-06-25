@@ -8,6 +8,13 @@
       "when": 1782283325289,
       "tag": "0000_spicy_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1782348924258,
+      "tag": "0001_minor_peter_parker",
+      "breakpoints": true
     }
   ]
 }
