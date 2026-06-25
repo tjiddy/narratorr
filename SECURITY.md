@@ -103,7 +103,7 @@ In `basic`/`none` modes the browser already authenticates same-origin `EventSour
 
 Narratorr uses `@fastify/helmet` for HTTP security headers in production:
 
-- **Content-Security-Policy:** Strict CSP with nonce-based script execution (`script-src 'self'`, no `unsafe-inline` in script-src); `style-src` permits `'unsafe-inline'` (and explicitly no nonce — a Fastify `onSend` hook strips the `@fastify/helmet`-injected style nonce before the response is sent, because per CSP Level 2 a nonce's presence silently disables `unsafe-inline` in the same directive)
+- **Content-Security-Policy:** Strict CSP with nonce-based script execution (`script-src 'self'`, no `unsafe-inline` in script-src); `style-src` permits `'self'`, `'unsafe-inline'`, and `https://fonts.googleapis.com` (and explicitly no nonce — a Fastify `onSend` hook strips the `@fastify/helmet`-injected style nonce before the response is sent, because per CSP Level 2 a nonce's presence silently disables `unsafe-inline` in the same directive); `font-src` permits `'self'` and `https://fonts.gstatic.com` (Google Fonts); `img-src` permits `'self'`, `data:`, `https:`, and `blob:` (external cover art); `default-src`/`connect-src`/`base-uri`/`form-action`/`frame-ancestors` are `'self'`, with `object-src`/`script-src-attr` set to `'none'`
 - **X-Frame-Options:** `DENY` — prevents clickjacking
 - **Referrer-Policy:** `strict-origin-when-cross-origin`
 - **X-Content-Type-Options:** `nosniff` (helmet default)

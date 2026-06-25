@@ -2,13 +2,14 @@
 
 **source:** #755
 **added:** 2026-05-04
+**files:** src/server/__tests__/search-grab-flow.e2e.test.ts, src/server/__tests__/sse-helpers.ts
 **tags:** testing, sse, fastify, e2e, test-harness
 
 ---
 
 Fastify's `app.inject()` cannot exercise SSE/streaming routes because Fastify hijacks the response on those handlers — the injection API never sees the streamed body. When migrating E2E tests from a non-streaming endpoint to an SSE replacement, the available workarounds are (a) call the underlying service method directly (preserves MSW/mocking assertions but bypasses the route handler) or (b) bind a real ephemeral port and parse the SSE event stream from a real HTTP client.
 
-Observed in `src/server/__tests__/e2e-helpers.ts` during the #755 migration: three tests originally hit `GET /api/search?q=...` via `app.inject()` and were ported to call `e2e.services.indexer.searchAll()` directly against `/api/search/stream`. The route-layer coverage was lost as a tradeoff. See the explanatory comment at `src/server/__tests__/search-stream.test.ts:417`.
+Observed in `src/server/__tests__/e2e-helpers.ts` during the #755 migration: three tests originally hit `GET /api/search?q=...` via `app.inject()` and were ported to call `e2e.services.indexer.searchAll()` directly against `/api/search/stream`. The route-layer coverage was lost as a tradeoff. See the explanatory comment in `src/server/__tests__/search-grab-flow.e2e.test.ts` (where `GET /api/search` is noted as retired in favor of the SSE surface, and the indexer service is exercised directly so the MSW capture still verifies the outgoing query params); `src/server/__tests__/sse-helpers.ts` documents why `app.inject()` hangs on `reply.hijack()` routes.
 
 If future work needs true end-to-end SSE coverage in this harness, add a `searchViaStream(e2e, query)` helper that spins up the app on a free port, opens a streaming HTTP request, and accumulates SSE `data:` frames into a result array. Until that helper exists, prefer the direct-service-call pattern for SSE route tests and document the bypass in the test.
 
