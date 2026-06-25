@@ -73,7 +73,9 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       audioFileCount: 1,
       lastGrabGuid: 'guid:old',
       lastGrabInfoHash: 'hash:old',
-      enrichmentStatus: 'enriched',
+      // Maxed-out failed identity: the terminal state Fix Match exists to rescue (#1646).
+      enrichmentStatus: 'failed',
+      enrichmentAttempts: 5,
     }).where(eq(books.id, created.id));
     return created.id;
   }
@@ -118,6 +120,8 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.isbn).toBe('9781234567890');
     expect(row!.genres).toEqual(['Fantasy']);
     expect(row!.enrichmentStatus).toBe('pending');
+    // Fix Match grants a fresh attempt budget, not the stale count from the wrong identity (#1646).
+    expect(row!.enrichmentAttempts).toBe(0);
     // Preserved local state
     expect(row!.path).toBe('/library/old-path');
     expect(row!.size).toBe(12345);
