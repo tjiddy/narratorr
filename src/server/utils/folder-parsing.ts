@@ -151,6 +151,29 @@ export function cleanTagTitle(s: string): string {
 }
 
 /**
+ * Whole-string pure volume/book marker — an optional series keyword followed by
+ * `Book`/`Vol`/`Volume` + number and nothing else (`Book 1`, `Volume 2`,
+ * `Series, Book 1`). Used by the tag pass (#1650) to detect a placeholder title
+ * tag that carries no real title — the real title lives in the album.
+ */
+const PURE_VOLUME_MARKER_REGEX = /^(?:saga|trilogy|series|cycle|chronicles)?[\s,]*(?:book|vol(?:ume)?)\s+\d+$/i;
+
+/** True when the whole tag title is only a `[<series-kw> ]Book/Vol N` marker, with no real title words. */
+export function isPureVolumeMarker(s: string): boolean {
+  return PURE_VOLUME_MARKER_REGEX.test(s.trim());
+}
+
+/**
+ * True when the tag title carries a trailing series/volume marker that
+ * `cleanTagTitle` would strip (`, Book N`, ` Book N`, `<series-kw> Book N`),
+ * leaving a real prefix in front of it. Distinguishes `Shattered Sea, Book 1`
+ * (a series-name prefix) from a bare `Title` (#1650).
+ */
+export function hasTagSeriesMarker(s: string): boolean {
+  return TAG_TITLE_SERIES_MARKER_REGEX.test(s);
+}
+
+/**
  * Strip bracketed release tags (`[M4B]`, `[64k]`, `[2021]`, `[GA]`) — but NOT when
  * doing so would leave a title-less remainder. When the whole title is wrapped in
  * brackets (`Author - [The Real Title]`, `[Dune]`), a global strip collapses the

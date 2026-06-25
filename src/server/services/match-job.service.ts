@@ -10,7 +10,7 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
+import { applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
@@ -208,7 +208,7 @@ class MatchJob {
       // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
       // tag.title and tag.albumartist are structurally distinct fields.
       const tagResult = await this.tryTagDerivedMatch(book, audioResult, duration);
-      if (tagResult) return tagResult;
+      if (tagResult) return applyNarratorCap(tagResult, audioResult);
 
       // Pass 2 — filename-derived search via swap-retry wrapper (existing path).
       this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
@@ -268,12 +268,12 @@ class MatchJob {
 
       if (scored.length === 1) {
         this.log.debug({ path: book.path, title: topScored.meta.title, score: topScored.score.toFixed(2) }, 'Single result — high confidence');
-        return {
+        return applyNarratorCap({
           path: book.path,
           confidence: 'high',
           bestMatch: topScored.meta,
           alternatives: [],
-        };
+        }, audioResult);
       }
 
       // Multiple results — use duration to determine confidence (not to override winner)
@@ -290,13 +290,13 @@ class MatchJob {
         },
         confidence === 'high' ? 'Duration-verified high confidence' : reason ?? 'Multiple results — medium confidence',
       );
-      return {
+      return applyNarratorCap({
         path: book.path,
         confidence,
         bestMatch: topScored.meta,
         alternatives: scored.slice(1).map(s => s.meta),
         ...(reason !== undefined && { reason }),
-      };
+      }, audioResult);
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
       return {

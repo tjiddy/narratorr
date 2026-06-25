@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diceCoefficient, scoreResult, tokenizeNarrators, normalizeNarrator } from './similarity.js';
+import { diceCoefficient, scoreResult, tokenizeNarrators, normalizeNarrator, narratorsFuzzyMatch, NARRATOR_MATCH_THRESHOLD } from './similarity.js';
 
 describe('diceCoefficient', () => {
   it('returns 1.0 for identical strings', () => {
@@ -174,5 +174,55 @@ describe('normalizeNarrator', () => {
     expect(normalizeNarrator('a,b')).toBe('a,b');
     expect(normalizeNarrator('a;b')).toBe('a;b');
     expect(normalizeNarrator('a&b')).toBe('a&b');
+  });
+});
+
+describe('narratorsFuzzyMatch (#1650)', () => {
+  it('exposes the 0.8 default threshold as the single source of truth', () => {
+    expect(NARRATOR_MATCH_THRESHOLD).toBe(0.8);
+  });
+
+  it('returns true for a spelling variant at or above threshold (dice ≈ 0.875)', () => {
+    expect(narratorsFuzzyMatch('Juliet Stevenson', ['Juliette Stevenson'])).toBe(true);
+  });
+
+  it('returns true when normalization collapses punctuation noise (Ray Porter / Ray. Porter)', () => {
+    expect(narratorsFuzzyMatch('Ray Porter', ['Ray. Porter'])).toBe(true);
+  });
+
+  it('returns false for a bare-surname variant below threshold (dice ≈ 0.706)', () => {
+    // Documents the design contract: no phonetic/alias layer — Stevenson/Stephenson
+    // scores below 0.8 and is (correctly) treated as a mismatch.
+    expect(narratorsFuzzyMatch('Stevenson', ['Stephenson'])).toBe(false);
+  });
+
+  it('returns false for distinct narrators (wrong-edition headline)', () => {
+    expect(narratorsFuzzyMatch('Adriel Brandt', ['Michael York'])).toBe(false);
+  });
+
+  it('set-overlap: any file token matching any edition narrator satisfies the match', () => {
+    expect(narratorsFuzzyMatch('Ethan Hawke', ['James Franco', 'Ethan Hawke'])).toBe(true);
+    expect(narratorsFuzzyMatch('Ethan Hawke', ['James Franco', 'Tatiana Maslany'])).toBe(false);
+  });
+
+  it('splits a multi-value file narrator string on delimiters', () => {
+    expect(narratorsFuzzyMatch('Ethan Hawke, James Franco', ['James Franco'])).toBe(true);
+  });
+
+  it('returns false when the file narrator has no signal', () => {
+    expect(narratorsFuzzyMatch(undefined, ['Michael York'])).toBe(false);
+    expect(narratorsFuzzyMatch('', ['Michael York'])).toBe(false);
+    expect(narratorsFuzzyMatch('   ', ['Michael York'])).toBe(false);
+  });
+
+  it('returns false when the edition has no narrators', () => {
+    expect(narratorsFuzzyMatch('Adriel Brandt', undefined)).toBe(false);
+    expect(narratorsFuzzyMatch('Adriel Brandt', [])).toBe(false);
+    expect(narratorsFuzzyMatch('Adriel Brandt', ['   '])).toBe(false);
+  });
+
+  it('honors a caller-supplied threshold override', () => {
+    // Stevenson/Stephenson scores ≈ 0.706 — clears a relaxed 0.7 bar.
+    expect(narratorsFuzzyMatch('Stevenson', ['Stephenson'], 0.7)).toBe(true);
   });
 });

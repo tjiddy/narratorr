@@ -127,6 +127,52 @@ describe('deriveTagQuery', () => {
     const scan = makeAudioScan({ tagTitle: 'X', tagAuthor: '(Various)' });
     expect(deriveTagQuery(scan)).toBeNull();
   });
+
+  // ── #1650 generic title-tag fallback ──────────────────────────────
+  describe('#1650 generic title-tag → album fallback', () => {
+    it('substitutes the album when a ", Book N" prefix differs from a usable album (headline)', () => {
+      // `Shattered Sea, Book 1` cleans to series-name prefix `Shattered Sea`;
+      // album `Half a King` is the real title → search on the album.
+      const scan = makeAudioScan({
+        tagTitle: 'Shattered Sea, Book 1',
+        tagAlbum: 'Half a King',
+        tagAuthor: 'Joe Abercrombie',
+        tagYear: '2014',
+      });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie', year: '2014' });
+    });
+
+    it('uses the album for a bare placeholder title when a usable album exists', () => {
+      const scan = makeAudioScan({ tagTitle: 'Book 1', tagAlbum: 'Half a King', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
+
+    it('returns null for a bare placeholder title with no usable album (falls through to Pass 2)', () => {
+      const scan = makeAudioScan({ tagTitle: 'Book 1', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toBeNull();
+    });
+
+    it('treats "<series-kw>, Book N" as a bare placeholder', () => {
+      const scan = makeAudioScan({ tagTitle: 'Series, Book 1', tagAlbum: 'Half a King', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
+
+    it('preserves a legitimate ", Book N" title when the cleaned album equals it', () => {
+      const scan = makeAudioScan({ tagTitle: 'The Hobbit, Book 1', tagAlbum: 'The Hobbit', tagAuthor: 'J.R.R. Tolkien' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'The Hobbit', author: 'J.R.R. Tolkien' });
+    });
+
+    it('preserves a legitimate ", Book N" title when there is no usable album', () => {
+      const scan = makeAudioScan({ tagTitle: 'The Hobbit, Book 1', tagAuthor: 'J.R.R. Tolkien' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'The Hobbit', author: 'J.R.R. Tolkien' });
+    });
+
+    it('does NOT substitute the album for a normal title (no series marker) even when album differs', () => {
+      // No `, Book N` marker → the album-difference rule never fires; the title stands.
+      const scan = makeAudioScan({ tagTitle: 'Half a King', tagAlbum: 'Shattered Sea', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
+  });
 });
 
 // ============================================================================
