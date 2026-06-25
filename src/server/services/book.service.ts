@@ -61,6 +61,7 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
     publishedDate: r.publishedDate ?? null,
     genres: r.genres ?? null,
     enrichmentStatus: 'pending',
+    enrichmentAttempts: 0,
     updatedAt: new Date(),
   };
 }
