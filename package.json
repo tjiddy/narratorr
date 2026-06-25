@@ -46,7 +46,7 @@
     "fastify-plugin": "^5.1.0",
     "fastify-type-provider-zod": "^6.1.0",
     "music-metadata": "^11.12.3",
-    "nodemailer": "^8.0.7",
+    "nodemailer": "^9.0.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-hook-form": "^7.74.0",
