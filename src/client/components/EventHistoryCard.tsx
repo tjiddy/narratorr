@@ -47,6 +47,17 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };
 
+// Import-list events carry the synced list's name in `reason.importListName`; surface that
+// instead of the generic `import_list` source chip. Fall back to "Import list" for older
+// events recorded before the name was captured (reason null / missing the key).
+function getSourceLabel(source: string, reason: Record<string, unknown> | null): string {
+  if (source === 'import_list') {
+    const importListName = reason?.importListName;
+    return typeof importListName === 'string' ? importListName : 'Import list';
+  }
+  return source;
+}
+
 function EventCardActions({ eventId, downloadId, canRetry, isActionable, onRetry, isRetrying, onMarkFailed, isMarkingFailed, onDelete, isDeleting }: {
   eventId: number;
   downloadId: number | null;
@@ -130,6 +141,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry
 
   const showDetails = hasReasonContent(event.reason);
   const summary = getEventSummary(event.eventType, event.reason, indexerMap);
+  const sourceLabel = getSourceLabel(event.source, event.reason);
 
   return (
     <div
@@ -149,7 +161,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry
             )}
             <span className="text-xs text-muted-foreground/70">{formatRelativeDate(event.createdAt)}</span>
             <span className="text-xs px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
-              {event.source}
+              {sourceLabel}
             </span>
           </div>
 

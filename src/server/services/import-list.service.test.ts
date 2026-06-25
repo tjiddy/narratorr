@@ -484,7 +484,13 @@ describe('ImportListService', () => {
         importListId: 7,
       }));
       expect(eventInsertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 42, eventType: 'grabbed', source: 'import_list', authorName: 'Author Name' }),
+        expect.objectContaining({
+          bookId: 42,
+          eventType: 'book_added',
+          source: 'import_list',
+          authorName: 'Author Name',
+          reason: expect.objectContaining({ importListName: 'My List' }),
+        }),
       );
       expect(mockLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42, title: 'New Book', listName: 'My List' }),

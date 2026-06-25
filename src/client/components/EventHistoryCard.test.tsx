@@ -221,6 +221,51 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.queryByText('book_added')).not.toBeInTheDocument();
     expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
   });
+
+  // #1633 — import-list activity: book_added + specific list-name chip
+  it('renders the specific list name from reason.importListName (not raw "import_list")', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({
+      eventType: 'book_added',
+      source: 'import_list',
+      reason: { importListName: 'Hardcover' },
+    })} />);
+    expect(screen.getByText('Hardcover')).toBeInTheDocument();
+    expect(screen.queryByText('import_list')).not.toBeInTheDocument();
+  });
+
+  it('falls back to "Import list" when reason is null (older events)', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({
+      eventType: 'book_added',
+      source: 'import_list',
+      reason: null,
+    })} />);
+    expect(screen.getByText('Import list')).toBeInTheDocument();
+    expect(screen.queryByText('import_list')).not.toBeInTheDocument();
+  });
+
+  it('falls back to "Import list" when reason lacks importListName', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({
+      eventType: 'book_added',
+      source: 'import_list',
+      reason: { somethingElse: 'x' },
+    })} />);
+    expect(screen.getByText('Import list')).toBeInTheDocument();
+  });
+
+  it('book_added is non-actionable: no Mark Failed even with downloadId + onMarkFailed', () => {
+    const onMarkFailed = vi.fn();
+    renderWithProviders(<EventHistoryCard
+      event={createMockEvent({ eventType: 'book_added', source: 'import_list', downloadId: 5, reason: { importListName: 'Hardcover' } })}
+      onMarkFailed={onMarkFailed}
+    />);
+    expect(screen.queryByText('Mark Failed')).not.toBeInTheDocument();
+  });
+
+  it('real grabbed events keep "Grabbed" label and raw source chip (regression guard)', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'grabbed', source: 'auto' })} />);
+    expect(screen.getByText('Grabbed')).toBeInTheDocument();
+    expect(screen.getByText('auto')).toBeInTheDocument();
+  });
 });
 
 // ============================================================================
