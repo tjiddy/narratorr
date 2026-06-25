@@ -11,6 +11,12 @@ import type { BookService } from '../services/book.service.js';
 
 const BATCH_LIMIT = 5;
 const RETRY_AFTER_MS = 60 * 60 * 1000; // 1 hour
+// Cap on background-enrichment failure attempts. Once a `failed` row has been
+// re-searched this many times it drops out of the candidate set and rests as a
+// terminal `failed` row (recoverable via manual Fix Match, which resets it to
+// `pending`). Bounds the silent recurring external load of the search rescue so
+// unresolvable null-ASIN rows aren't re-searched forever.
+const MAX_ENRICHMENT_ATTEMPTS = 5;
 
 interface ExistingBookFields {
   duration: number | null;
@@ -91,7 +97,14 @@ async function markFailedGuarded(
 ): Promise<boolean> {
   const rows = await db
     .update(books)
-    .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
+    .set({
+      enrichmentStatus: 'failed',
+      // Increment the persisted attempt counter so the candidate query can cap
+      // unresolvable rows. Covers the no-match, collision, and unique-recovery
+      // paths uniformly (every guarded failure transition routes through here).
+      enrichmentAttempts: sql`${books.enrichmentAttempts} + 1`,
+      updatedAt: new Date(),
+    })
     .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
     .returning({ id: books.id });
   if (rows.length === 0) {
@@ -223,12 +236,18 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   let filledTitle = 0;
   let filledDescription = 0;
 
-  // Candidates: pending (with OR without an ASIN), or failed older than 1 hour.
-  // Null-ASIN rows are no longer short-circuited to 'skipped' — they're exactly
-  // the books the search fallback in resolveBook is meant to rescue. The primary
-  // (position-0) author is sourced from the book_authors/authors join (left-join
-  // so authorless books are still selected; the resolver is then called
-  // title-only). Only the title (plus the author when present) feeds the
+  // Candidates: pending (with OR without an ASIN), pre-existing 'skipped' rows
+  // (re-queued once through the search rescue — they motivated #1622 but were
+  // orphaned by the pending/failed-only query), or failed older than 1 hour that
+  // haven't hit the attempt cap. Null-ASIN rows are no longer short-circuited to
+  // 'skipped' — they're exactly the books the search fallback in resolveBook is
+  // meant to rescue. A 'skipped' row transitions to 'enriched'/'failed' on its
+  // first pass and never returns to 'skipped', so it won't loop. The attempt cap
+  // keeps unresolvable 'failed' rows from being re-searched forever; once maxed
+  // out they rest as terminal 'failed' (recoverable via manual Fix Match). The
+  // primary (position-0) author is sourced from the book_authors/authors join
+  // (left-join so authorless books are still selected; the resolver is then
+  // called title-only). Only the title (plus the author when present) feeds the
   // resolver's search — it searches title+author only, so no ISBN is passed.
   const retryThreshold = new Date(Date.now() - RETRY_AFTER_MS);
   const candidates = await db
@@ -239,9 +258,11 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
     .where(
       or(
         eq(books.enrichmentStatus, 'pending'),
+        eq(books.enrichmentStatus, 'skipped'),
         and(
           eq(books.enrichmentStatus, 'failed'),
           sql`${books.updatedAt} < ${Math.floor(retryThreshold.getTime() / 1000)}`,
+          sql`${books.enrichmentAttempts} < ${MAX_ENRICHMENT_ATTEMPTS}`,
         ),
       ),
     )

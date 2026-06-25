@@ -57,6 +57,7 @@ function makeBookService(overrides: {
     genres: null,
     status: 'wanted',
     enrichmentStatus: 'pending',
+    enrichmentAttempts: 0,
     path: null,
     size: null,
     audioCodec: null,
@@ -436,6 +437,7 @@ describe('ImportListService', () => {
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,
       status: 'wanted', enrichmentStatus: 'pending',
+      enrichmentAttempts: 0,
       path: null, size: null,
       audioCodec: null, audioBitrate: null, audioSampleRate: null,
       audioChannels: null, audioBitrateMode: null, audioFileFormat: null,
@@ -940,7 +942,7 @@ describe('ImportListService', () => {
         const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
         expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
         expect(mockLog.warn).toHaveBeenCalledWith(
-          expect.objectContaining({ title: 'Rate Limited Book', provider: 'Audible.com' }),
+          expect.objectContaining({ title: 'Rate Limited Book', provider: 'Audible.com', retryAfterMs: 30000 }),
           expect.stringContaining('rate limited'),
         );
       });

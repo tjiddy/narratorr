@@ -240,7 +240,7 @@ export class ImportListService {
       if (error instanceof RateLimitError) {
         // Transient provider state, NOT a no-match — leave the book resolvable
         // later (pending), do not mark it failed.
-        this.log.warn({ title: item.title, provider: error.provider }, 'Metadata resolution rate limited; leaving book pending');
+        this.log.warn({ title: item.title, provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Metadata resolution rate limited; leaving book pending');
         return { match: null, enrichmentStatus: undefined };
       }
       if (error instanceof TransientError) {

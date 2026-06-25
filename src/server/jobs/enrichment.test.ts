@@ -1457,4 +1457,69 @@ describe('enrichment job', () => {
     });
   });
 
+  // ── #1630 Enrichment robustness: re-queue skipped, cap retries ──
+  describe('retry cap + skipped re-queue (#1630)', () => {
+    it('candidate query re-queues skipped rows and caps maxed-out failed rows', async () => {
+      // Capture the candidate-query `.where()` predicate and serialize it so a
+      // regression that drops the cap or the skipped branch fails the assertion.
+      const candChain = mockDbChain([]);
+      db.select.mockReturnValueOnce(candChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const candWhere = candChain.where.mock.calls[0]![0];
+      const sql = whereSql(candWhere);
+      const params = whereParams(candWhere);
+      // Pre-existing 'skipped' rows flow through the search rescue once.
+      expect(params).toContain('skipped');
+      // The failed branch is capped on the persisted attempt counter.
+      expect(sql).toContain('"enrichment_attempts"');
+      expect(sql).toContain('"enrichment_attempts" < ?');
+      // The cap constant (5) is bound — distinct from the retry-threshold timestamp.
+      expect(params).toContain(5);
+      // Existing pending + failed branches survive.
+      expect(params).toContain('pending');
+      expect(params).toContain('failed');
+    });
+
+    it('no-match increments enrichment_attempts alongside the failed status, keeping the captured-ASIN guard', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_CAP', title: 'Unresolvable', author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce(null);
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('enrichmentStatus', 'failed');
+      // The attempt counter is incremented via a `col + 1` SQL expression.
+      expect(setArg.enrichmentAttempts).toBeDefined();
+      expect(whereSql(setArg.enrichmentAttempts)).toContain('"enrichment_attempts" + 1');
+      // The guarded write still carries the captured-ASIN guard (#1627).
+      const where = updateChain.where.mock.calls[0]![0];
+      expect(whereSql(where)).toContain('"asin"');
+      expect(whereParams(where)).toEqual([1, 'B_CAP']);
+    });
+
+    it('collision-failed increments enrichment_attempts through the shared guarded helper', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD', title: 'Dupe', author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B_OWNED', title: 'Dupe', authors: [{ name: 'Author' }], duration: 700,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce({ conflictBookId: 99, conflictTitle: 'Other' });
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('enrichmentStatus', 'failed');
+      expect(whereSql(setArg.enrichmentAttempts)).toContain('"enrichment_attempts" + 1');
+    });
+  });
+
 });
