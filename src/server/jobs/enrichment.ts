@@ -146,11 +146,19 @@ async function applyScalarWrite(
 
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
 function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknown>): Record<string, unknown> {
-  const fields: Array<keyof ExistingBookFields> = ['subtitle', 'description', 'publisher', 'coverUrl', 'publishedDate'];
+  const fields: Array<keyof ExistingBookFields> = ['subtitle', 'description', 'publisher', 'publishedDate'];
   const updates: Record<string, unknown> = {};
   for (const field of fields) {
     if (!book[field] && result[field]) updates[field] = result[field];
   }
+  // coverUrl carve-out from fill-empty (#1634): the Audnexus square audiobook
+  // cover is authoritative for an audiobook app, so it overwrites an existing
+  // provider (print) cover rather than only filling when empty. Guard on the
+  // result value's presence — Audnexus maps a missing cover to `undefined`
+  // (`coverUrl: d.image || undefined`), so a no-image result leaves the cover
+  // untouched and never blanks it. The pending/failed candidate gate keeps this
+  // from re-clobbering a manual edit on an already-`enriched` book.
+  if (result.coverUrl) updates.coverUrl = result.coverUrl;
   return updates;
 }
 
