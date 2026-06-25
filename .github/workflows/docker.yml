@@ -14,6 +14,9 @@ on:
 env:
   IMAGE_NAME: narratorr/narratorr
 
+permissions:
+  contents: read
+
 jobs:
   quality-gates:
     runs-on: ubuntu-latest
