@@ -64,6 +64,11 @@ export const books = sqliteTable('books', {
   })
     .notNull()
     .default('pending'),
+  // Persisted count of background-enrichment failure attempts. Incremented on
+  // every `failed`/no-match transition through markFailedGuarded so the
+  // candidate query can cap unresolvable rows (they rest as terminal `failed`,
+  // recoverable via manual Fix Match which resets the row to `pending`).
+  enrichmentAttempts: integer('enrichment_attempts').notNull().default(0),
   path: text('path'),
   size: integer('size'),
   // Audio technical info (populated by file-based enrichment)
