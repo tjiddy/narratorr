@@ -1,78 +1,56 @@
 import { describe, it, expect } from 'vitest';
-import { booksApi } from './books.js';
-import { searchApi } from './search.js';
-import { activityApi } from './activity.js';
-import { indexersApi } from './indexers.js';
-import { downloadClientsApi } from './download-clients.js';
-import { notifiersApi } from './notifiers.js';
-import { blacklistApi } from './blacklist.js';
-import { settingsApi } from './settings.js';
-import { libraryScanApi } from './library-scan.js';
-import { systemApi } from './system.js';
-import { authApi } from './auth.js';
-import { filesystemApi } from './filesystem.js';
-import { remotePathMappingsApi } from './remote-path-mappings.js';
-import { eventHistoryApi } from './event-history.js';
-import { backupsApi } from './backups.js';
-import { importListsApi } from './import-lists.js';
+import { api, apiModules } from './index.js';
 
-const allModules = [
-  { name: 'booksApi', api: booksApi },
-  { name: 'searchApi', api: searchApi },
-  { name: 'activityApi', api: activityApi },
-  { name: 'indexersApi', api: indexersApi },
-  { name: 'downloadClientsApi', api: downloadClientsApi },
-  { name: 'notifiersApi', api: notifiersApi },
-  { name: 'blacklistApi', api: blacklistApi },
-  { name: 'settingsApi', api: settingsApi },
-  { name: 'libraryScanApi', api: libraryScanApi },
-  { name: 'systemApi', api: systemApi },
-  { name: 'authApi', api: authApi },
-  { name: 'filesystemApi', api: filesystemApi },
-  { name: 'remotePathMappingsApi', api: remotePathMappingsApi },
-  { name: 'eventHistoryApi', api: eventHistoryApi },
-  { name: 'backupsApi', api: backupsApi },
-  { name: 'importListsApi', api: importListsApi },
-];
+/**
+ * The module set under test is read from the barrel's own exported `apiModules`
+ * collection (the same one `api` is built from), so any module added to
+ * `index.ts` is covered automatically with no edit here.
+ */
+function findCollisions(modules: { name: string; api: object }[]): string[] {
+  const seen = new Map<string, string>();
+  const collisions: string[] = [];
+
+  for (const { name, api: mod } of modules) {
+    for (const key of Object.keys(mod)) {
+      if (seen.has(key)) {
+        collisions.push(`"${key}" exported by both ${seen.get(key)} and ${name}`);
+      } else {
+        seen.set(key, name);
+      }
+    }
+  }
+
+  return collisions;
+}
 
 describe('API barrel export collision detection', () => {
   it('no two API modules export the same method name', () => {
-    const seen = new Map<string, string>();
-    const collisions: string[] = [];
-
-    for (const { name, api } of allModules) {
-      for (const key of Object.keys(api)) {
-        if (seen.has(key)) {
-          collisions.push(`"${key}" exported by both ${seen.get(key)} and ${name}`);
-        } else {
-          seen.set(key, name);
-        }
-      }
-    }
+    const collisions = findCollisions(apiModules);
 
     expect(collisions, `API method name collisions found:\n${collisions.join('\n')}`).toEqual([]);
   });
 
+  it('barrel key count equals the sum of per-module key counts (no key lost to overwrite)', () => {
+    // Object spread is silent on duplicate keys: the rightmost wins and the
+    // barrel shrinks. This structural check trips even when both colliding
+    // methods have legitimate-looking names.
+    const summedKeys = apiModules.reduce((total, { api: mod }) => total + Object.keys(mod).length, 0);
+
+    expect(Object.keys(api).length).toBe(summedKeys);
+  });
+
   it('detects collision when a synthetic duplicate method name is introduced', () => {
     const modulesWithDuplicate = [
-      ...allModules,
+      ...apiModules,
       { name: 'fakeApi', api: { getAuthStatus: () => {} } },
     ];
 
-    const seen = new Map<string, string>();
-    const collisions: string[] = [];
-
-    for (const { name, api } of modulesWithDuplicate) {
-      for (const key of Object.keys(api)) {
-        if (seen.has(key)) {
-          collisions.push(`"${key}" exported by both ${seen.get(key)} and ${name}`);
-        } else {
-          seen.set(key, name);
-        }
-      }
-    }
+    const collisions = findCollisions(modulesWithDuplicate);
 
     expect(collisions.length).toBeGreaterThan(0);
+    // Failure message names the colliding key AND both modules that define it.
     expect(collisions[0]).toContain('getAuthStatus');
+    expect(collisions[0]).toContain('authApi');
+    expect(collisions[0]).toContain('fakeApi');
   });
 });

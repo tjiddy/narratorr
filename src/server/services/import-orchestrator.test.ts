@@ -10,6 +10,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RetrySearchDeps } from './retry-search.js';
 import { createMockLogger, createMockSettingsService, inject } from '../__tests__/helpers.js';
+import { ContentFailureError } from '../utils/import-helpers.js';
 
 // Mock rejection-helpers for blacklist dispatch testing
 vi.mock('../utils/rejection-helpers.js', () => ({
@@ -66,6 +67,7 @@ const mockContext: ImportContext = {
   bookId: 1,
   bookTitle: 'The Way of Kings',
   bookStatus: 'wanted',
+  bookStatusAtGrab: 'wanted',
   bookPath: null,
   authorName: 'Brandon Sanderson',
   narratorStr: 'Michael Kramer',
@@ -93,6 +95,7 @@ describe('ImportOrchestrator', () => {
   let tagging: TaggingService;
   let eventHistory: EventHistoryService;
   let broadcaster: EventBroadcasterService;
+  let connector: { notifyRefresh: ReturnType<typeof vi.fn> };
   let orchestrator: ImportOrchestrator;
 
   beforeEach(() => {
@@ -108,8 +111,9 @@ describe('ImportOrchestrator', () => {
     tagging = inject<TaggingService>({ tagBook: vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 }) });
     eventHistory = inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({ id: 1 }) });
     broadcaster = inject<EventBroadcasterService>({ emit: vi.fn() });
+    connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
 
-    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
+    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector));
 
     // Default wire — most tests need wired deps. Tests that exercise the unwired
     // contract construct their own orchestrator and skip the wire() call.
@@ -211,6 +215,21 @@ describe('ImportOrchestrator', () => {
       expect(result).toEqual(mockResult);
     });
 
+    // #1491 — connector refresh fires fire-and-forget after the DB commit, with
+    // reason 'import' and the final target path.
+    it('enqueues a connector refresh on import success', async () => {
+      await orchestrator.importDownload(1);
+
+      expect(connector.notifyRefresh).toHaveBeenCalledWith('import', [
+        expect.objectContaining({
+          bookId: 1,
+          title: 'The Way of Kings',
+          authorName: 'Brandon Sanderson',
+          libraryPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
+        }),
+      ]);
+    });
+
     it('forwards optional callbacks bag to importService.importDownload (#681)', async () => {
       const callbacks = { setPhase: vi.fn().mockResolvedValue(undefined), emitProgress: vi.fn() };
       await orchestrator.importDownload(1, callbacks);
@@ -226,9 +245,10 @@ describe('ImportOrchestrator', () => {
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(importError);
     });
 
-    it('dispatches failure SSE when importService.importDownload throws', async () => {
+    it('dispatches failure SSE with the real prior lifecycle (snapshot) as reverted status', async () => {
       await expect(orchestrator.importDownload(1)).rejects.toThrow('Import pipeline crashed');
 
+      // mockContext.bookStatusAtGrab === 'wanted' → reverted status mirrors the snapshot.
       expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
         downloadId: 1, bookId: 1, revertedBookStatus: 'wanted',
       }));
@@ -254,9 +274,23 @@ describe('ImportOrchestrator', () => {
       await expect(orchestrator.importDownload(1)).rejects.toBe(importError);
     });
 
-    it('uses "imported" as reverted book status when book had a path (upgrade)', async () => {
-      const upgradeCtx = { ...mockContext, bookPath: '/audiobooks/old/path' };
-      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(upgradeCtx);
+    it('uses the real prior lifecycle (failed) even when the book has a path — path no longer drives the value', async () => {
+      // A book in 'failed' before this import, but with a path on disk. The old
+      // path-derived logic would force 'imported'; the snapshot must win.
+      const failedCtx = { ...mockContext, bookStatusAtGrab: 'failed' as const, bookPath: '/audiobooks/old/path' };
+      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(failedCtx);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        revertedBookStatus: 'failed',
+      }));
+    });
+
+    it('falls back to the conservative REVERT_FALLBACK_STATUS when the snapshot is null (legacy rows)', async () => {
+      // Null snapshot + a path present: must NOT path-infer; falls back to 'imported'.
+      const legacyCtx = { ...mockContext, bookStatusAtGrab: null, bookPath: '/audiobooks/old/path' };
+      (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(legacyCtx);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
 
@@ -403,7 +437,7 @@ describe('ImportOrchestrator', () => {
     });
 
     it('content failure triggers blacklistAndRetrySearch with correct identifiers, reason, blacklistType, and retry-gating deps', async () => {
-      const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
+      const contentError = new ContentFailureError('Copy verification failed: source 1000 bytes, target 500 bytes');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -422,10 +456,24 @@ describe('ImportOrchestrator', () => {
       expect(callArg).not.toHaveProperty('overrideRetry');
     });
 
+    it('typed ContentFailureError with a reworded message still routes to bad_quality/temporary (#1304)', async () => {
+      // Proves classification rides the instanceof path, not the message text: a reworded
+      // ContentFailureError (no 'Copy verification failed' substring) still blacklists + retries.
+      const typedError = new ContentFailureError('audio bytes mismatch after copy');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(typedError);
+
+      await expect(orchestrator.importDownload(1)).rejects.toThrow();
+
+      expect(blacklistAndRetrySearch).toHaveBeenCalledWith(expect.objectContaining({
+        reason: 'bad_quality',
+        blacklistType: 'temporary',
+      }));
+    });
+
     it('guid-only usenet content failure propagates guid to blacklistAndRetrySearch', async () => {
       const usenetCtx = { ...mockContext, infoHash: null, guid: 'usenet-guid-abc' };
       (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(usenetCtx);
-      const contentError = new Error('No audio files found in /path');
+      const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -436,7 +484,7 @@ describe('ImportOrchestrator', () => {
     });
 
     it('content failure (duplicate filename) triggers blacklistAndRetrySearch — original loop scenario', async () => {
-      const dupeError = new Error('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"');
+      const dupeError = new ContentFailureError('Duplicate filename "01.mp3" found during import flattening: "/a" and "/b"');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(dupeError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -468,7 +516,7 @@ describe('ImportOrchestrator', () => {
     it('blacklist call failure does not suppress original import error and logs warning', async () => {
       const blacklistError = new Error('DB blacklist error');
       vi.mocked(blacklistAndRetrySearch).mockRejectedValueOnce(blacklistError);
-      const contentError = new Error('Copy verification failed: source 1000 bytes, target 500 bytes');
+      const contentError = new ContentFailureError('Copy verification failed: source 1000 bytes, target 500 bytes');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toBe(contentError);
@@ -484,7 +532,7 @@ describe('ImportOrchestrator', () => {
 
     it('batch path: content failure blacklisting verified via importDownload (not processCompletedDownloads which now enqueues)', async () => {
       // processCompletedDownloads now enqueues jobs — blacklisting happens when the adapter runs importDownload
-      const contentError = new Error('No audio files found in /path');
+      const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
@@ -508,7 +556,7 @@ describe('ImportOrchestrator', () => {
 
     it('importDownload() content-failure path throws ServiceWireError when called before wire()', async () => {
       const unwired = makeUnwiredOrchestrator();
-      const contentError = new Error('No audio files found in /path');
+      const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
       // The throw happens inside dispatchFailureSideEffects; it replaces the

@@ -1,12 +1,26 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import type { Services } from '../routes/index.js';
+import type { Services } from '../services/di.js';
 import { createMockServices, createMockLogger } from '../__tests__/helpers.js';
 import { TaskRegistry } from '../services/task-registry.js';
 
-// Mock node-cron to prevent real scheduling
-vi.mock('node-cron', () => ({ default: { schedule: vi.fn() } }));
+// Track every Cron the scheduler constructs so each test can stop them in
+// afterEach — croner schedules a real timer, so leaking one across tests would
+// fire mid-suite. The subclass uses the REAL croner engine (real next-run math),
+// it just records instances. Module-level array shared via vi.hoisted so the
+// (hoisted) vi.mock factory can reach it.
+const { cronInstances } = vi.hoisted(() => ({ cronInstances: [] as Cron[] }));
+vi.mock('croner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('croner')>();
+  class TrackedCron extends actual.Cron {
+    constructor(pattern: string | Date, fn?: CronCallback<undefined>) {
+      super(pattern, fn);
+      cronInstances.push(this);
+    }
+  }
+  return { ...actual, Cron: TrackedCron };
+});
 
 // Mock job modules — only the run functions are used now
 vi.mock('./monitor.js', () => ({ monitorDownloads: vi.fn() }));
@@ -17,9 +31,17 @@ vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
 vi.mock('./cover-backfill.js', () => ({ runCoverBackfill: vi.fn().mockResolvedValue(undefined) }));
 
-import cron from 'node-cron';
+import { Cron, type CronCallback } from 'croner';
 import { runCoverBackfill } from './cover-backfill.js';
+import { checkForUpdate } from './version-check.js';
 import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
+
+/** Find the scheduled Cron for an expression and fire its real (try/catch-wrapped) callback. */
+async function triggerCron(pattern: string): Promise<void> {
+  const job = cronInstances.find((c) => c.getPattern() === pattern);
+  expect(job, `no scheduled cron for "${pattern}"`).toBeDefined();
+  await job!.trigger();
+}
 
 describe('startJobs', () => {
   let services: Services;
@@ -53,6 +75,19 @@ describe('startJobs', () => {
     (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.qualityGateOrchestrator.cleanupDeferredRejections as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    // Startup version check (#1225) chains .catch on the return value, so the mock
+    // must return a Promise. Default to a resolved one; specific tests override.
+    vi.mocked(checkForUpdate).mockResolvedValue(undefined);
+    // startJobs registers the manual-run version-update nudge on the health
+    // service (#1411). The proxy mock would otherwise auto-stub this as a
+    // rejecting promise; the call is fire-and-void, so make it a no-op.
+    (services.healthCheck.setVersionUpdateCallback as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    // Stop every scheduled cron so no live croner timer leaks into the next test.
+    for (const job of cronInstances) job.stop();
+    cronInstances.length = 0;
   });
 
   it('registers all jobs with the task registry', async () => {
@@ -79,19 +114,37 @@ describe('startJobs', () => {
     expect(names).not.toContain('import');
   });
 
-  it('schedules cron jobs via cron.schedule', async () => {
+  it('schedules cron jobs via croner', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const cronCalls = vi.mocked(cron.schedule).mock.calls;
-    const expressions = cronCalls.map(([expr]) => expr);
+    const expressions = cronInstances.map((c) => c.getPattern());
     expect(expressions).toContain('*/30 * * * * *'); // monitor
-    expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check
-    expect(expressions).toContain('*/5 * * * *');    // import-maintenance (shares schedule with enrichment, health-check)
+    expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check, import-maintenance
     expect(expressions).toContain('0 0 * * 0');      // housekeeping
     expect(expressions).toContain('0 2 * * *');      // version-check
     expect(expressions).toContain('* * * * *');      // import-list-sync
+    expect(expressions).toContain('0 */6 * * *');    // library-rescan
+  });
+
+  it('every cron job reports a real future nextRun (not "now") after scheduling', async () => {
+    const { startJobs } = await import('./index.js');
+    // Capture the reference time BEFORE scheduling. croner stores the next fire as
+    // of construction time, so for sub-minute expressions (`*/30 * * * * *`) the
+    // stored boundary can be imminent — a reference time captured AFTER scheduling
+    // could race past it and fail spuriously. A pre-scheduling reference is always
+    // strictly less than any next-fire croner computes during startJobs.
+    const before = Date.now();
+    startJobs(injectHelper<Db>(db), services, log);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const cronTasks = services.taskRegistry.getAll().filter((t) => t.type === 'cron');
+    expect(cronTasks.length).toBeGreaterThan(0);
+    for (const task of cronTasks) {
+      expect(task.nextRun, `${task.name} has no nextRun`).not.toBeNull();
+      expect(new Date(task.nextRun!).getTime()).toBeGreaterThan(before);
+    }
   });
 
   it('logs startup message', async () => {
@@ -169,12 +222,8 @@ describe('startJobs', () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
 
-    // Find and execute the monitor cron callback
-    const cronCalls = vi.mocked(cron.schedule).mock.calls;
-    const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
-    expect(monitorCall).toBeDefined();
-    const cronCallback = monitorCall![1] as () => Promise<void>;
-    await cronCallback();
+    // Fire the monitor cron callback via croner's trigger
+    await triggerCron('*/30 * * * * *');
 
     // Assert monitorDownloads received services.eventHistory as the last argument
     expect(monitorDownloads).toHaveBeenCalledWith(
@@ -196,11 +245,7 @@ describe('startJobs', () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
 
-    const cronCalls = vi.mocked(cron.schedule).mock.calls;
-    const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
-    expect(monitorCall).toBeDefined();
-    const cronCallback = monitorCall![1] as () => Promise<void>;
-    await cronCallback();
+    await triggerCron('*/30 * * * * *');
 
     // The retryDeps object passed to monitorDownloads (5th arg) must contain
     // the SAME instances that createServices wired into the service graph.
@@ -250,14 +295,8 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      // Find the cron callback for monitor (first cron.schedule call)
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
-      expect(monitorCall).toBeDefined();
-
-      // Execute the cron callback — scheduleCron wraps it in try/catch
-      const cronCallback = monitorCall![1] as () => Promise<void>;
-      await cronCallback();
+      // Fire the monitor cron callback — scheduleCron wraps it in try/catch
+      await triggerCron('*/30 * * * * *');
 
       expect(log.error).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: error.message, type: 'Error' }) }),
@@ -394,7 +433,7 @@ describe('startJobs', () => {
   describe('housekeeping callback (#477)', () => {
     it('executeTracked housekeeping calls VACUUM, pruneOlderThan, and deleteExpired with correct args', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 14 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
@@ -411,7 +450,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       // Re-mock after clearAllMocks
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 14 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -431,9 +470,9 @@ describe('startJobs', () => {
       expect(log.warn).not.toHaveBeenCalled();
     });
 
-    it('uses fallback retention of 90 when housekeepingRetentionDays is null and 30 when seriesCacheRetentionDays is null', async () => {
+    it('uses fallback retention of 90 when housekeepingRetentionDays is null', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: null, seriesCacheRetentionDays: null };
+        if (category === 'general') return { housekeepingRetentionDays: null };
         if (category === 'search') return { intervalMinutes: 30 };
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
@@ -448,7 +487,7 @@ describe('startJobs', () => {
 
       vi.clearAllMocks();
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: null, seriesCacheRetentionDays: null };
+        if (category === 'general') return { housekeepingRetentionDays: null };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -469,7 +508,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -481,7 +520,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(new Error('VACUUM failed'));
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
@@ -503,7 +542,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -515,7 +554,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('prune failed'));
@@ -536,7 +575,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -548,7 +587,7 @@ describe('startJobs', () => {
       vi.clearAllMocks();
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(5);
@@ -606,7 +645,7 @@ describe('startJobs', () => {
         if (category === 'rss') return { intervalMinutes: 30 };
         if (category === 'system') return { backupIntervalMinutes: 60 };
         if (category === 'discovery') return { intervalHours: 24 };
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -621,7 +660,7 @@ describe('startJobs', () => {
       const deleteError = new Error('delete failed');
       (db as Record<string, unknown>).run = vi.fn().mockRejectedValue(vacuumError);
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
-        if (category === 'general') return { housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 };
+        if (category === 'general') return { housekeepingRetentionDays: 30 };
         return {};
       });
       (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockRejectedValue(pruneError);
@@ -658,7 +697,8 @@ describe('startJobs', () => {
       // Verify the reset update was called
       expect(db.update).toHaveBeenCalled();
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'completed' }));
+      // Recovery resets only the pipelineStage axis back to idle (display 'completed').
+      expect(setCalls).toContainEqual(expect.objectContaining({ pipelineStage: 'idle' }));
     });
 
     it('calls batch methods after status reset', async () => {
@@ -701,6 +741,180 @@ describe('startJobs', () => {
     });
   });
 
+  // #1225 — run version-check once on startup so the update banner reflects reality
+  describe('startup version check (#1225)', () => {
+    it('routes the boot check through runTask and stamps lastRun (#1317)', async () => {
+      // #1317 — the boot check goes through the registry (not a direct checkForUpdate
+      // call) so the run stamps `lastRun`; otherwise the Jobs page shows `—` until the
+      // 2 AM cron. spyOn keeps the real implementation, so the registered callback still
+      // runs and lastRun gets stamped after it resolves.
+      const runTaskSpy = vi.spyOn(services.taskRegistry, 'runTask');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The boot path runs the registered task exactly once.
+      expect(runTaskSpy).toHaveBeenCalledTimes(1);
+      expect(runTaskSpy).toHaveBeenCalledWith('version-check');
+
+      // Routing through the registry invokes the registered callback, which still
+      // calls checkForUpdate with the #1262 onUpdateChanged nudge wired in.
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+      expect(checkForUpdate).toHaveBeenCalledWith(log, expect.any(Function));
+
+      // AC1: after the boot run resolves, version-check reports a non-null lastRun
+      // (rendered as a timestamp, not `—`).
+      const versionCheck = services.taskRegistry.getAll().find((t) => t.name === 'version-check');
+      expect(versionCheck?.lastRun).not.toBeNull();
+    });
+
+    it('does not await checkForUpdate — startJobs returns promptly even when the check never settles', async () => {
+      // A never-resolving check must not delay startJobs returning.
+      vi.mocked(checkForUpdate).mockReturnValue(new Promise<void>(() => { /* never settles */ }));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      // startJobs is synchronous; it must have completed its registration work
+      // (logged the startup message) without waiting on the pending check.
+      expect(log.info).toHaveBeenCalledWith('Background jobs started');
+      expect(checkForUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('startup failure is non-fatal — a rejected check is caught and logged, jobs still register', async () => {
+      const checkError = new Error('GitHub unreachable');
+      vi.mocked(checkForUpdate).mockRejectedValue(checkError);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      // Jobs register synchronously regardless of the check outcome.
+      const tasks = services.taskRegistry.getAll();
+      expect(tasks.length).toBeGreaterThan(0);
+
+      // The .catch handler logs the rejection rather than propagating it.
+      await vi.waitFor(() => {
+        expect(log.error).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: checkError.message, type: 'Error' }) }),
+          'Startup version check failed — jobs continue normally',
+        );
+      });
+    });
+
+    it('leaves the 2 AM version-check cron registration unchanged', async () => {
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The cron entry must still exist with the same name and schedule.
+      const tasks = services.taskRegistry.getAll();
+      expect(tasks.map((t) => t.name)).toContain('version-check');
+      const cronExpressions = cronInstances.map((c) => c.getPattern());
+      expect(cronExpressions).toContain('0 2 * * *');
+    });
+  });
+
+  // #1262 — version-check nudges a health recompute so a manual/boot update check
+  // reflects in the health card within one UI poll instead of lagging to the next
+  // scheduled health-check tick.
+  describe('version-check → health-check nudge wiring (#1262)', () => {
+    it('boot version-check is passed an onUpdateChanged callback that recomputes health', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The boot call wires the nudge. Invoke the captured callback and assert it
+      // drives a real health recompute via the service (not executeTracked, which
+      // silently no-ops while a pass is running).
+      const bootCall = vi.mocked(checkForUpdate).mock.calls.at(-1)!;
+      const onUpdateChanged = bootCall[1] as () => void;
+      expect(typeof onUpdateChanged).toBe('function');
+
+      expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
+      onUpdateChanged();
+      expect(services.healthCheck.runAllChecks).toHaveBeenCalledTimes(1);
+    });
+
+    it('the 2 AM version-check cron callback passes the same onUpdateChanged nudge', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      vi.mocked(checkForUpdate).mockClear();
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Run the registered cron task; its callback must call checkForUpdate with
+      // the nudge wired in (log + a function), mirroring the boot path.
+      await services.taskRegistry.executeTracked('version-check');
+
+      const cronCall = vi.mocked(checkForUpdate).mock.calls.find((c) => typeof c[1] === 'function');
+      expect(cronCall).toBeDefined();
+      const onUpdateChanged = cronCall![1] as () => void;
+      onUpdateChanged();
+      expect(services.healthCheck.runAllChecks).toHaveBeenCalled();
+    });
+
+    it('does not recompute health when the nudge callback is never invoked (no-op check)', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // The mocked checkForUpdate never calls its callback (mirrors a same-version
+      // no-op check). The health service must not be recomputed by the nudge path.
+      expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
+    });
+
+    // #1411 — the manual "Run Now" health route fires a live version check using
+    // the SAME nudge the boot/2 AM invocations use. startJobs must register that
+    // exact callback on the health service so runManualChecks can reach it.
+    it('registers the version-update nudge on the health service for the manual Run Now path (#1411 AC#5)', async () => {
+      const setCb = services.healthCheck.setVersionUpdateCallback as ReturnType<typeof vi.fn>;
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      vi.mocked(checkForUpdate).mockClear();
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Registered exactly once with a function.
+      expect(setCb).toHaveBeenCalledTimes(1);
+      const registered = setCb.mock.calls[0]![0] as () => void;
+      expect(typeof registered).toBe('function');
+
+      // It is the IDENTICAL reference the version-check cron passes to
+      // checkForUpdate — proving the manual path nudges health exactly as the
+      // boot/2 AM path does (not a hand-rolled duplicate).
+      await services.taskRegistry.executeTracked('version-check');
+      const cronCall = vi.mocked(checkForUpdate).mock.calls.find((c) => typeof c[1] === 'function');
+      expect(cronCall).toBeDefined();
+      expect(cronCall![1]).toBe(registered);
+    });
+
+    it('the scheduled health-check cron stays cache-only — it does not fire a version check (#1411 AC#3)', async () => {
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Discard the boot version-check call; we only care about the scheduled tick.
+      vi.mocked(checkForUpdate).mockClear();
+      (services.healthCheck.runAllChecks as ReturnType<typeof vi.fn>).mockClear();
+
+      await services.taskRegistry.executeTracked('health-check');
+
+      expect(services.healthCheck.runAllChecks).toHaveBeenCalledTimes(1);
+      expect(checkForUpdate).not.toHaveBeenCalled();
+    });
+  });
+
   // #1066 — scheduled library reconciliation
   describe('library-rescan job (#1066)', () => {
     it('registers library-rescan as a cron job on a 6-hour schedule', async () => {
@@ -713,8 +927,7 @@ describe('startJobs', () => {
       expect(entry).toBeDefined();
       expect(entry!.type).toBe('cron');
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const expressions = cronCalls.map(([expr]) => expr);
+      const expressions = cronInstances.map((c) => c.getPattern());
       expect(expressions).toContain('0 */6 * * *');
     });
 
@@ -738,11 +951,7 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
-      expect(rescanCall).toBeDefined();
-      const cronCallback = rescanCall![1] as () => Promise<void>;
-      await cronCallback();
+      await triggerCron('0 */6 * * *');
 
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: 'Library path is not configured', type: 'LibraryPathError' }) }),
@@ -764,10 +973,7 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
-      const cronCallback = rescanCall![1] as () => Promise<void>;
-      await cronCallback();
+      await triggerCron('0 */6 * * *');
 
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ type: 'ScanInProgressError' }) }),
@@ -786,10 +992,7 @@ describe('startJobs', () => {
       const { startJobs } = await import('./index.js');
       startJobs(injectHelper<Db>(db), services, log);
 
-      const cronCalls = vi.mocked(cron.schedule).mock.calls;
-      const rescanCall = cronCalls.find(([expr]) => expr === '0 */6 * * *');
-      const cronCallback = rescanCall![1] as () => Promise<void>;
-      await cronCallback();
+      await triggerCron('0 */6 * * *');
 
       // The job didn't swallow it — scheduleCron caught it via its own try/catch
       expect(log.error).toHaveBeenCalledWith(
@@ -801,6 +1004,246 @@ describe('startJobs', () => {
         expect.anything(),
         'Scheduled library rescan skipped',
       );
+    });
+  });
+
+  // #1270 — scheduleCron is the croner owner: it stores the engine's real next-fire
+  // on the registry. These tests drive it directly against a real TaskRegistry and a
+  // real croner engine (no stubbed nextRun) so the cron math is actually exercised.
+  describe('scheduleCron next-run wiring (#1270)', () => {
+    // Every production cron expression — the 5 previously-broken fixed/weekly/hourly/
+    // every-minute ones plus the sub-minute monitor and the */5 interval jobs.
+    const CRON_EXPRESSIONS: ReadonlyArray<[name: string, expr: string]> = [
+      ['monitor', '*/30 * * * * *'],
+      ['enrichment', '*/5 * * * *'],
+      ['version-check', '0 2 * * *'],
+      ['housekeeping', '0 0 * * 0'],
+      ['series-refresh', '0 3 * * 0'],
+      ['library-rescan', '0 */6 * * *'],
+      ['import-list-sync', '* * * * *'],
+    ];
+
+    it.each(CRON_EXPRESSIONS)(
+      'stores a real future nextRun for %s (%s)',
+      async (name, expr) => {
+        const { scheduleCron } = await import('./index.js');
+        const reg = new TaskRegistry();
+        // Mirror production order: register BEFORE scheduling, else setNextRun no-ops.
+        reg.register(name, 'cron', vi.fn().mockResolvedValue(undefined), expr);
+
+        const before = Date.now();
+        const job = scheduleCron(reg, name, expr, log);
+        cronInstances.push(job); // ensure afterEach stops it
+
+        const task = reg.getAll().find((t) => t.name === name);
+        expect(task!.nextRun).not.toBeNull();
+        const nextRunMs = new Date(task!.nextRun!).getTime();
+        expect(Number.isNaN(nextRunMs)).toBe(false);
+        expect(nextRunMs).toBeGreaterThan(before);
+      },
+    );
+
+    it('reports a fixed-time cron (0 2 * * *) more than a minute out — guards the old "≈now" fallback', async () => {
+      // Freeze the clock to an instant well away from 02:00 (#1611): a daily 02:00 cron's
+      // real next-run legitimately drops under 60s when the suite runs in the 01:59–02:00
+      // window, which flaked this assertion (observed 32s at 01:59). Fake ONLY `Date` so
+      // croner computes next-run against the frozen time while its real scheduling timers
+      // stay untouched; restore real timers in finally so the afterEach cleanup is unaffected.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2024-06-15T12:00:00'));
+      try {
+        const { scheduleCron } = await import('./index.js');
+        const reg = new TaskRegistry();
+        reg.register('version-check', 'cron', vi.fn().mockResolvedValue(undefined), '0 2 * * *');
+
+        const job = scheduleCron(reg, 'version-check', '0 2 * * *', log);
+        cronInstances.push(job);
+
+        const task = reg.getAll().find((t) => t.name === 'version-check');
+        const deltaMs = new Date(task!.nextRun!).getTime() - Date.now();
+        expect(deltaMs).toBeGreaterThan(60 * 1000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('refreshes nextRun after each fire via the callback finally-block', async () => {
+      const { scheduleCron } = await import('./index.js');
+      const reg = new TaskRegistry();
+      const fn = vi.fn().mockResolvedValue(undefined);
+      reg.register('monitor', 'cron', fn, '*/30 * * * * *');
+
+      const job = scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
+      cronInstances.push(job);
+
+      // Reference time captured before the fire — the finally-block recomputes
+      // nextRun during trigger(), so it is strictly after this point. Comparing
+      // against a post-trigger Date.now() would re-introduce the same sub-minute
+      // boundary race as F1 for `*/30 * * * * *`.
+      const before = Date.now();
+      await job.trigger();
+
+      // The callback ran the registered fn and refreshed nextRun from job.nextRun().
+      expect(fn).toHaveBeenCalledTimes(1);
+      const task = reg.getAll().find((t) => t.name === 'monitor');
+      expect(task!.nextRun).not.toBeNull();
+      expect(new Date(task!.nextRun!).getTime()).toBeGreaterThan(before);
+    });
+
+    it('skips setNextRun (leaves the prior value) when nextRun() returns null, without throwing', async () => {
+      const { scheduleCron } = await import('./index.js');
+      const reg = new TaskRegistry();
+      reg.register('null-job', 'cron', vi.fn().mockResolvedValue(undefined), '* * * * *');
+
+      // Seed a prior value that must survive a null-nextRun scheduling pass.
+      const prior = new Date('2026-01-01T00:00:00.000Z');
+      reg.setNextRun('null-job', prior);
+
+      // Force croner's next-fire to read as null (no future occurrence). nextRun lives
+      // on the real Cron prototype (the imported Cron is the tracking subclass).
+      const proto = Object.getPrototypeOf(Cron.prototype) as { nextRun: () => Date | null };
+      const spy = vi.spyOn(proto, 'nextRun').mockReturnValue(null);
+
+      let job: Cron;
+      expect(() => { job = scheduleCron(reg, 'null-job', '* * * * *', log); }).not.toThrow();
+      cronInstances.push(job!);
+      spy.mockRestore();
+
+      const task = reg.getAll().find((t) => t.name === 'null-job');
+      expect(task!.nextRun).toBe(prior.toISOString());
+    });
+  });
+
+  // #1515 — startJobs returns a best-effort, graceful-only `stopAll` so the
+  // shutdown path can halt every cron + timeout-loop before the awaited drains.
+  describe('scheduler stop (#1515)', () => {
+    /** Wait until the timeout-loop with the (unique) backup interval has armed `n` timers. */
+    async function waitForBackupTimers(spy: ReturnType<typeof vi.spyOn>, n: number, ms: number): Promise<void> {
+      await vi.waitFor(() => {
+        const calls = (spy.mock.calls as Array<[unknown, number]>).filter(([, d]) => d === ms);
+        expect(calls.length).toBe(n);
+      });
+    }
+
+    const BACKUP_MS = 60 * 60 * 1000; // backup is the only 60-minute timeout-loop job
+
+    it('stopAll() calls Cron.stop() exactly once on every constructed cron', async () => {
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      // Crons are constructed synchronously in the registration loop.
+      const stopSpies = cronInstances.map((c) => vi.spyOn(c, 'stop'));
+      expect(stopSpies.length).toBeGreaterThan(0);
+
+      scheduler.stopAll();
+
+      for (const s of stopSpies) expect(s).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopAll() is idempotent — a second call does not re-stop the crons and does not throw', async () => {
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      const stopSpies = cronInstances.map((c) => vi.spyOn(c, 'stop'));
+
+      scheduler.stopAll();
+      expect(() => scheduler.stopAll()).not.toThrow();
+
+      for (const s of stopSpies) expect(s).toHaveBeenCalledTimes(1);
+    });
+
+    it('stopAll() cancels a pending timeout-loop tick — its callback does not fire and does not re-arm', async () => {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const execSpy = vi.spyOn(services.taskRegistry, 'executeTracked');
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await waitForBackupTimers(setTimeoutSpy, 1, BACKUP_MS);
+      const tick = setTimeoutSpy.mock.calls.find(([, d]) => d === BACKUP_MS)![0] as () => Promise<void>;
+
+      scheduler.stopAll();
+      const execCallsBefore = execSpy.mock.calls.length;
+      const setTimeoutCallsBefore = setTimeoutSpy.mock.calls.length;
+
+      // Simulate the already-pending timer firing after stop: it must short-circuit.
+      await tick();
+
+      expect(execSpy.mock.calls.length).toBe(execCallsBefore); // executeTracked never ran
+      expect(setTimeoutSpy.mock.calls.length).toBe(setTimeoutCallsBefore); // scheduleNext did not re-arm
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('a tick that fired before stopAll re-armed, but stopAll halts that re-armed tick', async () => {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const execSpy = vi.spyOn(services.taskRegistry, 'executeTracked').mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await waitForBackupTimers(setTimeoutSpy, 1, BACKUP_MS);
+      const firstTick = setTimeoutSpy.mock.calls.find(([, d]) => d === BACKUP_MS)![0] as () => Promise<void>;
+
+      // Let one tick fire: executeTracked('backup') runs and scheduleNext re-arms.
+      await firstTick();
+      expect(execSpy).toHaveBeenCalledWith('backup');
+      await waitForBackupTimers(setTimeoutSpy, 2, BACKUP_MS);
+      const secondTick = (setTimeoutSpy.mock.calls.filter(([, d]) => d === BACKUP_MS)[1]![0]) as () => Promise<void>;
+
+      // Stop, then the re-armed tick fires — it must short-circuit (no further run).
+      scheduler.stopAll();
+      const backupCallsBefore = execSpy.mock.calls.filter((c) => c[0] === 'backup').length;
+      await secondTick();
+      expect(execSpy.mock.calls.filter((c) => c[0] === 'backup').length).toBe(backupCallsBefore);
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('unref()s the timeout-loop timers so a pending tick does not pin the event loop past SIGTERM', async () => {
+      const unrefs: Array<ReturnType<typeof vi.fn>> = [];
+      const realSetTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+        const handle = realSetTimeout(fn, ms) as ReturnType<typeof setTimeout>;
+        const origUnref = handle.unref.bind(handle);
+        const u = vi.fn(() => origUnref());
+        handle.unref = u as unknown as typeof handle.unref;
+        unrefs.push(u);
+        return handle;
+      }) as unknown as typeof setTimeout);
+      try {
+        const { startJobs } = await import('./index.js');
+        startJobs(injectHelper<Db>(db), services, log);
+
+        // Four timeout-loop jobs (search, rss, backup, discovery) each arm + unref()
+        // their initial timer. Wait until at least that many unref()'d timers exist.
+        await vi.waitFor(() => {
+          const unreffed = unrefs.filter((u) => u.mock.calls.length === 1);
+          expect(unreffed.length).toBeGreaterThanOrEqual(4);
+        });
+      } finally {
+        vi.mocked(globalThis.setTimeout).mockRestore();
+      }
+    });
+
+    it('no timeout-loop job fires its service work after stopAll', async () => {
+      const { runBackupJob } = await import('./backup.js');
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await waitForBackupTimers(setTimeoutSpy, 1, BACKUP_MS);
+      const tick = setTimeoutSpy.mock.calls.find(([, d]) => d === BACKUP_MS)![0] as () => Promise<void>;
+
+      scheduler.stopAll();
+      await tick();
+
+      // executeTracked never ran the registered backup callback, so the service
+      // work (runBackupJob) was never invoked post-shutdown.
+      expect(runBackupJob).not.toHaveBeenCalled();
+
+      setTimeoutSpy.mockRestore();
     });
   });
 });

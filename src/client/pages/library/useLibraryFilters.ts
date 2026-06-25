@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom';
 import type { LibraryBookListParams, LibraryBookListItem } from '@/lib/api';
 import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs } from './helpers.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { LIBRARY_FILTER_VALUES } from '../../../shared/schemas/book.js';
 import { usePagination } from '@/hooks/usePagination';
 
-const VALID_STATUS_FILTERS = new Set<string>(['all', 'wanted', 'downloading', 'imported', 'failed', 'missing']);
+const VALID_STATUS_FILTERS = new Set<string>(LIBRARY_FILTER_VALUES);
 const VALID_SORT_FIELDS = new Set<string>(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);
 const VALID_SORT_DIRECTIONS = new Set<string>(['asc', 'desc']);
 

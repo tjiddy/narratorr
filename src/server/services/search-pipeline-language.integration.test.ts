@@ -22,6 +22,7 @@ vi.mock('../../core/utils/network-service.js', async (importActual) => {
 });
 
 import { fetchWithSsrfRedirect } from '../../core/utils/network-service.js';
+import { enrichmentCache } from '../utils/enrichment-cache.js';
 const mockFetchWithSsrfRedirect = vi.mocked(fetchWithSsrfRedirect);
 
 function createMockLogger(): FastifyBaseLogger {
@@ -85,6 +86,10 @@ function createMockSettings(allowedLanguages: string[]): SettingsService {
 describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based language detection)', () => {
   beforeEach(() => {
     mockFetchWithSsrfRedirect.mockReset();
+    // The enrichment cache is a process-wide singleton; clear it so a release
+    // re-used across tests (same downloadUrl) is re-fetched, not served from a
+    // prior test's cached outcome (#1315).
+    enrichmentCache.clear();
   });
 
   it('drops all three Fairy Tale German releases with language-mismatch when NZB fetch fails — #1148 UAT', async () => {

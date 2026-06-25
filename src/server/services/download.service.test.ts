@@ -9,6 +9,7 @@ import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 import { createMockDbBook, createMockDbIndexer } from '../__tests__/factories.js';
 import * as statusRegistry from '../../shared/download-status-registry.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
 const dialect = new SQLiteSyncDialect();
@@ -31,7 +32,8 @@ const mockDownload = {
   downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
   size: 1073741824,
   seeders: 42,
-  status: 'downloading' as const,
+  clientStatus: 'downloading' as const,
+  pipelineStage: 'idle' as const,
   progress: 0,
   externalId: 'ext-123',
   errorMessage: null,
@@ -137,6 +139,19 @@ describe('DownloadService', () => {
 
       const result = await service.getById(999);
       expect(result).toBeNull();
+    });
+
+    it('derives the display status from the (clientStatus, pipelineStage) tuple (#1445 F1 seam)', async () => {
+      // A completed client download mid-pipeline displays the pipeline stage.
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'pending_review' }, book: mockBook }]),
+      );
+
+      const result = await service.getById(1);
+      expect(result!.status).toBe('pending_review');
+      // The underlying axis fields are exposed alongside the derived status.
+      expect(result!.clientStatus).toBe('completed');
+      expect(result!.pipelineStage).toBe('pending_review');
     });
   });
 
@@ -378,7 +393,7 @@ describe('DownloadService', () => {
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'completed', externalId: null }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'idle', externalId: null }, book: mockBook }]),
       );
 
       const result = await service.grab({
@@ -473,6 +488,31 @@ describe('DownloadService', () => {
       expect(insertValues.bookStatusAtGrab).toBeNull();
     });
 
+    // #1443 — opaque publicId on the downloads insert boundary
+    it('writes a dl_-prefixed publicId to the downloads insert payload', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+        removeDownload: vi.fn(),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      });
+
+      const insertValues = db.insert.mock.results[0]!.value.values.mock.calls[0][0];
+      expect(insertValues.publicId).toMatch(/^dl_/);
+    });
+
     // #966 — LAN allowlist construction for HTTP torrent grabs
     describe('LAN allowlist (#966)', () => {
       const httpTorrentUrl = 'http://192.168.0.22:9696/dl/foo.torrent';
@@ -533,9 +573,15 @@ describe('DownloadService', () => {
         resolveSpy.mockRestore();
       });
 
-      it('does NOT call IndexerService.getLanAllowlist() for usenet HTTP grabs', async () => {
+      // #1243 — usenet HTTP grabs now thread the LAN allowlist so the Blackhole
+      // self-download can reach private/LAN configured-indexer NZB URLs.
+      it('delegates LAN allowlist construction to IndexerService.getLanAllowlist for usenet HTTP grabs (#1243)', async () => {
         setupCommonGrabMocks();
-        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) };
+        const sharedAllowlist = {
+          hostPort: new Set(['192.168.0.22:9696']),
+          hostname: new Set(['192.168.0.22']),
+        };
+        const indexerService = { getLanAllowlist: vi.fn().mockResolvedValue(sharedAllowlist) };
         service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
 
         const resolveSpy = vi.spyOn(DownloadUrl.prototype, 'resolve').mockResolvedValue({
@@ -548,8 +594,8 @@ describe('DownloadService', () => {
           protocol: 'usenet',
         });
 
-        expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
-        expect(resolveSpy).toHaveBeenCalledWith(undefined);
+        expect(indexerService.getLanAllowlist).toHaveBeenCalledTimes(1);
+        expect(resolveSpy.mock.calls[0]![0]!).toBe(sharedAllowlist);
         resolveSpy.mockRestore();
       });
 
@@ -592,38 +638,16 @@ describe('DownloadService', () => {
     });
   });
 
-  describe('updateStatus', () => {
-    it('passes correct status value to set()', async () => {
-      const chain = mockDbChain();
-      db.update.mockReturnValue(chain);
-
-      await service.updateStatus(1, 'importing');
-
-      expect(chain.set).toHaveBeenCalledWith({ status: 'importing' });
-    });
-
-    it('logs at info level', async () => {
-      db.update.mockReturnValue(mockDbChain());
-      const log = createMockLogger();
-      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
-
-      await svc.updateStatus(1, 'completed');
-
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, status: 'completed' }),
-        expect.any(String),
-      );
-    });
-  });
-
   describe('setError', () => {
-    it('passes status failed and errorMessage to set()', async () => {
+    it('writes the sanctioned failure tuple (failed, idle) with errorMessage', async () => {
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
 
       await service.setError(1, 'Connection refused');
 
-      expect(chain.set).toHaveBeenCalledWith({ status: 'failed', errorMessage: 'Connection refused' });
+      // Full tuple so the row derives as `failed` regardless of prior pipeline stage.
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Connection refused' });
+      expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
     });
 
     it('logs at warn level', async () => {
@@ -641,22 +665,57 @@ describe('DownloadService', () => {
   });
 
   describe('cancel', () => {
-    it('removes torrent from client and updates status', async () => {
+    it('removes torrent from client and writes the failure tuple (failed, idle)', async () => {
       const mockAdapter = {
         removeDownload: vi.fn().mockResolvedValue(undefined),
       };
+      const chain = mockDbChain();
 
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(chain);
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       const result = await service.cancel(1);
 
       expect(result).toBe(true);
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(mockDownload.externalId, true);
-      expect(db.update).toHaveBeenCalled();
+      // Idle cancel still carries the explicit pipelineStage: 'idle' (no-op on that axis).
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
+    });
+
+    it.each(['pending_review', 'importing', 'checking'] as const)(
+      'resets pipelineStage to idle when cancelling a download in %s (display derives as failed)',
+      async (stage) => {
+        const chain = mockDbChain();
+        db.select.mockReturnValue(
+          mockDbChain([{ download: { ...mockDownload, pipelineStage: stage }, book: mockBook }]),
+        );
+        db.update.mockReturnValue(chain);
+        (clientService.getAdapter as Mock).mockResolvedValue(null);
+
+        const result = await service.cancel(1);
+
+        expect(result).toBe(true);
+        expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
+        // The written tuple derives as `failed`, not the stale in-pipeline stage.
+        expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
+      },
+    );
+
+    it('uses a custom cancellation reason as the errorMessage', async () => {
+      const chain = mockDbChain();
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, pipelineStage: 'importing' }, book: mockBook }]),
+      );
+      db.update.mockReturnValue(chain);
+      (clientService.getAdapter as Mock).mockResolvedValue(null);
+
+      const result = await service.cancel(1, 'some reason');
+
+      expect(result).toBe(true);
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'some reason' });
     });
 
     it('returns false when download not found', async () => {
@@ -664,6 +723,7 @@ describe('DownloadService', () => {
 
       const result = await service.cancel(999);
       expect(result).toBe(false);
+      expect(db.update).not.toHaveBeenCalled();
     });
 
     it('still cancels when adapter removal fails', async () => {
@@ -685,7 +745,7 @@ describe('DownloadService', () => {
   describe('delete', () => {
     it('returns true when download exists and has terminal status', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'completed' }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'idle' }, book: mockBook }]),
       );
       db.delete.mockReturnValue(mockDbChain());
 
@@ -713,7 +773,7 @@ describe('DownloadService', () => {
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'completed', externalId: null }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'idle', externalId: null }, book: mockBook }]),
       );
 
       const log = createMockLogger();
@@ -790,6 +850,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
       );
+      service.wire({ retrySearchDeps: {} as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
       const result = await service.grab({
         downloadUrl: 'https://nzb.example.com/download/123',
@@ -1032,6 +1093,7 @@ describe('DownloadService', () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
       );
+      service.wire({ retrySearchDeps: {} as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
       await service.grab({
         downloadUrl: 'https://indexer.test/nzb/12345',
@@ -1098,6 +1160,7 @@ describe('DownloadService', () => {
 
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      svc.wire({ retrySearchDeps: {} as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
 
       await svc.grab({
         downloadUrl: 'https://indexer.example.com/api/v1/download/12345?apikey=SECRETKEY123',
@@ -1156,7 +1219,7 @@ describe('DownloadService', () => {
 
       await service.cancel(1);
 
-      expect(chain.set).toHaveBeenCalledWith({ status: 'failed', errorMessage: 'Cancelled by user' });
+      expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
     });
 
     it('does not update book status (orchestrator responsibility)', async () => {
@@ -1171,7 +1234,7 @@ describe('DownloadService', () => {
       // Only one db.update call — for download status, not for book status
       const setCalls = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).toHaveLength(1);
-      expect(setCalls[0]).toEqual({ status: 'failed', errorMessage: 'Cancelled by user' });
+      expect(setCalls[0]).toEqual({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
     });
   });
 
@@ -1201,7 +1264,7 @@ describe('DownloadService', () => {
     });
 
     it('throws DownloadError NO_BOOK_LINKED when download has no bookId', async () => {
-      const failedNoBook = { ...mockDownload, status: 'failed' as const, bookId: null };
+      const failedNoBook = { ...mockDownload, clientStatus: 'failed' as const, pipelineStage: 'idle' as const, bookId: null };
       db.select.mockReturnValue(
         mockDbChain([{ download: failedNoBook, book: null }]),
       );
@@ -1211,7 +1274,7 @@ describe('DownloadService', () => {
     });
 
     it('throws ServiceWireError when retry() invoked before wire() (required-wiring contract)', async () => {
-      const failedDownload = { ...mockDownload, status: 'failed' as const };
+      const failedDownload = { ...mockDownload, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
       db.select.mockReturnValue(
         mockDbChain([{ download: failedDownload, book: mockBook }]),
       );
@@ -1253,7 +1316,7 @@ describe('DownloadService', () => {
       });
 
       it('returns retried and deletes old record on successful retry', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
         mockRetryDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
 
@@ -1268,7 +1331,7 @@ describe('DownloadService', () => {
       });
 
       it('returns no_candidates and updates errorMessage when no results found', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         mockRetryDeps.indexerSearchService.searchAll.mockResolvedValue([]);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1282,7 +1345,7 @@ describe('DownloadService', () => {
       });
 
       it('returns no_candidates and updates errorMessage when budget exhausted', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         retryBudget.consumeAttempt(1);
         retryBudget.consumeAttempt(1);
         retryBudget.consumeAttempt(1);
@@ -1312,7 +1375,7 @@ describe('DownloadService', () => {
       });
 
       it('returns retry_error and updates errorMessage when search throws', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         mockRetryDeps.indexerSearchService.searchAll.mockRejectedValue(new Error('Indexer down'));
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1327,7 +1390,7 @@ describe('DownloadService', () => {
       });
 
       it('resets retry budget for the book before searching', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         const resetSpy = vi.spyOn(retryBudget, 'reset');
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1339,7 +1402,7 @@ describe('DownloadService', () => {
       });
 
       it('logs warning but still returns retried when old record deletion fails', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
         mockRetryDeps.indexerSearchService.searchAll.mockResolvedValue([searchResult]);
 
@@ -1362,7 +1425,7 @@ describe('DownloadService', () => {
 
       // #1103 F5 — manual retry guard on imported books
       it('throws DownloadError IMPORTED_BOOK_NO_RETRY when linked book has been imported (book.path != null)', async () => {
-        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         // First select: getById(downloadId) returns the download row
         db.select
           .mockReturnValueOnce(mockDbChain([{ download: failedDownload, book: mockBook }]))
@@ -1452,7 +1515,7 @@ describe('DownloadService', () => {
       await service.updateProgress(1, 0.5);
 
       expect(chain.set).toHaveBeenCalledWith(
-        expect.objectContaining({ progress: 0.5, status: 'downloading', completedAt: null }),
+        expect.objectContaining({ progress: 0.5, clientStatus: 'downloading', completedAt: null }),
       );
     });
 
@@ -1463,7 +1526,7 @@ describe('DownloadService', () => {
       await service.updateProgress(1, 1.0);
 
       expect(chain.set).toHaveBeenCalledWith(
-        expect.objectContaining({ progress: 1.0, status: 'completed' }),
+        expect.objectContaining({ progress: 1.0, clientStatus: 'completed' }),
       );
       const setArgs = (chain.set as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArgs.completedAt).toBeInstanceOf(Date);
@@ -1538,7 +1601,7 @@ describe('DownloadService', () => {
   describe('delete — history guard', () => {
     it('succeeds and returns true when status is completed', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'completed' }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'idle' }, book: mockBook }]),
       );
       db.delete.mockReturnValue(mockDbChain());
 
@@ -1548,7 +1611,7 @@ describe('DownloadService', () => {
 
     it('succeeds and returns true when status is imported', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'imported' }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'imported' }, book: mockBook }]),
       );
       db.delete.mockReturnValue(mockDbChain());
 
@@ -1558,7 +1621,7 @@ describe('DownloadService', () => {
 
     it('succeeds and returns true when status is failed', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'failed' }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'failed', pipelineStage: 'idle' }, book: mockBook }]),
       );
       db.delete.mockReturnValue(mockDbChain());
 
@@ -1580,7 +1643,7 @@ describe('DownloadService', () => {
 
     it('throws DownloadError with code INVALID_STATUS for non-terminal status (not a plain Error)', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, status: 'downloading' }, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, clientStatus: 'downloading', pipelineStage: 'idle' }, book: mockBook }]),
       );
 
       const error = await service.delete(1).catch((e: unknown) => e);
@@ -1597,7 +1660,7 @@ describe('DownloadService', () => {
 
     it('succeeds for orphaned download (bookId = null)', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: { ...mockDownload, bookId: null, status: 'completed' }, book: null }]),
+        mockDbChain([{ download: { ...mockDownload, bookId: null, clientStatus: 'completed', pipelineStage: 'idle' }, book: null }]),
       );
       db.delete.mockReturnValue(mockDbChain());
 
@@ -1648,7 +1711,7 @@ describe('DownloadService', () => {
     });
 
     it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS when replaceable active download exists', async () => {
-      const replaceableDownload = { ...mockDownload, id: 5, status: 'queued' as const };
+      const replaceableDownload = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
       db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
 
       const err = await service.grab({
@@ -1664,7 +1727,7 @@ describe('DownloadService', () => {
     });
 
     it('throws DuplicateDownloadError with PIPELINE_ACTIVE code when only importing downloads exist', async () => {
-      const pipelineDownload = { ...mockDownload, id: 5, status: 'importing' as const };
+      const pipelineDownload = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
       // getActiveByBookId returns only pipeline download
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
@@ -1681,7 +1744,7 @@ describe('DownloadService', () => {
 
     // #197 — DuplicateDownloadError typed error assertions (ERR-1)
     it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS for replaceable-active duplicate', async () => {
-      const replaceableDownload = { ...mockDownload, id: 5, status: 'queued' as const };
+      const replaceableDownload = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
       db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
 
       const err = await service.grab({
@@ -1696,7 +1759,7 @@ describe('DownloadService', () => {
     });
 
     it('throws DuplicateDownloadError with code PIPELINE_ACTIVE for pipeline-active duplicate', async () => {
-      const pipelineDownload = { ...mockDownload, id: 5, status: 'importing' as const };
+      const pipelineDownload = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
       const err = await service.grab({
@@ -1806,8 +1869,7 @@ describe('DownloadService', () => {
       await service.cancel(1, 'Replaced by new download');
 
       expect(chain.set).toHaveBeenCalledWith(expect.objectContaining({
-        status: 'failed',
-        errorMessage: 'Replaced by new download',
+        clientStatus: 'failed',        errorMessage: 'Replaced by new download',
       }));
     });
 
@@ -1821,8 +1883,7 @@ describe('DownloadService', () => {
       await service.cancel(1);
 
       expect(chain.set).toHaveBeenCalledWith(expect.objectContaining({
-        status: 'failed',
-        errorMessage: 'Cancelled by user',
+        clientStatus: 'failed',        errorMessage: 'Cancelled by user',
       }));
     });
   });

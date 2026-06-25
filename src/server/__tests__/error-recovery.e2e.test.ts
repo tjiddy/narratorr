@@ -133,7 +133,8 @@ describe('Error recovery E2E', () => {
 
     // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl!.status).toBe('failed');
+    expect(dl!.clientStatus).toBe('failed');
+    expect(dl!.pipelineStage).toBe('idle');
     expect(dl!.errorMessage).toBeTruthy();
 
     // Book status recovered — no path so reverts to 'wanted'
@@ -252,10 +253,16 @@ describe('Error recovery E2E', () => {
     // Reset enrichmentStatus to pending so enrichment runs
     await e2e.db.update(books).set({ enrichmentStatus: 'pending' }).where(eq(books.id, bookId));
 
-    // Audnexus returns 500 — enrichment should fail gracefully
+    // Genuine no-match (#1628): the ASIN is genuinely not found (404 → null, not a
+    // transient 500) AND the title/author search fallback returns zero results.
+    // Only a true empty result marks the row `failed`; a transient provider error
+    // (5xx/timeout) would instead leave the book `pending` for the next cycle.
     mswServer.use(
       http.get(`${AUDNEXUS_BASE}/books/${TEST_ASIN}`, () => {
-        return new HttpResponse('Internal Server Error', { status: 500 });
+        return new HttpResponse('Not Found', { status: 404 });
+      }),
+      http.get('https://api.audible.com/1.0/catalog/products', () => {
+        return HttpResponse.json({ products: [] });
       }),
     );
 

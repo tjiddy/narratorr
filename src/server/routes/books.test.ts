@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { booksRoutes, type BookRouteDeps } from './books.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
@@ -42,13 +43,62 @@ vi.mock('../config.js', () => ({
   config: { configPath: '/test-config' },
 }));
 
-import { serveCoverFromCache, cleanCoverCache } from '../utils/cover-cache.js';
+import { serveCoverFromCache } from '../utils/cover-cache.js';
 
 const mockBook = {
   ...createMockDbBook(),
   authors: [createMockDbAuthor()],
   narrators: [],
 };
+
+/**
+ * Build a complete `BookRouteDeps` with all 17 services mocked. Each call
+ * derives fresh `vi.fn()`-backed mocks from `createMockServices()`, so a test
+ * mutating the returned deps can't leak into a later call. Pass `overrides` to
+ * replace any field; omitted fields keep their default mock.
+ *
+ * Overrides is `Partial<BookRouteDeps>` rather than a bare-undefined-stripping
+ * shape: callers add or replace fields but never need to strip a default, so it
+ * compiles cleanly under `exactOptionalPropertyTypes` without explicit-`undefined`
+ * literals (see `fixture-builder-eopt-overrides`).
+ */
+function makeBookRouteDeps(overrides: Partial<BookRouteDeps> = {}): BookRouteDeps {
+  const s = createMockServices();
+  return {
+    bookService: s.book,
+    bookListService: s.bookList,
+    downloadService: s.download,
+    downloadOrchestrator: s.downloadOrchestrator,
+    settingsService: s.settings,
+    renameService: s.rename,
+    mergeService: s.merge,
+    taggingService: s.tagging,
+    eventHistory: s.eventHistory,
+    bookDeletionService: s.bookDeletion,
+    indexerSearchService: s.indexerSearch,
+    indexerService: s.indexer,
+    bookRejectionService: s.bookRejection,
+    blacklistService: s.blacklist,
+    eventBroadcaster: s.eventBroadcaster,
+    seriesCardService: s.seriesCard,
+    metadataService: s.metadata,
+    ...overrides,
+  };
+}
+
+/** Register only `booksRoutes` onto a fresh Fastify app, wired from the given
+ *  `BookRouteDeps`. Mirrors `createTestApp` but takes route deps directly so a
+ *  test can exercise the routes through a factory-built deps object. */
+async function createAppFromDeps(deps: BookRouteDeps) {
+  const app = Fastify({ logger: false, routerOptions: { maxParamLength: 2048 } }).withTypeProvider<ZodTypeProvider>();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+  await app.register(errorHandlerPlugin);
+  await booksRoutes(app, deps);
+  await app.ready();
+  return app;
+}
 
 describe('books routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -241,6 +291,32 @@ describe('books routes', () => {
     it('rejects ?status=monitored (invalid enum) with 400', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/library/books?status=monitored' });
       expect(res.statusCode).toBe(400);
+    });
+
+    // #1447 (S2d) — the library filter param is bucket-only: `all` is a
+    // client-only sentinel (the client omits the param), and non-bucket canonical
+    // statuses like `searching`/`importing` are not valid filter buckets.
+    it('rejects ?status=all (client-only sentinel) with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=all' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects ?status=searching (non-bucket canonical status) with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=searching' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('accepts a bucket key like ?status=downloading and forwards it to the service', async () => {
+      (services.bookList.getAllForLibrary as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/library/books?status=downloading' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.bookList.getAllForLibrary).toHaveBeenCalledWith(
+        'downloading',
+        { limit: DEFAULT_LIMITS.books, offset: undefined },
+        {},
+      );
     });
 
     it('rejects limit=0 with 400', async () => {
@@ -880,6 +956,20 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it('maps path_outside_library → 400 with the real ancestry-guard message (#1550)', async () => {
+      // Use the real PathOutsideLibraryError message (not a fabricated string) so this
+      // pins the actual `error: error.message` pass-through. The global handler emits
+      // message-only — there is no PATH_OUTSIDE_LIBRARY literal in the response body.
+      const err = new PathOutsideLibraryError('/etc/passwd', '/audiobooks');
+      (services.rename.renameBook as Mock).mockRejectedValue(err);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: err.message });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('code');
+    });
+
     it('returns 409 on conflict with different book', async () => {
       (services.rename.renameBook as Mock).mockRejectedValue(
         new RenameError(
@@ -1225,188 +1315,89 @@ describe('books routes', () => {
     });
   });
 
+  // The route is a thin result-to-status mapper over BookDeletionService; the
+  // destructive workflow itself (ordering, per-step error policy, best-effort
+  // failures) is covered in book-deletion.service.test.ts.
   describe('DELETE /api/books/:id', () => {
-    beforeEach(() => {
-      // The DELETE route always calls bookService.getById before any branching.
-      // Tests that don't exercise the deleteFiles=true path can leave the book undefined.
-      (services.book.getById as Mock).mockResolvedValue(undefined);
-    });
-
-    it('deletes book and returns success', async () => {
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
+    it('maps deleted → 200 with success body', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).success).toBe(true);
-      expect(services.download.getActiveByBookId).toHaveBeenCalledWith(1);
+      expect(services.bookDeletion.deleteBook).toHaveBeenCalledWith(1, { deleteFiles: false });
     });
 
-    it('returns 404 when not found', async () => {
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(false);
+    it('passes deleteFiles=true through to the service', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.bookDeletion.deleteBook).toHaveBeenCalledWith(1, { deleteFiles: true });
+    });
+
+    it('maps not_found → 404', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'not_found' });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
 
       expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Book not found');
     });
 
-    it('cancels active downloads before deleting', async () => {
-      const activeDownloads = [
-        { id: 10, bookId: 1, status: 'downloading' },
-        { id: 11, bookId: 1, status: 'queued' },
-      ];
-      (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
-      (services.downloadOrchestrator.cancel as Mock).mockResolvedValue(true);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledWith(10);
-      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledWith(11);
-      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledTimes(2);
-      expect(services.book.delete).toHaveBeenCalledWith(1);
-    });
-
-    it('deletes files from disk when deleteFiles=true and book has path', async () => {
-      const bookWithPath = { ...mockBook, path: '/audiobooks/Author/Book' };
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
-      (services.book.deleteBookFiles as Mock).mockResolvedValue(undefined);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
+    it('maps path_outside_library → 400 with the real ancestry-guard message', async () => {
+      // Use the real PathOutsideLibraryError message (not a fabricated string) so
+      // this pins the actual `error: error.message` pass-through end-to-end.
+      const realMessage = new PathOutsideLibraryError('/etc/passwd', '/audiobooks').message;
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
+        outcome: 'path_outside_library',
+        error: realMessage,
+      });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
-      expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Author/Book', '/audiobooks');
-      expect(services.book.delete).toHaveBeenCalledWith(1);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toMatch(/not inside library root/);
     });
 
-    it('skips file deletion when deleteFiles=true but book has no path', async () => {
-      const bookNoPath = { ...mockBook, path: null };
-      (services.book.getById as Mock).mockResolvedValue(bookNoPath);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
-      expect(services.book.delete).toHaveBeenCalledWith(1);
-    });
-
-    it('returns 500 and preserves DB record when file deletion fails', async () => {
-      const bookWithPath = { ...mockBook, path: '/audiobooks/Author/Book' };
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
-      (services.book.deleteBookFiles as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
+    it('maps file_deletion_failed → 500 with the service-provided message', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
+        outcome: 'file_deletion_failed',
+        error: 'Failed to delete book files from disk',
+      });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Failed to delete book files from disk');
-      expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
-      expect(services.book.delete).not.toHaveBeenCalled();
     });
 
-    it('returns 400 and preserves DB record when book path is outside library root', async () => {
-      const bookWithPath = { ...mockBook, path: '/tmp/external' };
-      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
-      (services.book.deleteBookFiles as Mock).mockRejectedValue(
-        new PathOutsideLibraryError('/tmp/external', '/audiobooks'),
-      );
+    it('serializes the kept-files fileSummary on the deleted body (#1589)', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({
+        outcome: 'deleted',
+        bookTitle: 'The Way of Kings',
+        fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.payload).error).toMatch(/library root/i);
-      expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
-      expect(services.book.delete).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+      // The route must carry the kept-files disclosure through to the client (AC).
+      expect(JSON.parse(res.payload)).toEqual({
+        success: true,
+        fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
     });
 
-    it('does not delete files when deleteFiles param is absent', async () => {
-      (services.book.getById as Mock).mockResolvedValue(mockBook);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
+    it('omits fileSummary from the deleted body when the service did not return one', async () => {
+      (services.bookDeletion.deleteBook as Mock).mockResolvedValue({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
-    });
-
-    it('returns 404 when deleteFiles=true and book not found', async () => {
-      (services.book.getById as Mock).mockResolvedValue(null);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/999?deleteFiles=true' });
-
-      expect(res.statusCode).toBe(404);
-    });
-
-    // #396 — cover cache cleanup on full book deletion
-    it('DELETE /api/books/:id cleans up cover cache entry', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/library/book1' });
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
-    });
-
-    it('DELETE /api/books/:id continues when cover cache cleanup fails (best-effort)', async () => {
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/library/book1' });
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-      (cleanCoverCache as Mock).mockRejectedValue(new Error('EACCES'));
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      // Should still succeed — cache cleanup is best-effort
-      expect(res.statusCode).toBe(200);
-    });
-
-    it('DELETE /api/books/:id does not clean cover cache when book not found', async () => {
-      (cleanCoverCache as Mock).mockClear();
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 999 });
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(false);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
-
-      expect(res.statusCode).toBe(404);
-      expect(cleanCoverCache).not.toHaveBeenCalled();
-    });
-
-    it('delete event snapshot includes comma-joined authors and narratorName (#71)', async () => {
-      const multiAuthorBook = {
-        ...mockBook,
-        authors: [
-          createMockDbAuthor({ id: 1, name: 'Brandon Sanderson' }),
-          createMockDbAuthor({ id: 2, name: 'Robert Jordan' }),
-        ],
-        narrators: [
-          { id: 1, name: 'Michael Kramer', slug: 'michael-kramer', createdAt: new Date(), updatedAt: new Date() },
-          { id: 2, name: 'Kate Reading', slug: 'kate-reading', createdAt: new Date(), updatedAt: new Date() },
-        ],
-      };
-      (services.book.getById as Mock).mockResolvedValue(multiAuthorBook);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(services.eventHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          authorName: 'Brandon Sanderson, Robert Jordan',
-          narratorName: 'Michael Kramer, Kate Reading',
-          eventType: 'deleted',
-        }),
-      );
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
     });
   });
 
@@ -2041,24 +2032,6 @@ describe('books routes', () => {
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
-    it('DELETE still succeeds when cancel() throws for one download', async () => {
-      const activeDownloads = [
-        { id: 10, bookId: 1, status: 'downloading' },
-        { id: 11, bookId: 1, status: 'queued' },
-      ];
-      (services.book.getById as Mock).mockResolvedValue(undefined);
-      (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
-      (services.downloadOrchestrator.cancel as Mock)
-        .mockRejectedValueOnce(new Error('cancel failed'))
-        .mockResolvedValueOnce(true);
-      (services.book.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
-
-      expect(res.statusCode).toBe(200);
-      expect(services.book.delete).toHaveBeenCalledWith(1);
-    });
-
     it('GET /api/books/:id/cover returns 400 for NaN id', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/books/abc/cover' });
       expect(res.statusCode).toBe(400);
@@ -2513,6 +2486,74 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
       narrators: ['Michael Kramer'],
     }));
+  });
+
+  it('accepts the extended metadata body (publishedDate/genres/nullable description+coverUrl) and delegates to the service (#1609)', async () => {
+    const updatedBook = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(updatedBook);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: {
+        description: null,
+        coverUrl: null,
+        publishedDate: '2010-08-31',
+        genres: ['Fantasy', 'Epic'],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(services.book.update).toHaveBeenCalledWith(1, {
+      description: null,
+      coverUrl: null,
+      publishedDate: '2010-08-31',
+      genres: ['Fantasy', 'Epic'],
+    });
+  });
+
+  it('passes null clears for publishedDate and genres through to the service (#1609)', async () => {
+    const updatedBook = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(updatedBook);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { publishedDate: null, genres: null },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(services.book.update).toHaveBeenCalledWith(1, { publishedDate: null, genres: null });
+  });
+
+  it('rejects an invalid publishedDate type (number) with 400 (#1609)', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { publishedDate: 123 },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid genres type (string) with 400 (#1609)', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { genres: 'Fantasy' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.update).not.toHaveBeenCalled();
   });
 
   describe('POST /api/books/:id/merge-to-m4b', () => {
@@ -3024,37 +3065,69 @@ describe('POST /api/books/:id/cover', () => {
   });
 });
 
-describe('#514 books route — missing blacklistService guard', () => {
-  let app: Awaited<ReturnType<typeof createTestApp>>;
-  let services: Services;
+// #1558 — `BookRouteDeps` now marks all 17 services required, so the old
+// `#514` "absent blacklistService" test (which forced `services.blacklist =
+// undefined` and asserted search is NOT triggered) is no longer representable.
+// The positive required-deps path — search IS triggered for a `searchImmediately`
+// create on a `wanted` book — is covered by 'triggers search when
+// searchImmediately is true and status is wanted' in the POST /api/books block.
+describe('#1558 makeBookRouteDeps factory', () => {
+  const ALL_FIELDS: Array<keyof BookRouteDeps> = [
+    'bookService', 'bookListService', 'downloadService', 'downloadOrchestrator',
+    'settingsService', 'renameService', 'mergeService', 'taggingService',
+    'eventHistory', 'bookDeletionService', 'indexerSearchService', 'indexerService',
+    'bookRejectionService', 'blacklistService', 'eventBroadcaster', 'seriesCardService',
+    'metadataService',
+  ];
 
-  beforeAll(async () => {
-    services = createMockServices();
-    (services as unknown as Record<string, unknown>).blacklist = undefined;
-    app = await createTestApp(services);
+  it('returns a complete BookRouteDeps with all 17 fields defined', () => {
+    const deps = makeBookRouteDeps();
+    expect(ALL_FIELDS).toHaveLength(17);
+    for (const field of ALL_FIELDS) {
+      expect(deps[field], `expected ${field} to be defined`).toBeDefined();
+    }
   });
 
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('does not trigger search when blacklistService is absent even with searchImmediately', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
-    (services.book.create as Mock).mockResolvedValueOnce({ ...mockBook, status: 'wanted' });
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/api/books',
-      payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+  it('replaces only the overridden field, leaving the other 16 as defaults', () => {
+    const customBookService = inject<BookRouteDeps['bookService']>({
+      getById: vi.fn().mockResolvedValue(mockBook),
     });
+    const deps = makeBookRouteDeps({ bookService: customBookService });
 
-    expect(res.statusCode).toBe(201);
+    expect(deps.bookService).toBe(customBookService);
+    for (const field of ALL_FIELDS) {
+      if (field === 'bookService') continue;
+      expect(deps[field], `expected default ${field} to be present`).toBeDefined();
+    }
+  });
 
-    // Wait for any fire-and-forget promise to settle
-    await new Promise(r => setTimeout(r, 50));
+  it('returns independent objects across calls — a mutation does not leak', () => {
+    const first = makeBookRouteDeps();
+    const second = makeBookRouteDeps();
 
-    // If the guard were absent, triggerImmediateSearch would call searchAllStreaming
-    expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
+    // Distinct mock instances per call (fresh createMockServices each time).
+    expect(first.bookService).not.toBe(second.bookService);
+
+    // Mutating one returned deps must not affect a later-built deps.
+    const sentinel = inject<BookRouteDeps['metadataService']>({ lookupForFixMatch: vi.fn() });
+    first.metadataService = sentinel;
+    expect(second.metadataService).not.toBe(sentinel);
+  });
+
+  it('routes wired from factory deps are reachable (GET /api/books/:id)', async () => {
+    const deps = makeBookRouteDeps({
+      bookService: inject<BookRouteDeps['bookService']>({
+        getById: vi.fn().mockResolvedValue({ ...mockBook, id: 7 }),
+      }),
+    });
+    const app = await createAppFromDeps(deps);
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/books/7' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ id: 7 });
+    } finally {
+      await app.close();
+    }
   });
 });
 
@@ -3169,6 +3242,76 @@ describe('#1071 series routes', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ series: null });
+  });
+
+  // #1228: manual Hardcover series search + bind routes.
+  it('GET /api/books/:id/series/search returns candidates and forwards the query', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    (services.seriesCard.searchSeriesCandidates as Mock).mockResolvedValue([
+      { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3, readersCount: 0, imageUrl: null },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=the%20band' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().candidates[0].id).toBe(5523);
+    expect(services.seriesCard.searchSeriesCandidates).toHaveBeenCalledWith('the band');
+  });
+
+  it('GET /api/books/:id/series/search returns an empty list (not a 500) when Hardcover yields nothing', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    (services.seriesCard.searchSeriesCandidates as Mock).mockResolvedValue([]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=nothing' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ candidates: [] });
+  });
+
+  it('GET /api/books/:id/series/search returns 404 for a missing book', async () => {
+    (services.book.getById as Mock).mockResolvedValue(null);
+    const res = await app.inject({ method: 'GET', url: '/api/books/999/series/search?q=x' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('GET /api/books/:id/series/search rejects an empty query', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    const res = await app.inject({ method: 'GET', url: '/api/books/1/series/search?q=' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /api/books/:id/series/bind returns the rebuilt card and forwards the id', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Earthsea Cycle' });
+    (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue({
+      id: 9, name: 'The Earthsea Quartet', hardcoverSeriesId: 4242, seriesAuthor: 'Ursula K. Le Guin', lastFetchedAt: null, members: [],
+    });
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().series.hardcoverSeriesId).toBe(4242);
+    expect(services.seriesCard.bindHardcoverSeries).toHaveBeenCalledWith(1, 4242);
+  });
+
+  it('POST /api/books/:id/series/bind returns 502 when binding fails', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue(null);
+
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
+
+    expect(res.statusCode).toBe(502);
+  });
+
+  it('POST /api/books/:id/series/bind returns 404 for a missing book', async () => {
+    (services.book.getById as Mock).mockResolvedValue(null);
+    const res = await app.inject({ method: 'POST', url: '/api/books/999/series/bind', payload: { hardcoverSeriesId: 4242 } });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('POST /api/books/:id/series/bind rejects a non-positive hardcoverSeriesId', async () => {
+    (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
+    const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 0 } });
+    expect(res.statusCode).toBe(400);
   });
 
   it('POST /api/books no longer enqueues an async series refresh (#1133 — lazy via GET)', async () => {

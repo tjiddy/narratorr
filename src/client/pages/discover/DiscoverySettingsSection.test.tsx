@@ -17,7 +17,12 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
@@ -25,7 +30,7 @@ const mockApi = api as unknown as {
 
 function makeSettings(overrides = {}) {
   return {
-    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30 },
+    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
     library: { rootFolder: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}' },
     search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 30 },
     import: { deleteAfterImport: false, importMode: 'copy' as const },
@@ -161,11 +166,6 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('save success invalidates settings cache, resets dirty state, and shows success toast', async () => {
-    vi.mock('sonner', () => ({
-      toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-    }));
-    const { toast } = await import('sonner');
-
     const invalidateSpy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
 
     mockApi.updateSettings.mockResolvedValue(makeSettings({
@@ -200,7 +200,7 @@ describe('DiscoverySettingsSection', () => {
     invalidateSpy.mockRestore();
   });
 
-  // --- #408: Expiry & Snooze settings fields ---
+  // --- #408: Expiry settings fields ---
 
   describe('expiryDays field', () => {
     it('renders expiry days input with default value', async () => {
@@ -215,7 +215,7 @@ describe('DiscoverySettingsSection', () => {
 
     it('changing expiry days persists via settings mutation', async () => {
       mockApi.updateSettings.mockResolvedValue(makeSettings({
-        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60, snoozeDays: 30 },
+        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60 },
       }));
 
       renderWithProviders(<DiscoverySettingsSection />);
@@ -254,58 +254,6 @@ describe('DiscoverySettingsSection', () => {
     });
   });
 
-  describe('snoozeDays field', () => {
-    it('renders snooze days input with default value', async () => {
-      renderWithProviders(<DiscoverySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
-      });
-
-      expect(screen.getByLabelText(/default snooze duration/i)).toHaveValue(30);
-    });
-
-    it('changing snooze days persists via settings mutation', async () => {
-      mockApi.updateSettings.mockResolvedValue(makeSettings({
-        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 14 },
-      }));
-
-      renderWithProviders(<DiscoverySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
-      });
-
-      const snoozeInput = screen.getByLabelText(/default snooze duration/i);
-      await userEvent.clear(snoozeInput);
-      await userEvent.type(snoozeInput, '14');
-      await userEvent.click(screen.getByRole('button', { name: /save/i }));
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith({
-          discovery: expect.objectContaining({ snoozeDays: 14 }),
-        });
-      });
-    });
-
-    it('does not submit when snoozeDays is 0 (below min)', async () => {
-      renderWithProviders(<DiscoverySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
-      });
-
-      const snoozeInput = screen.getByLabelText(/default snooze duration/i);
-      await userEvent.clear(snoozeInput);
-      await userEvent.type(snoozeInput, '0');
-      await userEvent.click(screen.getByRole('button', { name: /save/i }));
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).not.toHaveBeenCalled();
-      });
-    });
-  });
-
   it('renders Enable Discovery toggle as a hidden-checkbox slider (sr-only peer pattern)', async () => {
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -324,11 +272,6 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('save failure shows error toast', async () => {
-    vi.mock('sonner', () => ({
-      toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
-    }));
-    const { toast } = await import('sonner');
-
     mockApi.updateSettings.mockRejectedValue(new Error('Server error'));
 
     renderWithProviders(<DiscoverySettingsSection />);
@@ -345,45 +288,6 @@ describe('DiscoverySettingsSection', () => {
     });
   });
 
-  it('save payload omits weightMultipliers even when settings include it', async () => {
-    const settingsWithWeights = makeSettings({
-      discovery: {
-        enabled: false,
-        intervalHours: 24,
-        maxSuggestionsPerAuthor: 5,
-        expiryDays: 90,
-        snoozeDays: 30,
-        weightMultipliers: { same_author: 0.8, same_narrator: 0.5, same_series: 1 },
-      },
-    });
-    mockApi.getSettings.mockResolvedValue(settingsWithWeights);
-    mockApi.updateSettings.mockResolvedValue(settingsWithWeights);
-
-    renderWithProviders(<DiscoverySettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/enable discovery/i)).toBeInTheDocument();
-    });
-
-    // Edit a visible field to make the form dirty
-    await userEvent.click(screen.getByLabelText(/enable discovery/i));
-    await userEvent.click(screen.getByRole('button', { name: /save/i }));
-
-    await waitFor(() => {
-      expect(mockApi.updateSettings).toHaveBeenCalledTimes(1);
-    });
-
-    const payload = mockApi.updateSettings.mock.calls[0]![0];
-    expect(payload.discovery).toEqual({
-      enabled: true,
-      intervalHours: 24,
-      maxSuggestionsPerAuthor: 5,
-      expiryDays: 90,
-      snoozeDays: 30,
-    });
-    expect(payload.discovery).not.toHaveProperty('weightMultipliers');
-  });
-
   it('renders each number input with step="1"', async () => {
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -394,7 +298,6 @@ describe('DiscoverySettingsSection', () => {
     expect(screen.getByLabelText(/refresh interval/i).getAttribute('step')).toBe('1');
     expect(screen.getByLabelText(/max suggestions per author/i).getAttribute('step')).toBe('1');
     expect(screen.getByLabelText(/suggestion expiry/i).getAttribute('step')).toBe('1');
-    expect(screen.getByLabelText(/default snooze duration/i).getAttribute('step')).toBe('1');
   });
 
   it('#514 shows destructive border on each invalid numeric input', async () => {
@@ -404,7 +307,6 @@ describe('DiscoverySettingsSection', () => {
       { label: /refresh interval/i },
       { label: /max suggestions per author/i },
       { label: /suggestion expiry/i },
-      { label: /default snooze duration/i },
     ];
 
     for (const { label } of fields) {

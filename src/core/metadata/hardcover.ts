@@ -38,7 +38,7 @@ const GET_SERIES_MEMBERS_QUERY = `
 `;
 
 const GET_SERIES_MEMBERS_BY_ID_QUERY = `
-  query GetSeriesMembersById($id: bigint!, $today: date!) {
+  query GetSeriesMembersById($id: Int!, $today: date!) {
     series(where: {
       id: {_eq: $id},
       canonical_id: {_is_null: true}
@@ -73,7 +73,7 @@ const GET_SERIES_MEMBERS_BY_ID_QUERY = `
 // lowercase form to match Hardcover's docs; do not "fix" it to capitalized.
 const SEARCH_SERIES_QUERY = `
   query SearchSeries($query: String!) {
-    search(query: $query, query_type: "series", per_page: 10, page: 1) {
+    search(query: $query, query_type: "series", per_page: 25, page: 1) {
       results
     }
   }
@@ -138,6 +138,8 @@ export interface HardcoverSearchCandidate {
   slug: string | null;
   authorName: string | null;
   booksCount: number;
+  readersCount: number;
+  imageUrl: string | null;
 }
 
 function isoDateToday(): string {
@@ -270,7 +272,16 @@ export class HardcoverClient {
     if (parsed.data.errors?.length) {
       throw new MetadataError(HARDCOVER_PROVIDER, `Hardcover search error: ${parsed.data.errors[0]!.message}`);
     }
-    return extractSearchCandidates(parsed.data.data?.search?.results);
+    // Re-rank by popularity: Typesense text-relevance buries flagship series
+    // behind low-readership spin-offs (see #1239). Drop zero-book stubs, then
+    // sort by readersCount desc. `Array.prototype.sort` is stable (ES2019+), so
+    // equal-readersCount ties preserve Hardcover's relative order. The full
+    // filtered/sorted pool is returned unsliced — the picker display cap lives
+    // in SeriesCardService, and the automatic resolver consumes the wider pool.
+    const candidates = extractSearchCandidates(parsed.data.data?.search?.results)
+      .filter((c) => c.booksCount > 0);
+    candidates.sort((a, b) => b.readersCount - a.readersCount);
+    return candidates;
   }
 }
 
@@ -299,9 +310,30 @@ function extractSearchCandidates(raw: unknown): HardcoverSearchCandidate[] {
     const slug = typeof obj.slug === 'string' ? obj.slug : null;
     const authorName = extractAuthorName(obj);
     const booksCount = pickNumber(obj.books_count) ?? 0;
-    out.push({ id, name, slug, authorName, booksCount });
+    const readersCount = pickNumber(obj.readers_count) ?? 0;
+    const imageUrl = extractImageUrl(obj);
+    out.push({ id, name, slug, authorName, booksCount, readersCount, imageUrl });
   }
   return out;
+}
+
+/**
+ * Cover art for a series candidate is best-effort: the Typesense `search`
+ * payload may carry it as a top-level `image_url` string, or nested under
+ * `image` / `cached_image` objects with a `url`. Absent on most series hits —
+ * the candidate list renders fine without it (name + book count carry the UI).
+ */
+function extractImageUrl(hit: Record<string, unknown>): string | null {
+  const directUrl = hit.image_url;
+  if (typeof directUrl === 'string' && directUrl.length > 0) return directUrl;
+  for (const key of ['image', 'cached_image'] as const) {
+    const candidate = hit[key];
+    if (typeof candidate === 'object' && candidate !== null) {
+      const url = (candidate as Record<string, unknown>).url;
+      if (typeof url === 'string' && url.length > 0) return url;
+    }
+  }
+  return null;
 }
 
 function extractHitsArray(raw: unknown): unknown[] {

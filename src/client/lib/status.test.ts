@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { bookStatusConfig } from './status.js';
+import { bookStatusConfig, bookStatusChipStyles } from './status.js';
 import type { BookStatusStyle } from './status.js';
+import { BOOK_STATUSES } from '../../shared/schemas/book.js';
 
 // Verify the interface is exported (compile-time check — if this import fails, the test file won't compile)
 // PHASE 1 SKIPPED — needs human review
@@ -13,6 +14,24 @@ describe('bookStatusConfig', () => {
   it('has entries for all 7 statuses', () => {
     for (const status of ALL_STATUSES) {
       expect(bookStatusConfig[status]).toBeDefined();
+    }
+  });
+
+  // #1447 (S2d) — drift guard: the badge config keys must set-equal the canonical
+  // BookStatus set, so a future status can't render with an empty/fallback style.
+  it('keys set-equal BOOK_STATUSES (no drift, no fallback masking)', () => {
+    expect(Object.keys(bookStatusConfig).sort()).toEqual([...BOOK_STATUSES].sort());
+  });
+
+  it('renders each canonical status with its own first-class config (no wanted fallback)', () => {
+    for (const status of BOOK_STATUSES) {
+      const entry = bookStatusConfig[status];
+      expect(entry).toBeDefined();
+      // Non-`wanted` statuses must not coincidentally equal the `wanted` config,
+      // which would mean a missing entry was being masked by a fallback.
+      if (status !== 'wanted') {
+        expect(entry).not.toBe(bookStatusConfig.wanted);
+      }
     }
   });
 
@@ -84,6 +103,12 @@ describe('bookStatusConfig', () => {
     expect(dotClass).toContain('rose');
     expect(textClass).toContain('rose');
     expect(barClass).toContain('rose');
+  });
+
+  // #1447 (S2d) — second status-style renderer (library table chip) carries the
+  // same drift guard, so neither status-style map can fall behind BOOK_STATUSES.
+  it('bookStatusChipStyles keys set-equal BOOK_STATUSES', () => {
+    expect(Object.keys(bookStatusChipStyles).sort()).toEqual([...BOOK_STATUSES].sort());
   });
 
   it('active statuses have shimmer in barClass', () => {

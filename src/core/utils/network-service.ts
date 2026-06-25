@@ -39,7 +39,7 @@ import { mapNetworkError } from './map-network-error.js';
 
 // Re-export so callers have a single import surface for outbound-network helpers
 // (the implementation stays in map-network-error.ts to keep its dedicated tests isolated).
-export { mapNetworkError } from './map-network-error.js';
+export { mapNetworkError, redactUrlsFromMessage } from './map-network-error.js';
 import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
 
 /**
@@ -93,18 +93,26 @@ export async function fetchWithOptionalDispatcher(
  *
  * Network-level errors (ECONNREFUSED, ENOTFOUND, timeouts) are mapped to
  * actionable messages via mapNetworkError.
+ *
+ * An optional caller `signal` is composed with the internal timeout signal via
+ * `AbortSignal.any`, so the request aborts when EITHER the per-request timeout
+ * elapses OR the caller aborts (e.g. the connector flush's outer timeout). The
+ * caller signal does not replace the timeout — both stay in force.
  */
 export async function fetchWithTimeout(
   url: string | URL,
   options: RequestInit,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const combinedSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
   let response: Response;
   try {
     response = await fetch(url, {
       ...options,
       redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: combinedSignal,
     });
   } catch (error: unknown) {
     throw mapNetworkError(error);
@@ -390,6 +398,18 @@ export interface FetchWithSsrfRedirectOptions {
   timeoutMs?: number;
   maxHops?: number;
   /**
+   * Request headers forwarded into each `fetch` call so callers can identify
+   * themselves to indexers without reaching into the redirect loop. Intended
+   * for identity headers only (`User-Agent`, `Accept`).
+   *
+   * Credential-bearing headers (`Authorization`, `Cookie`, `Proxy-Authorization`,
+   * any casing) are stripped on cross-origin redirect hops — mirroring WHATWG
+   * fetch / undici / browser behavior — so a malicious or compromised indexer
+   * cannot 302 to a collector host and harvest a forwarded credential. They are
+   * preserved on same-origin hops (origin compared via `URL.origin`).
+   */
+  headers?: Record<string, string>;
+  /**
    * Pre-flight host:port allowlist. When set, a hop whose canonical
    * `host:port` (lowercased hostname, scheme-default port if absent, IPv6
    * brackets stripped) is in the set may resolve to a private/loopback
@@ -414,11 +434,64 @@ export interface FetchWithSsrfRedirectOptions {
  * - Throws UnsupportedRedirectSchemeError when a 3xx Location is not http(s);
  *   the helper does not interpret per-site artifacts (e.g. magnet:).
  */
+/**
+ * Resolve the next hop URL from a 3xx response: cancel the redirect body (so
+ * undici sockets release), validate the Location header is present and points
+ * at http(s), and return the absolute next URL. Throws on a missing Location or
+ * an unsupported scheme. Extracted so the redirect walker stays under the
+ * cyclomatic-complexity cap.
+ */
+async function resolveRedirectTarget(response: Response, currentUrl: string, parsed: URL): Promise<string> {
+  const location = response.headers.get('location');
+  if (!location) {
+    await response.body?.cancel().catch(() => { /* best-effort */ });
+    throw new Error('Redirect with no Location header');
+  }
+  const nextHref = new URL(location, currentUrl).href;
+  await response.body?.cancel().catch(() => { /* best-effort */ });
+  if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
+    throw new UnsupportedRedirectSchemeError(nextHref, parsed);
+  }
+  return nextHref;
+}
+
+/** Request headers stripped on cross-origin redirect hops (lower-cased keys). */
+const CREDENTIAL_HEADER_KEYS = new Set(['authorization', 'cookie', 'proxy-authorization']);
+
+/**
+ * Per-hop request-header filter for the SSRF redirect walker. On a cross-origin
+ * hop, drops credential-class headers (`Authorization`, `Cookie`,
+ * `Proxy-Authorization`, matched case-insensitively) so they are not forwarded
+ * to a host chosen by an indexer-supplied `Location` — mirroring WHATWG fetch /
+ * undici / browser behavior. Identity headers (`User-Agent`, `Accept`) always
+ * survive.
+ *
+ * Returns a fresh object (never mutates the caller's `headers`) and preserves
+ * the original casing of surviving keys. On a same-origin hop, returns a copy
+ * with every header intact.
+ */
+export function stripCrossOriginCredentialHeaders(
+  headers: Record<string, string>,
+  isCrossOrigin: boolean,
+): Record<string, string> {
+  if (!isCrossOrigin) {
+    return { ...headers };
+  }
+  const filtered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (!CREDENTIAL_HEADER_KEYS.has(key.toLowerCase())) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
+}
+
 export async function fetchWithSsrfRedirect(
   startUrl: string,
   opts: FetchWithSsrfRedirectOptions = {},
 ): Promise<Response> {
-  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist } = opts;
+  const { dispatcher, timeoutMs = HTTP_DOWNLOAD_TIMEOUT_MS, maxHops = MAX_REDIRECTS, lanAllowlist, headers = {} } = opts;
+  const startOrigin = new URL(startUrl).origin;
   const visited = new Set<string>();
   let currentUrl = startUrl;
 
@@ -438,6 +511,7 @@ export async function fetchWithSsrfRedirect(
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
       dispatcher,
+      headers: stripCrossOriginCredentialHeaders(headers, parsed.origin !== startOrigin),
     };
 
     const response = await fetchWithOptionalDispatcher(currentUrl, fetchOptions);
@@ -446,20 +520,7 @@ export async function fetchWithSsrfRedirect(
       return response;
     }
 
-    const location = response.headers.get('location');
-    if (!location) {
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      throw new Error('Redirect with no Location header');
-    }
-
-    const nextHref = new URL(location, currentUrl).href;
-    if (!nextHref.startsWith('http://') && !nextHref.startsWith('https://')) {
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      throw new UnsupportedRedirectSchemeError(nextHref, parsed);
-    }
-
-    await response.body?.cancel().catch(() => { /* best-effort */ });
-    currentUrl = nextHref;
+    currentUrl = await resolveRedirectTarget(response, currentUrl, parsed);
   }
 
   throw new Error('Too many redirects');

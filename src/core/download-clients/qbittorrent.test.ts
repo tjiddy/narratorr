@@ -339,6 +339,97 @@ describe('QBittorrentClient', () => {
       });
     });
 
+    describe('duplicate-add adoption (HTTP 409)', () => {
+      const dupInfoHash = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+      const magnetArtifact: DownloadArtifact = {
+        type: 'magnet-uri',
+        uri: `magnet:?xt=urn:btih:${dupInfoHash}&dn=Test`,
+        infoHash: dupInfoHash,
+      };
+      const fakeTorrentFile = Buffer.from('d8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte');
+      const fileArtifact: DownloadArtifact = {
+        type: 'torrent-bytes',
+        data: fakeTorrentFile,
+        infoHash: dupInfoHash,
+      };
+
+      it('magnet path: adopts existing torrent on 409 when present', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 409 });
+          }),
+          http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+            return HttpResponse.json([{ ...mockTorrent, hash: dupInfoHash }]);
+          }),
+        );
+
+        const hash = await client.addDownload(magnetArtifact);
+        expect(hash).toBe(dupInfoHash);
+      });
+
+      it('torrent-bytes path: adopts existing torrent on 409 when present', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 409 });
+          }),
+          http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+            return HttpResponse.json([{ ...mockTorrent, hash: dupInfoHash }]);
+          }),
+        );
+
+        const hash = await client.addDownload(fileArtifact);
+        expect(hash).toBe(dupInfoHash);
+      });
+
+      it('magnet path: rethrows original 409 when torrent absent (race/removed)', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 409 });
+          }),
+          http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+            return HttpResponse.json([]);
+          }),
+        );
+
+        const error = await client.addDownload(magnetArtifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('409');
+      });
+
+      it('torrent-bytes path: rethrows original 409 when torrent absent (race/removed)', async () => {
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 409 });
+          }),
+          http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+            return HttpResponse.json([]);
+          }),
+        );
+
+        const error = await client.addDownload(fileArtifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('409');
+      });
+
+      it('magnet path: does NOT adopt on non-409 failure (e.g. 400)', async () => {
+        let infoCalled = false;
+        server.use(
+          http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+            return new HttpResponse(null, { status: 400 });
+          }),
+          http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+            infoCalled = true;
+            return HttpResponse.json([{ ...mockTorrent, hash: dupInfoHash }]);
+          }),
+        );
+
+        const error = await client.addDownload(magnetArtifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('400');
+        expect(infoCalled).toBe(false);
+      });
+    });
+
     it('rejects nzb-url artifact with torrent-only error', async () => {
       await expect(
         client.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' }),

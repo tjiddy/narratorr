@@ -21,6 +21,7 @@ function makeRow(overrides?: Partial<ImportRow>): ImportRow {
   return {
     book: makeBook(),
     selected: true,
+    userEdited: false,
     edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name' },
     ...overrides,
   };
@@ -83,6 +84,20 @@ describe('ImportCard', () => {
       const badge = screen.getByTestId('badge');
       expect(badge).toHaveClass('bg-amber-500/15', 'text-amber-400', 'ring-1', 'ring-amber-500/20');
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
+    });
+
+    it('renders a Review (medium) row with selected=false as an unchecked checkbox (#1318)', () => {
+      // Medium-confidence rows default to unchecked so the human reviews before import.
+      render(
+        <ImportCard
+          {...defaultProps}
+          row={makeRow({ selected: false, matchResult: makeMatchResult({ confidence: 'medium' }) })}
+        />,
+      );
+      expect(screen.getByText('Review')).toBeInTheDocument();
+      // Unchecked rows expose the "Select" affordance; checked rows expose "Deselect".
+      expect(screen.getByLabelText('Select')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Deselect')).not.toBeInTheDocument();
     });
 
     it('shows red "No Match" badge for none confidence', () => {

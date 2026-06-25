@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  absSettingsSchema,
   createImportListFormSchema,
   createImportListSchema,
   hardcoverSettingsSchema,
@@ -71,13 +70,6 @@ describe('createImportListSchema — typed settings validation', () => {
   const base = { name: 'Test' };
 
   describe('positive cases — each type with valid settings', () => {
-    it('accepts valid abs settings (serverUrl + apiKey + libraryId)', () => {
-      const result = createImportListSchema.safeParse({
-        ...base, type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
-      });
-      expect(result.success).toBe(true);
-    });
-
     it('accepts valid nyt settings (apiKey)', () => {
       const result = createImportListSchema.safeParse({
         ...base, type: 'nyt', settings: { apiKey: 'nytkey' },
@@ -94,14 +86,14 @@ describe('createImportListSchema — typed settings validation', () => {
   });
 
   describe('negative cases', () => {
-    it('rejects missing required fields for abs (no serverUrl)', () => {
+    it('rejects missing required fields for nyt (no apiKey)', () => {
       const result = createImportListSchema.safeParse({
-        ...base, type: 'abs', settings: { apiKey: 'key', libraryId: 'lib' },
+        ...base, type: 'nyt', settings: {},
       });
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.issues).toContainEqual(
-          expect.objectContaining({ path: ['settings', 'serverUrl'] }),
+          expect.objectContaining({ path: ['settings', 'apiKey'] }),
         );
       }
     });
@@ -148,7 +140,7 @@ describe('createImportListSchema — invalid discriminant rejection', () => {
     const result = createImportListSchema.safeParse({
       name: 'Bad List',
       type: 'badList',
-      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
+      settings: { apiKey: 'key' },
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -162,14 +154,14 @@ describe('createImportListSchema — invalid discriminant rejection', () => {
 describe('previewImportListSchema — typed settings validation', () => {
   it('accepts valid preview with typed settings per provider', () => {
     const result = previewImportListSchema.safeParse({
-      type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib1' },
+      type: 'nyt', settings: { apiKey: 'key' },
     });
     expect(result.success).toBe(true);
   });
 
   it('rejects preview with invalid settings', () => {
     const result = previewImportListSchema.safeParse({
-      type: 'abs', settings: { apiKey: 'key' },
+      type: 'nyt', settings: {},
     });
     expect(result.success).toBe(false);
   });
@@ -226,105 +218,6 @@ describe('hardcoverSettingsSchema — numeric shelfId (#732)', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect((result.data.settings as { shelfId?: number }).shelfId).toBe(42);
-    }
-  });
-});
-
-// #786 — ABS libraryId URL-path injection tightening
-describe('absSettingsSchema libraryId (#786)', () => {
-  const baseSettings = { serverUrl: 'http://abs.local', apiKey: 'key' };
-
-  describe('rejects path-injection payloads', () => {
-    const injections = [
-      '../../../etc/passwd',
-      'lib-1/../sensitive',
-      'lib%2F1',
-      'lib 1',
-      'lib?id=1',
-      'lib#frag',
-      'lib\\1',
-      'lib.1.2',
-    ];
-    for (const libraryId of injections) {
-      it(`rejects ${JSON.stringify(libraryId)}`, () => {
-        const result = absSettingsSchema.safeParse({ ...baseSettings, libraryId });
-        expect(result.success).toBe(false);
-      });
-    }
-  });
-
-  describe('rejects whitespace-only and empty', () => {
-    it('rejects empty string', () => {
-      const result = absSettingsSchema.safeParse({ ...baseSettings, libraryId: '' });
-      expect(result.success).toBe(false);
-    });
-
-    it('rejects whitespace-only', () => {
-      const result = absSettingsSchema.safeParse({ ...baseSettings, libraryId: '   ' });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  describe('accepts canonical ABS library ID shapes', () => {
-    const accepted = [
-      'lib_o78uaoeuh78h6',
-      '550e8400-e29b-41d4-a716-446655440000',
-      'lib-1',
-      'library_123',
-    ];
-    for (const libraryId of accepted) {
-      it(`accepts ${JSON.stringify(libraryId)}`, () => {
-        const result = absSettingsSchema.safeParse({ ...baseSettings, libraryId });
-        expect(result.success).toBe(true);
-      });
-    }
-  });
-
-  it('rejects URL-path injection payload at the schema layer', () => {
-    const injection = '../../../etc/passwd';
-    const result = absSettingsSchema.safeParse({ ...baseSettings, libraryId: injection });
-    expect(result.success).toBe(false);
-  });
-});
-
-// #786 — Form-schema libraryId regex coverage (F1)
-describe('createImportListFormSchema libraryId (#786)', () => {
-  const validForm = {
-    name: 'My ABS',
-    type: 'abs' as const,
-    enabled: true,
-    syncIntervalMinutes: 1440,
-  };
-
-  it('rejects path-injection libraryId in ABS form settings', () => {
-    const result = createImportListFormSchema.safeParse({
-      ...validForm,
-      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: '../../../etc/passwd' },
-    });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues).toContainEqual(
-        expect.objectContaining({ path: ['settings', 'libraryId'] }),
-      );
-    }
-  });
-
-  it('accepts canonical ABS libraryId in form settings', () => {
-    const result = createImportListFormSchema.safeParse({
-      ...validForm,
-      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib_o78uaoeuh78h6' },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('trims surrounding whitespace on ABS libraryId before regex validation', () => {
-    const result = createImportListFormSchema.safeParse({
-      ...validForm,
-      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: '  lib-1  ' },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.settings.libraryId).toBe('lib-1');
     }
   });
 });

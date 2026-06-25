@@ -1,17 +1,19 @@
-import { rm } from 'node:fs/promises';
-import { assertPathInsideLibrary, cleanEmptyParents, PathOutsideLibraryError } from '../utils/paths.js';
+import { cleanEmptyParents } from '../utils/paths.js';
+import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/delete-managed-files.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { eq, and, sql, notExists } from 'drizzle-orm';
+import { eq, and, sql, notExists, inArray } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
-import { slugify, findUnmatchedGenres } from '../../core/index.js';
+import { slugify, findUnmatchedGenres, normalizeGenres } from '../../core/index.js';
 import { replaceSeriesLink, upsertSeriesLink, type ReplaceSeriesLinkArgs } from './book-series-link.js';
 import { findOrCreateAuthor, findOrCreateNarrator } from '../utils/find-or-create-person.js';
+import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 
 
 export { CoverUploadError } from './cover-upload.js';
@@ -32,6 +34,7 @@ export interface FixMatchReplacement {
   authors: { name: string; asin?: string | undefined }[];
   narrators?: string[] | undefined;
   description?: string | undefined;
+  publisher?: string | undefined;
   coverUrl?: string | undefined;
   duration?: number | undefined;
   publishedDate?: string | undefined;
@@ -46,7 +49,9 @@ export interface FixMatchReplacement {
 function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof books.$inferInsert> {
   return {
     title: r.title,
+    subtitle: r.subtitle ?? null,
     description: r.description ?? null,
+    publisher: r.publisher ?? null,
     coverUrl: r.coverUrl ?? null,
     asin: r.asin ?? null,
     isbn: r.isbn ?? null,
@@ -56,6 +61,7 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
     publishedDate: r.publishedDate ?? null,
     genres: r.genres ?? null,
     enrichmentStatus: 'pending',
+    enrichmentAttempts: 0,
     updatedAt: new Date(),
   };
 }
@@ -173,6 +179,41 @@ export class BookService {
   }
 
   /**
+   * Batch ASIN → library-status lookup for the v1 metadata-search cross-reference
+   * (#1537). Given the result ASINs of a metadata search, returns a Map keyed by
+   * the UPPERCASED ASIN with `{ bookId: <bk_ publicId>, status }` for each owned
+   * book — so the caller does a plain `.get(result.asin?.toUpperCase())`.
+   *
+   * Case-insensitive by design: ASINs are NOT globally normalized in narratorr
+   * (the parser uppercases, but API validators only `.trim()` and add-by-ASIN
+   * stores as-is), so an exact `IN` would silently miss a case-drifted stored
+   * ASIN and wrongly show every such book as "not owned". We match on
+   * `lower(asin)` (the `book-list.service` precedent) and uppercase both the keys
+   * and the result rows. The query is bounded by the small search result set
+   * (currently ≤10) over the partial unique `idx_books_asin_unique`, so no
+   * chunking is needed — but guard the empty list so we never emit `IN ()`.
+   *
+   * Null-ASIN owned books cannot match (the unique index is partial,
+   * `asin IS NOT NULL`); that limitation is accepted and documented in #1537.
+   */
+  async findLibraryStatusByAsins(asins: string[]): Promise<Map<string, { bookId: string; status: BookStatus }>> {
+    const map = new Map<string, { bookId: string; status: BookStatus }>();
+    if (asins.length === 0) return map;
+
+    const lowered = asins.map((a) => a.toLowerCase());
+    const rows = await this.db
+      .select({ bookId: books.publicId, status: books.status, asin: books.asin })
+      .from(books)
+      .where(inArray(sql`lower(${books.asin})`, lowered));
+
+    for (const row of rows) {
+      if (row.asin == null) continue;
+      map.set(row.asin.toUpperCase(), { bookId: row.bookId, status: row.status as BookStatus });
+    }
+    return map;
+  }
+
+  /**
    * Replace all author junction rows for a book with the given list.
    * Deduplicates by slug within the payload, find-or-creates each author.
    * Called by create() and update().
@@ -228,7 +269,9 @@ export class BookService {
     title: string;
     authors: { name: string; asin?: string | undefined }[];
     narrators?: string[] | undefined;
+    subtitle?: string | undefined;
     description?: string | undefined;
+    publisher?: string | undefined;
     coverUrl?: string | undefined;
     asin?: string | undefined;
     isbn?: string | undefined;
@@ -240,6 +283,7 @@ export class BookService {
     publishedDate?: string | undefined;
     genres?: string[] | undefined;
     status?: BookRow['status'] | undefined;
+    enrichmentStatus?: BookRow['enrichmentStatus'] | undefined;
     providerId?: string | undefined;
     importListId?: number | undefined;
   }): Promise<BookWithAuthor> {
@@ -261,8 +305,11 @@ export class BookService {
       const result = await tx
         .insert(books)
         .values({
+          publicId: generatePublicId('bk'),
           title: data.title,
+          subtitle: data.subtitle,
           description: data.description,
+          publisher: data.publisher,
           coverUrl: data.coverUrl,
           asin: enrichedAsin,
           isbn: data.isbn,
@@ -272,6 +319,7 @@ export class BookService {
           publishedDate: data.publishedDate,
           genres: data.genres,
           status: data.status || 'wanted',
+          enrichmentStatus: data.enrichmentStatus,
           importListId: data.importListId,
         })
         .returning();
@@ -416,23 +464,21 @@ export class BookService {
   }
 
   /**
-   * Delete a book's files from disk and clean up empty parent directories.
-   * Throws on failure so the caller can abort the deletion flow.
+   * Delete a book's MANAGED files from disk (audio + the narratorr cover sidecar), preserving any
+   * foreign files (e-books, PDFs, subtitles, user images) co-located in the folder (#1589), then
+   * clean up empty parent directories. Throws {@link PathOutsideLibraryError} for a path outside
+   * the library root. A per-file deletion failure does NOT throw — it is recorded in the returned
+   * `failedManaged`; the caller decides fatality (manual delete aborts before its DB mutation).
    */
-  async deleteBookFiles(bookPath: string, libraryRoot: string): Promise<void> {
-    try {
-      assertPathInsideLibrary(bookPath, libraryRoot);
-    } catch (error: unknown) {
-      if (error instanceof PathOutsideLibraryError) {
-        this.log.warn({ bookPath, libraryRoot }, 'Refusing to delete book path outside library root');
-      }
-      throw error;
-    }
-
-    await rm(bookPath, { recursive: true, force: true });
-    this.log.info({ path: bookPath }, 'Book files deleted from disk');
+  async deleteBookFiles(bookPath: string, libraryRoot: string): Promise<DeleteManagedFilesResult> {
+    const result = await deleteManagedBookFiles(bookPath, libraryRoot, this.log);
+    this.log.info(
+      { path: bookPath, deleted: result.deletedManaged.length, preserved: result.preservedForeign.length, failed: result.failedManaged.length },
+      'Book managed files deleted from disk',
+    );
 
     await cleanEmptyParents(bookPath, libraryRoot, this.log);
+    return result;
   }
 
   /**
@@ -462,7 +508,7 @@ export class BookService {
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
   private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
-    const unmatched = findUnmatchedGenres(genres, genres);
+    const unmatched = findUnmatchedGenres(normalizeGenres(genres));
     if (unmatched.length === 0) return;
 
     for (const genre of unmatched) {

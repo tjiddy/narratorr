@@ -18,6 +18,7 @@ import { cleanTagTitle } from '../utils/folder-parsing.js';
 import {
   cleanTagAuthor,
   deriveTagQuery,
+  isDurationVerified,
   rankResultsCleaned,
   rankResults,
   resolveConfidenceFromDuration,
@@ -502,6 +503,48 @@ describe('resolveConfidenceFromDuration', () => {
     // distance 10% — fails strict 5%; score below gate so relaxed isn't applied
     const result = resolveConfidenceFromDuration([{ meta: makeBook({ duration: 600 }), score: 0.94 }], 660);
     expect(result.confidence).toBe('medium');
+  });
+});
+
+// ============================================================================
+// isDurationVerified (#1266)
+// ============================================================================
+
+describe('isDurationVerified', () => {
+  it('returns false when scanned duration is undefined', () => {
+    expect(isDurationVerified(makeBook({ duration: 600 }), undefined, 0.9)).toBe(false);
+  });
+
+  it('returns false when scanned duration is zero', () => {
+    expect(isDurationVerified(makeBook({ duration: 600 }), 0, 0.9)).toBe(false);
+  });
+
+  it('returns false when meta duration is missing', () => {
+    expect(isDurationVerified(makeBook(), 600, 0.9)).toBe(false);
+  });
+
+  it('returns false when meta duration is zero', () => {
+    expect(isDurationVerified(makeBook({ duration: 0 }), 600, 0.9)).toBe(false);
+  });
+
+  it('returns true within strict 5% band when score < combined gate', () => {
+    // duration 605 vs 600 → distance ≈ 0.83% — under strict 5%
+    expect(isDurationVerified(makeBook({ duration: 600 }), 605, 0.85)).toBe(true);
+  });
+
+  it('returns false outside strict band when score < combined gate', () => {
+    // duration 660 vs 600 → distance 10% — over strict 5%, score below gate
+    expect(isDurationVerified(makeBook({ duration: 600 }), 660, 0.94)).toBe(false);
+  });
+
+  it('returns true within relaxed 15% band when score >= combined gate (0.95)', () => {
+    // distance 10% — fails strict but passes relaxed once the score clears the gate
+    expect(isDurationVerified(makeBook({ duration: 600 }), 660, 0.96)).toBe(true);
+  });
+
+  it('returns false outside relaxed band even when score >= combined gate', () => {
+    // duration 720 vs 600 → distance 20% — over relaxed 15%
+    expect(isDurationVerified(makeBook({ duration: 600 }), 720, 0.99)).toBe(false);
   });
 });
 

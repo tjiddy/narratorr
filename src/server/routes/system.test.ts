@@ -17,13 +17,6 @@ vi.mock('../utils/version.js', () => ({
   getCommit: () => 'testsha99',
 }));
 
-vi.mock('../jobs/version-check.js', () => ({
-  getUpdateStatus: vi.fn(),
-  checkForUpdate: vi.fn(),
-}));
-
-import { getUpdateStatus } from '../jobs/version-check.js';
-
 describe('system routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
@@ -71,94 +64,6 @@ describe('system routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload).not.toHaveProperty('timestamp');
       expect(payload).not.toHaveProperty('update');
-    });
-  });
-
-  describe('GET /api/system/update-status (#742 — authenticated update info)', () => {
-    it('returns { update: null } when no update available', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
-      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
-      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
-
-      expect(res.statusCode).toBe(200);
-      const payload = JSON.parse(res.payload);
-      expect(payload).toEqual({ update: null });
-    });
-
-    it('returns { update } when newer version available and not dismissed', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        dismissed: false,
-      });
-      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
-
-      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
-
-      expect(res.statusCode).toBe(200);
-      const payload = JSON.parse(res.payload);
-      expect(payload.update).toEqual({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        dismissed: false,
-      });
-      expect(getUpdateStatus).toHaveBeenCalledWith('');
-    });
-
-    it('returns dismissed: true update info when version is dismissed', async () => {
-      vi.mocked(getUpdateStatus).mockReturnValue({
-        latestVersion: '0.2.0',
-        releaseUrl: 'https://github.com/releases/v0.2.0',
-        dismissed: true,
-      });
-      (services.settings.get as Mock).mockResolvedValue({
-        ...DEFAULT_SETTINGS.system,
-        dismissedUpdateVersion: '0.2.0',
-      });
-
-      const res = await app.inject({ method: 'GET', url: '/api/system/update-status' });
-
-      const payload = JSON.parse(res.payload);
-      expect(payload.update.dismissed).toBe(true);
-      expect(getUpdateStatus).toHaveBeenCalledWith('0.2.0');
-    });
-  });
-
-  describe('PUT /api/system/update/dismiss', () => {
-    it('writes dismissedUpdateVersion to system settings via patch', async () => {
-      (services.settings.patch as Mock).mockResolvedValue(undefined);
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/system/update/dismiss',
-        payload: { version: '0.2.0' },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ ok: true });
-      expect(services.settings.patch as Mock).toHaveBeenCalledWith('system', {
-        dismissedUpdateVersion: '0.2.0',
-      });
-    });
-
-    it('returns 400 when version is missing from body', async () => {
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/system/update/dismiss',
-        payload: {},
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when version is whitespace-only', async () => {
-      const res = await app.inject({
-        method: 'PUT',
-        url: '/api/system/update/dismiss',
-        payload: { version: '   ' },
-      });
-
-      expect(res.statusCode).toBe(400);
-      expect(services.settings.patch as Mock).not.toHaveBeenCalled();
     });
   });
 
@@ -242,29 +147,14 @@ describe('system routes', () => {
     });
   });
 
-  describe('POST /api/system/tasks/rss', () => {
-    it('returns 200 with RSS sync summary', async () => {
-      (services.settings.get as Mock).mockImplementation((cat: string) => {
-        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
-      });
-
+  // #1554 — the dedicated POST /api/system/tasks/rss route was removed; RSS is
+  // now triggered only through the generic POST /api/system/tasks/:name/run runner
+  // (covered against the real registry below). The dedicated path is a route-level 404.
+  describe('POST /api/system/tasks/rss (removed — #1554)', () => {
+    it('returns a route-level 404 (no dedicated handler matches)', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
 
-      expect(res.statusCode).toBe(200);
-
-      const payload = JSON.parse(res.payload);
-      expect(payload).toHaveProperty('polled');
-      expect(payload).toHaveProperty('matched');
-      expect(payload).toHaveProperty('grabbed');
-      expect(payload.polled).toBe(0);
-    });
-
-    it('returns 500 when RSS job throws', async () => {
-      (services.settings.get as Mock).mockRejectedValue(new Error('DB connection lost'));
-
-      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
-
-      expect(res.statusCode).toBe(500);
+      expect(res.statusCode).toBe(404);
     });
   });
 
@@ -346,7 +236,6 @@ describe('system routes', () => {
     const cases = [
       { url: '/api/system/tasks/search', task: 'search' },
       { url: '/api/system/tasks/search-all-wanted', task: 'search' },
-      { url: '/api/system/tasks/rss', task: 'rss' },
       { url: '/api/system/backups/create', task: 'backup' },
     ] as const;
 
@@ -414,22 +303,39 @@ describe('system routes', () => {
       await manualRun;
     });
 
+    // #1554 — retargeted from the removed dedicated /tasks/rss route to the
+    // surviving runExclusive-backed /tasks/search route, preserving #746 AC7 coverage.
     it('successful manual run updates lastRun via runExclusive side effect (AC7)', async () => {
-      realRegistry.register('rss', 'timeout', vi.fn().mockResolvedValue(undefined));
+      // Re-register to reset lastRun (the AC4 test above already exercised 'search').
+      realRegistry.register('search', 'timeout', vi.fn().mockResolvedValue(undefined));
       (realServices.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
       );
       (realServices.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
-      const before = realRegistry.getAll().find((t) => t.name === 'rss');
+      const before = realRegistry.getAll().find((t) => t.name === 'search');
       expect(before?.lastRun).toBeNull();
 
-      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/rss' });
+      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/search' });
       expect(res.statusCode).toBe(200);
 
-      const after = realRegistry.getAll().find((t) => t.name === 'rss');
+      const after = realRegistry.getAll().find((t) => t.name === 'search');
       expect(after?.lastRun).not.toBeNull();
       expect(new Date(after!.lastRun!).getTime()).toBeGreaterThan(0);
+    });
+
+    // #1554 — RSS stays reachable through the generic runner after the dedicated
+    // route's removal. The generic runner returns { ok: true } and discards the job
+    // summary (the dedicated route used to return { polled, matched, grabbed }).
+    it('generic POST /api/system/tasks/rss/run drives the registered rss task and returns { ok: true }', async () => {
+      const rssFn = vi.fn().mockResolvedValue(undefined);
+      realRegistry.register('rss', 'timeout', rssFn);
+
+      const res = await realApp.inject({ method: 'POST', url: '/api/system/tasks/rss/run' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ ok: true });
+      expect(rssFn).toHaveBeenCalledOnce();
     });
   });
 
@@ -707,6 +613,101 @@ describe('system routes', () => {
 
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload).error).toBe('File is not a valid zip archive');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+  });
+
+  describe('DELETE /api/system/backups/:filename', () => {
+    it('returns 200 with { success: true } and passes the raw filename to deleteBackup', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.deleteBackup as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/narratorr-backup-test.zip',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
+      expect(services.backup.deleteBackup as Mock).toHaveBeenCalledWith('narratorr-backup-test.zip');
+
+      await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
+    });
+
+    it('rejects path-traversal attempts with 400 and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/..%2F..%2Fetc%2Fpasswd',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an absolute-path filename with 400 and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/%2Fetc%2Fpasswd',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-narratorr-backup filename with 400 and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue(null);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/backup.tar.gz',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid backup filename');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 when the backup file does not exist and does not call deleteBackup', async () => {
+      (services.backup.getBackupPath as Mock).mockReturnValue('/nonexistent/path/backup.zip');
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/narratorr-backup-test.zip',
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Backup not found');
+      expect(services.backup.deleteBackup as Mock).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 and logs canonical serialized error for unexpected deleteBackup failures', async () => {
+      const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-route-test-'));
+      const tmpFile = path.join(tmpDir, 'test.zip');
+      await fsp.writeFile(tmpFile, 'fake');
+      (services.backup.getBackupPath as Mock).mockReturnValue(tmpFile);
+      (services.backup.deleteBackup as Mock).mockRejectedValue(new Error('disk failure'));
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/system/backups/narratorr-backup-test.zip',
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Failed to delete backup');
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'disk failure', type: 'Error' }) }),
+        'Delete backup failed',
+      );
 
       await fsp.rm(tmpDir, { recursive: true }).catch(() => {});
     });

@@ -83,6 +83,30 @@ describe('IndexerService', () => {
     });
   });
 
+  // #1404 — decryptRow threads the injected service logger into decryptFields so a
+  // corrupt/wrong-key secret surfaces a diagnostic. This asserts the warn reaches
+  // THIS caller's injected logger (would fail if `this.log` were dropped from the call).
+  describe('#1404 decrypt-failure diagnostic threading', () => {
+    const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+
+    it('getById threads this.log: corrupt apiKey warns with entity/failedFields, passthrough preserved', async () => {
+      const log = createMockLogger();
+      const loggedService = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      db.select.mockReturnValue(mockDbChain([
+        createMockDbIndexer({ settings: { apiKey: CORRUPT, hostname: 'audiobookbay.lu' } }),
+      ]));
+
+      const result = await loggedService.getById(1);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        { entity: 'indexer', failedFields: ['apiKey'] },
+        expect.stringContaining('secret.key'),
+      );
+      // Passthrough preserved (#1357) — corrupt blob returned unchanged.
+      expect((result!.settings as Record<string, unknown>).apiKey).toBe(CORRUPT);
+    });
+  });
+
   describe('create', () => {
     it('inserts and returns new indexer', async () => {
       db.insert.mockReturnValue(mockDbChain([mockIndexer]));

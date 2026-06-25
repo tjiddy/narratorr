@@ -2,18 +2,18 @@ import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, filterByLanguage, filterMultiPartUsenet } from '../../core/utils/index.js';
 import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
-import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
-import { DuplicateDownloadError } from './download.service.js';
+import { DuplicateDownloadError } from './download-errors.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { recordGrabFailedEvent } from '../utils/download-side-effects.js';
-import { safeEmit } from '../utils/safe-emit.js';
+import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '../../shared/parse-word-list.js';
@@ -280,7 +280,9 @@ export async function postProcessSearchResults(
 
   // Enrich Usenet results with language from newsgroup metadata. Forwarding
   // the LAN allowlist lets the NZB fetch reach a configured-indexer host:port
-  // even at a private IP (#1149).
+  // even at a private IP (#1149). This interactive/post-process display path
+  // stays uncapped (omit maxPhase2Fetches) so enrichment is unaffected; it
+  // still benefits from the shared enrichment cache (#1315).
   const lanAllowlist = await indexerService.getLanAllowlist();
   await enrichUsenetLanguages(filteredResults, logger, lanAllowlist);
 
@@ -322,13 +324,19 @@ export type SingleBookSearchResult =
   | { result: 'skipped'; reason: string }
   | { result: 'grab_error'; error: Error };
 
-/** Attempt to grab the best result and return the search outcome. */
+/**
+ * Attempt to grab the best result and return the search outcome. The return type
+ * excludes `no_results` — `tryGrab` is only reached once a grabbable result has
+ * been selected, so it can only resolve to grabbed/skipped/grab_error. Narrowing
+ * here keeps the outcome chain in {@link runSearchAndGrab} statically aligned with
+ * the three branches it actually handles (#1330, type-only — no behavior change).
+ */
 async function tryGrab(
   best: SearchResult,
   book: { id: number; title: string },
   downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
-): Promise<SingleBookSearchResult> {
+): Promise<Exclude<SingleBookSearchResult, { result: 'no_results' }>> {
   try {
     await downloadOrchestrator.grab(
       buildGrabPayload(best, book.id, { guid: best.guid }),
@@ -344,54 +352,74 @@ async function tryGrab(
   }
 }
 
-async function searchWithBroadcaster(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
+/**
+ * Dependency bag for {@link searchAndGrabForBook} — collapses the former
+ * 9-positional-parameter signature. `indexerService` is required so the LAN
+ * allowlist (#1149) threads to the enrichment leaf at every caller; `broadcaster`
+ * is optional — present selects the streaming/SSE path, absent the no-op path.
+ */
+export interface SearchAndGrabDeps {
+  indexerSearchService: IndexerSearchService;
+  downloadOrchestrator: DownloadOrchestrator;
+  qualitySettings: SearchFilterOptions;
+  log: FastifyBaseLogger;
+  blacklistService: BlacklistService;
+  indexerService: IndexerService;
+  eventHistory: EventHistoryService;
+  broadcaster?: EventBroadcasterService | undefined;
+}
+
+/**
+ * Streaming search executor for the broadcaster path: emits `search_started`,
+ * sets up per-indexer abort controllers, and forwards per-indexer completion /
+ * error callbacks into the sink (streaming-only events stay off the other path).
+ */
+async function streamingSearch(
+  query: string,
+  book: SearchBook,
   indexerSearchService: IndexerSearchService,
-  downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: SearchFilterOptions,
-  log: FastifyBaseLogger,
-  blacklistService: BlacklistService,
-  indexerService: IndexerService,
-  broadcaster: EventBroadcasterService,
-  eventHistory: EventHistoryService,
-): Promise<SingleBookSearchResult> {
-  const query = buildSearchQuery(book);
+  sink: SearchEventSink,
+): Promise<SearchResult[]> {
   const enabledIndexers = await indexerSearchService.getEnabledIndexers();
-  safeEmit(broadcaster, 'search_started', {
-    book_id: book.id, book_title: book.title,
-    indexers: enabledIndexers.map(i => ({ id: i.id, name: i.name })),
-  }, log);
+  sink.searchStarted(enabledIndexers);
 
   const controllers = new Map<number, AbortController>();
   for (const indexer of enabledIndexers) {
     controllers.set(indexer.id, new AbortController());
   }
 
-  let totalResults = 0;
-  const rawResults = await indexerSearchService.searchAllStreaming(
+  return indexerSearchService.searchAllStreaming(
     query,
     { title: book.title, author: book.authors?.[0]?.name },
     controllers,
     {
-      onComplete: (indexerId, name, resultCount, elapsedMs) => {
-        totalResults += resultCount;
-        safeEmit(broadcaster, 'search_indexer_complete', {
-          book_id: book.id, indexer_id: indexerId, indexer_name: name,
-          results_found: resultCount, elapsed_ms: elapsedMs,
-        }, log);
-      },
-      onError: (indexerId, name, error, elapsedMs) => {
-        safeEmit(broadcaster, 'search_indexer_error', {
-          book_id: book.id, indexer_id: indexerId, indexer_name: name,
-          error, elapsed_ms: elapsedMs,
-        }, log);
-      },
+      onComplete: (indexerId, name, resultCount, elapsedMs) => sink.indexerComplete(indexerId, name, resultCount, elapsedMs),
+      onError: (indexerId, name, error, elapsedMs) => sink.indexerError(indexerId, name, error, elapsedMs),
     },
   );
+}
+
+/**
+ * Single search→gate→enrich→rank→grab pipeline shared by the streaming and
+ * non-streaming entry points. The `searchExecutor` injects the search call
+ * (streaming vs aggregate) and the `sink` injects event emission; everything
+ * between — blacklist gate, Usenet language enrichment (LAN allowlist #1149 +
+ * `AUTO_GRAB_PHASE2_CAP` #1315), quality ranking, best-result selection, grab,
+ * and single-record grab-failure handling (#1157) — is identical on both paths.
+ */
+async function runSearchAndGrab(
+  book: SearchBook,
+  deps: SearchAndGrabDeps,
+  sink: SearchEventSink,
+  searchExecutor: () => Promise<SearchResult[]>,
+): Promise<SingleBookSearchResult> {
+  const { downloadOrchestrator, qualitySettings, log, blacklistService, indexerService, eventHistory } = deps;
+
+  const rawResults = await searchExecutor();
 
   if (rawResults.length === 0) {
     log.debug({ bookId: book.id, title: book.title }, 'No results found');
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    sink.searchComplete('no_results');
     return { result: 'no_results' };
   }
 
@@ -400,115 +428,58 @@ async function searchWithBroadcaster(
   const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService, log);
   if (afterBlacklist.length === 0) {
     log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    sink.searchComplete('no_results');
     return { result: 'no_results' };
   }
 
-  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist());
+  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
-  const broadcasterInputCount = afterBlacklist.length;
+  const inputCount = afterBlacklist.length;
   const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
-  if (results.length < broadcasterInputCount) log.debug({ inputCount: broadcasterInputCount, outputCount: results.length }, 'Quality gate filtering applied');
+  if (results.length < inputCount) log.debug({ inputCount, outputCount: results.length }, 'Quality gate filtering applied');
 
   const best = results.find((r) => r.downloadUrl);
   if (!best) {
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    sink.searchComplete('no_results');
     return { result: 'no_results' };
   }
 
   const grabResult = await tryGrab(best, book, downloadOrchestrator, log);
   if (grabResult.result === 'grabbed') {
-    const indexerName = enabledIndexers.find(i => i.id === best.indexerId)?.name ?? best.indexer ?? 'unknown';
-    safeEmit(broadcaster, 'search_grabbed', { book_id: book.id, release_title: best.title, indexer_name: indexerName }, log);
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'grabbed' }, log);
+    sink.grabbed(best);
+    sink.searchComplete('grabbed');
   } else if (grabResult.result === 'skipped') {
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'skipped' }, log);
+    sink.searchComplete('skipped');
   } else if (grabResult.result === 'grab_error') {
-    emitGrabError(grabResult.error, book, best.title, totalResults, broadcaster, eventHistory, log);
-  } else {
-    safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome: 'no_results' }, log);
+    sink.grabError(grabResult.error, best.title);
+    const errorMessage = grabResult.error.message || 'Unknown grab error';
+    recordGrabFailedEvent({ book, releaseTitle: best.title, errorMessage, eventHistory, log });
   }
   return grabResult;
-}
-
-function emitGrabError(
-  error: Error,
-  book: { id: number; title: string; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
-  releaseTitle: string,
-  totalResults: number,
-  broadcaster: EventBroadcasterService,
-  eventHistory: EventHistoryService,
-  log: FastifyBaseLogger,
-): void {
-  const errorMessage = error.message || 'Unknown grab error';
-  safeEmit(broadcaster, 'search_complete', {
-    book_id: book.id,
-    total_results: totalResults,
-    outcome: 'grab_error',
-    book_title: book.title,
-    error_message: errorMessage,
-    release_title: releaseTitle,
-  }, log);
-  recordGrabFailedEvent({ book, releaseTitle, errorMessage, eventHistory, log });
 }
 
 /**
  * Search indexers for a single book and auto-grab the best result.
  * Core search-and-grab logic shared by all callers (jobs, routes).
  *
- * `indexerService` is required so the LAN allowlist (#1149) threads to the
- * enrichment leaf at every production caller without relying on optional-arg
- * leniency at the type level.
+ * Pass `deps.broadcaster` to drive the streaming/SSE path (per-indexer events
+ * plus `search_complete`); omit it for the silent non-streaming path. Both paths
+ * run the identical {@link runSearchAndGrab} core, differing only in the injected
+ * search call and event sink.
  */
 export async function searchAndGrabForBook(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
-  indexerSearchService: IndexerSearchService,
-  downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: SearchFilterOptions,
-  log: FastifyBaseLogger,
-  blacklistService: BlacklistService,
-  indexerService: IndexerService,
-  eventHistory: EventHistoryService,
-  broadcaster?: EventBroadcasterService,
+  book: SearchBook,
+  deps: SearchAndGrabDeps,
 ): Promise<SingleBookSearchResult> {
-  if (broadcaster) {
-    return searchWithBroadcaster(book, indexerSearchService, downloadOrchestrator, qualitySettings, log, blacklistService, indexerService, broadcaster, eventHistory);
-  }
-
+  const { indexerSearchService, broadcaster, log } = deps;
   const query = buildSearchQuery(book);
-  const rawResults = await indexerSearchService.searchAll(query, {
-    title: book.title,
-    author: book.authors?.[0]?.name,
-  });
 
-  if (rawResults.length === 0) {
-    log.debug({ bookId: book.id, title: book.title }, 'No results found');
-    return { result: 'no_results' };
+  if (broadcaster) {
+    const sink = createBroadcasterSink(book, broadcaster, log);
+    return runSearchAndGrab(book, deps, sink, () => streamingSearch(query, book, indexerSearchService, sink));
   }
 
-  log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
-
-  const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService, log);
-  if (afterBlacklist.length === 0) {
-    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
-    return { result: 'no_results' };
-  }
-
-  await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist());
-
-  const grabInputCount = afterBlacklist.length;
-  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
-  if (results.length < grabInputCount) log.debug({ inputCount: grabInputCount, outputCount: results.length }, 'Quality gate filtering applied');
-
-  const best = results.find((r) => r.downloadUrl);
-  if (!best) {
-    return { result: 'no_results' };
-  }
-
-  const grabResult = await tryGrab(best, book, downloadOrchestrator, log);
-  if (grabResult.result === 'grab_error') {
-    const errorMessage = grabResult.error.message || 'Unknown grab error';
-    recordGrabFailedEvent({ book, releaseTitle: best.title, errorMessage, eventHistory, log });
-  }
-  return grabResult;
+  return runSearchAndGrab(book, deps, NOOP_SINK, () =>
+    indexerSearchService.searchAll(query, { title: book.title, author: book.authors?.[0]?.name }),
+  );
 }

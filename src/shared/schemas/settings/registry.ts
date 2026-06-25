@@ -11,7 +11,6 @@ import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
 import { systemSettingsSchema } from './system.js';
 import { discoverySettingsSchema } from './discovery.js';
-import { SUGGESTION_REASONS } from '../discovery.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -37,7 +36,7 @@ export const settingsRegistry = {
   }),
   search: defineCategory({
     schema: searchSettingsSchema,
-    defaults: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' as const },
+    defaults: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' as const },
   }),
   import: defineCategory({
     schema: importSettingsSchema,
@@ -45,7 +44,7 @@ export const settingsRegistry = {
   }),
   general: defineCategory({
     schema: generalSettingsSchema,
-    defaults: { logLevel: 'info' as const, housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false },
+    defaults: { logLevel: 'info' as const, housekeepingRetentionDays: 90, welcomeSeen: false },
   }),
   metadata: defineCategory({
     schema: metadataSettingsSchema,
@@ -56,10 +55,10 @@ export const settingsRegistry = {
     defaults: {
       ffmpegPath: '',
       outputFormat: 'm4b' as const,
-      keepOriginalBitrate: false,
+      keepOriginalBitrate: true,
       bitrate: 128,
       mergeBehavior: 'multi-file-only' as const,
-      maxConcurrentProcessing: 2,
+      maxConcurrentProcessing: 1,
       postProcessingScript: '',
       postProcessingScriptTimeout: 300,
     },
@@ -92,11 +91,11 @@ export const settingsRegistry = {
   }),
   system: defineCategory({
     schema: systemSettingsSchema,
-    defaults: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+    defaults: { backupIntervalMinutes: 10080, backupRetention: 7 },
   }),
   discovery: defineCategory({
     schema: discoverySettingsSchema,
-    defaults: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: Object.fromEntries(SUGGESTION_REASONS.map((r) => [r, 1])) as Record<string, number> },
+    defaults: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
   }),
 };
 

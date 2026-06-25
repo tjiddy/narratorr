@@ -2,16 +2,49 @@ import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { join, extname, basename } from 'node:path';
+import { join, extname, basename, dirname } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
-import { DISC_FOLDER_PATTERN, parseTitledDiscFolder } from '../../core/utils/book-discovery.js';
+import {
+  DISC_FOLDER_PATTERN, parseTitledDiscFolder, parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass,
+  type EmbeddedDiscMarker,
+} from '../../core/utils/book-discovery.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
 import type { authors } from '../../db/schema.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 export const COPY_VERIFICATION_THRESHOLD = 0.99;
+
+/**
+ * Typed marker for import failures caused by bad release content (not host/environment).
+ * `isContentFailure` recognizes this via `instanceof` so the failure classification no longer
+ * depends on substring-matching the message text. Mirrors the existing custom-error convention
+ * (`BackupRecoveryError`): extend `Error`, set `this.name`, preserve a descriptive message.
+ */
+export class ContentFailureError extends Error {
+  /** Serialization-safe discriminant (#1346) — survives prototype loss across a process/JSON
+   * boundary the way `instanceof` cannot. Matches the `BackupRecoveryError` / `PathOutsideLibraryError`
+   * convention. */
+  readonly code = 'CONTENT_FAILURE' as const;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'ContentFailureError';
+  }
+}
+
+/**
+ * Single source of truth for the copy-verification check shared by all four copy paths
+ * (`verifyCopy`, `stagedAudioReplace`, `copyToLibrary`, `copyDiscGroupToLibrary`). Throws a
+ * `ContentFailureError` — whose message retains the source/target byte sizes for diagnostics —
+ * when the copied target is smaller than `sourceSize * COPY_VERIFICATION_THRESHOLD`.
+ */
+export function assertCopyVerified(sourceSize: number, targetSize: number): void {
+  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
+    throw new ContentFailureError(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
+  }
+}
 
 export type { BookRow } from '../services/types.js';
 export type AuthorRow = typeof authors.$inferSelect;
@@ -119,6 +152,20 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   return false;
 }
 
+/**
+ * Audio-bearing check for disc-group reconstruction. Mirrors discovery's `scanDir`, which
+ * catches `readdir` failures and treats an unreadable subtree as zero-audio
+ * (`book-discovery.ts` scanDir) — so an unreadable sibling is excluded from the member set
+ * rather than failing the whole import.
+ */
+async function isAudioBearingDir(dirPath: string): Promise<boolean> {
+  try {
+    return await containsAudioFiles(dirPath);
+  } catch {
+    return false;
+  }
+}
+
 /** Recursively collect all audio file paths from a source directory. */
 async function collectAudioFiles(
   dir: string,
@@ -132,12 +179,16 @@ async function collectAudioFiles(
 
 type AudioFile = { srcPath: string; name: string };
 
-/** Extract disc number from a folder name — works for both bare and titled patterns. */
+/** Extract disc number from a folder name — works for bare, titled, and embedded-marker patterns. */
 function extractDiscNumber(name: string): number {
   const titled = parseTitledDiscFolder(name);
   if (titled) return titled.discNumber;
-  // Bare disc pattern (CD1, Disc 2, etc.) — first digits in name
-  return parseInt(name.match(/\d+/)![0], 10);
+  const embedded = parseEmbeddedDiscMarker(name);
+  if (embedded) return embedded.discNumber;
+  // Bare disc pattern (CD1, Disc 2, etc.) — first digits in name. Guard the no-digit
+  // case so a marker keyword without a number ("Disc of 10") can't crash the sort.
+  const match = name.match(/\d+/);
+  return match ? parseInt(match[0], 10) : 0;
 }
 
 /** Collect audio from disc subfolders with sequential renaming, plus non-disc entries. */
@@ -174,7 +225,7 @@ async function collectMultiDiscFiles(
   for (const file of nonDiscFiles) {
     const existing = seenNonDisc.get(file.name);
     if (existing) {
-      throw new Error(
+      throw new ContentFailureError(
         `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
       );
     }
@@ -185,7 +236,7 @@ async function collectMultiDiscFiles(
   const sequentialNames = new Set(sequentialFiles.map(f => f.name));
   for (const file of nonDiscFiles) {
     if (sequentialNames.has(file.name)) {
-      throw new Error(
+      throw new ContentFailureError(
         `Duplicate filename "${file.name}" found during import flattening: non-disc file "${file.srcPath}" collides with sequential disc numbering`,
       );
     }
@@ -210,7 +261,7 @@ async function collectFlatFiles(
   for (const file of files) {
     const existing = seen.get(file.name);
     if (existing) {
-      throw new Error(
+      throw new ContentFailureError(
         `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
       );
     }
@@ -219,38 +270,17 @@ async function collectFlatFiles(
   return files;
 }
 
-/** Copy audio files from source to target, flattening all subdirectories. */
-export async function copyAudioFiles(
-  source: string,
-  target: string,
-  onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
-): Promise<void> {
-  const rootEntries = await readdir(source, { withFileTypes: true });
+type ProgressFn = (progress: number, byteCounter: { current: number; total: number }) => void;
 
-  const discFolders: Array<{ name: string; path: string }> = [];
-  const otherDirs: Array<{ path: string }> = [];
-  const looseFiles: AudioFile[] = [];
+/** True when a source subfolder is a disc folder — bare, parenthesized, or embedded-marker. */
+function isDiscFolderName(name: string): boolean {
+  return DISC_FOLDER_PATTERN.test(name)
+    || parseTitledDiscFolder(name) !== null
+    || parseEmbeddedDiscMarker(name) !== null;
+}
 
-  for (const entry of rootEntries) {
-    const fullPath = join(source, entry.name);
-    if (entry.isDirectory() && (DISC_FOLDER_PATTERN.test(entry.name) || parseTitledDiscFolder(entry.name) !== null)) {
-      discFolders.push({ name: entry.name, path: fullPath });
-    } else if (entry.isDirectory()) {
-      otherDirs.push({ path: fullPath });
-    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      looseFiles.push({ srcPath: fullPath, name: entry.name });
-    }
-  }
-
-  const allDirs = [...otherDirs];
-  if (discFolders.length < 2) {
-    allDirs.push(...discFolders.map(d => ({ path: d.path })));
-  }
-
-  const files = discFolders.length >= 2
-    ? await collectMultiDiscFiles(discFolders, otherDirs, looseFiles)
-    : await collectFlatFiles(allDirs, looseFiles);
-
+/** Write a resolved {srcPath, name} file list into target, optionally tracking byte progress. */
+async function writeCollectedFiles(files: AudioFile[], target: string, onProgress?: ProgressFn): Promise<void> {
   await mkdir(target, { recursive: true });
 
   if (!onProgress) {
@@ -280,6 +310,111 @@ export async function copyAudioFiles(
 
     await pipeline(createReadStream(srcPath), tracker, createWriteStream(destPath));
   }
+}
+
+/** Copy audio files from source to target, flattening all subdirectories. */
+export async function copyAudioFiles(
+  source: string,
+  target: string,
+  onProgress?: ProgressFn,
+): Promise<void> {
+  const rootEntries = await readdir(source, { withFileTypes: true });
+
+  const discFolders: Array<{ name: string; path: string }> = [];
+  const otherDirs: Array<{ path: string }> = [];
+  const looseFiles: AudioFile[] = [];
+
+  for (const entry of rootEntries) {
+    const fullPath = join(source, entry.name);
+    if (entry.isDirectory() && isDiscFolderName(entry.name)) {
+      discFolders.push({ name: entry.name, path: fullPath });
+    } else if (entry.isDirectory()) {
+      otherDirs.push({ path: fullPath });
+    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      looseFiles.push({ srcPath: fullPath, name: entry.name });
+    }
+  }
+
+  const allDirs = [...otherDirs];
+  if (discFolders.length < 2) {
+    allDirs.push(...discFolders.map(d => ({ path: d.path })));
+  }
+
+  const files = discFolders.length >= 2
+    ? await collectMultiDiscFiles(discFolders, otherDirs, looseFiles)
+    : await collectFlatFiles(allDirs, looseFiles);
+
+  await writeCollectedFiles(files, target, onProgress);
+}
+
+/**
+ * Reconstruct the ordered member-disc folders of a coalesced disc-group row.
+ *
+ * Discovery stores only the lowest-disc member as the row `path`; at import time the full
+ * set is re-derived server-side from `dirname(path)` — siblings whose normalized stem matches
+ * and that carry a disc marker, ordered by disc number. Returns `[memberPath]` unchanged when
+ * the path is not an embedded-marker disc member (so callers gate on `length >= 2`).
+ *
+ * Replays discovery's `discGroupGuardsPass` consistency + all-or-nothing guards so a row that
+ * discovery intentionally left ungrouped (inconsistent `of M` totals, or a markerless stem-sharing
+ * sibling) is NOT flattened/rejected as a coalesced set here.
+ *
+ * Both the guard input AND the member collection run over **audio-bearing sibling directories
+ * only**, exactly mirroring discovery, which groups over `audioChildren` (children with
+ * `countAudioFilesDeep > 0`). Without this filter, an audioless stem-sharing sibling — a usenet
+ * pack's `<stem> Artwork`/`Sample`/NFO folder — is invisible to discovery's all-or-nothing guard
+ * (passes, coalesces) but seen by import's guard (fails, refuses), silently dropping discs 2..N
+ * (#1280). Filtering to audio-bearing dirs gives true parity: a markerless-audioless sibling is
+ * excluded before the guard, and a marker-carrying audioless sibling (a stray zero-file
+ * `<stem> Disc 11 of 10`) is excluded from `memberPaths` so reconstructed members are exactly the
+ * audio-bearing disc directories discovery persisted.
+ */
+export async function reconstructDiscGroup(memberPath: string): Promise<string[]> {
+  const marker = parseEmbeddedDiscMarker(basename(memberPath));
+  if (!marker || !marker.stem) return [memberPath];
+
+  const parent = dirname(memberPath);
+  const key = normalizeStem(marker.stem);
+
+  let entries;
+  try {
+    entries = await readdir(parent, { withFileTypes: true });
+  } catch {
+    return [memberPath];
+  }
+
+  // Filter siblings to audio-bearing dirs once, before BOTH the guard and the member map,
+  // so the set fed to discGroupGuardsPass matches discovery's audio-bearing `audioChildren`.
+  const audioBearingNames: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory() && await isAudioBearingDir(join(parent, entry.name))) {
+      audioBearingNames.push(entry.name);
+    }
+  }
+
+  if (!discGroupGuardsPass(audioBearingNames, key)) return [memberPath];
+
+  return audioBearingNames
+    .map(name => ({ path: join(parent, name), marker: parseEmbeddedDiscMarker(name) }))
+    .filter((e): e is { path: string; marker: EmbeddedDiscMarker } =>
+      e.marker !== null && e.marker.stem !== '' && normalizeStem(e.marker.stem) === key)
+    .sort((a, b) => a.marker.discNumber - b.marker.discNumber)
+    .map(e => e.path);
+}
+
+/**
+ * Flatten an explicit, ordered set of disc-member folders into one target directory,
+ * sequentially renaming across discs. Used by the manual/scan-confirm import path where
+ * the reconstructed member discs are siblings (not children of a single source dir).
+ */
+export async function copyDiscGroup(
+  memberDiscPaths: string[],
+  target: string,
+  onProgress?: ProgressFn,
+): Promise<void> {
+  const discFolders = memberDiscPaths.map(p => ({ name: basename(p), path: p }));
+  const files = await collectMultiDiscFiles(discFolders, [], []);
+  await writeCollectedFiles(files, target, onProgress);
 }
 
 /** Recursively count audio files in a directory. */

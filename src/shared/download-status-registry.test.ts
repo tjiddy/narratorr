@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { downloadStatusSchema } from './schemas.js';
+import { downloadStatusSchema, clientStatusSchema, pipelineStageSchema } from './schemas.js';
 import {
   DOWNLOAD_STATUS_REGISTRY,
   isInProgressStatus,
@@ -9,6 +9,11 @@ import {
   getCompletedStatuses,
   getClientPolledStatuses,
   getReplaceableStatuses,
+  deriveDisplayStatus,
+  isInProgressState,
+  isTerminalState,
+  isReplaceableState,
+  isClientPolledState,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -183,6 +188,71 @@ describe('download-status-registry', () => {
     it('excludes importing (import-pipeline status)', () => {
       const replaceable = getReplaceableStatuses();
       expect(replaceable).not.toContain('importing');
+    });
+  });
+
+  // ── Two-axis derivation (#1445) ─────────────────────────────────────────
+  describe('deriveDisplayStatus', () => {
+    it('maps client-only tuples (pipelineStage=idle) onto the client status, including the failure tuple', () => {
+      for (const s of ['queued', 'downloading', 'paused', 'completed', 'failed'] as const) {
+        expect(deriveDisplayStatus(s, 'idle')).toBe(s);
+      }
+    });
+
+    it('pipeline stage wins over clientStatus whenever the stage is non-idle', () => {
+      // A completed client download mid-pipeline always shows the pipeline stage.
+      expect(deriveDisplayStatus('completed', 'checking')).toBe('checking');
+      expect(deriveDisplayStatus('completed', 'importing')).toBe('importing');
+      expect(deriveDisplayStatus('completed', 'imported')).toBe('imported');
+    });
+  });
+
+  describe('tuple predicates over the full (clientStatus, pipelineStage) product', () => {
+    const clientStatuses = clientStatusSchema.options;
+    const pipelineStages = pipelineStageSchema.options;
+
+    it('isInProgressState matches isInProgressStatus(deriveDisplayStatus(...)) for every tuple', () => {
+      for (const c of clientStatuses) {
+        for (const p of pipelineStages) {
+          expect(isInProgressState(c, p)).toBe(isInProgressStatus(deriveDisplayStatus(c, p)));
+        }
+      }
+    });
+
+    it('isTerminalState matches isTerminalStatus(deriveDisplayStatus(...)) for every tuple', () => {
+      for (const c of clientStatuses) {
+        for (const p of pipelineStages) {
+          expect(isTerminalState(c, p)).toBe(isTerminalStatus(deriveDisplayStatus(c, p)));
+        }
+      }
+    });
+
+    it('a download with pipelineStage=importing is NOT replaceable (load-bearing invariant)', () => {
+      for (const c of clientStatuses) {
+        expect(isReplaceableState(c, 'importing')).toBe(false);
+      }
+    });
+
+    it('isReplaceableState matches getReplaceableStatuses() membership for every tuple', () => {
+      const replaceable = new Set(getReplaceableStatuses());
+      for (const c of clientStatuses) {
+        for (const p of pipelineStages) {
+          expect(isReplaceableState(c, p)).toBe(replaceable.has(deriveDisplayStatus(c, p)));
+        }
+      }
+    });
+
+    it('isClientPolledState is true only for pipeline-idle queued/downloading/paused rows', () => {
+      const polled = new Set(getClientPolledStatuses());
+      for (const c of clientStatuses) {
+        for (const p of pipelineStages) {
+          expect(isClientPolledState(c, p)).toBe(polled.has(deriveDisplayStatus(c, p)));
+        }
+      }
+      // Concretely: a completed client status with idle stage is never polled.
+      expect(isClientPolledState('completed', 'idle')).toBe(false);
+      expect(isClientPolledState('downloading', 'idle')).toBe(true);
+      expect(isClientPolledState('downloading', 'checking')).toBe(false);
     });
   });
 });

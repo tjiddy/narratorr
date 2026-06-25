@@ -27,7 +27,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       uploadBookCover: vi.fn(),
       refreshScanBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
         search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
         import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5 },
@@ -388,6 +388,42 @@ describe('useBookActions', () => {
 
     it('shows success toast mentioning files when deleteFiles=true', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: true });
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Removed book and deleted files from disk');
+      });
+    });
+
+    it('appends the kept-files disclosure when foreign files were preserved (#1589)', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({
+        success: true,
+        fileSummary: { deletedManaged: 3, preservedForeign: ['book.epub', 'notes.pdf'] },
+      });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: true });
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(
+          'Removed book and deleted files from disk — kept 2 non-audio files (book.epub, notes.pdf)',
+        );
+      });
+    });
+
+    it('shows the plain files toast when deleteFiles=true preserved nothing', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({
+        success: true,
+        fileSummary: { deletedManaged: 4, preservedForeign: [] },
+      });
       const { wrapper } = createTestHarness();
       const { result } = renderHook(() => useBookActions(1), { wrapper });
 

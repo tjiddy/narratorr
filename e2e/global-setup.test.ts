@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { _resetCurrentRunForTests, createRunTempDirs, getCurrentRun } from './fixtures/temp-dirs.js';
+import { SUBPATH_RUN } from './fixtures/subpath.js';
 import { _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/run-state.js';
 import { authors, books, downloadClients, indexers } from '../src/db/schema.js';
 import globalSetup, { getE2ESourcePath, cleanupRunPathsFile } from './global-setup.js';
@@ -90,6 +91,28 @@ describe('globalSetup', () => {
       expect((await db.select().from(indexers)).length).toBe(1);
       expect((await db.select().from(downloadClients)).length).toBe(1);
       expect((await db.select().from(authors)).length).toBe(1);
+      expect((await db.select().from(books)).length).toBe(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('seeds the subpath run DB with its own rows when a subpath run is allocated', async () => {
+    const run = createRunTempDirs();
+    const subpath = createRunTempDirs(SUBPATH_RUN);
+    orphans.push(
+      dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath,
+      dirname(subpath.dbPath), subpath.libraryPath, subpath.configPath, subpath.downloadsPath, subpath.sourcePath,
+    );
+
+    await globalSetup();
+
+    // The subpath server's isolated DB gets the same seed (indexer/client/
+    // author/book) so its library renders without sharing the root DB.
+    const client = createClient({ url: `file:${subpath.dbPath}` });
+    const db = drizzle(client);
+    try {
+      expect((await db.select().from(indexers)).length).toBe(1);
       expect((await db.select().from(books)).length).toBe(1);
     } finally {
       client.close();

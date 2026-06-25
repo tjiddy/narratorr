@@ -196,6 +196,10 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
             { headers: { 'Set-Cookie': '_session_id=test; path=/' } },
           );
         }
+        // Short-circuit the daemon handshake: report the web already connected.
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         if (body.method === 'core.add_torrent_file') {
           return HttpResponse.json({ id: body.id, result: 'hash-from-file', error: null });
         }
@@ -218,6 +222,11 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
               { id: body.id, result: true, error: null },
               { headers: { 'Set-Cookie': '_session_id=test; path=/' } },
             );
+          }
+          // Short-circuit the daemon handshake so the first captured method below
+          // is the artifact-specific core.add_torrent_file call, not web.connected.
+          if (body.method === 'web.connected') {
+            return HttpResponse.json({ id: body.id, result: true, error: null });
           }
           capturedMethod = body.method;
           capturedParams = body.params;

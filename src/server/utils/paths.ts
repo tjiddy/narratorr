@@ -1,4 +1,4 @@
-import { readdir, rename, rmdir } from 'node:fs/promises';
+import { readdir, rename, rmdir, realpath } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
@@ -20,6 +20,21 @@ export class PathOutsideLibraryError extends Error {
 }
 
 /**
+ * Containment decision shared by {@link assertPathInsideLibrary} (lexical relative) and
+ * {@link assertRealPathInsideLibrary} (realpath-canonicalized relative): a path is OUTSIDE the
+ * root when its already-computed relative path is empty (equals the root), starts with `..`
+ * (an upward escape or sibling-prefix attack), or is absolute (cross-drive on Windows). The
+ * caller computes `rel` — lexically or via realpath — so this predicate stays agnostic to how
+ * resolution happened and the two guards keep their distinct inputs while sharing one decision.
+ *
+ * NOT for `cleanEmptyParents` or the import-source-outside check: those answer the opposite
+ * (must-be-OUTSIDE) question with a different predicate — folding them in would be a wrong-merge.
+ */
+function isOutsideRoot(rel: string): boolean {
+  return rel === '' || rel.startsWith('..') || isAbsolute(rel);
+}
+
+/**
  * Throw `PathOutsideLibraryError` unless `bookPath` is a true descendant of `libraryRoot`.
  * Rejects equality, `..` escapes, sibling-prefix attacks, and (on Windows) cross-drive paths.
  */
@@ -27,7 +42,46 @@ export function assertPathInsideLibrary(bookPath: string, libraryRoot: string): 
   const normalizedRoot = normalize(resolve(libraryRoot));
   const normalizedBook = normalize(resolve(bookPath));
   const rel = relative(normalizedRoot, normalizedBook);
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+  if (isOutsideRoot(rel)) {
+    throw new PathOutsideLibraryError(bookPath, libraryRoot);
+  }
+}
+
+/**
+ * Async, symlink-aware containment guard for a DB-sourced path that is about to
+ * feed a destructive op (e.g. `renameBook`'s `oldPath`). Runs the lexical
+ * `assertPathInsideLibrary` check **first and unconditionally** — a lexical
+ * escape is rejected even when the path doesn't exist on disk — then re-runs the
+ * `relative`/`isAbsolute` containment on the `realpath`-canonicalized values to
+ * catch an in-library symlink whose target escapes the root (mirrors
+ * `import-preview.ts`).
+ *
+ * An in-library path that doesn't exist on disk surfaces as a `realpath` ENOENT,
+ * which is **swallowed** — the check returns without error, leaving the caller's
+ * own logic to surface the real missing-path cause (preserving today's behavior).
+ * A non-ENOENT `realpath` error propagates.
+ *
+ * Deliberately kept separate from the synchronous `assertPathInsideLibrary`: that
+ * helper's call sites pass not-yet-created target paths, on which `realpath`
+ * would spuriously ENOENT — so folding realpath into it would break those flows.
+ */
+export async function assertRealPathInsideLibrary(bookPath: string, libraryRoot: string): Promise<void> {
+  // Lexical containment first and unconditional — rejects escapes for a missing path too.
+  assertPathInsideLibrary(bookPath, libraryRoot);
+
+  let realRoot: string;
+  let realBook: string;
+  try {
+    realRoot = await realpath(libraryRoot);
+    realBook = await realpath(bookPath);
+  } catch (error: unknown) {
+    // In-library path absent on disk: swallow so the caller surfaces the real cause.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+
+  const rel = relative(realRoot, realBook);
+  if (isOutsideRoot(rel)) {
     throw new PathOutsideLibraryError(bookPath, libraryRoot);
   }
 }

@@ -1,11 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
+import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { NotifierCard } from './NotifierCard';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES, type NotifierType } from '../../../shared/notifier-registry.js';
+import { notifierSettingsSchemas } from '../../../shared/schemas.js';
 import type { Notifier, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
+
+// Every settings key declared by a notifier type OTHER than `ownType`, minus any key
+// `ownType` also declares (e.g. slack/discord both use `webhookUrl`). Delegates to the shared
+// #908-family helper so all four leak-guard suites derive foreign keys identically.
+const foreignNotifierKeys = (ownType: NotifierType): string[] =>
+  foreignRegistryKeys(ownType, NOTIFIER_TYPES, NOTIFIER_REGISTRY);
 
 const mockNotifier: Notifier = createMockNotifier({ id: 1 });
 
@@ -142,6 +151,32 @@ describe('NotifierCard — view mode', () => {
 
     expect(screen.getByText(/Discord — Discord/)).toBeInTheDocument();
   });
+
+  it('shows ntfy subtitle as server hostname when settings are server-masked', () => {
+    const ntfyNotifier = createMockNotifier({
+      id: 4, name: 'My Ntfy', type: 'ntfy',
+      settings: { ntfyTopic: '********', ntfyServer: 'https://ntfy.example.com' },
+    });
+    renderWithProviders(
+      <NotifierCard notifier={ntfyNotifier} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/ntfy — ntfy\.example\.com/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*{8}/)).not.toBeInTheDocument();
+  });
+
+  it('shows ntfy subtitle as ntfy.sh fallback when server is unset', () => {
+    const ntfyNotifier = createMockNotifier({
+      id: 5, name: 'My Ntfy', type: 'ntfy',
+      settings: { ntfyTopic: '********', ntfyServer: '' },
+    });
+    renderWithProviders(
+      <NotifierCard notifier={ntfyNotifier} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    expect(screen.getByText(/ntfy — ntfy\.sh/)).toBeInTheDocument();
+    expect(screen.queryByText(/\*{8}/)).not.toBeInTheDocument();
+  });
 });
 
 describe('NotifierCard — create mode', () => {
@@ -169,6 +204,20 @@ describe('NotifierCard — create mode', () => {
     expect(screen.getByPlaceholderText('https://example.com/webhook')).toBeInTheDocument();
     expect(screen.getByText('Method')).toBeInTheDocument();
     expect(screen.getByText('Body Template')).toBeInTheDocument();
+  });
+
+  it('#1342 Type selector is enabled and present in create mode', () => {
+    renderWithProviders(
+      <NotifierCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const typeSelect = screen.getByLabelText('Type');
+    expect(typeSelect).toBeInTheDocument();
+    expect(typeSelect).toBeEnabled();
   });
 
   it('shows discord fields when type is changed', async () => {
@@ -374,6 +423,40 @@ describe('NotifierCard — edit mode', () => {
     expect(screen.getByText('Save Changes')).toBeInTheDocument();
   });
 
+  it('#1342 Type selector is disabled and present in edit mode', () => {
+    renderWithProviders(
+      <NotifierCard
+        notifier={mockNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const typeSelect = screen.getByLabelText('Type');
+    expect(typeSelect).toBeInTheDocument();
+    expect(typeSelect).toBeDisabled();
+  });
+
+  it('#1342 in edit mode, Save fires and payload carries the original type', async () => {
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={mockNotifier}
+        mode="edit"
+        onSubmit={onSubmit}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByText('Save Changes').closest('button')!);
+
+    expect(onSubmit).toHaveBeenCalled();
+    expect(onSubmit.mock.calls[0]![0]).toMatchObject({ type: mockNotifier.type });
+  });
+
   it('pre-fills event checkboxes from notifier data', () => {
     renderWithProviders(
       <NotifierCard
@@ -560,5 +643,247 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
     // Zod's events.min(1, 'Select at least one event') fires; the error text appears in red below the events list.
     expect(await screen.findByText('Select at least one event')).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+// #908 family — settingsFromX registry-overlay guard (siblings: IndexerCard.test.tsx,
+// DownloadClientForm.test.tsx). NotifierCard hydrates edit-mode settings via the
+// `settingsFromNotifier` registry overlay (NotifierCard.tsx:32-46): it seeds from the entity
+// type's `defaultSettings` and overlays only the non-null stored values whose KEY is in that
+// type's `defaultSettings`. Stored keys foreign to the type (e.g. a stale Telegram `botToken`
+// on a webhook row — real in a hand-edited/legacy self-hosted DB) are dropped at hydration, so
+// a clean row AND a dirty row both hydrate to the type's own keys only. (Earlier this guard was
+// claimed to hold "by construction" for clean rows; the #1343 own-keys filter makes it true for
+// dirty rows too.) The filter is safe because notifier `defaultSettings` keys ≡ the strict
+// per-type schema keys for every type — pinned by the schema-alignment test below.
+//
+// As of #1342 the edit-mode Type selector is rendered disabled and unregistered
+// (NotifierCardForm.tsx), so in-edit type switching is intentionally unreachable; the overlay
+// is validated at hydration, per type. The create-mode reset effect (NotifierCard.tsx:92-97)
+// is a separate guard for the in-create type switch — covered by its own test below.
+describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)', () => {
+  it('webhook entity edit Test payload preserves webhook keys and leaks no foreign-type keys', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const webhookNotifier: Notifier = createMockNotifier({
+      id: 200,
+      name: 'Webhook No Leak',
+      type: 'webhook',
+      settings: { url: 'https://hook.example.com', method: 'POST', bodyTemplate: '{{title}}' },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={webhookNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+    // Stored webhook-specific keys MUST round-trip (value-checked so a default can't masquerade).
+    expect(payloadSettings).toHaveProperty('url', 'https://hook.example.com');
+    expect(payloadSettings).toHaveProperty('method', 'POST');
+    expect(payloadSettings).toHaveProperty('bodyTemplate', '{{title}}');
+
+    // NO key from ANY other notifier type may leak — AC1/CLAUDE.md require the selected
+    // type's payload to carry no foreign keys (the strict per-type server schema rejects them).
+    // Covers discord (webhookUrl/includeCover) plus script/email/telegram/slack/pushover/ntfy/gotify.
+    const foreignKeys = foreignNotifierKeys('webhook');
+    expect(foreignKeys).toContain('webhookUrl');
+    expect(foreignKeys).toContain('botToken');
+    for (const key of foreignKeys) {
+      expect(payloadSettings).not.toHaveProperty(key);
+    }
+  });
+
+  it('discord entity edit Test payload preserves discord keys and leaks no foreign-type keys', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const discordNotifier: Notifier = createMockNotifier({
+      id: 201,
+      name: 'Discord No Leak',
+      type: 'discord',
+      settings: { webhookUrl: 'https://discord.com/api/webhooks/x', includeCover: false },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={discordNotifier}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+
+    // Stored discord-specific keys MUST round-trip — includeCover:false is non-default,
+    // so the overlay (not the registry default of true) must win.
+    expect(payloadSettings).toHaveProperty('webhookUrl', 'https://discord.com/api/webhooks/x');
+    expect(payloadSettings).toHaveProperty('includeCover', false);
+
+    // NO key from ANY other notifier type may leak. `webhookUrl` is shared with slack so it
+    // is the discord type's own key (correctly excluded); webhook keys (url/method/headers/
+    // bodyTemplate) plus script/email/telegram/pushover/ntfy/gotify keys MUST all be absent.
+    const foreignKeys = foreignNotifierKeys('discord');
+    expect(foreignKeys).toContain('url');
+    expect(foreignKeys).not.toContain('webhookUrl');
+    for (const key of foreignKeys) {
+      expect(payloadSettings).not.toHaveProperty(key);
+    }
+  });
+
+  // Mutation-kill: the create-mode reset effect (NotifierCard.tsx:92-97). Validation-free
+  // (DOM field state), because the Test button is RHF `handleSubmit`-gated and a freshly
+  // switched-to type has empty required fields — so we round-trip a type switch and assert the
+  // previous type's field value did not survive. Deleting the reset effect leaves the typed
+  // webhook `url` in RHF state across the switch (shouldUnregister defaults to false), so the
+  // remounted field shows the stale value and this assertion reds.
+  it('#908 create-mode type switch resets the previous type\'s field (reset-effect guard)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <NotifierCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    const urlInput = screen.getByPlaceholderText('https://example.com/webhook');
+    await user.type(urlInput, 'https://typed.example.com/hook');
+    expect(urlInput).toHaveValue('https://typed.example.com/hook');
+
+    const typeSelect = screen.getByLabelText('Type');
+    await user.selectOptions(typeSelect, 'discord');
+    await user.selectOptions(typeSelect, 'webhook');
+
+    // After the round-trip the reset effect must have cleared the stale webhook url.
+    expect(screen.getByPlaceholderText('https://example.com/webhook')).toHaveValue('');
+  });
+
+  // Boundary: a DIRTY webhook row carrying a stale foreign `botToken` (Telegram-only) plus a
+  // non-default `method: 'PUT'` (so the present-value check can't be satisfied by the registry
+  // default 'POST'). The own-keys filter drops `botToken` at hydration, so validation passes and
+  // the Test payload is clean. Removing the filter re-admits `botToken` (the form settings schema
+  // declares it, so zod won't strip it) and this reds.
+  it('#908 dirty webhook row drops a stale foreign botToken and keeps the non-default method', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const dirtyWebhook: Notifier = createMockNotifier({
+      id: 210,
+      name: 'Dirty Webhook',
+      type: 'webhook',
+      settings: { url: 'https://hook.example.com', method: 'PUT', botToken: '123:STALE' },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={dirtyWebhook}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+    expect(payloadSettings).not.toHaveProperty('botToken');
+    expect(payloadSettings).toHaveProperty('method', 'PUT');
+    expect(payloadSettings).toHaveProperty('url', 'https://hook.example.com');
+  });
+
+  // Null-stored-value backfill: a discord row persisting `includeCover: null` must hydrate to the
+  // registry default `true` (the overlay skips null values). A `val != null` → `!== undefined`
+  // mutation would overlay the null and red this.
+  it('#908 discord includeCover:null backfills to the registry default true', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const discordNullCover: Notifier = createMockNotifier({
+      id: 211,
+      name: 'Discord Null Cover',
+      type: 'discord',
+      settings: { webhookUrl: 'https://discord.com/api/webhooks/y', includeCover: null as unknown as boolean },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={discordNullCover}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+    expect(payloadSettings).toHaveProperty('includeCover', true);
+  });
+
+  // #1607 — an ntfy row with a stored (masked) access token and a priority must hydrate both into
+  // the edit Test payload. The access token arrives as the masked sentinel (the server resolves it
+  // against the entity id, injected downstream by the shared hook), and the priority carries through.
+  it('#1607 ntfy edit Test payload carries the masked access token sentinel and priority', async () => {
+    const onFormTest = vi.fn();
+    const user = userEvent.setup();
+    const ntfyRow: Notifier = createMockNotifier({
+      id: 212,
+      name: 'Protected Ntfy',
+      type: 'ntfy',
+      settings: { ntfyTopic: '********', ntfyServer: 'https://ntfy.example.com', ntfyAccessToken: '********', ntfyPriority: 'high' },
+    });
+
+    renderWithProviders(
+      <NotifierCard
+        notifier={ntfyRow}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={onFormTest}
+      />,
+    );
+
+    await user.click(screen.getByText('Test').closest('button')!);
+
+    await waitFor(() => {
+      expect(onFormTest).toHaveBeenCalled();
+    });
+
+    const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
+    expect(payloadSettings).toHaveProperty('ntfyAccessToken', '********');
+    expect(payloadSettings).toHaveProperty('ntfyPriority', 'high');
+  });
+});
+
+// #908 — schema-alignment guard. The `settingsFromNotifier` own-keys filter uses each type's
+// `defaultSettings` keys as the allowlist. That is only safe while the default key set equals
+// the strict per-type schema key set — otherwise a valid-but-default-less schema field would be
+// silently dropped at hydration. This pins the invariant: adding such a field reds here, forcing
+// either a matching default or an explicit revisit of the filter's allowlist source.
+describe('#908 — notifier registry/schema key-set alignment', () => {
+  it.each(NOTIFIER_TYPES)('%s defaultSettings keys equal its strict schema keys', (type) => {
+    const defaultKeys = Object.keys(NOTIFIER_REGISTRY[type].defaultSettings).sort();
+    const shape = (notifierSettingsSchemas[type] as unknown as { shape: Record<string, unknown> }).shape;
+    const schemaKeys = Object.keys(shape).sort();
+    expect(schemaKeys).toEqual(defaultKeys);
   });
 });

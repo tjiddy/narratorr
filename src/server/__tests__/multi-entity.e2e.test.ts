@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { join } from 'node:path';
@@ -373,13 +374,13 @@ describe('Job lifecycle E2E', () => {
 
     await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
 
-    const [dl] = await e2e.db.insert(downloads).values({
+    const [dl] = await e2e.db.insert(downloads).values({ publicId: generatePublicId('dl'),
       bookId,
       downloadClientId,
       title: 'Monitor Test Book',
       protocol: 'torrent' as const,
       externalId: TORRENT_HASH,
-      status: 'downloading' as const,
+      clientStatus: 'downloading' as const,
     }).returning();
 
     // qBittorrent reports download as complete (progress 100%)
@@ -411,7 +412,8 @@ describe('Job lifecycle E2E', () => {
 
     // Verify download is completed with timestamp
     const [updated] = await e2e.db.select().from(downloads).where(eq(downloads.id, dl!.id));
-    expect(updated!.status).toBe('completed');
+    expect(updated!.clientStatus).toBe('completed');
+    expect(updated!.pipelineStage).toBe('idle');
     expect(updated!.completedAt).toBeTruthy();
 
     // Book stays 'downloading' — promotion to 'importing' now happens in processOneDownload
@@ -443,6 +445,6 @@ describe('Job lifecycle E2E', () => {
 
     // Download should be imported too
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
-    expect(dl!.status).toBe('imported');
+    expect(dl!.pipelineStage).toBe('imported');
   });
 });

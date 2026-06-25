@@ -153,12 +153,13 @@ export const delugeTorrentStatusSchema = z.object({
 export const delugeTorrentsStatusMapSchema = z.record(z.string(), delugeTorrentStatusSchema);
 
 // NZBGet RPC response schema
-// At least one of result or error must be present
+// At least one of result or a non-null error must be present. NZBGet returns an
+// explicit `error: null` on success, so use `.nullish()` (mirrors Deluge above).
 export const nzbgetRpcResponseSchema = z.object({
   result: z.unknown().optional(),
-  error: z.object({ name: z.string(), code: z.number(), message: z.string() }).optional(),
+  error: z.object({ name: z.string(), code: z.number(), message: z.string() }).nullish(),
 }).passthrough().refine(
-  (data) => data.result !== undefined || data.error !== undefined,
+  (data) => data.result !== undefined || data.error != null,
   { message: 'NZBGet RPC response missing both "result" and "error" fields' },
 );
 

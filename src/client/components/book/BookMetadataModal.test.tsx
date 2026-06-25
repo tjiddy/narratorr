@@ -1,21 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookMetadataModal } from './BookMetadataModal';
-import { createMockBook, createMockBookMetadata } from '@/__tests__/factories';
-
-// Mock the API
-vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual('@/lib/api');
-  return {
-    ...actual,
-    api: {
-      searchMetadata: vi.fn(),
-    },
-  };
-});
-
+import { createMockBook } from '@/__tests__/factories';
 
 const mockBook = createMockBook({
   title: 'The Way of Kings',
@@ -25,6 +13,12 @@ const mockBook = createMockBook({
   path: '/library/Brandon Sanderson/The Way of Kings',
   status: 'imported',
   authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+  subtitle: 'Book One of the Stormlight Archive',
+  description: 'An epic fantasy novel.',
+  publisher: 'Macmillan Audio',
+  coverUrl: 'https://example.com/cover.jpg',
+  publishedDate: '2010-08-31',
+  genres: ['Fantasy', 'Epic'],
 });
 
 const defaultProps = {
@@ -52,10 +46,16 @@ describe('BookMetadataModal', () => {
     it('opens with current metadata pre-filled', () => {
       renderModal();
 
-      expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
+      expect(screen.getByLabelText(/^title/i)).toHaveValue('The Way of Kings');
+      expect(screen.getByLabelText(/^author$/i)).toHaveValue('Brandon Sanderson');
       expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
       expect(screen.getByLabelText(/position/i)).toHaveValue('1');
       expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer');
+      expect(screen.getByLabelText(/description/i)).toHaveValue('An epic fantasy novel.');
+      expect(screen.getByLabelText(/subtitle/i)).toHaveValue('Book One of the Stormlight Archive');
+      expect(screen.getByLabelText(/publisher/i)).toHaveValue('Macmillan Audio');
+      expect(screen.getByLabelText(/published date/i)).toHaveValue('2010-08-31');
+      expect(screen.getByLabelText(/genres/i)).toHaveValue('Fantasy, Epic');
     });
 
     it('calls onSave with updated data when Save is clicked', async () => {
@@ -63,7 +63,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Words of Radiance');
 
@@ -102,7 +102,7 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal();
 
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
 
       await waitFor(() => {
@@ -189,11 +189,6 @@ describe('BookMetadataModal', () => {
       });
     });
 
-    it('shows "Search for metadata" button', () => {
-      renderModal();
-      expect(screen.getByText('Search for metadata')).toBeInTheDocument();
-    });
-
     it('excludes seriesPosition from payload when user types non-numeric value', async () => {
       const onSave = vi.fn();
       const user = userEvent.setup();
@@ -204,7 +199,7 @@ describe('BookMetadataModal', () => {
       await user.type(posInput, 'abc');
 
       // Change title so onSave gets called with some data
-      const titleInput = screen.getByLabelText(/title/i);
+      const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
 
@@ -295,388 +290,237 @@ describe('BookMetadataModal', () => {
     });
   });
 
-  describe('search view', () => {
-    it('shows search input pre-filled with book title and author', async () => {
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-
-      await waitFor(() => {
-        const searchInput = screen.getByLabelText('Search query');
-        expect(searchInput).toHaveValue('The Way of Kings Brandon Sanderson');
-      });
-    });
-
-    it('pre-fills with title only when book has no author', async () => {
-      const user = userEvent.setup();
-      const bookNoAuthor = { ...mockBook, authors: [] };
-      renderModal({ book: bookNoAuthor });
-
-      await user.click(screen.getByText('Search for metadata'));
-
-      await waitFor(() => {
-        const searchInput = screen.getByLabelText('Search query');
-        expect(searchInput).toHaveValue('The Way of Kings');
-      });
-    });
-
-    it('auto-fires search on mount when query is pre-populated', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({ books: [createMockBookMetadata({ title: 'Auto Result' })], authors: [], series: [] });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-
-      // Search should fire automatically without clicking the Search button
-      await waitFor(() => {
-        expect(searchMock).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
-      });
-
-      // Results should appear without manual search click
-      await screen.findByText('Auto Result');
-    });
-
-    it('does not auto-fire search when query would be empty', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-
-      const user = userEvent.setup();
-      const bookNoTitleOrAuthor = { ...mockBook, title: '', authors: [] };
-      renderModal({ book: bookNoTitleOrAuthor });
-
-      await user.click(screen.getByText('Search for metadata'));
-
-      // Should not have called search
-      expect(searchMock).not.toHaveBeenCalled();
-    });
-
-    it('calls api.searchMetadata when search is submitted', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({ books: [], authors: [], series: [] });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-
-      await waitFor(() => {
-        expect(searchMock).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
-      });
-    });
-
-    it('submits search on Enter key', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({ books: [], authors: [], series: [] });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.keyboard('{Enter}');
-
-      await waitFor(() => {
-        expect(searchMock).toHaveBeenCalled();
-      });
-    });
-
-    it('renders search results with title, author, and narrator', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [
-          createMockBookMetadata({ title: 'Result One', authors: [{ name: 'Author A' }], narrators: ['Narrator X'] }),
-          createMockBookMetadata({ title: 'Result Two', authors: [{ name: 'Author B' }], narrators: ['Narrator Y'], asin: 'B002' }),
-        ],
-        authors: [],
-        series: [],
-      });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-
-      await screen.findByText('Result One');
-      await waitFor(() => {
-        expect(screen.getByText('Result Two')).toBeInTheDocument();
-        expect(screen.getByText('Author A')).toBeInTheDocument();
-        expect(screen.getByText('Narrator X')).toBeInTheDocument();
-      });
-    });
-
-    it('auto-fills fields when a search result is selected', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [
-          createMockBookMetadata({
-            title: 'Words of Radiance',
-            narrators: ['Michael Kramer', 'Kate Reading'],
-            series: [{ name: 'The Stormlight Archive', position: 2 }],
-            asin: 'B00DA6YEKS',
-          }),
-        ],
-        authors: [],
-        series: [],
-      });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-
-      await screen.findByText('Words of Radiance');
-      await user.click(screen.getByText('Words of Radiance'));
-
-      // Should return to edit view with auto-filled fields
-      await waitFor(() => {
-        expect(screen.getByLabelText(/title/i)).toHaveValue('Words of Radiance');
-        expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer, Kate Reading');
-        expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
-        expect(screen.getByLabelText(/position/i)).toHaveValue('2');
-      });
-    });
-
-    it('allows editing auto-filled fields before saving', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [createMockBookMetadata({ title: 'Auto Title', narrators: ['Auto Narrator'] })],
-        authors: [],
-        series: [],
-      });
-
+  describe('new metadata fields (#1609)', () => {
+    it('sends authors when the author field is edited', async () => {
       const onSave = vi.fn();
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-      await screen.findByText('Auto Title');
-      await user.click(screen.getByText('Auto Title'));
-
-      // Now in edit view — modify the auto-filled title
-      const titleInput = screen.getByLabelText(/title/i);
-      await user.clear(titleInput);
-      await user.type(titleInput, 'Modified Title');
-      await user.click(screen.getByText('Save'));
-
-      await waitFor(() => {
-        expect(onSave).toHaveBeenCalledWith(
-          expect.objectContaining({ title: 'Modified Title' }),
-          false,
-        );
-      });
-    });
-
-    it('does not modify form fields when search is dismissed without selecting', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [createMockBookMetadata({ title: 'Some Result' })],
-        authors: [],
-        series: [],
-      });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-      await screen.findByText('Some Result');
-
-      // Dismiss without selecting
-      await user.click(screen.getByLabelText('Back to edit'));
-
-      // Original values preserved
-      await waitFor(() => {
-        expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
-        expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer');
-      });
-    });
-
-    it('shows empty state when search returns no results', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({ books: [], authors: [], series: [] });
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-
-      // Auto-search fires on mount — wait for the no-results state
-      await screen.findByText(/No results found/);
-    });
-
-    it('shows loading state during search', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      // Never resolve to keep loading
-      searchMock.mockReturnValue(new Promise(() => {}));
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-
-      // Search button should be disabled while loading
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
-      });
-    });
-
-    it('shows error message when search fails', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockRejectedValue(new Error('Network error'));
-
-      const user = userEvent.setup();
-      renderModal();
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-
-      await screen.findByText('Search failed. Please try again.');
-    });
-
-    it('saves correct payload after auto-fill from search', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [
-          createMockBookMetadata({
-            title: 'New Title',
-            narrators: ['New Narrator'],
-            series: [{ name: 'New Series', position: 3 }],
-          }),
-        ],
-        authors: [],
-        series: [],
-      });
-
-      const onSave = vi.fn();
-      const user = userEvent.setup();
-      renderModal({ onSave });
-
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-      await screen.findByText('New Title');
-      await user.click(screen.getByText('New Title'));
+      const authorInput = screen.getByLabelText(/^author$/i);
+      await user.clear(authorInput);
+      await user.type(authorInput, 'Robert Jordan, Brandon Sanderson');
       await user.click(screen.getByText('Save'));
 
       await waitFor(() => {
         expect(onSave).toHaveBeenCalledWith(
           expect.objectContaining({
-            title: 'New Title',
-            narrators: ['New Narrator'],
-            seriesName: 'New Series',
-            seriesPosition: 3,
+            authors: [{ name: 'Robert Jordan' }, { name: 'Brandon Sanderson' }],
           }),
           false,
         );
       });
     });
 
-    describe('URL_BASE resolveUrl integration', () => {
-      afterEach(() => {
-        vi.restoreAllMocks();
-      });
+    it('omits authors (does not send []) when the author field is blanked', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
 
-      it('prefixes app-relative search result cover URLs with URL_BASE via resolveUrl', async () => {
-        vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
-          (url) => {
-            if (!url) return undefined;
-            if (url.startsWith('http://') || url.startsWith('https://')) return url;
-            return `/narratorr${url}`;
-          },
-        );
+      await user.clear(screen.getByLabelText(/^author$/i));
+      // Change title so save still fires with a payload
+      const titleInput = screen.getByLabelText(/^title/i);
+      await user.clear(titleInput);
+      await user.type(titleInput, 'Changed Title');
+      await user.click(screen.getByText('Save'));
 
-        const { api } = await import('@/lib/api');
-        const searchMock = vi.mocked(api.searchMetadata);
-        searchMock.mockResolvedValue({
-          books: [
-            createMockBookMetadata({ title: 'Prefixed Cover', coverUrl: '/api/books/1/cover', asin: 'B999' }),
-          ],
-          authors: [],
-          series: [],
-        });
-
-        const user = userEvent.setup();
-        renderModal();
-
-        await user.click(screen.getByText('Search for metadata'));
-        await user.click(screen.getByRole('button', { name: 'Search' }));
-
-        await screen.findByText('Prefixed Cover');
-        const imgs = document.querySelectorAll('img');
-        const coverImg = Array.from(imgs).find(img => img.getAttribute('src')?.includes('/api/books/1/cover'));
-        expect(coverImg).toBeTruthy();
-        expect(coverImg!.getAttribute('src')).toBe('/narratorr/api/books/1/cover');
+      await waitFor(() => {
+        const payload = onSave.mock.calls[0]![0];
+        expect(payload).not.toHaveProperty('authors');
       });
     });
 
-    it('clears narrator field when selected metadata has no narrators', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [createMockBookMetadata({ title: 'No Narrator Book', narrators: undefined })],
-        authors: [],
-        series: [],
-      });
-
+    it('sends edited description; untouched fields are omitted', async () => {
+      const onSave = vi.fn();
       const user = userEvent.setup();
-      renderModal();
+      renderModal({ onSave });
 
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-      await screen.findByText('No Narrator Book');
-      await user.click(screen.getByText('No Narrator Book'));
+      const descInput = screen.getByLabelText(/description/i);
+      await user.clear(descInput);
+      await user.type(descInput, 'A revised description.');
+      await user.click(screen.getByText('Save'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText(/narrator/i)).toHaveValue('');
+        const payload = onSave.mock.calls[0]![0];
+        expect(payload.description).toBe('A revised description.');
+        expect(payload).not.toHaveProperty('title');
+        expect(payload).not.toHaveProperty('genres');
       });
     });
 
-    // #1097 — applyMetadata prefers seriesPrimary over series[0]
-    it('prefers seriesPrimary over series[0] when populating edit fields (#1097)', async () => {
-      const { api } = await import('@/lib/api');
-      const searchMock = vi.mocked(api.searchMetadata);
-      searchMock.mockResolvedValue({
-        books: [createMockBookMetadata({
-          title: 'Stormlight Book',
-          seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
-          series: [
-            { name: 'Cosmere', position: 5 },
-            { name: 'The Stormlight Archive', position: 2 },
-          ],
-        })],
-        authors: [],
-        series: [],
-      });
-
+    it('sends null (not "") when description is cleared', async () => {
+      const onSave = vi.fn();
       const user = userEvent.setup();
-      renderModal();
+      renderModal({ onSave });
 
-      await user.click(screen.getByText('Search for metadata'));
-      await user.click(screen.getByRole('button', { name: 'Search' }));
-      await screen.findByText('Stormlight Book');
-      await user.click(screen.getByText('Stormlight Book'));
+      await user.clear(screen.getByLabelText(/description/i));
+      await user.click(screen.getByText('Save'));
 
       await waitFor(() => {
-        expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
-        expect(screen.getByLabelText(/position/i)).toHaveValue('2');
+        const payload = onSave.mock.calls[0]![0];
+        expect(payload.description).toBeNull();
       });
+    });
+
+    it('does not render a Cover URL input (#1614)', () => {
+      renderModal();
+      expect(screen.queryByLabelText(/cover url/i)).not.toBeInTheDocument();
+    });
+
+    it('sends edited subtitle and null when cleared', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const subtitleInput = screen.getByLabelText(/subtitle/i);
+      await user.clear(subtitleInput);
+      await user.type(subtitleInput, 'A New Subtitle');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].subtitle).toBe('A New Subtitle');
+      });
+
+      onSave.mockClear();
+      await user.clear(screen.getByLabelText(/subtitle/i));
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].subtitle).toBeNull();
+      });
+    });
+
+    it('sends edited publisher and null when cleared', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const publisherInput = screen.getByLabelText(/publisher/i);
+      await user.clear(publisherInput);
+      await user.type(publisherInput, 'Tor Books');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].publisher).toBe('Tor Books');
+      });
+
+      onSave.mockClear();
+      await user.clear(screen.getByLabelText(/publisher/i));
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].publisher).toBeNull();
+      });
+    });
+
+    it('sends the full raw publishedDate string when edited (no year truncation)', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const dateInput = screen.getByLabelText(/published date/i);
+      await user.clear(dateInput);
+      await user.type(dateInput, '2015-03-14');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].publishedDate).toBe('2015-03-14');
+      });
+    });
+
+    it('omits an untouched publishedDate from the payload (never truncated to a year)', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      // Touch a different field so save fires with a payload
+      const titleInput = screen.getByLabelText(/^title/i);
+      await user.clear(titleInput);
+      await user.type(titleInput, 'Changed Title');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        const payload = onSave.mock.calls[0]![0];
+        expect(payload).not.toHaveProperty('publishedDate');
+      });
+    });
+
+    it('sends null when publishedDate is cleared', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      await user.clear(screen.getByLabelText(/published date/i));
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].publishedDate).toBeNull();
+      });
+    });
+
+    it('parses comma-separated genres into a string[] payload', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const genresInput = screen.getByLabelText(/genres/i);
+      await user.clear(genresInput);
+      await user.type(genresInput, 'Science Fiction, Horror');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].genres).toEqual(['Science Fiction', 'Horror']);
+      });
+    });
+
+    it('sends null (not []) when the genres field is blanked', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      await user.clear(screen.getByLabelText(/genres/i));
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(onSave.mock.calls[0]![0].genres).toBeNull();
+      });
+    });
+
+    it('editing only the author leaves other fields out of the payload', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const authorInput = screen.getByLabelText(/^author$/i);
+      await user.clear(authorInput);
+      await user.type(authorInput, 'Robert Jordan');
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        const payload = onSave.mock.calls[0]![0];
+        expect(payload).toHaveProperty('authors');
+        expect(payload).not.toHaveProperty('title');
+        expect(payload).not.toHaveProperty('subtitle');
+        expect(payload).not.toHaveProperty('description');
+        expect(payload).not.toHaveProperty('publisher');
+        expect(payload).not.toHaveProperty('publishedDate');
+        expect(payload).not.toHaveProperty('genres');
+        expect(payload).not.toHaveProperty('narrators');
+        expect(payload).not.toHaveProperty('seriesName');
+      });
+    });
+  });
+
+  describe('embedded search removed (#1609)', () => {
+    it('does not render a "Search for metadata" button', () => {
+      renderModal();
+      expect(screen.queryByText('Search for metadata')).not.toBeInTheDocument();
+    });
+
+    it('does not render a Search Metadata header or search query input', () => {
+      renderModal();
+      expect(screen.queryByText('Search Metadata')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Search query')).not.toBeInTheDocument();
+      expect(screen.getByText('Edit Metadata')).toBeInTheDocument();
     });
   });
 
@@ -701,25 +545,6 @@ describe('BookMetadataModal', () => {
 
     expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveAttribute('type', 'button');
     expect(screen.getByRole('button', { name: /^save$/i })).toHaveAttribute('type', 'button');
-  });
-
-  it('search-result selection buttons have explicit type="button"', async () => {
-    const { api: mockApi } = await import('@/lib/api');
-    vi.mocked(mockApi.searchMetadata).mockResolvedValue({
-      books: [createMockBookMetadata({ title: 'Result One', authors: [{ name: 'Author A' }] })],
-      authors: [],
-      series: [],
-    });
-    const user = userEvent.setup();
-    renderModal();
-
-    await user.click(screen.getByText('Search for metadata'));
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-
-    await waitFor(() => {
-      const resultBtn = screen.getByText('Result One').closest('button');
-      expect(resultBtn).toHaveAttribute('type', 'button');
-    });
   });
 
   describe('Strategy B migration (#484)', () => {

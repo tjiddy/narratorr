@@ -5,6 +5,7 @@ import { QualityGateService, QualityGateServiceError } from './quality-gate.serv
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
+import { completedDisplayDownloadCondition } from '../utils/download-state.js';
 
 function createService() {
   const db = createMockDb();
@@ -19,7 +20,8 @@ function createService() {
 }
 
 const baseDownload = {
-  id: 1, bookId: 1, title: 'Test Book', status: 'completed' as const,
+  id: 1, publicId: 'dl_test000000000000000', bookId: 1, title: 'Test Book',
+  clientStatus: 'completed' as const, pipelineStage: 'idle' as const,
   externalId: 'ext-1', downloadClientId: 1, infoHash: 'abc123',
   protocol: 'torrent' as const, downloadUrl: null, size: 500_000_000,
   seeders: 10, progress: 1, errorMessage: null,
@@ -29,18 +31,18 @@ const baseDownload = {
 };
 
 const baseBook = {
-  id: 1, title: 'Test Book', status: 'imported' as const,
+  id: 1, publicId: 'bk_test000000000000000', title: 'Test Book', status: 'imported' as const,
   narrators: [{ name: 'John Smith' }], size: 400_000_000, duration: 600,
   audioTotalSize: null, audioDuration: 36000, path: '/library/test',
-  asin: null, isbn: null, coverUrl: null, description: null,
+  asin: null, isbn: null, coverUrl: null, subtitle: null, description: null,
   publishedDate: null, publisher: null, language: null,
   seriesName: null, seriesPosition: null, genres: null, tags: null,
   rating: null, ratingCount: null, pageCount: null,
   audioBitrate: null, audioCodec: null, audioSampleRate: null,
   audioChannels: null, updatedAt: new Date(), addedAt: new Date(),
-  createdAt: new Date(), enrichmentStatus: 'pending' as const,
+  createdAt: new Date(), enrichmentStatus: 'pending' as const, enrichmentAttempts: 0,
   audioBitrateMode: null, audioFileFormat: null, audioFileCount: null, topLevelAudioFileCount: null,
-  audibleId: null, goodreadsId: null, seriesId: null, importListId: null,
+  seriesId: null, importListId: null,
   lastGrabGuid: null, lastGrabInfoHash: null,
 };
 
@@ -74,7 +76,7 @@ describe('QualityGateService', () => {
       expect(result).toEqual(expected);
       const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(
-        and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)),
+        and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId)),
       );
     });
 
@@ -102,7 +104,7 @@ describe('QualityGateService', () => {
       expect(result!.book).toEqual({ ...baseBook, narrators: [{ name: 'John Smith' }] });
       const chain = db.select.mock.results[0]!.value;
       expect(chain.where).toHaveBeenCalledWith(
-        and(eq(downloads.id, 1), eq(downloads.status, 'completed')),
+        and(eq(downloads.id, 1), completedDisplayDownloadCondition()),
       );
     });
 
@@ -725,12 +727,22 @@ describe('QualityGateService', () => {
   });
 
   describe('atomicClaim', () => {
-    it('returns true when claim succeeds (status was completed)', async () => {
+    it('guards on (completed, idle) and SETs only pipelineStage=checking', async () => {
       const { service, db } = createService();
-      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      const chain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(chain);
 
       const result = await service.atomicClaim(1);
+
       expect(result).toBe(true);
+      // SET shape: pipelineStage axis only — never clientStatus.
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ pipelineStage: 'checking' });
+      expect('clientStatus' in setArg).toBe(false);
+      // WHERE compiles the expected (completed, idle) guard.
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.clientStatus, 'completed'), eq(downloads.pipelineStage, 'idle')),
+      );
     });
 
     it('returns false when already claimed (no matching row)', async () => {
@@ -742,33 +754,46 @@ describe('QualityGateService', () => {
     });
   });
 
-  describe('setStatus', () => {
-    it('updates download status in DB', async () => {
+  describe('hold', () => {
+    it('SETs only pipelineStage=pending_review (no clientStatus write)', async () => {
       const { service, db } = createService();
-      db.update.mockReturnValue(mockDbChain([]));
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
-      await service.setStatus(1, 'pending_review');
+      await service.hold(1);
 
-      expect(db.update).toHaveBeenCalled();
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ pipelineStage: 'pending_review' });
+      expect('clientStatus' in setArg).toBe(false);
     });
   });
 
   describe('approve', () => {
     it('transitions pending_review download to importing and returns context', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'pending_review' }, book: baseBook }]));
-      db.update.mockReturnValue(mockDbChain([]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review' }, book: baseBook }]));
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
       const result = await service.approve(1);
       expect(result.id).toBe(1);
       expect(result.status).toBe('importing');
       expect(result.download).toBeDefined();
       expect(result.book).toEqual(baseBook);
+
+      // SET shape: pipelineStage axis only — never clientStatus.
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ pipelineStage: 'importing' });
+      expect('clientStatus' in setArg).toBe(false);
+      // WHERE guards on the expected pending_review stage.
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.pipelineStage, 'pending_review')),
+      );
     });
 
     it('returns null book when download has no bookId', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'pending_review', bookId: null }, book: null }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review', bookId: null }, book: null }]));
       db.update.mockReturnValue(mockDbChain([]));
 
       const result = await service.approve(1);
@@ -777,7 +802,7 @@ describe('QualityGateService', () => {
 
     it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'downloading' }, book: baseBook }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, clientStatus: 'downloading' }, book: baseBook }]));
 
       await expect(service.approve(1)).rejects.toThrow(QualityGateServiceError);
       await expect(service.approve(1)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
@@ -793,21 +818,31 @@ describe('QualityGateService', () => {
   });
 
   describe('reject', () => {
-    it('transitions pending_review download to failed and returns context', async () => {
+    it('writes the canonical failure tuple (failed, idle) in one guarded update', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'pending_review' }, book: baseBook }]));
-      db.update.mockReturnValue(mockDbChain([]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, pipelineStage: 'pending_review' }, book: baseBook }]));
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
       const result = await service.reject(1);
       expect(result.id).toBe(1);
       expect(result.status).toBe('failed');
       expect(result.download).toBeDefined();
       expect(result.book).toEqual(baseBook);
+
+      // Sanctioned cross-axis write: both axes set in ONE update, no extra keys.
+      expect(chain.set as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+      const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toEqual({ clientStatus: 'failed', pipelineStage: 'idle' });
+      // WHERE guards on the expected pending_review stage.
+      expect(chain.where).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.pipelineStage, 'pending_review')),
+      );
     });
 
     it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {
       const { service, db } = createService();
-      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'downloading' }, book: baseBook }]));
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, clientStatus: 'downloading' }, book: baseBook }]));
 
       await expect(service.reject(1)).rejects.toThrow(QualityGateServiceError);
       await expect(service.reject(1)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
@@ -842,7 +877,7 @@ describe('QualityGateService', () => {
     it('returns null when no held_for_review event exists', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getQualityGateData(1);
@@ -860,11 +895,105 @@ describe('QualityGateService', () => {
         probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason }]));
 
       const result = await service.getQualityGateData(1);
       expect(result).toEqual(reason);
+    });
+
+    // #1362 — the read path safeParses the persisted blob. A present-`null` non-null
+    // field is the live crash class: the old `{ ...NULL_REASON, ...stored }` spread
+    // repaired MISSING keys but a stored `holdReasons: null` overwrote the empty-array
+    // default and survived, crashing `.holdReasons.length` downstream. safeParse rejects
+    // it → null → the activity card takes its no-qualityGate branch.
+    it('#1362: present-null holdReasons fails safeParse → returns null (crash-class regression)', async () => {
+      const { service, db } = createService();
+      const reason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: null,
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      const result = await service.getQualityGateData(1);
+      expect(result).toBeNull();
+    });
+
+    // #1362: observable behavior change — the old cast+spread repaired missing keys via
+    // NULL_REASON; the new safeParse treats the 16 launch fields as required, so a legacy
+    // row missing a key now parse-fails to null (the activity card's no-data branch)
+    // rather than being silently back-filled into a partial object.
+    it('#1362: missing required key fails safeParse → returns null (was previously spread-repaired)', async () => {
+      const { service, db } = createService();
+      const reason = {
+        action: 'held' as const,
+        // mbPerHour intentionally omitted
+        existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      const result = await service.getQualityGateData(1);
+      expect(result).toBeNull();
+    });
+
+    // #1404 — a malformed reason row degraded to null with zero diagnostic signal,
+    // so a missing quality card had no greppable cause. Surface one warn with the
+    // downloadId and Zod issue paths (paths exclude input values).
+    it('#1404: malformed reason logs one warn with downloadId + issue paths, still returns null', async () => {
+      const { service, db, log } = createService();
+      const reason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: null,
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      const result = await service.getQualityGateData(7);
+
+      expect(result).toBeNull();
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        { downloadId: 7, issuePaths: ['holdReasons'] },
+        expect.stringContaining('Malformed quality-gate reason'),
+      );
+      // Negative-leak: issue paths are dotted strings only, no reason VALUES.
+      const [arg] = (log.warn as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect((arg as { issuePaths: string[] }).issuePaths.every((p) => typeof p === 'string')).toBe(true);
+    });
+
+    it('#1404: a valid reason does not warn', async () => {
+      const { service, db, log } = createService();
+      const reason = {
+        action: 'held' as const,
+        mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
+        existingNarrator: null, downloadNarrator: null,
+        durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
+        codec: 'AAC', channels: 1, existingCodec: null, existingChannels: null,
+        probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
+      };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ reason }]));
+
+      await service.getQualityGateData(1);
+      expect(log.warn).not.toHaveBeenCalled();
     });
   });
 
@@ -882,8 +1011,8 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.select
         .mockReturnValueOnce(mockDbChain([
-          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
-          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+          { ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, pipelineStage: 'pending_review' },
         ]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: batchReason },
@@ -900,7 +1029,7 @@ describe('QualityGateService', () => {
     it('returns null for downloads without bookId', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: null, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: null, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -910,7 +1039,7 @@ describe('QualityGateService', () => {
     it('returns null for downloads without held_for_review event', async () => {
       const { service, db } = createService();
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getQualityGateDataBatch([1]);
@@ -938,7 +1067,7 @@ describe('QualityGateService', () => {
     it('chunks download lookup at 999 and event lookup at 998 for >999 IDs', async () => {
       const { service, db } = createService();
       const ids = Array.from({ length: 999 }, (_, i) => i + 1);
-      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, status: 'pending_review' as const }));
+      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, pipelineStage: 'pending_review' as const }));
 
       db.select
         .mockReturnValueOnce(mockDbChain(allDownloads))
@@ -954,7 +1083,7 @@ describe('QualityGateService', () => {
     it('keeps both chunks under SQLite limit for large batches', async () => {
       const { service, db } = createService();
       const ids = Array.from({ length: 2000 }, (_, i) => i + 1);
-      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, status: 'pending_review' as const }));
+      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, pipelineStage: 'pending_review' as const }));
 
       const dlChunk1 = allDownloads.slice(0, 999);
       const dlChunk2 = allDownloads.slice(999, 1998);
@@ -980,7 +1109,7 @@ describe('QualityGateService', () => {
       const olderReason = { ...batchReason, mbPerHour: 50 };
 
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([
           { downloadId: 1, reason: newestReason },
           { downloadId: 1, reason: olderReason },
@@ -988,6 +1117,99 @@ describe('QualityGateService', () => {
 
       const result = await service.getQualityGateDataBatch([1]);
       expect(result.get(1)).toEqual(newestReason);
+    });
+
+    // #1362 — batch feeder safeParses too. A null-feeder row maps to null (not a partial
+    // object), and a valid row in the same batch is unaffected.
+    it('#1362: present-null holdReasons row maps to null; valid sibling row unaffected', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, pipelineStage: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
+          { downloadId: 2, reason: batchReason },
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1, 2]);
+      expect(result.get(1)).toBeNull();
+      expect(result.get(2)).toEqual(batchReason);
+    });
+
+    it('#1362: missing required key row maps to null (was previously spread-repaired)', async () => {
+      const { service, db } = createService();
+      const { mbPerHour: _m, ...missing } = batchReason;
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: missing }]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toBeNull();
+    });
+
+    it('#1362: a valid full reason parses and returns unchanged', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: batchReason }]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toEqual(batchReason);
+    });
+
+    // #1362 F1 — newest-event-wins must hold even when the newest event parses to null.
+    // The desc-ordered events list puts the malformed newest event first; it maps to null,
+    // and the older valid event MUST NOT overwrite it (otherwise the batch path disagrees
+    // with getQualityGateData, which limit(1)s to the newest row).
+    it('#1362 F1: malformed newest event maps to null and is NOT overwritten by an older valid event', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } }, // newest (desc), malformed
+          { downloadId: 1, reason: batchReason },                            // older, valid
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+      expect(result.get(1)).toBeNull();
+    });
+
+    // #1404 — the batch read site logs per malformed event with the correct
+    // per-event downloadId and Zod issue paths, and still maps the entry to null.
+    it('#1404: malformed batch row logs one warn with the per-event downloadId + issue paths', async () => {
+      const { service, db, log } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, pipelineStage: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
+          { downloadId: 2, reason: batchReason },
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1, 2]);
+
+      expect(result.get(1)).toBeNull();
+      expect(result.get(2)).toEqual(batchReason);
+      // Exactly one warn — only the malformed row 1, not the valid row 2.
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        { downloadId: 1, issuePaths: ['holdReasons'] },
+        expect.stringContaining('Malformed quality-gate reason'),
+      );
+    });
+
+    it('#1404: an all-valid batch does not warn', async () => {
+      const { service, db, log } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: batchReason }]));
+
+      await service.getQualityGateDataBatch([1]);
+      expect(log.warn).not.toHaveBeenCalled();
     });
   });
 });
@@ -1076,11 +1298,18 @@ describe('Quality gate — narrator array comparison (#71)', () => {
     expect(result.reason.narratorMatch).toBeNull();
   });
 
-  // #300 — Legacy backward compatibility (readback normalization)
-  describe('getQualityGateData — legacy event normalization', () => {
-    it('returns null for new fields when stored reason JSON predates the schema change', async () => {
+  // #300/#1362 — Legacy backward compatibility (readback normalization).
+  // BEHAVIOR CHANGE (#1362): the old `{ ...NULL_REASON, ...stored }` spread back-filled
+  // missing keys so legacy rows that predate a field addition still resolved. The read
+  // path now safeParses against the shared schema, where the 16 launch fields are
+  // REQUIRED — so a legacy row missing keys parse-fails to null and the activity card
+  // takes its no-qualityGate branch (no partial object leaks downstream). This is the
+  // intended trade: the field-addition rule (post-1.0 fields must be `.nullish()`) is
+  // what keeps future additions backward-compatible, not the lossy spread.
+  describe('getQualityGateData — legacy event normalization (#1362 supersedes #300 spread)', () => {
+    it('a legacy row missing required keys parse-fails to null (no longer spread-repaired)', async () => {
       const { service, db } = createService();
-      // Legacy reason missing the 4 new fields
+      // Legacy reason missing the 4 fields added in a later schema growth.
       const legacyReason = {
         action: 'held' as const,
         mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
@@ -1089,24 +1318,17 @@ describe('Quality gate — narrator array comparison (#71)', () => {
         probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ reason: legacyReason }]));
 
       const result = await service.getQualityGateData(1);
 
-      expect(result).not.toBeNull();
-      expect(result!.existingCodec).toBeNull();
-      expect(result!.existingChannels).toBeNull();
-      expect(result!.existingDuration).toBeNull();
-      expect(result!.downloadedDuration).toBeNull();
-      // Existing fields preserved
-      expect(result!.mbPerHour).toBe(60);
-      expect(result!.codec).toBe('AAC');
+      expect(result).toBeNull();
     });
   });
 
-  describe('getQualityGateDataBatch — legacy event normalization', () => {
-    it('normalizes legacy events identically — missing keys become null, not undefined', async () => {
+  describe('getQualityGateDataBatch — legacy event normalization (#1362 supersedes #300 spread)', () => {
+    it('a legacy row missing required keys maps to null (no longer spread-repaired)', async () => {
       const { service, db } = createService();
       const legacyReason = {
         action: 'held' as const,
@@ -1115,19 +1337,12 @@ describe('Quality gate — narrator array comparison (#71)', () => {
         probeFailure: false, holdReasons: ['narrator_mismatch'],
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, status: 'pending_review' }]))
+        .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([{ downloadId: 1, reason: legacyReason }]));
 
       const result = await service.getQualityGateDataBatch([1]);
 
-      const data = result.get(1);
-      expect(data).not.toBeNull();
-      expect(data!.existingCodec).toBeNull();
-      expect(data!.existingChannels).toBeNull();
-      expect(data!.existingDuration).toBeNull();
-      expect(data!.downloadedDuration).toBeNull();
-      // Existing fields preserved
-      expect(data!.mbPerHour).toBe(60);
+      expect(result.get(1)).toBeNull();
     });
   });
 
@@ -1135,7 +1350,7 @@ describe('Quality gate — narrator array comparison (#71)', () => {
   describe('getDeferredCleanupCandidates', () => {
     it('queries with where(isNotNull(downloads.pendingCleanup)) and returns matching rows', async () => {
       const { service, db } = createService();
-      const deferredDownload = { ...baseDownload, id: 10, status: 'failed', pendingCleanup: new Date() };
+      const deferredDownload = { ...baseDownload, id: 10, clientStatus: 'failed', pendingCleanup: new Date() };
       db.select.mockReturnValue(mockDbChain([deferredDownload]));
 
       const result = await service.getDeferredCleanupCandidates();

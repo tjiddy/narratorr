@@ -157,6 +157,62 @@ describe('ToolbarDropdown', () => {
       // left = 80 + 0 = 80
       expect(portalWrapper).toHaveStyle({ top: '104px', left: '80px' });
     });
+
+    it('clamps the panel left so it stays on-screen when the trigger is near the right edge', () => {
+      const cwSpy = vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(390);
+      const { rerender, getByTestId } = render(<Wrapper open={false} onClose={vi.fn()} />);
+
+      const trigger = getByTestId('trigger');
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 50, left: 331, top: 30, right: 367, width: 36, height: 20,
+        x: 331, y: 30, toJSON: () => ({}),
+      } as DOMRect);
+
+      rerender(<Wrapper open={true} onClose={vi.fn()} />);
+
+      const portalWrapper = getByTestId('panel').parentElement!;
+      // Give the rendered panel a measurable width (jsdom returns 0 by default)
+      vi.spyOn(portalWrapper, 'getBoundingClientRect').mockReturnValue({
+        bottom: 0, left: 0, top: 0, right: 177, width: 177, height: 120,
+        x: 0, y: 0, toJSON: () => ({}),
+      } as DOMRect);
+
+      // Re-run positioning now that the panel width is measurable
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+
+      // 390 (viewport) − 177 (panel) − 8 (margin) = 205
+      expect(portalWrapper).toHaveStyle({ left: '205px' });
+      cwSpy.mockRestore();
+    });
+
+    it('floors the panel at the left margin when the trigger sits off the left edge', () => {
+      const cwSpy = vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(400);
+      const { rerender, getByTestId } = render(<Wrapper open={false} onClose={vi.fn()} />);
+
+      const trigger = getByTestId('trigger');
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 50, left: -20, top: 30, right: 16, width: 36, height: 20,
+        x: -20, y: 30, toJSON: () => ({}),
+      } as DOMRect);
+
+      rerender(<Wrapper open={true} onClose={vi.fn()} />);
+
+      const portalWrapper = getByTestId('panel').parentElement!;
+      vi.spyOn(portalWrapper, 'getBoundingClientRect').mockReturnValue({
+        bottom: 0, left: 0, top: 0, right: 100, width: 100, height: 120,
+        x: 0, y: 0, toJSON: () => ({}),
+      } as DOMRect);
+
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+
+      // max(8, min(-20, 400 − 100 − 8)) = 8
+      expect(portalWrapper).toHaveStyle({ left: '8px' });
+      cwSpy.mockRestore();
+    });
   });
 
   describe('Escape isolation with modal', () => {

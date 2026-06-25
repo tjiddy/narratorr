@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { api, type UpdateBookPayload, type RetagExcludableField, type RetagMode } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
+import { describeKeptFiles } from '@/lib/kept-files-message.js';
 
 export function useBookActions(bookId: number) {
   const queryClient = useQueryClient();
@@ -80,9 +81,14 @@ export function useBookActions(bookId: number) {
   const deleteMutation = useMutation({
     mutationFn: ({ deleteFiles }: { deleteFiles: boolean }) =>
       api.deleteBook(bookId, deleteFiles ? { deleteFiles: true } : undefined),
-    onSuccess: (_data, variables) => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      toast.success(variables.deleteFiles ? 'Removed book and deleted files from disk' : 'Removed book from library');
+      if (!variables.deleteFiles) {
+        toast.success('Removed book from library');
+        return;
+      }
+      const kept = describeKeptFiles(data.fileSummary?.preservedForeign);
+      toast.success(kept ? `Removed book and deleted files from disk — ${kept}` : 'Removed book and deleted files from disk');
     },
     onError: (error: Error) => {
       toast.error(`Failed to remove book: ${getErrorMessage(error)}`);

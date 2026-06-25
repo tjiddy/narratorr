@@ -24,3 +24,16 @@ export const HTTP_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 /** Request timeout for Hardcover series-card GraphQL requests (ms). */
 export const HARDCOVER_TIMEOUT_MS = 15_000;
+
+/** Request timeout for a single connector HTTP request (ms). */
+export const CONNECTOR_TIMEOUT_MS = 15_000;
+
+/**
+ * Hard cap on how long `ConnectorService.stop()` waits for in-flight refreshes to
+ * drain on graceful shutdown (ms). NOT user-configurable (same status as
+ * `CONNECTOR_TIMEOUT_MS`). Sized to leave headroom inside Docker's default 10s
+ * stop grace (import-worker stop → connector drain → app.close()) while bounding
+ * the pathological case where a large multi-path Plex batch's scaled per-attempt
+ * timeout would otherwise block teardown for minutes.
+ */
+export const CONNECTOR_SHUTDOWN_DRAIN_MS = 5_000;

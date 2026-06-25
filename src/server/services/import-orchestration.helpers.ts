@@ -2,20 +2,23 @@
  * Bulk import pipeline — accepts user-confirmed items and queues them for the
  * import worker. Extracted for consistency with quality-gate helpers.
  */
-import { mkdir, cp, rm } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
-import { streamCopyWithProgress } from './streaming-copy.helpers.js';
+import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { buildTargetPath, getAudioPathSize, COPY_VERIFICATION_THRESHOLD } from '../utils/import-helpers.js';
+import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
+import { deleteManagedBookFiles } from '../utils/delete-managed-files.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { ConnectorService } from './connector.service.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -31,7 +34,78 @@ export interface ImportPipelineDeps {
   eventHistory: EventHistoryService;
   enrichmentDeps: EnrichmentDeps;
   broadcaster?: EventBroadcasterService | undefined;
+  connectorService?: ConnectorService | undefined;
 }
+
+/**
+ * Audio bytes already present at the computed target, treating a non-existent
+ * target (ENOENT) as empty. `> 0` routes the manual import through the staged
+ * swap (#1287); `0`/missing keeps the simple direct-copy fast path (AC3).
+ */
+async function getTargetAudioSize(targetPath: string): Promise<number> {
+  try {
+    return await getAudioPathSize(targetPath);
+  } catch (sizeError: unknown) {
+    if ((sizeError as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw sizeError;
+  }
+}
+
+/**
+ * Per-site logging contract for the nonfatal post-commit source cleanup. The `context` carries
+ * the success log LEVEL and message plus the warn-on-failure message so the four call sites keep
+ * their distinct, test-asserted log behavior (#1591) while sharing one cleanup body.
+ */
+interface SourceCleanupContext {
+  successLevel: 'info' | 'debug';
+  successMessage: string;
+  errorMessage: string;
+}
+
+// Single-source (`copyToLibrary`) sites: success at `info`, the single-source warn message.
+const SINGLE_SOURCE_CLEANUP: SourceCleanupContext = {
+  successLevel: 'info',
+  successMessage: 'Source managed files removed after move (foreign files preserved)',
+  errorMessage: 'Failed to clean source after committed move — import already succeeded, continuing',
+};
+
+// Per-disc (`copyDiscGroupToLibrary`) sites: success at `debug`, the disc-specific warn message.
+const DISC_SOURCE_CLEANUP: SourceCleanupContext = {
+  successLevel: 'debug',
+  successMessage: 'Disc source managed files removed after move',
+  errorMessage: 'Failed to clean disc source after committed move — import already succeeded, continuing',
+};
+
+/**
+ * Post-commit cleanup of a single source folder/disc member after a committed move. Deletes only
+ * MANAGED files (#1589), preserving co-located foreign files; the source is OUTSIDE the library
+ * root so containment is opted out (`{ assertInsideLibrary: false }`) — classification still
+ * protects foreign files, and the helper's #1598 `lstat` hardening keeps a top-level symlinked
+ * source unfollowed.
+ *
+ * NONFATAL by contract (#1591): this runs AFTER the commit, so a cleanup throw — a source that
+ * vanished between stat and readdir (ENOENT) OR any non-ENOENT failure (EACCES/EPERM/EBUSY) — must
+ * not fail the already-committed import. The throw is swallowed into a `log.warn`. At the disc
+ * sites this is called per member inside the loop so one failing disc doesn't skip the rest.
+ */
+async function cleanupSourceManagedFilesNonfatal(
+  sourcePath: string,
+  libraryRoot: string,
+  log: FastifyBaseLogger,
+  context: SourceCleanupContext,
+): Promise<void> {
+  try {
+    const cleanup = await deleteManagedBookFiles(sourcePath, libraryRoot, log, { assertInsideLibrary: false });
+    log[context.successLevel]({ source: sourcePath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length }, context.successMessage);
+  } catch (cleanupError: unknown) {
+    log.warn({ error: serializeError(cleanupError), source: sourcePath }, context.errorMessage);
+  }
+}
+
+// `recoverInterruptedCommit` (the marker-gated recovery sequence run before the
+// populated-target gate, #1337) now lives in `utils/recover-interrupted-commit.ts` so the
+// rename and merge writers can share the same `assertMarkerPathWritable` +
+// `prepareImportSiblings` sequence (#1418). Imported above.
 
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
 export async function copyToLibrary(
@@ -76,24 +150,141 @@ export async function copyToLibrary(
     throw new Error('Source path is inside the library root — cannot import a path already managed by the library');
   }
 
-  await mkdir(targetPath, { recursive: true });
-  log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
-  if (onProgress) {
-    await streamCopyWithProgress(item.path, targetPath, onProgress);
-  } else {
-    await cp(item.path, targetPath, { recursive: true, errorOnExist: false });
+  // Coalesced disc-group row: `item.path` is only the lowest-disc member. Reconstruct the full
+  // member set from disk and flatten every disc into one target (AC7), instead of copying just one.
+  const memberPaths = await reconstructDiscGroup(item.path);
+  if (memberPaths.length >= 2) {
+    return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, librarySettings.path, onProgress);
   }
+
+  // Recover any interrupted commit (#1337) BEFORE the populated-target gate: an
+  // audio-empty target with an armed marker must restore its stranded originals
+  // first, so the gate below routes through the staged swap instead of the
+  // fast path orphaning the marker/backup. No-op when no commit was interrupted.
+  await recoverInterruptedCommit(targetPath, librarySettings.path, log);
+
+  // Populated-target guard (#1287): a manual import whose computed target already
+  // contains audio must NOT merge-copy in place (that recreates the #1252
+  // Frankenbook). Route through the staged audio swap, flattening the source's
+  // audio to the staging top level so the commit moves every file. Empty/missing
+  // target keeps the simple direct-copy fast path below (AC3).
+  if (await getTargetAudioSize(targetPath) > 0) {
+    const sourceStats = await stat(item.path);
+    const sourceAudioSize = await getAudioPathSize(item.path);
+    log.info({ source: item.path, target: targetPath, mode, sourceAudioSize }, 'Target already contains audio — routing manual import through staged swap');
+    await stagedAudioReplace({
+      targetPath,
+      libraryRoot: librarySettings.path,
+      log,
+      sourceAudioSize,
+      stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
+    });
+    if (mode === 'move') {
+      // Post-commit cleanup: the staged swap has already committed the new audio to the library.
+      await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
+    }
+    return targetPath;
+  }
+
+  // Empty-target fast path (#1602): import AUDIO ONLY by reusing the SAME copier the populated-target
+  // staged swap uses (`stageSourceAudio`/`copyToLibrary`), so the foreign-file outcome can no longer
+  // diverge between the two paths. It branches directory-vs-file internally: a directory source drops
+  // non-audio members (co-located `.epub`/`.pdf`/`.nfo`/images), an audio single-file source is copied
+  // (file-path manual imports stay supported), and a non-audio single-file source is rejected with
+  // `ContentFailureError`. It also mkdir's the target itself, so the standalone `mkdir` + whole-tree
+  // `cp`/`streamCopyWithProgress` (which copied foreign files verbatim) are gone.
+  const sourceStats = await stat(item.path);
+  log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
+  await stageSourceAudio({ sourcePath: item.path, targetPath, sourceStats, log, onProgress });
 
   const sourceSize = await getAudioPathSize(item.path);
   const targetSize = await getAudioPathSize(targetPath);
   log.debug({ source: item.path, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Copy verification');
-  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-  }
+  assertCopyVerified(sourceSize, targetSize);
 
   if (mode === 'move') {
-    await rm(item.path, { recursive: true });
-    log.info({ source: item.path }, 'Source directory removed after move');
+    // Empty-target move cleanup (#1598): route source removal through the managed-file helper
+    // instead of a blanket `rm(item.path, { recursive: true })`, so a co-located foreign file
+    // (e.g. a bundled .epub/.pdf) is preserved (#1589) AND a top-level symlinked source is not
+    // followed. The copy above is already verified, so this matches the populated-target cleanup.
+    await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
+  }
+
+  return targetPath;
+}
+
+/**
+ * Flatten a reconstructed multi-disc set into the library target. Aggregates source size across
+ * all member discs for copy verification and removes every member folder on `move`.
+ */
+async function copyDiscGroupToLibrary(
+  item: ImportConfirmItem,
+  targetPath: string,
+  memberPaths: string[],
+  mode: ImportMode,
+  deps: ImportPipelineDeps,
+  libraryRoot: string,
+  onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
+): Promise<string> {
+  const { log } = deps;
+  log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode }, 'Flattening multi-disc group to library');
+
+  // Recover any interrupted commit (#1337) BEFORE the populated-target gate — the
+  // disc-group flatten has the identical marker-orphaning gap as the single-source
+  // path. No-op when no commit was interrupted.
+  await recoverInterruptedCommit(targetPath, libraryRoot, log);
+
+  // Populated-target guard (#1287, AC5): the disc-group flatten has the identical
+  // merge-into-target gap as the single-source path. When the target already holds
+  // audio, stage the flattened discs and atomically swap rather than merging.
+  if (await getTargetAudioSize(targetPath) > 0) {
+    let sourceAudioSize = 0;
+    for (const memberPath of memberPaths) {
+      sourceAudioSize += await getAudioPathSize(memberPath);
+    }
+    log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode, sourceAudioSize }, 'Target already contains audio — routing multi-disc import through staged swap');
+    await stagedAudioReplace({
+      targetPath,
+      libraryRoot,
+      log,
+      sourceAudioSize,
+      stage: (stagingPath) => copyDiscGroup(memberPaths, stagingPath, onProgress),
+    });
+    if (mode === 'move') {
+      // Post-commit cleanup: the staged swap has already committed all discs' audio. Delete only
+      // MANAGED files from each source disc folder (#1589) so a bundled e-book/PDF is preserved.
+      // Sources are OUTSIDE the library root → containment guard opted out. Nonfatal — a vanished
+      // member (ENOENT) is a no-op and a locked managed file is recorded, not thrown.
+      // Per-member (#1591): post-commit cleanup must not fail the already-committed import, and one
+      // failing disc must not skip the rest — `cleanupSourceManagedFilesNonfatal` swallows per call.
+      for (const memberPath of memberPaths) {
+        await cleanupSourceManagedFilesNonfatal(memberPath, libraryRoot, log, DISC_SOURCE_CLEANUP);
+      }
+      log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
+    }
+    return targetPath;
+  }
+
+  await copyDiscGroup(memberPaths, targetPath, onProgress);
+
+  let sourceSize = 0;
+  for (const memberPath of memberPaths) {
+    sourceSize += await getAudioPathSize(memberPath);
+  }
+  const targetSize = await getAudioPathSize(targetPath);
+  log.debug({ discMembers: memberPaths.length, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Multi-disc copy verification');
+  assertCopyVerified(sourceSize, targetSize);
+
+  if (mode === 'move') {
+    // Empty-target multi-disc move cleanup (#1598): route each member through the managed-file
+    // helper instead of a blanket `rm(memberPath, { recursive: true })`, mirroring the single-source
+    // empty-target path above so the two stay consistent. Per-member nonfatal (matching the
+    // populated-target multi-disc cleanup): one failing disc must not fail the committed import or
+    // skip the remaining members.
+    for (const memberPath of memberPaths) {
+      await cleanupSourceManagedFilesNonfatal(memberPath, libraryRoot, log, DISC_SOURCE_CLEANUP);
+    }
+    log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
   }
 
   return targetPath;

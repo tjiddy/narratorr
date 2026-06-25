@@ -12,6 +12,7 @@ import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
+import { getUserAgent } from '../../shared/user-agent.js';
 
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
@@ -108,7 +109,7 @@ export class NewznabIndexer implements IndexerAdapter {
     if (this.flareSolverrUrl) {
       return fetchWithProxy({
         url,
-        headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
+        headers: { Accept: 'application/rss+xml, application/xml, text/xml', 'User-Agent': getUserAgent() },
         proxyUrl: this.flareSolverrUrl,
         signal,
       });
@@ -116,7 +117,7 @@ export class NewznabIndexer implements IndexerAdapter {
 
     return fetchWithProxyAgent(url, {
       proxyUrl: this.proxyUrl,
-      headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
+      headers: { Accept: 'application/rss+xml, application/xml, text/xml', 'User-Agent': getUserAgent() },
       signal,
     });
   }

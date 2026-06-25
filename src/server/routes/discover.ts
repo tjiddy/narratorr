@@ -27,7 +27,6 @@ function toSuggestionResponse(row: SuggestionRowWithLibraryBookId): SuggestionRo
     status: row.status,
     refreshedAt: row.refreshedAt.toISOString(),
     dismissedAt: row.dismissedAt?.toISOString() ?? null,
-    snoozeUntil: row.snoozeUntil?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     libraryBookId: row.libraryBookId,
   };

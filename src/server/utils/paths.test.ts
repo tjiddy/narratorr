@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Dirent } from 'node:fs';
 import { basename } from 'node:path';
-import { renameFilesWithTemplate, planFileRenames, padWidth, assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { realpath } from 'node:fs/promises';
+import { renameFilesWithTemplate, planFileRenames, padWidth, assertPathInsideLibrary, assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
 
 vi.mock('node:fs/promises', async () => ({
@@ -10,7 +11,12 @@ vi.mock('node:fs/promises', async () => ({
   readdir: vi.fn(),
   rename: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn(),
+  realpath: vi.fn(),
 }));
+
+function enoent(): NodeJS.ErrnoException {
+  return Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+}
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -71,6 +77,76 @@ describe('assertPathInsideLibrary', () => {
     expect((caught as PathOutsideLibraryError).bookPath).toBe('/tmp/external');
     expect((caught as PathOutsideLibraryError).libraryRoot).toBe('/library');
     expect((caught as PathOutsideLibraryError).message).toBe('Path "/tmp/external" is not inside library root "/library"');
+  });
+});
+
+describe('assertRealPathInsideLibrary', () => {
+  beforeEach(() => {
+    vi.mocked(realpath).mockReset();
+  });
+
+  // Lexical containment runs first and unconditionally — the canonical (realpath)
+  // pass is never reached for these, even if realpath would ENOENT.
+  it('rejects a path outside the root', async () => {
+    await expect(assertRealPathInsideLibrary('/tmp/external', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('rejects equality with the library root', async () => {
+    await expect(assertRealPathInsideLibrary('/library', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('rejects a `..` escape', async () => {
+    await expect(assertRealPathInsideLibrary('/library/../etc/passwd', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('rejects a sibling-prefix path (/library2 vs /library)', async () => {
+    await expect(assertRealPathInsideLibrary('/library2/Author/Title', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('rejects a lexical escape even when realpath would ENOENT', async () => {
+    vi.mocked(realpath).mockRejectedValue(enoent());
+    await expect(assertRealPathInsideLibrary('/tmp/external', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('rejects an in-library symlink whose realpath canonicalizes outside the root', async () => {
+    vi.mocked(realpath)
+      .mockResolvedValueOnce('/library')        // realpath(libraryRoot)
+      .mockResolvedValueOnce('/etc/passwd');    // realpath(bookPath) escapes
+    await expect(assertRealPathInsideLibrary('/library/link', '/library')).rejects.toThrow(PathOutsideLibraryError);
+  });
+
+  it('swallows ENOENT for an in-library path missing on disk (no throw)', async () => {
+    vi.mocked(realpath).mockRejectedValue(enoent());
+    await expect(assertRealPathInsideLibrary('/library/Author/Missing', '/library')).resolves.toBeUndefined();
+  });
+
+  it('passes an in-library path whose realpath stays inside the root', async () => {
+    vi.mocked(realpath)
+      .mockResolvedValueOnce('/library')
+      .mockResolvedValueOnce('/library/Author/Title');
+    await expect(assertRealPathInsideLibrary('/library/Author/Title', '/library')).resolves.toBeUndefined();
+  });
+
+  it('propagates a non-ENOENT realpath error', async () => {
+    vi.mocked(realpath).mockRejectedValue(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    await expect(assertRealPathInsideLibrary('/library/Author/Title', '/library')).rejects.toThrow('EACCES');
+  });
+
+  it('attaches PathOutsideLibraryError properties on a symlink escape', async () => {
+    vi.mocked(realpath)
+      .mockResolvedValueOnce('/library')
+      .mockResolvedValueOnce('/etc');
+    let caught: unknown;
+    try {
+      await assertRealPathInsideLibrary('/library/link', '/library');
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(PathOutsideLibraryError);
+    expect((caught as PathOutsideLibraryError).name).toBe('PathOutsideLibraryError');
+    expect((caught as PathOutsideLibraryError).code).toBe('PATH_OUTSIDE_LIBRARY');
+    expect((caught as PathOutsideLibraryError).bookPath).toBe('/library/link');
+    expect((caught as PathOutsideLibraryError).libraryRoot).toBe('/library');
   });
 });
 
@@ -360,6 +436,19 @@ describe('planFileRenames', () => {
       expect(renames[0]!.to).toBe('Author - Test Book (001).mp3');
       expect(renames[99]!.to).toBe('Author - Test Book (100).mp3');
       expect(renames.every(r => /\(\d{3}\)\.mp3$/.test(r.to))).toBe(true);
+    });
+
+    it('numbers the bare file first, before its (N) duplicate copies', async () => {
+      // Windows/download duplicate convention: bare `Title.mp3` IS part 1, `(2)` is part 2.
+      // Pre-fix the bare file sorted LAST and got the highest ordinal — chapter 1 at the end.
+      await mockFiles(['Title.mp3', 'Title (10).mp3', 'Title (2).mp3']);
+
+      const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
+
+      const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+      expect(byFrom['Title.mp3']).toBe('Author - Test Book (1).mp3');
+      expect(byFrom['Title (2).mp3']).toBe('Author - Test Book (2).mp3');
+      expect(byFrom['Title (10).mp3']).toBe('Author - Test Book (3).mp3');
     });
 
     it('orders already-suffixed (N) stems numerically, not lexicographically', async () => {

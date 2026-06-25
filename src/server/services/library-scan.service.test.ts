@@ -252,6 +252,7 @@ describe('LibraryScanService', () => {
   let log: ReturnType<typeof createMockLogger>;
   let mockEventHistoryService: { create: ReturnType<typeof vi.fn> };
   let mockBookImportService: { enqueue: ReturnType<typeof vi.fn> };
+  let mockConnectorService: { notifyRefresh: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -263,6 +264,9 @@ describe('LibraryScanService', () => {
       where: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue([]),
       set: vi.fn().mockReturnThis(),
+      // The guarded `transitionBookStatus` book write ends in `.returning()`; a non-empty
+      // result means the precondition matched so the rescan counters increment.
+      returning: vi.fn().mockResolvedValue([{ id: 1 }]),
     };
     // select/update calls return the chain by default
     db.select.mockReturnValue(chainMethods as never);
@@ -286,6 +290,9 @@ describe('LibraryScanService', () => {
     mockEventHistoryService = {
       create: vi.fn().mockResolvedValue({}),
     };
+    mockConnectorService = {
+      notifyRefresh: vi.fn().mockResolvedValue(undefined),
+    };
     let nextJobId = 100;
     mockBookImportService = {
       enqueue: vi.fn().mockImplementation(async () => ({ jobId: nextJobId++ })),
@@ -302,6 +309,8 @@ describe('LibraryScanService', () => {
       inject<SettingsService>(mockSettingsService),
       log,
       inject<EventHistoryService>(mockEventHistoryService),
+      undefined,
+      inject<never>(mockConnectorService),
     );
     // Wire the required-wiring nudgeImportWorker dep so confirmImport doesn't
     // throw ServiceWireError. Tests that exercise the unwired contract
@@ -1057,6 +1066,23 @@ describe('LibraryScanService', () => {
       );
     });
 
+    it('does not clobber an in-flight import: guarded missing-write no-ops when the row is no longer imported', async () => {
+      // Scan read the row as 'imported', but a concurrent import flipped it to 'importing'
+      // before the guarded write — the `expected: { status: 'imported' }` predicate matches
+      // no row, so `.returning()` is empty and the scan must NOT count it as missing.
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
+        { id: 1, path: '/library/Author/Book', status: 'imported' },
+      ]);
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).returning!.mockResolvedValueOnce([]);
+      vi.mocked(access)
+        .mockResolvedValueOnce(undefined) // library root check
+        .mockRejectedValueOnce(new Error('ENOENT'));
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+    });
+
     it('restores missing book whose path reappears', async () => {
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
         { id: 2, path: '/library/Author/Book', status: 'missing' },
@@ -1149,6 +1175,31 @@ describe('LibraryScanService', () => {
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([]);
       const result = await service.rescanLibrary();
       expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    // ── #1491 connector refresh hook ───────────────────────────────────────
+    it('enqueues a connector refresh with exact item payload for a restored row', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
+        { id: 2, path: '/library/Author/Book', status: 'missing', title: 'The Restored Book' },
+      ]);
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      await service.rescanLibrary();
+
+      expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('restored', [
+        { bookId: 2, title: 'The Restored Book', libraryPath: '/library/Author/Book' },
+      ]);
+    });
+
+    it('does NOT enqueue a connector refresh when there are zero restorations', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
+        { id: 5, path: '/library/Author/Book', status: 'imported', title: 'Still Here' },
+      ]);
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      await service.rescanLibrary();
+
+      expect(mockConnectorService.notifyRefresh).not.toHaveBeenCalled();
     });
 
     it('throws when library path is not configured', async () => {

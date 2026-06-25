@@ -54,12 +54,13 @@ describe('mergeBookData', () => {
       expect(result.statusBarClass).toBe(bookStatusConfig.imported!.barClass);
     });
 
-    it('falls back to wanted config for unknown status string', () => {
+    // #1447 (S2d) — the `?? bookStatusConfig.wanted` masking fallback was removed.
+    // bookStatusConfig is now drift-guarded to set-equal BOOK_STATUSES, so every
+    // canonical status resolves first-class; an off-enum value surfaces the drift
+    // (throws) instead of being silently masked as "Wanted".
+    it('surfaces an off-enum status instead of masking it as wanted', () => {
       const book = createMockBook({ status: 'nonexistent' as unknown as BookStatus });
-      const result = mergeBookData(book);
-      expect(result.statusDotClass).toBe(bookStatusConfig.wanted!.dotClass);
-      expect(result.statusBarClass).toBe(bookStatusConfig.wanted!.barClass);
-      expect(result.statusLabel).toBe('Wanted');
+      expect(() => mergeBookData(book)).toThrow(/missing entry for "nonexistent"/);
     });
   });
 
@@ -175,6 +176,47 @@ describe('mergeBookData', () => {
         series: [{ name: 'Discworld', position: 9 }],
       });
       expect(result.metaDots).toContain('Discworld #9');
+    });
+  });
+
+  // #1614 — subtitle/publisher are stored columns; the library row wins and the
+  // provider value is only a fallback (so they survive a provider-lookup failure).
+  describe('stored subtitle/publisher precedence (#1614)', () => {
+    it('reads subtitle from the library book when set', () => {
+      const book = createMockBook({ subtitle: 'Stored Subtitle' });
+      const result = mergeBookData(book, { subtitle: 'Provider Subtitle' });
+      expect(result.subtitle).toBe('Stored Subtitle');
+    });
+
+    it('falls back to the provider subtitle when the library subtitle is null', () => {
+      const book = createMockBook({ subtitle: null });
+      const result = mergeBookData(book, { subtitle: 'Provider Subtitle' });
+      expect(result.subtitle).toBe('Provider Subtitle');
+    });
+
+    it('renders the stored subtitle even when no provider metadata is available', () => {
+      const book = createMockBook({ subtitle: 'Stored Subtitle' });
+      const result = mergeBookData(book, null);
+      expect(result.subtitle).toBe('Stored Subtitle');
+    });
+
+    it('reads publisher from the library book when set', () => {
+      const book = createMockBook({ publisher: 'Stored Publisher' });
+      const result = mergeBookData(book, { publisher: 'Provider Publisher' });
+      expect(result.metaDots).toContain('Stored Publisher');
+      expect(result.metaDots).not.toContain('Provider Publisher');
+    });
+
+    it('falls back to the provider publisher when the library publisher is null', () => {
+      const book = createMockBook({ publisher: null });
+      const result = mergeBookData(book, { publisher: 'Provider Publisher' });
+      expect(result.metaDots).toContain('Provider Publisher');
+    });
+
+    it('renders the stored publisher even when no provider metadata is available', () => {
+      const book = createMockBook({ publisher: 'Stored Publisher' });
+      const result = mergeBookData(book, null);
+      expect(result.metaDots).toContain('Stored Publisher');
     });
   });
 });

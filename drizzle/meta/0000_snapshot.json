@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "fb3729c0-e315-4d27-86a7-d3358a6d9d56",
+  "id": "c0868cc2-e2eb-4cf8-9cde-1d0a9a39b979",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -13,6 +13,13 @@
           "primaryKey": true,
           "notNull": true,
           "autoincrement": true
+        },
+        "public_id": {
+          "name": "public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
         },
         "name": {
           "name": "name",
@@ -53,6 +60,13 @@
         }
       },
       "indexes": {
+        "authors_public_id_unique": {
+          "name": "authors_public_id_unique",
+          "columns": [
+            "public_id"
+          ],
+          "isUnique": true
+        },
         "authors_slug_unique": {
           "name": "authors_slug_unique",
           "columns": [
@@ -494,11 +508,25 @@
           "notNull": true,
           "autoincrement": true
         },
+        "public_id": {
+          "name": "public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "title": {
           "name": "title",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "subtitle": {
+          "name": "subtitle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "description": {
@@ -508,22 +536,15 @@
           "notNull": false,
           "autoincrement": false
         },
+        "publisher": {
+          "name": "publisher",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "cover_url": {
           "name": "cover_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "goodreads_id": {
-          "name": "goodreads_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "audible_id": {
-          "name": "audible_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -593,6 +614,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'pending'"
+        },
+        "enrichment_attempts": {
+          "name": "enrichment_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         },
         "path": {
           "name": "path",
@@ -717,6 +746,13 @@
         }
       },
       "indexes": {
+        "books_public_id_unique": {
+          "name": "books_public_id_unique",
+          "columns": [
+            "public_id"
+          ],
+          "isUnique": true
+        },
         "idx_books_status": {
           "name": "idx_books_status",
           "columns": [
@@ -762,6 +798,76 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "connectors": {
+      "name": "connectors",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "settings": {
+          "name": "settings",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_connectors_enabled": {
+          "name": "idx_connectors_enabled",
+          "columns": [
+            "enabled"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -846,6 +952,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "public_id": {
+          "name": "public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "book_id": {
           "name": "book_id",
           "type": "integer",
@@ -910,13 +1023,21 @@
           "notNull": false,
           "autoincrement": false
         },
-        "status": {
-          "name": "status",
+        "client_status": {
+          "name": "client_status",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
           "default": "'queued'"
+        },
+        "pipeline_stage": {
+          "name": "pipeline_stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'idle'"
         },
         "progress": {
           "name": "progress",
@@ -992,17 +1113,25 @@
         }
       },
       "indexes": {
+        "downloads_public_id_unique": {
+          "name": "downloads_public_id_unique",
+          "columns": [
+            "public_id"
+          ],
+          "isUnique": true
+        },
         "idx_downloads_status": {
           "name": "idx_downloads_status",
           "columns": [
-            "status"
+            "client_status",
+            "pipeline_stage"
           ],
           "isUnique": false
         },
         "idx_downloads_status_completed": {
           "name": "idx_downloads_status_completed",
           "columns": [
-            "status",
+            "client_status",
             "completed_at"
           ],
           "isUnique": false
@@ -1381,6 +1510,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "public_id": {
+          "name": "public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "name": {
           "name": "name",
           "type": "text",
@@ -1405,6 +1541,13 @@
         }
       },
       "indexes": {
+        "narrators_public_id_unique": {
+          "name": "narrators_public_id_unique",
+          "columns": [
+            "public_id"
+          ],
+          "isUnique": true
+        },
         "narrators_slug_unique": {
           "name": "narrators_slug_unique",
           "columns": [
@@ -1573,6 +1716,13 @@
           "notNull": true,
           "autoincrement": true
         },
+        "public_id": {
+          "name": "public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "hardcover_series_id": {
           "name": "hardcover_series_id",
           "type": "integer",
@@ -1640,6 +1790,13 @@
         }
       },
       "indexes": {
+        "series_public_id_unique": {
+          "name": "series_public_id_unique",
+          "columns": [
+            "public_id"
+          ],
+          "isUnique": true
+        },
         "idx_series_hardcover_series_id_unique": {
           "name": "idx_series_hardcover_series_id_unique",
           "columns": [
@@ -2015,13 +2172,6 @@
         },
         "dismissed_at": {
           "name": "dismissed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "snooze_until": {
-          "name": "snooze_until",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

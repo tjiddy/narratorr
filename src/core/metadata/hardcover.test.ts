@@ -98,6 +98,16 @@ describe('HardcoverClient', () => {
       expect(body.variables.id).toBe(42);
       expect(body.variables.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     });
+
+    it('declares the by-id $id variable as Int! (Hardcover schema expects Int, not bigint)', async () => {
+      fetchMock.mockResolvedValueOnce(buildJsonResponse({ data: { series: [] } }));
+      const client = new HardcoverClient('K');
+      await client.getSeriesMembersById(1170);
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.query).toContain('$id: Int!');
+      expect(body.query).not.toContain('bigint');
+    });
   });
 
   describe('Response shape', () => {
@@ -178,7 +188,7 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('star wars aftermath');
       expect(candidates).toEqual([
-        { id: 3384, name: 'Star Wars: Aftermath', slug: 'star-wars-aftermath', authorName: 'Chuck Wendig', booksCount: 10 },
+        { id: 3384, name: 'Star Wars: Aftermath', slug: 'star-wars-aftermath', authorName: 'Chuck Wendig', booksCount: 10, readersCount: 0, imageUrl: null },
       ]);
       // id is coerced from the string "3384" to the number 3384.
       expect(typeof candidates[0]!.id).toBe('number');
@@ -198,7 +208,7 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('the band');
       expect(candidates).toEqual([
-        { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3 },
+        { id: 5523, name: 'The Band', slug: 'the-band', authorName: 'Nicholas Eames', booksCount: 3, readersCount: 0, imageUrl: null },
       ]);
     });
 
@@ -211,11 +221,11 @@ describe('HardcoverClient', () => {
     });
 
     it('parses `{ hits: [...] }` and `{ results: [...] }` array-level envelopes', async () => {
-      fetchMock.mockResolvedValueOnce(buildSearchResponse({ hits: [{ document: { id: '1', name: 'H', slug: 'h' } }] }));
+      fetchMock.mockResolvedValueOnce(buildSearchResponse({ hits: [{ document: { id: '1', name: 'H', slug: 'h', books_count: 1 } }] }));
       const fromHits = await new HardcoverClient('K').searchSeries('h');
       expect(fromHits[0]!.id).toBe(1);
 
-      fetchMock.mockResolvedValueOnce(buildSearchResponse({ results: [{ document: { id: '2', name: 'R', slug: 'r' } }] }));
+      fetchMock.mockResolvedValueOnce(buildSearchResponse({ results: [{ document: { id: '2', name: 'R', slug: 'r', books_count: 1 } }] }));
       const fromResults = await new HardcoverClient('K').searchSeries('r');
       expect(fromResults[0]!.id).toBe(2);
     });
@@ -228,13 +238,69 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('partial');
       expect(candidates).toEqual([
-        { id: 51, name: 'Keeper', slug: 'keeper', authorName: null, booksCount: 1 },
+        { id: 51, name: 'Keeper', slug: 'keeper', authorName: null, booksCount: 1, readersCount: 0, imageUrl: null },
+      ]);
+    });
+
+    it('extracts a cover image from a string `image_url` or nested `image`/`cached_image`', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { document: { id: '1', name: 'Direct', slug: 'direct', books_count: 1, image_url: 'https://img.test/a.jpg' } },
+        { document: { id: '2', name: 'Nested', slug: 'nested', books_count: 1, image: { url: 'https://img.test/b.jpg' } } },
+        { document: { id: '3', name: 'Cached', slug: 'cached', books_count: 1, cached_image: { url: 'https://img.test/c.jpg' } } },
+        { document: { id: '4', name: 'None', slug: 'none', books_count: 1 } },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('images');
+      expect(candidates.map((c) => c.imageUrl)).toEqual([
+        'https://img.test/a.jpg',
+        'https://img.test/b.jpg',
+        'https://img.test/c.jpg',
+        null,
       ]);
     });
 
     it('returns [] for an empty results array', async () => {
       fetchMock.mockResolvedValueOnce(buildSearchResponse([]));
       expect(await new HardcoverClient('K').searchSeries('nothing')).toEqual([]);
+    });
+
+    it('re-ranks by readers_count desc and drops books_count:0 stubs (#1239)', async () => {
+      // Hits arrive low-to-high readers_count (opposite of desired output), with
+      // a zero-book stub interleaved. The flagship (highest readers) must surface
+      // at index 0 regardless of Hardcover's returned order, and the stub absent.
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([
+        { document: { id: '1', name: 'Spinoff Graphic Novels', slug: 's1', books_count: 26, readers_count: 323 } },
+        { document: { id: '2', name: 'Down Town', slug: 's2', books_count: 7, readers_count: 24 } },
+        { document: { id: '3', name: 'Empty Stub', slug: 's3', books_count: 0, readers_count: 9999 } },
+        { document: { id: '4', name: 'The Dresden Codex', slug: 's4', books_count: 3, readers_count: 26 } },
+        { document: { id: '5', name: 'The Dresden Files', slug: 's5', books_count: 76, readers_count: 19966 } },
+      ]));
+      const candidates = await new HardcoverClient('K').searchSeries('dresden');
+      expect(candidates.map((c) => c.name)).toEqual([
+        'The Dresden Files',         // 19966
+        'Spinoff Graphic Novels',    // 323
+        'The Dresden Codex',         // 26
+        'Down Town',                 // 24
+      ]);
+      expect(candidates.map((c) => c.readersCount)).toEqual([19966, 323, 26, 24]);
+      // books_count:0 stub is filtered even though it has the highest readers_count.
+      expect(candidates.find((c) => c.name === 'Empty Stub')).toBeUndefined();
+    });
+
+    it('requests per_page: 25 so the flagship is in the candidate pool (#1239)', async () => {
+      fetchMock.mockResolvedValueOnce(buildSearchResponse([]));
+      await new HardcoverClient('K').searchSeries('dresden');
+      const init = fetchMock.mock.calls[0]![1] as RequestInit;
+      const body = JSON.parse(init.body as string);
+      expect(body.query).toContain('per_page: 25');
+    });
+
+    it('does not cap to 10 — returns the full filtered/sorted pool (resolver consumes it)', async () => {
+      const hits = Array.from({ length: 12 }, (_, i) => ({
+        document: { id: String(i + 1), name: `Series ${i + 1}`, slug: `s${i + 1}`, books_count: 2, readers_count: i },
+      }));
+      fetchMock.mockResolvedValueOnce(buildSearchResponse(hits));
+      const candidates = await new HardcoverClient('K').searchSeries('many');
+      expect(candidates).toHaveLength(12);
     });
   });
 

@@ -17,8 +17,12 @@ import {
   getPathSize,
   containsAudioFiles,
   copyAudioFiles,
+  copyDiscGroup,
+  reconstructDiscGroup,
   countAudioFiles,
   COPY_VERIFICATION_THRESHOLD,
+  assertCopyVerified,
+  ContentFailureError,
 } from './import-helpers.js';
 
 /** Normalize backslashes to forward slashes for cross-platform test assertions. */
@@ -55,6 +59,36 @@ describe('extractYear', () => {
 describe('COPY_VERIFICATION_THRESHOLD', () => {
   it('is 0.99', () => {
     expect(COPY_VERIFICATION_THRESHOLD).toBe(0.99);
+  });
+});
+
+describe('assertCopyVerified (#1304)', () => {
+  it('throws a ContentFailureError when target is below source * threshold', () => {
+    expect(() => assertCopyVerified(1000, 400)).toThrow(ContentFailureError);
+  });
+
+  it('retains the source/target byte sizes in the diagnostic message', () => {
+    expect(() => assertCopyVerified(1000, 400))
+      .toThrow('Copy verification failed: source 1000 bytes, target 400 bytes');
+  });
+
+  it('does not throw exactly at the threshold boundary (source * 0.99)', () => {
+    // 1000 * 0.99 === 990 — equal is not "below", so it passes.
+    expect(() => assertCopyVerified(1000, 990)).not.toThrow();
+  });
+
+  it('does not throw above the threshold', () => {
+    expect(() => assertCopyVerified(1000, 1000)).not.toThrow();
+  });
+
+  it('throws just below the threshold boundary', () => {
+    expect(() => assertCopyVerified(1000, 989)).toThrow(ContentFailureError);
+  });
+
+  it('does not throw for a zero-byte source/target (audio-free folder edge, #1346)', () => {
+    // Reachable when an audio-free folder slips through (0 < 0 * 0.99 === 0 < 0 is false),
+    // so verification is a no-op here rather than a false content failure. Pinned deliberately.
+    expect(() => assertCopyVerified(0, 0)).not.toThrow();
   });
 });
 
@@ -315,7 +349,14 @@ describe('copyAudioFiles', () => {
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never);
 
-    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('01.mp3');
+    // #1346: the flat-collision site (collectFlatFiles) throws a typed ContentFailureError.
+    // Byte-for-byte message pin (#1346 AC) — full text, not a substring, so any suffix/path
+    // drift on this throw site fails the test rather than slipping through.
+    const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ContentFailureError);
+    expect(norm((err as Error).message)).toBe(
+      'Duplicate filename "01.mp3" found during import flattening: "/src/Part 1/01.mp3" and "/src/Part 2/01.mp3"',
+    );
   });
 
   it('collision detection runs before any files are copied — no partial state on cp mock', async () => {
@@ -623,7 +664,13 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       .mockResolvedValueOnce([makeDirent('b.mp3', true, false)] as never) // Disc 02
       .mockResolvedValueOnce([makeDirent('1.mp3', true, false)] as never); // Extras — collides with sequential "1.mp3"
 
-    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('1.mp3');
+    // #1346: the disc/non-disc sequential-collision site throws a typed ContentFailureError.
+    // Byte-for-byte message pin (#1346 AC).
+    const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ContentFailureError);
+    expect(norm((err as Error).message)).toBe(
+      'Duplicate filename "1.mp3" found during import flattening: non-disc file "/src/Extras/1.mp3" collides with sequential disc numbering',
+    );
     expect(cp).not.toHaveBeenCalled();
   });
 
@@ -660,7 +707,13 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never) // Extras
       .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never); // Bonus
 
-    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('cover.mp3');
+    // #1346: the non-disc collision site (collectMultiDiscFiles) throws a typed ContentFailureError.
+    // Byte-for-byte message pin (#1346 AC).
+    const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ContentFailureError);
+    expect(norm((err as Error).message)).toBe(
+      'Duplicate filename "cover.mp3" found during import flattening: "/src/Extras/cover.mp3" and "/src/Bonus/cover.mp3"',
+    );
     expect(cp).not.toHaveBeenCalled();
   });
 
@@ -705,6 +758,238 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     const destNames = getCopiedDestNames();
     // Non-disc files first (original name), then sequential disc files
     expect(destNames).toEqual(['root_track.mp3', '1.mp3', '2.mp3']);
+  });
+
+  // ---- Embedded disc-marker source folders (#1272) ----
+
+  it('detects embedded "Disc N of M" source subfolders and flattens without a basename collision', async () => {
+    // Each disc holds an identically-named "01.mp3" — collectFlatFiles would throw on the dupe;
+    // the multi-disc path sequentially renames them instead.
+    setupDiscLayout([
+      ['2005 Non Fiction David McCullough - 1776 Disc 1 of 10 - File ~ of 28 - yEnc', ['01.mp3']],
+      ['2005 Non Fiction David McCullough - 1776 Disc 2 of 10 - File ~ of 28 - yEnc', ['01.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('detects embedded "CD NN of M" source subfolders', async () => {
+    setupDiscLayout([
+      ['Stephen King - It CD 01 of 03', ['01.mp3']],
+      ['Stephen King - It CD 02 of 03', ['01.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
+  });
+
+  it('sorts embedded-marker discs by parsed disc number — shared parser with discovery', async () => {
+    // Names match ONLY the embedded grammar (not DISC_FOLDER_PATTERN / parseTitledDiscFolder),
+    // so correct ordering proves extractDiscNumber routes through parseEmbeddedDiscMarker.
+    setupDiscLayout([
+      ['Author - Long Book Disc 10 of 10', ['ten.mp3']],
+      ['Author - Long Book Disc 2 of 10', ['two.mp3']],
+    ]);
+
+    await copyAudioFiles('/src', '/dest');
+
+    const srcPaths = getCopiedSrcPaths();
+    expect(srcPaths[0]).toContain('Disc 2 of 10');
+    expect(srcPaths[1]).toContain('Disc 10 of 10');
+  });
+});
+
+describe('reconstructDiscGroup', () => {
+  // reconstructDiscGroup reads the parent dir, then probes each sibling for audio via
+  // containsAudioFiles (one readdir per sibling). Serve both from a path->entries tree so
+  // the audio-bearing decision is driven through the real OS boundary (the exported
+  // containsAudioFiles is same-module, so a vi.mock of it would not intercept the internal call).
+  type TreeEntry = { name: string; isFile: boolean; reject?: boolean };
+  // reconstructDiscGroup builds sibling paths with join(parent, name), which emits backslashes
+  // on Windows; the tree is keyed with POSIX separators, so normalize the lookup key before
+  // matching. Without this the per-sibling audio probe ENOENTs on a Windows dev box, audioBearing
+  // empties, and reconstruction returns [] (a silent local-only failure; Linux CI stays green).
+  const norm = (paths: string[]): string[] => paths.map(p => p.split('\\').join('/'));
+  function setupTree(tree: Record<string, TreeEntry[]>) {
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      const key = String(p).split('\\').join('/');
+      const entries = tree[key];
+      if (!entries) throw Object.assign(new Error(`ENOENT: ${key}`), { code: 'ENOENT' });
+      if (entries.some(e => e.reject)) {
+        throw Object.assign(new Error(`EACCES: ${key}`), { code: 'EACCES' });
+      }
+      return entries.map(e => makeDirent(e.name, e.isFile, !e.isFile)) as never;
+    });
+  }
+
+  /** Build a parent listing of disc dirs (each with one audio file) plus extra siblings. */
+  function discTree(
+    parent: string,
+    stem: string,
+    count: number,
+    total: number,
+    extras: Record<string, TreeEntry[]> = {},
+  ): { tree: Record<string, TreeEntry[]>; discPaths: string[] } {
+    const discNames = Array.from({ length: count }, (_, i) => `${stem} Disc ${i + 1} of ${total}`);
+    const extraNames = Object.keys(extras).map(p => p.slice(parent.length + 1));
+    const tree: Record<string, TreeEntry[]> = {
+      [parent]: [
+        ...discNames.map(n => ({ name: n, isFile: false })),
+        ...extraNames.map(n => ({ name: n, isFile: false })),
+      ],
+    };
+    for (const n of discNames) tree[`${parent}/${n}`] = [{ name: 'track.mp3', isFile: true }];
+    Object.assign(tree, extras);
+    return { tree, discPaths: discNames.map(n => `${parent}/${n}`) };
+  }
+
+  it('returns [path] for a non-disc folder without touching the filesystem', async () => {
+    const result = await reconstructDiscGroup('/lib/Author/Book Title');
+    expect(result).toEqual(['/lib/Author/Book Title']);
+    expect(readdir).not.toHaveBeenCalled();
+  });
+
+  it('reconstructs the ordered member set from sibling disc folders', async () => {
+    const { tree, discPaths } = discTree('/downloads', 'Author - Book', 3, 3);
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
+
+    expect(norm(result)).toEqual(discPaths);
+  });
+
+  it('filters to siblings sharing the stem — ignores a different group under the same parent', async () => {
+    const tree: Record<string, TreeEntry[]> = {
+      '/downloads': [
+        { name: '1776 Disc 1 of 2', isFile: false },
+        { name: '1776 Disc 2 of 2', isFile: false },
+        { name: 'Slaughterhouse Disc 1 of 2', isFile: false },
+        { name: 'Slaughterhouse Disc 2 of 2', isFile: false },
+      ],
+      '/downloads/1776 Disc 1 of 2': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/1776 Disc 2 of 2': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Slaughterhouse Disc 1 of 2': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Slaughterhouse Disc 2 of 2': [{ name: 'a.mp3', isFile: true }],
+    };
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 2');
+
+    expect(norm(result)).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
+  });
+
+  it('does NOT reconstruct a set with inconsistent "of M" totals (mirrors discovery guard)', async () => {
+    const tree: Record<string, TreeEntry[]> = {
+      '/downloads': [
+        { name: 'Author - Book Disc 1 of 10', isFile: false },
+        { name: 'Author - Book Disc 2 of 8', isFile: false },
+      ],
+      '/downloads/Author - Book Disc 1 of 10': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Author - Book Disc 2 of 8': [{ name: 'a.mp3', isFile: true }],
+    };
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
+
+    // Discovery left these separate → reconstruction must too (length 1 → callers skip flatten)
+    expect(norm(result)).toEqual(['/downloads/Author - Book Disc 1 of 10']);
+  });
+
+  it('does NOT reconstruct when an AUDIO-bearing markerless sibling shares the stem (all-or-nothing)', async () => {
+    const { tree } = discTree('/downloads', 'Author - Book', 2, 3, {
+      // markerless sibling that DOES contain audio → genuinely ambiguous → guard must refuse
+      '/downloads/Author - Book Bonus Material': [{ name: 'extra.mp3', isFile: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
+
+    expect(norm(result)).toEqual(['/downloads/Author - Book Disc 1 of 3']);
+  });
+
+  it('reconstructs the FULL N-disc set despite an audioless markerless stem-sharing sibling (#1280)', async () => {
+    // The data-loss case: an audioless `<stem> Artwork` sibling broke the all-or-nothing guard
+    // at import time even though discovery (audio-bearing children only) coalesced all 10 discs.
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
+      '/downloads/1776 Artwork': [{ name: 'cover.jpg', isFile: true }, { name: 'info.nfo', isFile: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(norm(result)).toEqual(discPaths);
+    expect(result).toHaveLength(10);
+    expect(norm(result)).not.toContain('/downloads/1776 Artwork');
+  });
+
+  it('returns the full set with NO audioless sibling present (happy-path control)', async () => {
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10);
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(norm(result)).toEqual(discPaths);
+  });
+
+  it('excludes a marker-carrying AUDIOLESS sibling from the member set (members are audio-bearing dirs only)', async () => {
+    // A stray `<stem> Disc 11 of 10` dir with no audio — discovery never persists it (audioless),
+    // so reconstruction must not return it either.
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
+      '/downloads/1776 Disc 11 of 10': [{ name: 'liner-notes.pdf', isFile: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(norm(result)).toEqual(discPaths);
+    expect(norm(result)).not.toContain('/downloads/1776 Disc 11 of 10');
+  });
+
+  it('reconstructs ALL members of an incomplete N-of-M set unchanged — import is never blocked (#1282)', async () => {
+    // 8-of-10 download: discs 9 and 10 are missing. The incomplete-set warning is display-only
+    // at discovery; reconstruction must still return every available member so the import copies
+    // all 8 discs (refusing partial sets would itself be a data-loss regression).
+    const { tree, discPaths } = discTree('/downloads', 'Author - Book', 8, 10);
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
+
+    expect(norm(result)).toEqual(discPaths);
+    expect(result).toHaveLength(8);
+  });
+
+  it('treats an unreadable audioless sibling as zero-audio (mirrors discovery scanDir)', async () => {
+    // F5: containsAudioFiles failure on a sibling must not fail the whole import — discovery's
+    // scanDir catches readdir failures and treats the subtree as empty/no-audio.
+    const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
+      '/downloads/1776 Artwork': [{ name: 'x', isFile: true, reject: true }],
+    });
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/1776 Disc 1 of 10');
+
+    expect(norm(result)).toEqual(discPaths);
+  });
+});
+
+describe('copyDiscGroup', () => {
+  it('flattens an ordered member-disc set into target with sequential renaming', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)  // disc 1 files
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never); // disc 2 files
+
+    await copyDiscGroup(
+      ['/downloads/Author - Book Disc 1 of 2', '/downloads/Author - Book Disc 2 of 2'],
+      '/dest',
+    );
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    const destNames = (cp as Mock).mock.calls.map((c: unknown[]) => norm(c[1] as string).split('/').pop());
+    expect(destNames).toEqual(['1.mp3', '2.mp3']);
   });
 });
 

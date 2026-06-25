@@ -20,6 +20,7 @@ export interface DelugeConfig {
 }
 
 type DelugeTorrentStatus = z.infer<typeof delugeTorrentStatusSchema>;
+type DelugeRpcEnvelope = z.infer<typeof delugeRpcResponseSchema>;
 
 const TORRENT_STATUS_KEYS = [
   'hash', 'name', 'state', 'progress', 'total_size',
@@ -27,6 +28,9 @@ const TORRENT_STATUS_KEYS = [
   'num_peers', 'eta', 'download_rate', 'save_path', 'time_added', 'label',
   'is_finished',
 ];
+
+const NO_DAEMON_MESSAGE =
+  'Deluge WebUI is not connected to a daemon. Open Deluge’s Connection Manager and configure (and connect to) a daemon host, then try again.';
 
 export class DelugeClient implements DownloadClientAdapter {
   readonly type = 'deluge';
@@ -72,26 +76,7 @@ export class DelugeClient implements DownloadClientAdapter {
           throw new DownloadClientAuthError(this.name, `Deluge request failed: HTTP ${response.status}`);
         }
 
-        if (!response.ok) {
-          throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
-        }
-
-        let raw: unknown;
-        try {
-          raw = await response.json();
-        } catch {
-          throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
-        }
-
-        const parsed = delugeRpcResponseSchema.safeParse(raw);
-        if (!parsed.success) {
-          throw new DownloadClientError(
-            this.name,
-            `Deluge returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-            { cause: parsed.error },
-          );
-        }
-        const data = parsed.data;
+        const data = await this.parseRpcResponse(response);
 
         if (data.error) {
           if (data.error.code === 1) {
@@ -112,6 +97,88 @@ export class DelugeClient implements DownloadClientAdapter {
         },
       },
     );
+  }
+
+  /**
+   * Issue a JSON-RPC call WITHOUT the auth gate that `rpc()` applies. Reuses the
+   * persisted session cookie from `login()`. The auth handshake (web.*) must use
+   * this rather than `rpc()` — `rpc()` calls `login()` when `!this.authenticated`,
+   * which would recurse back into the handshake.
+   */
+  private async rawRpc(method: string, params: unknown[] = []): Promise<unknown> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.sessionCookie) {
+      headers.Cookie = this.sessionCookie;
+    }
+
+    const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ method, params, id: ++this.requestId }),
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+    const data = await this.parseRpcResponse(response);
+    if (data.error) {
+      throw new DownloadClientError(this.name, `Deluge RPC error: ${data.error.message}`);
+    }
+
+    return data.result;
+  }
+
+  /**
+   * Shared, policy-free response pipeline for `rpc()` and `rawRpc()`: HTTP
+   * status check, JSON decode, and schema validation. Returns the validated
+   * envelope and performs NO `data.error` interpretation — each caller keeps
+   * its own `data.error` policy (auth-retry in `rpc()`, plain throw in
+   * `rawRpc()`). `rpc()`'s 401/403 auth pre-check also stays caller-side,
+   * ahead of this helper's generic `!response.ok` branch.
+   */
+  private async parseRpcResponse(response: Response): Promise<DelugeRpcEnvelope> {
+    if (!response.ok) {
+      throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
+    }
+
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch {
+      throw new DownloadClientError(this.name, 'Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
+    }
+
+    const parsed = delugeRpcResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new DownloadClientError(
+        this.name,
+        `Deluge returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      );
+    }
+    return parsed.data;
+  }
+
+  /**
+   * `auth.login` only authenticates to the web server — it does NOT connect the
+   * web server to a daemon. Daemon-proxied methods (`daemon.*`, `core.*`) are
+   * absent from the callable-method map until a daemon is connected, so they fail
+   * with "Unknown method". Ensure a daemon is connected before any such call.
+   */
+  private async ensureDaemonConnected(): Promise<void> {
+    const connected = await this.rawRpc('web.connected');
+    if (connected === true) {
+      return;
+    }
+
+    const hosts = await this.rawRpc('web.get_hosts');
+    if (!Array.isArray(hosts) || hosts.length === 0) {
+      throw new DownloadClientError(this.name, NO_DAEMON_MESSAGE);
+    }
+
+    const firstHost = hosts[0];
+    if (!Array.isArray(firstHost) || typeof firstHost[0] !== 'string' || firstHost[0].length === 0) {
+      throw new DownloadClientError(this.name, NO_DAEMON_MESSAGE);
+    }
+
+    await this.rawRpc('web.connect', [firstHost[0]]);
   }
 
   private async login(): Promise<void> {
@@ -160,6 +227,10 @@ export class DelugeClient implements DownloadClientAdapter {
       this.sessionCookie = setCookie.split(';')[0]!;
     }
 
+    // auth.login only authenticates to the web server — connect it to a daemon
+    // before any daemon.*/core.* call. Reuses the cookie just persisted above.
+    await this.ensureDaemonConnected();
+
     this.authenticated = true;
   }
 
@@ -191,20 +262,49 @@ export class DelugeClient implements DownloadClientAdapter {
   }
 
   private async addTorrent(artifact: Extract<DownloadArtifact, { type: 'torrent-bytes' } | { type: 'magnet-uri' }>, addOptions: Record<string, unknown>): Promise<string> {
-    let result: unknown;
+    try {
+      let result: unknown;
 
-    if (artifact.type === 'torrent-bytes') {
-      const fileContent = artifact.data.toString('base64');
-      result = await this.rpc('core.add_torrent_file', ['upload.torrent', fileContent, addOptions]);
-    } else {
-      result = await this.rpc('core.add_torrent_magnet', [artifact.uri, addOptions]);
+      if (artifact.type === 'torrent-bytes') {
+        const fileContent = artifact.data.toString('base64');
+        result = await this.rpc('core.add_torrent_file', ['upload.torrent', fileContent, addOptions]);
+      } else {
+        result = await this.rpc('core.add_torrent_magnet', [artifact.uri, addOptions]);
+      }
+
+      if (!result || typeof result !== 'string') {
+        throw new DownloadClientError(this.name, 'Deluge returned no torrent hash');
+      }
+
+      return result;
+    } catch (error: unknown) {
+      // Duplicate-add: Deluge raises an AddTorrentError ("Torrent already in
+      // session") which rpc() surfaces as a thrown DownloadClientError. The
+      // torrent the daemon already holds IS the release we wanted (matched by
+      // infohash), so adopt it — confirm it is present, then return its infohash
+      // so the grab persists a normal tracked download for the monitor to drive
+      // to completion. Mirror Transmission's torrent-duplicate handling.
+      if (this.isDuplicateAddError(error)) {
+        const existing = await this.getDownload(artifact.infoHash);
+        if (existing) {
+          return artifact.infoHash;
+        }
+      }
+      throw error;
     }
+  }
 
-    if (!result || typeof result !== 'string') {
-      throw new DownloadClientError(this.name, 'Deluge returned no torrent hash');
-    }
-
-    return result;
+  /**
+   * Detect Deluge's duplicate-add signal. A duplicate `core.add_torrent_*`
+   * returns `error.code === 4` (generic "RPC call failure") with an
+   * `AddTorrentError` / "already in session" message — so the match must be
+   * scoped to the message substrings, NOT `code 4` alone.
+   */
+  private isDuplicateAddError(error: unknown): boolean {
+    return (
+      error instanceof DownloadClientError &&
+      (error.message.includes('AddTorrentError') || error.message.includes('already in session'))
+    );
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
@@ -274,7 +374,7 @@ export class DelugeClient implements DownloadClientAdapter {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       await this.login();
-      const version = await this.rpc('daemon.info') as string;
+      const version = await this.rpc('daemon.get_version') as string;
       return { success: true, message: `Deluge ${version}` };
     } catch (error: unknown) {
       return {

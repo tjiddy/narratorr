@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
-import { buildEditedFromBestMatch, type ImportRow, type BookEditState } from '@/components/manual-import';
+import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -45,20 +45,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       // Duplicate rows are not in the match job — if a result somehow arrives, don't auto-select
       if (row.book.isDuplicate) return row;
 
-      // Auto-uncheck no-match rows (spec: 0 matches → Unchecked)
-      const selected = match.confidence === 'none' ? false : row.selected;
-
-      // Auto-populate edited fields from best match if not already manually edited
-      const wasEdited = row.edited.metadata !== undefined;
-      if (!wasEdited && match.bestMatch) {
-        return {
-          ...row,
-          matchResult: match,
-          selected,
-          edited: buildEditedFromBestMatch(match.bestMatch, row.edited),
-        };
-      }
-      return { ...row, matchResult: match, selected };
+      return mergeMatchIntoRow(row, match);
     }));
   }, []);
 
@@ -81,6 +68,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
         book,
         // Duplicate rows start unchecked; new books start checked
         selected: !book.isDuplicate,
+        userEdited: false,
         edited: {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
@@ -146,7 +134,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       if (i !== index) return r;
       const autoCheck = !r.selected && state.metadata ? true : r.selected;
       const matchResult = upgradeMatchConfidence(r.matchResult, state.metadata, r.edited.metadata);
-      return { ...r, edited: state, selected: autoCheck, matchResult };
+      return { ...r, edited: state, selected: autoCheck, userEdited: true, matchResult };
     }));
   }, []);
 

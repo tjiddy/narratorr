@@ -8,6 +8,7 @@ const now = new Date('2024-01-01T00:00:00Z');
 export function createMockDbAuthor(overrides?: Record<string, unknown>) {
   return {
     id: 1,
+    publicId: 'au_test000000000000000',
     name: 'Brandon Sanderson',
     slug: 'brandon-sanderson',
     asin: null as string | null,
@@ -20,11 +21,12 @@ export function createMockDbAuthor(overrides?: Record<string, unknown>) {
 export function createMockDbBook(overrides?: Record<string, unknown>) {
   return {
     id: 1,
+    publicId: 'bk_test000000000000000',
     title: 'The Way of Kings',
+    subtitle: null as string | null,
     description: 'An epic fantasy' as string | null,
+    publisher: null as string | null,
     coverUrl: null as string | null,
-    goodreadsId: null as string | null,
-    audibleId: null as string | null,
     asin: null as string | null,
     isbn: null as string | null,
     seriesName: null as string | null,
@@ -34,6 +36,7 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     genres: null as string[] | null,
     status: 'wanted' as const,
     enrichmentStatus: 'pending' as const,
+    enrichmentAttempts: 0,
     path: null as string | null,
     size: null as number | null,
     audioCodec: null as string | null,
@@ -58,10 +61,10 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
 export function createMockDbImportList(overrides?: Record<string, unknown>) {
   return {
     id: 1,
-    name: 'My ABS List',
-    type: 'abs' as const,
+    name: 'My NYT List',
+    type: 'nyt' as const,
     enabled: true,
-    settings: { serverUrl: 'http://abs.local', apiKey: 'test-key', libraryId: 'lib-1' },
+    settings: { apiKey: 'test-key', list: 'audio-fiction' },
     syncIntervalMinutes: 1440,
     lastRunAt: null as Date | null,
     nextRunAt: null as Date | null,
@@ -136,6 +139,19 @@ export function createMockDbNotifier(overrides?: Record<string, unknown>) {
     events: ['on_grab', 'on_import'] as string[],
     settings: { url: 'https://example.com/hook' },
     createdAt: now,
+    ...overrides,
+  };
+}
+
+export function createMockDbConnector(overrides?: Record<string, unknown>) {
+  return {
+    id: 1,
+    name: 'Test ABS',
+    type: 'audiobookshelf' as const,
+    enabled: true,
+    settings: { baseUrl: 'http://abs.local:13378', apiKey: 'secret-key', libraryId: 'lib-1' },
+    createdAt: now,
+    updatedAt: now,
     ...overrides,
   };
 }

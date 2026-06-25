@@ -6,6 +6,12 @@ vi.mock('node:dns/promises', () => ({
 }));
 
 const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
+// Spy wrapping the walker below so tests can assert the options (headers,
+// dispatcher, lanAllowlist) that resolveHttp passes to fetchWithSsrfRedirect.
+// Declared via vi.hoisted so it is initialized before the mock factory runs
+// (the factory calls .mockImplementation on it during module evaluation, which
+// is hoisted above plain top-level const initialization).
+const { fetchWithSsrfRedirectSpy } = vi.hoisted(() => ({ fetchWithSsrfRedirectSpy: vi.fn() }));
 
 // Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so
 // the existing `vi.stubGlobal('fetch', mockFetch)` continues to intercept
@@ -50,9 +56,10 @@ vi.mock('./network-service.js', async (importActual) => {
     }
     throw new Error('Too many redirects');
   };
+  fetchWithSsrfRedirectSpy.mockImplementation(fetchWithSsrfRedirect);
   return {
     ...actual,
-    fetchWithSsrfRedirect,
+    fetchWithSsrfRedirect: fetchWithSsrfRedirectSpy as unknown as typeof actual.fetchWithSsrfRedirect,
     createSsrfSafeDispatcher: (() => ({ close: dispatcherCloseSpy })) as unknown as typeof actual.createSsrfSafeDispatcher,
   };
 });
@@ -94,6 +101,7 @@ beforeEach(() => {
   mockFetch.mockClear();
   mockedDnsLookup.mockReset();
   dispatcherCloseSpy.mockClear();
+  fetchWithSsrfRedirectSpy.mockClear();
   // Default every host to a public IP so the SSRF pre-flight gate is open.
   mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   vi.stubGlobal('fetch', mockFetch);
@@ -102,6 +110,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 function mockResponse(body: Buffer | string, init?: ResponseInit): Response {
@@ -216,6 +225,31 @@ describe('DownloadUrl', () => {
       });
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    // #1243 — the allowlist is carried on the nzb-url artifact so the Blackhole
+    // self-download can reach private/LAN configured-indexer NZB URLs.
+    it('attaches the LAN allowlist to the nzb-url passthrough when provided (no HTTP fetch)', async () => {
+      const allowlist = {
+        hostPort: new Set(['192.168.0.22:9696']),
+        hostname: new Set(['192.168.0.22']),
+      };
+      const dl = new DownloadUrl('http://192.168.0.22:9696/getnzb/abc.nzb', 'usenet');
+      const artifact = await dl.resolve(allowlist);
+
+      expect(artifact).toEqual({
+        type: 'nzb-url',
+        url: 'http://192.168.0.22:9696/getnzb/abc.nzb',
+        lanAllowlist: allowlist,
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('omits lanAllowlist from the nzb-url passthrough when no allowlist is provided', async () => {
+      const dl = new DownloadUrl('https://indexer.example.com/dl/12345.nzb', 'usenet');
+      const artifact = await dl.resolve();
+
+      expect(artifact).not.toHaveProperty('lanAllowlist');
+    });
   });
 
   describe('resolve() — torrent HTTP URLs (direct response)', () => {
@@ -233,6 +267,26 @@ describe('DownloadUrl', () => {
       const tb = artifact as Extract<DownloadArtifact, { type: 'torrent-bytes' }>;
       expect(tb.infoHash).toBe(expectedHash);
       expect(tb.data).toEqual(buffer);
+    });
+
+    // #1329 — the HTTP torrent artifact grab must identify with the canonical
+    // Narratorr User-Agent (not undici's default), mirroring the #1315 blackhole
+    // self-download. Asserted at the fetchWithSsrfRedirect call.
+    it('sends the canonical Narratorr User-Agent on the torrent artifact fetch', async () => {
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
+      const { buffer } = fakeTorrentBuffer();
+      mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
+        status: 200,
+        headers: { 'Content-Type': 'application/x-bittorrent' },
+      }));
+
+      const dl = new DownloadUrl('https://indexer.example.com/dl/12345', 'torrent');
+      await dl.resolve();
+
+      expect(fetchWithSsrfRedirectSpy).toHaveBeenCalledWith(
+        'https://indexer.example.com/dl/12345',
+        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/v9.9.9' } }),
+      );
     });
 
     it('throws auth proxy error when response is HTML (content-type text/html)', async () => {

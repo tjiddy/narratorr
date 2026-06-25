@@ -1,7 +1,8 @@
 // Pattern helpers for folder-parsing.ts (issue #1034). Extracted to keep the
 // main module under the file-size cap; behaviour is unchanged from inlining.
 
-import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing.js';
+import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstSwap } from './folder-parsing-primitives.js';
+import type { ParsedFolder } from './folder-parsing.js';
 
 /**
  * `<title> - <series>, Book N [by Author] [(Narrator)]` — rightmost-dash split.
@@ -12,6 +13,75 @@ import { CODEC_TEST_REGEX, isEditionParen, NARRATOR_PAREN_REGEX, applyLastFirstS
 const TITLE_DASH_SERIES_BOOK_REGEX = /^(.+)\s+-\s+(.+?)\s*,\s*Book\s+(\d+(?:\.\d+)?)\s*(?:by\s+(.+?))?\s*(?:\(([^)]+)\))?\s*$/i;
 
 const SERIES_KEYWORD_REGEX = /\b(?:series|saga|chronicles|trilogy|cycle)\b/i;
+
+/** Release-tag phrases NOT in `CODEC_TAGS` (which covers single codec/format labels
+ * only); denied from `bracketTagStrip`'s whole-title unwrap as release metadata,
+ * not titles. Compared case-insensitively against the normalized inner. (#1331) */
+const TAG_PHRASE_DENYLIST = new Set(
+  ['Graphic Audio', 'GraphicAudio', 'GA', 'Dramatized Adaptation', 'Dramatized', 'Full Cast', 'Full-Cast']
+    .map((p) => p.toLowerCase()),
+);
+// `isReleaseTagInner` splits the inner on whitespace before testing each token,
+// so a token never contains an internal space — the dead `\s*` matcher these
+// regexes carried pre-#1332 could never fire and is dropped.
+const BITRATE_TOKEN_REGEX = /^\d+(?:\.\d+)?k(bps)?$/i; // `64k`, `128kbps`
+const SAMPLE_RATE_TOKEN_REGEX = /^\d+(?:\.\d+)?khz$/i; // `22khz`, `44khz`, joined `44.1khz`
+/** Bare numeric / decimal token — a filler digit inside a multi-token tag, e.g.
+ * the `44` left over when `normalize` dot-splits `44.1kHz` → `44 1kHz`, or the
+ * `64` in a spaced `64 kbps`. A LONE numeric inner is NOT a tag (it is a title
+ * like `[1984]` / `[22]`), so the classifier requires ≥1 strong tag token too. */
+const BARE_NUMERIC_TOKEN_REGEX = /^\d+(?:\.\d+)?$/;
+/** Bare unit token left when a sample-rate / bitrate is spaced from its number
+ * (`64 kbps` → `64` `kbps`, `44.1 kHz` → `44.1` `khz`). */
+const UNIT_TOKEN_REGEX = /^(?:k|kb|kbps|kbit|khz|hz|mhz|mb|mbps|vbr|cbr)$/i;
+/** Audible ASIN shape — defensive: `extractASIN` removes ASIN brackets before the
+ * clean pipeline, but a second ASIN bracket would survive to here. */
+const ASIN_TOKEN_REGEX = /^B0[A-Z0-9]{8}$/i;
+/** Strip leading/trailing token punctuation so `64k,` / `-` (from `[64k, 22khz]`,
+ * `[MP3 - 64k]`) reduce to bare tag tokens / empty separators. */
+const TOKEN_PUNCT_STRIP_REGEX = /^[-–—,]+|[-–—,]+$/g;
+
+/** A `strong` tag token carries release-metadata meaning on its own (codec, bitrate,
+ * sample rate, spaced unit, ASIN) — distinct from a bare numeric filler token. */
+function isStrongReleaseTagToken(t: string): boolean {
+  return CODEC_TEST_REGEX.test(t) || BITRATE_TOKEN_REGEX.test(t) || SAMPLE_RATE_TOKEN_REGEX.test(t)
+    || UNIT_TOKEN_REGEX.test(t) || ASIN_TOKEN_REGEX.test(t);
+}
+
+/**
+ * True when `trimmedInner` is entirely release-tag tokens (codec/format label,
+ * bitrate `64k`, sample rate `22khz`, spaced unit `64 kbps`, dot-split `44 1khz`)
+ * or a known release-tag phrase (`Graphic Audio`). Such inners are release
+ * metadata, so the bracket-tag strip keeps deleting them rather than unwrapping.
+ * A LONE bare numeric (`1984`, `22`) is a TITLE, not a tag — the classifier only
+ * fires when every token is a strong tag or numeric filler AND at least one strong
+ * tag is present. Any other non-tag token ⇒ `false`. Exported for tests. (#1331/#1332)
+ */
+export function isReleaseTagInner(trimmedInner: string): boolean {
+  const normalized = trimmedInner.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  if (TAG_PHRASE_DENYLIST.has(normalized)) return true;
+  const tokens = normalized.split(' ')
+    .map((t) => t.replace(TOKEN_PUNCT_STRIP_REGEX, ''))
+    .filter(Boolean);
+  if (tokens.length === 0) return false;
+  if (!tokens.every((t) => isStrongReleaseTagToken(t) || BARE_NUMERIC_TOKEN_REGEX.test(t))) return false;
+  return tokens.some(isStrongReleaseTagToken);
+}
+
+/** True when `segment` is wholly a SEQUENCE of bracketed release tags — one or more
+ * `[...]` groups with no other text, every inner passing `isReleaseTagInner`
+ * (`[Graphic Audio]`, `[64k 22khz]`, `[Graphic Audio] [64k 22khz]`). Used by the
+ * author/title dash split so a pure-tag segment (on either side) is never treated
+ * as a title or author, and by the shared cleanName collapse guard. (#1331/#1332) */
+export function isPureReleaseTagBracket(segment: string): boolean {
+  const trimmed = segment.trim();
+  if (!trimmed.startsWith('[')) return false;
+  // Reject if any non-bracket text remains once every `[...]` group is removed.
+  if (trimmed.replace(/\s*\[[^\]]*\]\s*/g, '').trim() !== '') return false;
+  const inners = [...trimmed.matchAll(/\[([^\]]*)\]/g)].map((m) => m[1]!.trim());
+  return inners.length > 0 && inners.every((inner) => isReleaseTagInner(inner));
+}
 
 function isNarratorDisambiguatorParen(content: string): boolean {
   const trimmed = content.trim();
@@ -76,7 +146,7 @@ export function trySeriesParen(
 ): { remainder: string; series: string; seriesPosition: number } | null {
   const m = input.match(SERIES_PAREN_REGEX);
   if (!m) return null;
-  const series = m[1]!.trim();
+  const series = m[1]!.trim().replace(/,\s*$/, '');
   if (!series || CODEC_TEST_REGEX.test(series) || isEditionParen(series)) return null;
   const position = parseRomanOrArabicPosition(m[2] ?? m[3]!);
   if (position === undefined) return null;
@@ -151,6 +221,92 @@ export function tryCrossSegmentAgreement(
     author: null,
     series: transform(seriesFolder),
     seriesPosition: position,
+    ...asinTail,
+  };
+}
+
+/**
+ * Anchored descriptor: a full ` - `-delimited segment that IS a
+ * `Book N of [the] <Series> Series|Saga|Trilogy|Cycle|Chronicles` unit (#1271).
+ * The series-keyword tail is part of the anchor, so a bare title word like
+ * "The Saga of Pliocene Exile" (no leading `Book N of`) never matches. Group 1 is
+ * the position (Arabic decimal or Roman); group 2 is the series name.
+ */
+const BOOK_OF_SERIES_DESCRIPTOR_REGEX =
+  /^Book\s+(\d+(?:\.\d+)?|[IVXLCDM]+)\s+of\s+(?:the\s+)?(.+?)\s+(?:series|saga|trilogy|cycle|chronicles)\s*$/i;
+
+/** Split an input into ` - ` / ` – ` / ` — `-delimited segments (each trimmed). */
+function splitDashSegments(input: string): string[] {
+  return input.split(/\s+[-–—]\s+/).map((s) => s.trim());
+}
+
+/** Locate the first segment that IS a `Book N of <Series> Saga` descriptor. */
+function findDescriptorSegment(segments: string[]): { index: number; match: RegExpMatchArray } | null {
+  for (let i = 0; i < segments.length; i++) {
+    const match = segments[i]!.match(BOOK_OF_SERIES_DESCRIPTOR_REGEX);
+    if (match) return { index: i, match };
+  }
+  return null;
+}
+
+/** Build the `{ series, seriesPosition? }` overlay captured from a descriptor match. */
+function descriptorSeriesOverlay(
+  match: RegExpMatchArray,
+  transform: (s: string) => string,
+): { series: string; seriesPosition?: number } {
+  const position = parseRomanOrArabicPosition(match[1]!);
+  const series = transform(match[2]!.trim());
+  return position !== undefined ? { series, seriesPosition: position } : { series };
+}
+
+/**
+ * Recognize an inline `Book N of [the] <Series> Series|Saga|Trilogy|Cycle|Chronicles`
+ * descriptor segment and resolve title/author around it (#1271). Two structural shapes:
+ *
+ * - **Trailing descriptor** — `Author - Title - <descriptor>`: strip the descriptor and let
+ *   the existing `Author - Title` first-dash heuristic (`resolveAuthorTitle`) resolve the
+ *   remainder.
+ * - **Middle descriptor** — `Title - <descriptor> - Author`: the real author is the TRAILING
+ *   segment and the real title is the LEADING segment, so assign them directly — a naive strip
+ *   would leave `Title - Author`, which the first-dash heuristic would invert.
+ *
+ * The series-keyword tail is part of the anchored segment match, so a bare title word
+ * (`The Saga of Pliocene Exile`, `The Chronicles of Amber`) never triggers the strip. Returns
+ * null when no descriptor segment is present, when it sits at the leading edge with trailing
+ * content (no title to assign), or when stripping would blank the name (degenerate
+ * `Book 1 of the Series` falls through to the title-only path). `transform` is `cleanName`
+ * for the cleaned parser, `identity` for raw — both paths run this branch identically.
+ */
+export function tryBookOfSeriesDescriptor(
+  input: string,
+  asinTail: { asin?: string },
+  transform: (s: string) => string,
+  resolveAuthorTitle: (residual: string) => ParsedFolder | null,
+): ParsedFolder | null {
+  const segments = splitDashSegments(input);
+  if (segments.length < 2) return null;
+  const found = findDescriptorSegment(segments);
+  if (!found) return null;
+  const overlay = descriptorSeriesOverlay(found.match, transform);
+
+  // Trailing descriptor — strip it, reuse the existing dash/by heuristic on the remainder.
+  if (found.index === segments.length - 1) {
+    const residual = segments.slice(0, found.index).join(' - ');
+    if (!residual) return null; // descriptor-only — fall back to the title-only path (AC6)
+    const resolved = resolveAuthorTitle(residual)
+      ?? { title: transform(residual), author: null, series: null, ...asinTail };
+    return { ...resolved, ...overlay, ...asinTail };
+  }
+
+  // Middle descriptor — leading segment is the title, trailing segment(s) the author.
+  if (found.index === 0) return null; // no leading title segment to assign
+  const title = segments.slice(0, found.index).join(' - ');
+  const author = segments.slice(found.index + 1).join(' - ');
+  if (!title) return null;
+  return {
+    title: transform(title),
+    author: author ? applyLastFirstSwap(transform(author)) : null,
+    ...overlay,
     ...asinTail,
   };
 }

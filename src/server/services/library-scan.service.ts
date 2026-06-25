@@ -6,6 +6,7 @@ import { books, authors, bookAuthors } from '../../db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '../../core/utils/parse.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
+import { transitionBookStatus } from '../utils/book-status.js';
 import type { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { MetadataService } from './metadata.service.js';
@@ -16,6 +17,9 @@ import { confirmImport as confirmImportHelper, type ImportPipelineDeps } from '.
 import { buildDiscoveredBook } from './library-scan.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { ConnectorService } from './connector.service.js';
+import type { ConnectorImportItem } from '../../core/connectors/index.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 import { WireOnce } from './wire-helpers.js';
@@ -67,6 +71,7 @@ export class LibraryScanService {
     private log: FastifyBaseLogger,
     private eventHistory: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
+    private connectorService?: ConnectorService,
   ) {}
 
   /** Wire cyclic / late-bound deps after construction. Call once during composition. */
@@ -79,7 +84,7 @@ export class LibraryScanService {
   }
 
   get importDeps(): ImportPipelineDeps {
-    return { db: this.db, log: this.log, bookService: this.bookService, bookImportService: this.bookImportService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster };
+    return { db: this.db, log: this.log, bookService: this.bookService, bookImportService: this.bookImportService, settingsService: this.settingsService, eventHistory: this.eventHistory, enrichmentDeps: this.enrichmentDeps, broadcaster: this.eventBroadcaster, connectorService: this.connectorService };
   }
 
   /**
@@ -108,41 +113,35 @@ export class LibraryScanService {
       const resolvedRoot = resolve(libraryRoot);
 
       const rows = await this.db
-        .select({ id: books.id, path: books.path, status: books.status })
+        .select({ id: books.id, path: books.path, status: books.status, title: books.title })
         .from(books)
         .where(inArray(books.status, ['imported', 'missing']));
 
       let scanned = 0;
       let missing = 0;
       let restored = 0;
+      const restoredItems: ConnectorImportItem[] = [];
 
       for (const row of rows) {
-        if (!row.path) continue;
-
-        // Path ancestry check — skip books outside library root
-        const resolvedPath = resolve(row.path);
-        const rel = relative(resolvedRoot, resolvedPath);
-        if (rel.startsWith('..') || isAbsolute(rel)) continue;
-
+        const outcome = await this.reconcileBookPath(row, resolvedRoot);
+        if (outcome === 'skipped') continue;
         scanned++;
-
-        let exists = false;
-        try {
-          await access(row.path);
-          exists = true;
-        } catch {
-          // path does not exist
-        }
-
-        if (row.status === 'imported' && !exists) {
-          await this.db.update(books).set({ status: 'missing', updatedAt: new Date() }).where(eq(books.id, row.id));
-          this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
-          missing++;
-        } else if (row.status === 'missing' && exists) {
-          await this.db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, row.id));
-          this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
+        if (outcome === 'missing') missing++;
+        else if (outcome === 'restored') {
           restored++;
+          // row.path is non-null here: a 'restored' outcome requires an existing path.
+          restoredItems.push({ bookId: row.id, title: row.title, libraryPath: row.path! });
         }
+      }
+
+      // Fire-and-forget: connector refresh for rows that flipped missing→imported.
+      // Never enqueued when there were zero restorations.
+      if (this.connectorService && restoredItems.length > 0) {
+        fireAndForget(
+          this.connectorService.notifyRefresh('restored', restoredItems),
+          this.log,
+          'Failed to enqueue connector refresh on library rescan',
+        );
       }
 
       this.log.info({ scanned, missing, restored, elapsedMs: Date.now() - startMs }, 'Library rescan complete');
@@ -150,6 +149,48 @@ export class LibraryScanService {
     } finally {
       this.scanning = false;
     }
+  }
+
+  /**
+   * Reconcile a single book row's on-disk presence against its persisted status.
+   * Returns `'skipped'` for rows outside the library root or with no path (not
+   * counted as scanned), `'missing'`/`'restored'` when a guarded transition
+   * lands, or `null` when scanned but unchanged. The `expected` guard ensures a
+   * concurrent in-flight import (`importing`) is never clobbered by the scan's
+   * reconciliation, which read the row status before the import landed.
+   */
+  private async reconcileBookPath(
+    row: { id: number; path: string | null; status: string; title: string },
+    resolvedRoot: string,
+  ): Promise<'skipped' | 'missing' | 'restored' | null> {
+    if (!row.path) return 'skipped';
+
+    // Path ancestry check — skip books outside library root
+    const rel = relative(resolvedRoot, resolve(row.path));
+    if (rel.startsWith('..') || isAbsolute(rel)) return 'skipped';
+
+    let exists = false;
+    try {
+      await access(row.path);
+      exists = true;
+    } catch {
+      // path does not exist
+    }
+
+    if (row.status === 'imported' && !exists) {
+      const flipped = await transitionBookStatus(this.db, row.id, { status: 'missing', expected: { status: 'imported' } });
+      if (flipped) {
+        this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
+        return 'missing';
+      }
+    } else if (row.status === 'missing' && exists) {
+      const flipped = await transitionBookStatus(this.db, row.id, { status: 'imported', expected: { status: 'missing' } });
+      if (flipped) {
+        this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
+        return 'restored';
+      }
+    }
+    return null;
   }
 
   /**

@@ -140,10 +140,14 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
   const blacklistMutation = useMutation({
     mutationFn: api.addToBlacklist,
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       toast.success('Release blacklisted');
       queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
-      queryClient.invalidateQueries({ queryKey: ['search-releases'] as const });
+      // Drop the blacklisted row(s) from the open results immediately (local-state
+      // only, no refetch). The mutation variables already carry `{ infoHash?, guid? }`,
+      // so pass them straight through — the hook owns identity matching (independent
+      // OR-match on either identifier), NOT the render key, which never consults `guid`.
+      actions.removeResult(variables);
     },
     onError: (err: Error) => {
       toast.error(`Failed to blacklist: ${getErrorMessage(err)}`);

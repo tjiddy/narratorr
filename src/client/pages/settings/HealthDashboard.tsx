@@ -53,7 +53,10 @@ function HealthCard({ check }: { check: HealthCheckResult }) {
   const navigate = useNavigate();
   const style = stateStyles[check.state] ?? stateStyles.healthy;
   const Icon = style.icon;
-  const href = check.target ? targetToHref(check.target) : null;
+  // A `link` makes the card non-clickable so its inline <a> isn't nested inside
+  // a <button> (invalid interactive nesting). Today only `version-update` sets
+  // `link`, and it carries no `target`, but this guard keeps that invariant safe.
+  const href = check.target && !check.link ? targetToHref(check.target) : null;
 
   const content = (
     <>
@@ -69,6 +72,16 @@ function HealthCard({ check }: { check: HealthCheckResult }) {
         </div>
         {check.message && (
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{check.message}</p>
+        )}
+        {check.link && (
+          <a
+            href={check.link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block text-xs font-medium mt-1 text-primary hover:text-primary/80 underline decoration-primary/30 underline-offset-2 hover:decoration-primary/60 transition-colors"
+          >
+            {check.link.label}
+          </a>
         )}
       </div>
     </>

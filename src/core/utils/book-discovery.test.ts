@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type path from 'node:path';
 
-// Mock node:fs/promises before importing the module under test
-vi.mock('node:fs/promises', () => ({
-  readdir: vi.fn(),
-  stat: vi.fn(),
-}));
+// Mock node:fs/promises before importing the module under test. Spread the real module so the
+// reconstructDiscGroup import (which statically pulls mkdir/cp from import-helpers.ts) keeps every
+// export present — only readdir/stat are stubbed, the rest stay real but are never called here.
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+  return {
+    ...actual,
+    readdir: vi.fn(),
+    stat: vi.fn(),
+  };
+});
 
 // Mock node:path to use posix behavior so tests work on Windows too.
 // The source code uses join() and extname() which produce backslash paths on Windows,
@@ -32,9 +38,13 @@ vi.mock('./audio-scanner.js', () => ({
 import {
   discoverBooks,
   parseTitledDiscFolder,
+  parseEmbeddedDiscMarker,
   normalizeAlbumForComparison,
+  composeReviewReason,
   type DiscoveryLogger,
 } from './book-discovery.js';
+import { parseFolderStructure } from '../../server/utils/folder-parsing.js';
+import { reconstructDiscGroup } from '../../server/utils/import-helpers.js';
 import { readdir, stat } from 'node:fs/promises';
 import { readAlbumTag } from './audio-scanner.js';
 
@@ -197,6 +207,60 @@ describe('discoverBooks', () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.audioFileCount).toBe(1);
     expect(result[0]!.totalSize).toBe(5000);
+  });
+
+  // ---- Import-sibling suffix exclusion (#1341) ----
+
+  describe('import-sibling suffix exclusion (#1341)', () => {
+    it('excludes .import-bak / .import-tmp / .import-commit-pending siblings, discovers only the real book', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'Real Book', isFile: false },
+          { name: 'Real Book.import-bak', isFile: false },
+          { name: 'Staging.import-tmp', isFile: false },
+          { name: 'Pending.import-commit-pending', isFile: false },
+        ],
+        '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+        // Each suffixed sibling holds audio — without the exclusion they'd surface as phantom books.
+        '/audiobooks/Author/Real Book.import-bak': [{ name: 'old.mp3', isFile: true, size: 4000 }],
+        '/audiobooks/Author/Staging.import-tmp': [{ name: 'staged.mp3', isFile: true, size: 3000 }],
+        '/audiobooks/Author/Pending.import-commit-pending': [{ name: 'pending.mp3', isFile: true, size: 2000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'Real Book']);
+      expect(result[0]!.totalSize).toBe(5000);
+    });
+
+    it('excludes a directory named like the marker-collision dir (Real Book.import-commit-pending)', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [
+          { name: 'Real Book', isFile: false },
+          { name: 'Real Book.import-commit-pending', isFile: false },
+        ],
+        '/audiobooks/Author/Real Book': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+        '/audiobooks/Author/Real Book.import-commit-pending': [{ name: 'audio.mp3', isFile: true, size: 4000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'Real Book']);
+    });
+
+    it('still discovers a folder whose name merely contains the substring mid-string', async () => {
+      setupFs({
+        '/audiobooks': [{ name: 'Author', isFile: false }],
+        '/audiobooks/Author': [{ name: 'import-bak archive', isFile: false }],
+        '/audiobooks/Author/import-bak archive': [{ name: 'ch1.mp3', isFile: true, size: 5000 }],
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.folderParts).toEqual(['Author', 'import-bak archive']);
+    });
   });
 
   // ---- Folder structure parsing (folderParts) ----
@@ -521,6 +585,384 @@ describe('discoverBooks', () => {
         expect(await isDiscMerged(name)).toBe(false);
       },
     );
+  });
+
+  // ---- Embedded per-disc folder-set coalescing (#1272) ----
+
+  describe('embedded disc-marker sibling coalescing', () => {
+    /** Build sibling disc folders under one parent, each with a single audio file. */
+    function discSiblings(
+      parent: string,
+      names: string[],
+      audioName = '01.mp3',
+      size = 100,
+    ): Record<string, { name: string; isFile: boolean; size?: number }[]> {
+      const tree: Record<string, { name: string; isFile: boolean; size?: number }[]> = {};
+      tree[parent] = names.map(name => ({ name, isFile: false }));
+      for (const name of names) {
+        tree[`${parent}/${name}`] = [{ name: audioName, isFile: true, size }];
+      }
+      return tree;
+    }
+
+    it('coalesces the 1776 set (10 discs) into a single discovery', async () => {
+      const names = Array.from(
+        { length: 10 },
+        (_, i) => `2005 Non Fiction David McCullough - 1776 Disc ${i + 1} of 10 - File ~ of 28 - yEnc`,
+      );
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      // path is the lowest-disc member (Disc 1)
+      expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
+      // counts aggregate across all 10 discs
+      expect(result[0]!.audioFileCount).toBe(10);
+      expect(result[0]!.totalSize).toBe(1000);
+      // synthesized folderParts parse to the real author/title (year + category stripped)
+      const parsed = parseFolderStructure(result[0]!.folderParts);
+      expect(parsed.title).toContain('1776');
+      expect(parsed.author).toBe('David McCullough');
+    });
+
+    it('coalesces the Slaughterhouse-Five set (5 discs, no "of M")', async () => {
+      const names = Array.from(
+        { length: 5 },
+        (_, i) => `Kurt Vonnegut - Slaughterhouse-Five - Disc ${i + 1}`,
+      );
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
+      expect(result[0]!.audioFileCount).toBe(5);
+      const parsed = parseFolderStructure(result[0]!.folderParts);
+      expect(parsed.title).toBe('Slaughterhouse-Five');
+      expect(parsed.author).toBe('Kurt Vonnegut');
+    });
+
+    it('emits one row per stem group when two groups share a parent', async () => {
+      const mcc = Array.from(
+        { length: 10 },
+        (_, i) => `2005 Non Fiction David McCullough - 1776 Disc ${i + 1} of 10 - yEnc`,
+      );
+      const kv = Array.from({ length: 5 }, (_, i) => `Kurt Vonnegut - Slaughterhouse-Five - Disc ${i + 1}`);
+      setupFs(discSiblings('/audiobooks', [...mcc, ...kv]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(2);
+      const paths = result.map(r => r.path).sort();
+      expect(paths).toEqual([`/audiobooks/${kv[0]}`, `/audiobooks/${mcc[0]}`].sort());
+      const byAuthor = Object.fromEntries(
+        result.map(r => {
+          const parsed = parseFolderStructure(r.folderParts);
+          return [parsed.author, parsed.title];
+        }),
+      );
+      expect(byAuthor['David McCullough']).toContain('1776');
+      expect(byAuthor['Kurt Vonnegut']).toBe('Slaughterhouse-Five');
+    });
+
+    it('coalesces the "CD NN of M" marker shape', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Stephen King - It CD 0${i + 1} of 03`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe(`/audiobooks/${names[0]}`);
+      expect(result[0]!.audioFileCount).toBe(3);
+    });
+
+    it('groups mixed-case and zero-padded markers as the same disc number', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc 1 of 3',
+        'Author - Book DISC 2 OF 3',
+        'Author - Book disc 03 of 3',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+    });
+
+    // ---- Negatives (must NOT coalesce) ----
+
+    it('keeps 8 distinct Dune titles (no markers) as 8 books', async () => {
+      const titles = [
+        'Dune', 'Dune Messiah', 'Children of Dune', 'God Emperor of Dune',
+        'Heretics of Dune', 'Chapterhouse Dune', 'The Butlerian Jihad', 'The Machine Crusade',
+      ];
+      setupFs({
+        '/audiobooks': [{ name: 'Frank Herbert', isFile: false }],
+        ...discSiblings('/audiobooks/Frank Herbert', titles),
+      });
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(8);
+    });
+
+    it('keeps distinct sibling novels without markers separate', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Lee Child - Killing Floor',
+        'Lee Child - Die Trying',
+        'Lee Child - Tripwire',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(3);
+    });
+
+    it('does NOT coalesce siblings with inconsistent "of M" totals', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc 1 of 10',
+        'Author - Book Disc 2 of 8',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(2);
+    });
+
+    it('does NOT coalesce when only some stem-sharing siblings carry a marker', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc 1 of 3',
+        'Author - Book Disc 2 of 3',
+        'Author - Book Bonus Material',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(3);
+    });
+
+    it('does NOT merge two multi-disc sets with divergent core titles', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        '2005 Non Fiction Author A - Book A Disc 1 of 2',
+        '2005 Non Fiction Author A - Book A Disc 2 of 2',
+        '2005 Non Fiction Author A - Book B Disc 1 of 2',
+        '2005 Non Fiction Author A - Book B Disc 2 of 2',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      // Two distinct stems → two coalesced books, not one merged blob
+      expect(result).toHaveLength(2);
+    });
+
+    // ---- Robustness ----
+
+    it('does not treat a marker keyword without a digit as a disc member', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Author - Book Disc of 10',        // malformed — no disc number
+        'Author - Book Disc 1 of 10',      // lone valid disc
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      // Malformed excluded, valid disc is a lone (size-1) group → both stay as ordinary rows
+      expect(result).toHaveLength(2);
+    });
+
+    it('leaves a single embedded-marker disc folder as an ordinary discovery', async () => {
+      setupFs(discSiblings('/audiobooks', ['Author - Book Disc 1 of 10']));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe('/audiobooks/Author - Book Disc 1 of 10');
+      // Ordinary leaf row — parent-relative folderParts, not a synthesized stem
+      expect(result[0]!.folderParts).toEqual(['Author - Book Disc 1 of 10']);
+    });
+
+    // ---- Discovery/import parity (#1280) ----
+
+    it('discovery and reconstruction group the SAME audio-bearing member set (1776 + artwork sibling)', async () => {
+      const stem = '2005 Non Fiction David McCullough - 1776';
+      const discNames = Array.from({ length: 10 }, (_, i) => `${stem} Disc ${i + 1} of 10 - yEnc`);
+      const tree: Record<string, { name: string; isFile: boolean; size?: number }[]> = {
+        '/audiobooks': [
+          ...discNames.map(n => ({ name: n, isFile: false })),
+          { name: `${stem} Artwork`, isFile: false },
+        ],
+      };
+      for (const n of discNames) tree[`/audiobooks/${n}`] = [{ name: 'track.mp3', isFile: true, size: 1000 }];
+      // audioless stem-sharing sibling — discovery filters it out, import must too
+      tree[`/audiobooks/${stem} Artwork`] = [
+        { name: 'cover.jpg', isFile: true, size: 50 },
+        { name: 'info.nfo', isFile: true, size: 10 },
+      ];
+      setupFs(tree);
+
+      const discoveryMembers = discNames.map(n => `/audiobooks/${n}`);
+
+      // Discovery side: one coalesced row anchored at disc 1, aggregating all 10 discs.
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toBe(discoveryMembers[0]);
+      expect(result[0]!.audioFileCount).toBe(10);
+
+      // Import side: reconstruct from the persisted anchor → identical 10-member set.
+      const reconstructed = await reconstructDiscGroup(result[0]!.path);
+      expect(reconstructed).toEqual(discoveryMembers);
+      expect(reconstructed).not.toContain(`/audiobooks/${stem} Artwork`);
+    });
+
+    // ---- Bundled polish A: leading-year strip tied to release category (#1280) ----
+
+    it('preserves a real leading year-title in synthesized folderParts (2001 A Space Odyssey)', async () => {
+      const names = Array.from({ length: 2 }, (_, i) => `2001 A Space Odyssey Disc ${i + 1} of 2`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      // year is part of the real title (no Fiction/Non Fiction category follows) → not stripped
+      expect(result[0]!.folderParts[0]).toContain('2001');
+      expect(result[0]!.folderParts[0]).toContain('A Space Odyssey');
+    });
+
+    // ---- Bundled polish B: lone embedded `D<n>` no longer coalesces distinct siblings (#1280) ----
+
+    it('keeps distinct `D<n>`-token siblings sharing a stem prefix separate', async () => {
+      setupFs(discSiblings('/audiobooks', [
+        'Star Wars D2 Adventures',
+        'Star Wars D3 Adventures',
+        'Star Wars D4 Adventures',
+      ]));
+
+      const result = await discoverBooks('/audiobooks');
+      // No embedded marker parsed from a bare `D<n>` token → three standalone books, not one merge
+      expect(result).toHaveLength(3);
+    });
+
+    // ---- Incomplete-disc-set warning (#1282) ----
+
+    it('coalesces an incomplete set AND flags the shortfall on reviewReason', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1} of 10`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      // still coalesces (guards permit incomplete sets) ...
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      // ... but warns the operator the set is short
+      expect(result[0]!.reviewReason).toBe('Incomplete disc set: 3 of 10 discs');
+    });
+
+    it('emits no incompleteness warning for a complete set', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1} of 3`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('flags the shortfall when the total lives on a non-lowest member (mixed implicit/explicit)', async () => {
+      // Disc 1 omits "of M" but discs 2 and 3 carry it — the consistency guard filters the
+      // undefined total and still coalesces, so the known total (10) must be recovered from the
+      // later members and the shortfall reported.
+      const names = [
+        'Author - Book Disc 1',
+        'Author - Book Disc 2 of 10',
+        'Author - Book Disc 3 of 10',
+      ];
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.audioFileCount).toBe(3);
+      expect(result[0]!.reviewReason).toBe('Incomplete disc set: 3 of 10 discs');
+    });
+
+    it('emits no incompleteness warning when no "of M" total was parsed', async () => {
+      const names = Array.from({ length: 3 }, (_, i) => `Author - Book Disc ${i + 1}`);
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      // total is unknown → cannot assert incompleteness
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('emits no incomplete "N of M" string for an over-complete set (count > M)', async () => {
+      // 4 members all marked "of 3" (e.g. a duplicated disc) — must never render N>M.
+      const names = [
+        'Author - Book Disc 1 of 3',
+        'Author - Book Disc 2 of 3',
+        'Author - Book Disc 3 of 3',
+        'Author - Book Disc 4 of 3',
+      ];
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]).not.toHaveProperty('reviewReason');
+    });
+
+    it('composes incomplete + bonus warnings when a member disc-folder name carries a bonus token', async () => {
+      // Disc-folder name matches BONUS_SUBDIR_RE (name-signal arm) AND the set is short of M.
+      const names = [
+        'Author - Bonus Disc 1 of 10',
+        'Author - Bonus Disc 2 of 10',
+        'Author - Bonus Disc 3 of 10',
+      ];
+      setupFs(discSiblings('/audiobooks', names));
+
+      const result = await discoverBooks('/audiobooks');
+      expect(result).toHaveLength(1);
+      expect(result[0]!.reviewReason).toBe(
+        'Incomplete disc set: 3 of 10 discs; Additional non-book content possibly merged',
+      );
+    });
+  });
+
+  // ---- composeReviewReason unit coverage (#1282) ----
+
+  describe('composeReviewReason', () => {
+    const incomplete = 'Incomplete disc set: 3 of 10 discs';
+    const bonus = 'Additional non-book content possibly merged';
+
+    it('joins both messages incomplete-first with "; "', () => {
+      expect(composeReviewReason(incomplete, bonus)).toBe(`${incomplete}; ${bonus}`);
+    });
+
+    it('returns the incomplete message alone when bonus is absent', () => {
+      expect(composeReviewReason(incomplete, undefined)).toBe(incomplete);
+    });
+
+    it('returns the bonus message alone when incomplete is absent', () => {
+      expect(composeReviewReason(undefined, bonus)).toBe(bonus);
+    });
+
+    it('returns undefined when neither is present', () => {
+      expect(composeReviewReason(undefined, undefined)).toBeUndefined();
+    });
+  });
+
+  // ---- parseEmbeddedDiscMarker unit coverage ----
+
+  describe('parseEmbeddedDiscMarker', () => {
+    it('extracts stem, disc number, and total from an embedded "Disc N of M"', () => {
+      expect(parseEmbeddedDiscMarker('2005 Non Fiction David McCullough - 1776 Disc 1 of 10 - yEnc'))
+        .toEqual({ stem: '2005 Non Fiction David McCullough - 1776', discNumber: 1, total: 10 });
+    });
+
+    it('omits total when there is no "of M"', () => {
+      expect(parseEmbeddedDiscMarker('Kurt Vonnegut - Slaughterhouse-Five - Disc 1'))
+        .toEqual({ stem: 'Kurt Vonnegut - Slaughterhouse-Five', discNumber: 1 });
+    });
+
+    it('returns empty stem for bare tokens (left to DISC_FOLDER_PATTERN)', () => {
+      expect(parseEmbeddedDiscMarker('CD1')).toEqual({ stem: '', discNumber: 1 });
+    });
+
+    it('returns null for a marker keyword with no digit', () => {
+      expect(parseEmbeddedDiscMarker('Author - Book Disc of 10')).toBeNull();
+    });
+
+    it('returns null when there is no marker', () => {
+      expect(parseEmbeddedDiscMarker('Children of Dune')).toBeNull();
+    });
+
+    it('does NOT treat a lone embedded `D<n>` token as a disc marker (#1280)', () => {
+      // bare D-tokens are owned by DISC_FOLDER_PATTERN / parseTitledDiscFolder, not the embedded grammar
+      expect(parseEmbeddedDiscMarker('Star Wars D2 Adventures')).toBeNull();
+    });
   });
 
   // ---- Parent has audio files (leaf folder behavior) ----

@@ -13,7 +13,8 @@ import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { BYTES_PER_GB } from '../../shared/constants.js';
 
-vi.mock('../utils/enrich-usenet-languages.js', () => ({
+vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
   enrichUsenetLanguages: vi.fn(),
 }));
 
@@ -38,6 +39,7 @@ const mockSearchResult = {
 
 const mockDownload: DownloadWithBook = {
   id: 2,
+  publicId: 'dl_test000000000000000',
   bookId: 1,
   indexerId: 1,
   downloadClientId: 1,
@@ -48,6 +50,8 @@ const mockDownload: DownloadWithBook = {
   size: 500000000,
   seeders: 10,
   status: 'downloading',
+  clientStatus: 'downloading',
+  pipelineStage: 'idle',
   progress: 0,
   externalId: 'ext-new',
   errorMessage: null,
@@ -655,7 +659,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const bookWithNarrators: BookWithAuthor = {
       ...createMockDbBook({ duration: 36000 }),
       authors: [createMockDbAuthor()],
-      narrators: [{ id: 1, name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
+      narrators: [{ id: 1, publicId: 'nr_test000000000000000', name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
     };
     const deps = createDeps({
       bookService: inject<BookService>({
@@ -704,6 +708,7 @@ describe('#502 retrySearch — enrichment before filtering', () => {
       expect.arrayContaining([expect.objectContaining({ protocol: 'usenet' })]),
       expect.anything(),
       expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
+      { maxPhase2Fetches: 10 },
     );
   });
 

@@ -37,7 +37,6 @@ let clampToTotalCallCount = 0;
 type ClampFn = (total: number) => void;
 const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
 vi.mock('@/hooks/usePagination', async () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const mod: typeof import('@/hooks/usePagination') = await vi.importActual('@/hooks/usePagination');
   return {
     ...mod,
@@ -56,7 +55,6 @@ vi.mock('@/hooks/usePagination', async () => {
 });
 
 vi.mock('@/hooks/useEventSource', async () => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
   const actual = await vi.importActual<typeof import('@/hooks/useEventSource')>('@/hooks/useEventSource');
   return {
     ...actual,
@@ -72,6 +70,7 @@ vi.mock('@/lib/api', async () => {
       ...(actual as { api: object }).api,
       getActivity: vi.fn(),
       getAuthConfig: vi.fn(),
+      mintStreamToken: vi.fn().mockResolvedValue({ token: 'test-stream-token', expiresInMs: 300_000 }),
       cancelDownload: vi.fn(),
       retryDownload: vi.fn(),
       approveDownload: vi.fn(),
@@ -94,6 +93,8 @@ const makeDownload = (overrides: Partial<Download> = {}): Download => ({
   title: 'Test Audiobook',
   protocol: 'torrent',
   status: 'queued',
+  clientStatus: 'queued',
+  pipelineStage: 'idle',
   progress: 0,
   addedAt: '2024-06-01T00:00:00Z',
   completedAt: null,
@@ -982,8 +983,9 @@ describe('#312 page-level SSE integration', () => {
       defaultOptions: { queries: { retry: false } },
     });
 
-    // Seed auth config so SSEProvider connects
-    queryClient.setQueryData(['auth', 'config'], { mode: 'apiKey', apiKey: 'test-key', localBypass: false });
+    // Seed the stream token so SSEProvider connects (#1453 — SSE auth is via a
+    // short-lived stream token now, not the API key).
+    queryClient.setQueryData(['auth', 'stream-token'], { token: 'test-stream-token', expiresInMs: 300_000 });
 
     const result = render(
       <QueryClientProvider client={queryClient}>

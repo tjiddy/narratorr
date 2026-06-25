@@ -27,11 +27,11 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const seriesName = libraryBook.seriesName || primaryMetaSeries?.name;
   const seriesPosition = libraryBook.seriesPosition ?? primaryMetaSeries?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);
-  const publisher = metadataBook?.publisher;
+  const publisher = libraryBook.publisher || metadataBook?.publisher;
   const year = formatYear(libraryBook.publishedDate || metadataBook?.publishedDate);
   const status = requireDefined(
-    bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted,
-    `mergeBookData: bookStatusConfig missing both "${libraryBook.status}" and fallback "wanted"`,
+    bookStatusConfig[libraryBook.status],
+    `mergeBookData: bookStatusConfig missing entry for "${libraryBook.status}"`,
   );
   const narratorNames = (libraryBook.narrators.length > 0 ? libraryBook.narrators.map((n) => n.name).join(', ') : null) || metadataBook?.narrators?.join(', ');
 
@@ -52,7 +52,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     statusLabel: status.label,
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
-    subtitle: metadataBook?.subtitle,
+    subtitle: libraryBook.subtitle || metadataBook?.subtitle,
     authorName: libraryBook.authors[0]?.name,
     authorAsin: libraryBook.authors[0]?.asin,
   };

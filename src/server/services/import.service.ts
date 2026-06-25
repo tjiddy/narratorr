@@ -1,7 +1,8 @@
-import { eq, and, inArray, isNotNull } from 'drizzle-orm';
+import { eq, and, isNotNull } from 'drizzle-orm';
+import { normalize } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '../../db/schema.js';
+import { downloads } from '../../db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
@@ -15,11 +16,15 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import {
-  validateSource, checkDiskSpace, copyToLibrary,
-  verifyCopy, cleanupOldBookPath, handleImportFailure,
+  validateSource, checkDiskSpace, prepareImportSiblings, copyToLibrary,
+  verifyCopy, commitStagedImport, cleanupOldBookPath, handleImportFailure,
+  assertMarkerPathWritable,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
-import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
+import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
+import { transitionDownloadState, completedDisplayDownloadCondition } from '../utils/download-state.js';
+import { transitionBookStatus } from '../utils/book-status.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 
 import type { ImportResult } from '../utils/import-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -57,6 +62,8 @@ export interface ImportContext {
   bookId: number;
   bookTitle: string;
   bookStatus: BookStatus;
+  /** Pre-grab lifecycle snapshot — the real prior status to revert to on failure. */
+  bookStatusAtGrab: BookStatus | null;
   bookPath: string | null;
   authorName: string | null;
   narratorStr: string | null;
@@ -93,10 +100,11 @@ export class ImportService {
     return {
       downloadId,
       downloadTitle: download.title,
-      downloadStatus: download.status,
+      downloadStatus: deriveDisplayStatus(download.clientStatus, download.pipelineStage),
       bookId: book.id,
       bookTitle: book.title,
       bookStatus: book.status,
+      bookStatusAtGrab: download.bookStatusAtGrab ?? null,
       bookPath: book.path,
       authorName,
       narratorStr,
@@ -121,9 +129,14 @@ export class ImportService {
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
 
-    await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
+    // Pipeline-only write: claim the download for import.
+    await transitionDownloadState(this.db, downloadId, { pipelineStage: 'importing' });
 
     let targetPath: string | undefined;
+    let stagingPath: string | undefined;
+    let backupPath: string | undefined;
+    let libraryRoot: string | undefined;
+    let protectTarget = false;
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
       this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath }, 'Resolved save path');
@@ -133,34 +146,70 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
       const namingOptions = toNamingOptions(librarySettings);
+      libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
-      this.log.debug({ downloadId, bookTitle: book.title, targetPath }, 'Built target path');
+      // Same-path re-import: targetPath IS the user's existing book folder, so the
+      // commit must back-up-and-rollback rather than destroy, and failure cleanup
+      // must never blanket-rm it. First import / move-path: targetPath is disposable.
+      // Computed BEFORE the #1341 preflight so a marker-collision abort can't reach
+      // handleImportFailure with protectTarget still false (which would blanket-rm a
+      // re-import's existing audio).
+      protectTarget = book.path != null && normalize(targetPath) === normalize(book.path);
+      // #1341 marker-path collision preflight — before the sibling paths are even derived, so a
+      // throw reaches handleImportFailure with stagingPath/backupPath still undefined (no
+      // sibling cleanup runs, an adjacent pre-existing `.import-bak` survives) and protectTarget
+      // already set. Aborts before prepareImportSiblings can strict-clear any sibling.
+      await assertMarkerPathWritable(targetPath);
+      stagingPath = `${targetPath}.import-tmp`;
+      backupPath = `${targetPath}.import-bak`;
+      this.log.debug({ downloadId, bookTitle: book.title, targetPath, protectTarget }, 'Built target path');
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
       this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
+
+      // ── Phase 1: stage + verify into a sibling (non-destructive) ──────────
+      // Copy, rename and verify the new version into `.import-tmp`. The existing
+      // targetPath is never touched here, so a copy failure can't destroy the
+      // current book — old audio, cover and metadata all remain in place.
+      await prepareImportSiblings({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
       await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
-        sourcePath, targetPath, sourceStats, log: this.log,
+        sourcePath, targetPath: stagingPath, sourceStats, log: this.log,
         onProgress: bindCopyProgress(callbacks),
       });
 
       if (librarySettings.fileFormat) {
         await notifyPhase(callbacks, 'renaming');
         await renameFilesWithTemplate(
-          targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions,
+          stagingPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions,
           bindRenameProgress(callbacks),
         );
       }
-      const targetSize = await verifyCopy({ targetPath, sourcePath });
+      const targetSize = await verifyCopy({ targetPath: stagingPath, sourcePath });
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
-      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
+
+      // ── Phase 2: commit (backup existing audio, move staged in, rollback) ─
+      // Only after Phase 1 verifies do we touch targetPath. The swap backs up the
+      // old audio before moving the new files in and rolls back on any failure,
+      // so a mid-commit error can't leave the book missing or half-replaced.
+      await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
+      // Committed: targetPath now holds the new version. Protect it so a later
+      // failure never blanket-rm's the committed files (matters for move re-imports
+      // and first imports, where protectTarget started false).
+      protectTarget = true;
 
       await this.db.transaction(async (tx) => {
-        await tx.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
-        await tx.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
+        // Book promotion + pipeline write commit together (single transaction).
+        await transitionBookStatus(tx, book.id, { status: 'imported', path: targetPath!, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null });
+        await transitionDownloadState(tx, downloadId, { pipelineStage: 'imported' });
       });
+
+      // Delete the old folder only after the DB durably points the book at
+      // targetPath. Deleting earlier would strand the DB on a deleted path if the
+      // transaction rolled back. No-op for first import / same-path re-import.
+      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
       await notifyPhase(callbacks, 'fetching_metadata');
@@ -176,8 +225,9 @@ export class ImportService {
       // handleImportFailure does core cleanup (rm files, revert DB) then rethrows.
       // Orchestrator catches the rethrow for failure-path side effects.
       return handleImportFailure({
-        error, targetPath, db: this.db, downloadId,
-        book, log: this.log, elapsedMs: Date.now() - startMs,
+        error, targetPath, stagingPath, backupPath, libraryRoot, protectTarget,
+        db: this.db, downloadId, book, bookStatusAtGrab: download.bookStatusAtGrab ?? null,
+        log: this.log, elapsedMs: Date.now() - startMs,
       });
     }
   }
@@ -202,7 +252,7 @@ export class ImportService {
       .select({ id: downloads.id, bookId: downloads.bookId })
       .from(downloads)
       .where(and(
-        inArray(downloads.status, ['completed']),
+        completedDisplayDownloadCondition(),
         isNotNull(downloads.externalId),
         isNotNull(downloads.completedAt),
         isNotNull(downloads.bookId),
@@ -227,34 +277,41 @@ export class ImportService {
     if (!download.downloadClientId || !download.externalId) return;
 
     try {
-      // Fetch current ratio from download client if ratio gating is enabled
-      let currentRatio = 0;
-      if (importSettings.minSeedRatio > 0) {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-        if (!liveState) {
-          // Cannot determine ratio — defer for retry
-          this.log.info({ downloadId: download.id }, 'Skipping torrent removal — cannot fetch current state, deferring');
-          await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-          return;
-        }
-        currentRatio = liveState.ratio;
-      }
-
-      if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
-        this.log.info({ downloadId: download.id, currentRatio, minSeedRatio: importSettings.minSeedRatio, minSeedTime: importSettings.minSeedTime }, 'Skipping torrent removal — seed conditions not met, deferring');
-        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
-        return;
-      }
-
-      const client = await this.downloadClientService.getById(download.downloadClientId);
-      const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-      if (adapter) {
-        await adapter.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type, deleteFiles: true }, 'Torrent removed from client after import');
-      }
+      // For torrents the import path defers when the live ratio cannot be fetched — it treats
+      // "unknown state" as "not yet safe to remove". For usenet, seed ratio is meaningless, so an
+      // unfetchable ratio must not defer; the protocol gate then folds the missing ratio to proceed.
+      // outputPath-nulling is intentionally NOT done here.
+      const deferOnUnavailableRatio = download.protocol === 'torrent';
+      const result = await removeOrDeferTorrent(download, importSettings,
+        { downloadClientService: this.downloadClientService, log: this.log },
+        { deferOnUnavailableRatio });
+      await this.applyImportRemovalResult(download, importSettings, result);
     } catch (error: unknown) {
       this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed to remove torrent after import');
+    }
+  }
+
+  /** Map the shared removal result onto the initial-import bookkeeping (defer markers + logs). */
+  private async applyImportRemovalResult(download: DownloadRow, importSettings: { minSeedTime: number; minSeedRatio: number }, result: TorrentRemovalResult): Promise<void> {
+    switch (result.outcome) {
+      case 'live-state-unavailable':
+        this.log.info({ downloadId: download.id }, 'Skipping torrent removal — cannot fetch current state, deferring');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+        return;
+      case 'deferred':
+        this.log.info({ downloadId: download.id, currentRatio: result.currentRatio, minSeedRatio: importSettings.minSeedRatio, minSeedTime: importSettings.minSeedTime }, 'Skipping torrent removal — seed conditions not met, deferring');
+        await this.db.update(downloads).set({ pendingCleanup: new Date() }).where(eq(downloads.id, download.id));
+        return;
+      case 'removed': {
+        const client = await this.downloadClientService.getById(download.downloadClientId!);
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type, deleteFiles: true }, 'Torrent removed from client after import');
+        return;
+      }
+      case 'remove-failed':
+        this.log.error({ error: serializeError(result.error), downloadId: download.id }, 'Failed to remove torrent after import');
+        return;
+      case 'no-adapter':
+        return;
     }
   }
 
@@ -275,32 +332,43 @@ export class ImportService {
     if (!importSettings.deleteAfterImport) return;
 
     const candidates = await this.db.select().from(downloads)
-      .where(and(eq(downloads.status, 'imported'), isNotNull(downloads.pendingCleanup)));
+      .where(and(eq(downloads.pipelineStage, 'imported'), isNotNull(downloads.pendingCleanup)));
     if (candidates.length === 0) return;
 
     for (const download of candidates) {
       try {
         if (!download.downloadClientId || !download.externalId) continue;
 
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-        const currentRatio = liveState?.ratio ?? 0;
-
-        if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
-          continue; // Still deferred — leave pendingCleanup for next cycle
-        }
-
-        if (!adapter) {
-          this.log.warn({ downloadId: download.id }, 'Deferred torrent removal skipped — adapter not found, will retry');
-          continue;
-        }
-        const client = await this.downloadClientService.getById(download.downloadClientId);
-        await adapter.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
-        await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
+        const result = await removeOrDeferTorrent(download, importSettings,
+          { downloadClientService: this.downloadClientService, log: this.log },
+          { deferOnUnavailableRatio: false });
+        await this.applyDeferredImportResult(download, result);
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
       }
+    }
+  }
+
+  /** Map the shared removal result onto the deferred-import retry bookkeeping (clears pendingCleanup on success). */
+  private async applyDeferredImportResult(download: DownloadRow, result: TorrentRemovalResult): Promise<void> {
+    switch (result.outcome) {
+      case 'no-adapter':
+        this.log.warn({ downloadId: download.id }, 'Deferred torrent removal skipped — adapter not found, will retry');
+        return;
+      case 'remove-failed':
+        this.log.error({ error: serializeError(result.error), downloadId: download.id }, 'Failed deferred torrent removal — will retry next cycle');
+        return;
+      case 'removed': {
+        const client = await this.downloadClientService.getById(download.downloadClientId!);
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type }, 'Deferred torrent removal completed after import');
+        await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
+        return;
+      }
+      // 'deferred' (seed conditions not yet met) and 'live-state-unavailable' (unreachable with
+      // deferOnUnavailableRatio: false) both leave the existing pendingCleanup marker for next cycle.
+      case 'deferred':
+      case 'live-state-unavailable':
+        return;
     }
   }
 }

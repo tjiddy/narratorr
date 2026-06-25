@@ -14,7 +14,6 @@ function pickFormFields(src: typeof DEFAULT_SETTINGS.discovery): DiscoveryFormDa
     intervalHours: src.intervalHours,
     maxSuggestionsPerAuthor: src.maxSuggestionsPerAuthor,
     expiryDays: src.expiryDays,
-    snoozeDays: src.snoozeDays,
   };
 }
 
@@ -100,26 +99,6 @@ export function DiscoverySettingsSection() {
           />
           {errors.expiryDays && (
             <p className="text-xs text-destructive mt-1">{errors.expiryDays.message}</p>
-          )}
-        </div>
-
-        {/* Default Snooze Duration */}
-        <div>
-          <label htmlFor="discovery-snooze" className="text-sm font-medium">
-            Default Snooze Duration (days)
-          </label>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            How long snoozed suggestions stay hidden before resurfacing
-          </p>
-          <input
-            id="discovery-snooze"
-            type="number"
-            {...register('snoozeDays', { valueAsNumber: true })}
-            className={`mt-1 text-sm ${errorInputClass(!!errors.snoozeDays)}`}
-            step={1}
-          />
-          {errors.snoozeDays && (
-            <p className="text-xs text-destructive mt-1">{errors.snoozeDays.message}</p>
           )}
         </div>
 

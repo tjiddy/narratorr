@@ -1,4 +1,4 @@
-import { stat, rm, statfs, mkdir, cp } from 'node:fs/promises';
+import { stat, statfs, mkdir, cp } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -6,8 +6,7 @@ import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { downloads } from '../../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { transitionDownloadState } from './download-state.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
@@ -27,31 +26,60 @@ export type {
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import {
   containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize, getAudioPathSize,
-  COPY_VERIFICATION_THRESHOLD,
+  assertCopyVerified, ContentFailureError,
 } from './import-helpers.js';
 import { runPostProcessingScript } from './post-processing-script.js';
 import { revertBookStatus } from './book-status.js';
-import { assertPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
+import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
+import { removeImportSibling, removeMarker, markerPresent } from './import-staging.js';
+import { deleteManagedBookFiles } from './delete-managed-files.js';
+
+// Staged-import siblings machinery (.import-tmp/.import-bak) lives in import-staging.ts;
+// re-exported here so existing importers (import.service.ts, manual path, tests) are unchanged.
+export {
+  prepareImportSiblings, commitStagedImport, cleanupImportSiblings, stagedAudioReplace, removeImportSibling,
+  markerPresent, BackupRecoveryError, findCommitPendingMarkers, sweepCommitPendingMarkers,
+  convergeStrandedMarker, assertMarkerPathWritable, MarkerPathConflictError,
+} from './import-staging.js';
+export type {
+  PrepareImportSiblingsArgs, CommitStagedImportArgs, CleanupImportSiblingsArgs, StagedAudioReplaceArgs,
+  MarkerSweepResult,
+} from './import-staging.js';
 
 // ── isContentFailure ────────────────────────────────────────────────────
 
-/** Content-failure signatures — errors caused by bad release content, not host/environment. */
-const CONTENT_FAILURE_PATTERNS = [
-  'No audio files found',
-  'not a supported audio format',
-  'Duplicate filename',
-  'Copy verification failed',
-] as const;
+/** Cause-chain walk bound — mirrors `serializeError`'s depth-5 cap with cycle detection
+ * (`serialize-error.ts`). Caps the wrapped-cause traversal below so a self-referential or
+ * pathologically deep chain can't spin. */
+const MAX_CAUSE_DEPTH = 5;
 
 /**
  * Classify an import error as content-caused (bad release) or environment-caused (host/config).
- * Uses a positive allowlist — only known content-failure signatures return true.
- * All unrecognized errors (including Audio processing failed) default to false (conservative).
+ *
+ * Classification rides ENTIRELY on the typed `ContentFailureError` (#1346): every content-failure
+ * throw site constructs one, so rewording any message can no longer silently break blacklist+retry
+ * routing — the failure mode the #1304 family exists to eliminate. The former
+ * `CONTENT_FAILURE_PATTERNS` substring fallback was retired here; an environment error whose
+ * message happens to contain a former pattern (e.g. `Path not found: .../No audio files found`)
+ * no longer mis-classifies.
+ *
+ * Walks `error.cause` (bounded + cycle-safe, mirroring `serializeError`) so a `ContentFailureError`
+ * wrapped via the in-file `new Error(msg, { cause })` pattern still classifies. Non-`Error` values
+ * never classify — a JSON-revived plain object that lost its prototype is treated conservatively as
+ * environment, not content (the sole production consumer, `ImportOrchestrator`, catches the error
+ * live and pre-serialization, so the typed `instanceof` path is always available there).
  */
 export function isContentFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const msg = error.message;
-  return CONTENT_FAILURE_PATTERNS.some((pattern) => msg.includes(pattern));
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth++) {
+    if (current instanceof ContentFailureError) return true;
+    if (!(current instanceof Error) || seen.has(current)) return false;
+    seen.add(current);
+    current = current.cause;
+  }
+  return false;
 }
 
 // ── validateSource ──────────────────────────────────────────────────────
@@ -88,7 +116,7 @@ export async function validateSource(
   let fileCount = 0;
   if (sourceStats.isDirectory()) {
     if (!(await containsAudioFiles(savePath))) {
-      throw new Error(`No audio files found in ${savePath}`);
+      throw new ContentFailureError(`No audio files found in ${savePath}`);
     }
     fileCount = await countAudioFiles(savePath);
   } else if (sourceStats.isFile()) {
@@ -161,7 +189,7 @@ export async function copyToLibrary(args: CopyToLibraryArgs): Promise<void> {
   }
 
   if (!AUDIO_EXTENSIONS.has(extname(sourcePath).toLowerCase())) {
-    throw new Error(`Source file is not a supported audio format: ${basename(sourcePath)}`);
+    throw new ContentFailureError(`Source file is not a supported audio format: ${basename(sourcePath)}`);
   }
 
   const destPath = join(targetPath, basename(sourcePath));
@@ -195,9 +223,7 @@ export async function verifyCopy(args: VerifyCopyArgs): Promise<number> {
   const { targetPath, sourcePath } = args;
   const targetSize = await getPathSize(targetPath);
   const sourceSize = await getAudioPathSize(sourcePath);
-  if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-    throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-  }
+  assertCopyVerified(sourceSize, targetSize);
   return targetSize;
 }
 
@@ -215,7 +241,9 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
   const { bookPath, targetPath, libraryRoot, log } = args;
   if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
   try {
-    assertPathInsideLibrary(bookPath, libraryRoot);
+    // Symlink-aware containment (#1591): an in-library symlink whose realpath escapes the root
+    // is rejected so the managed sweep can't follow it out of the library.
+    await assertRealPathInsideLibrary(bookPath, libraryRoot);
   } catch (gateError: unknown) {
     if (gateError instanceof PathOutsideLibraryError) {
       log.error({ bookPath, libraryRoot }, 'Refusing to delete old book path outside library root — leaving foreign path untouched');
@@ -224,10 +252,17 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
     throw gateError;
   }
   try {
-    await rm(bookPath, { recursive: true, force: true });
-    log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during re-import');
-  } catch (rmError: unknown) {
-    log.warn({ error: serializeError(rmError), oldPath: bookPath }, 'Failed to delete old book files during re-import — continuing');
+    // Delete only MANAGED files from the old library folder (#1589) so a co-located e-book/PDF/NFO
+    // or user image survives the re-import. Containment was already asserted above, so the helper
+    // runs without re-asserting. Nonfatal: a per-file failure is recorded+logged inside the helper
+    // and the import continues (existing contract preserved).
+    const cleanup = await deleteManagedBookFiles(bookPath, libraryRoot, log, { assertInsideLibrary: false });
+    log.info(
+      { oldPath: bookPath, newPath: targetPath, deleted: cleanup.deletedManaged.length, preservedForeign: cleanup.preservedForeign.length },
+      'Cleaned old book managed files during re-import (foreign files preserved)',
+    );
+  } catch (cleanupError: unknown) {
+    log.warn({ error: serializeError(cleanupError), oldPath: bookPath }, 'Failed to clean old book files during re-import — continuing');
   }
 }
 
@@ -311,33 +346,105 @@ export async function runImportPostProcessing(args: RunImportPostProcessingArgs)
 export interface HandleImportFailureArgs {
   error: unknown;
   targetPath: string | undefined;
+  /** Transient staging sibling (`.import-tmp`) to clean up, if one was created. */
+  stagingPath?: string | undefined;
+  /** Transient backup sibling (`.import-bak`) to clean up, if one was created. */
+  backupPath?: string | undefined;
+  /** Library root for the ancestry guard on every destructive cleanup step (#759). */
+  libraryRoot?: string | undefined;
+  /**
+   * True when `targetPath` is the user's pre-existing book folder (a same-path
+   * re-import). In that case `commitStagedImport`'s own rollback already restored
+   * it, so blanket-removing it here would re-introduce the data loss this guards
+   * against — only the transient siblings are cleaned. False (first import /
+   * move-path re-import) means `targetPath` is the import's own scratch dir and
+   * any partial files it left must be removed.
+   */
+  protectTarget?: boolean | undefined;
   db: Db;
   downloadId: number;
   book: { id: number; title: string; path: string | null };
+  /**
+   * Pre-grab lifecycle snapshot (`downloads.bookStatusAtGrab`) — the explicit
+   * prior state the book reverts to on failure. Null/absent (legacy/orphan rows)
+   * falls back to the conservative `REVERT_FALLBACK_STATUS`, never path inference.
+   * The production caller (`ImportService.importDownload`) always supplies it.
+   */
+  bookStatusAtGrab?: BookStatus | null;
   log: FastifyBaseLogger;
   elapsedMs?: number;
 }
 
 /** Clean up after a failed import: remove files, revert DB statuses. Rethrows. */
 export async function handleImportFailure(args: HandleImportFailureArgs): Promise<never> {
-  const { error, targetPath, db, downloadId, book, log, elapsedMs } = args;
+  const { targetPath, stagingPath, backupPath, libraryRoot, protectTarget, log } = args;
 
-  // Clean up copied files. `targetPath` is always derived from librarySettings.path
-  // via buildTargetPath() at the single call site (import.service.ts) — never sourced
-  // from a DB field — so no ancestry check is needed here. Audited 2026-04-30 (#759).
-  if (targetPath) {
-    await rm(targetPath, { recursive: true, force: true })
-      .catch((rmError) => log.warn({ error: serializeError(rmError), targetPath }, 'Failed to clean up target path after import failure'));
+  // #1336: preservation rides on the durable disk signal (the commit-pending marker), NOT
+  // on the error's identity. A kill-recovery leaves the marker + stranded originals in
+  // `.import-bak`; deleting them because the failure reached us as a plain Error (a raw
+  // readdir/stat error during recovery, a pre-flight `validateSource`/`checkDiskSpace`
+  // throw before recovery even runs, or a `BackupRecoveryError` re-wrapped via
+  // `new Error(msg, { cause })`) is the exact #1290 data loss through a different door.
+  // While the marker is present, never delete `.import-bak` or the marker; staging is
+  // still re-derivable scratch. `markerPresent` fails toward preservation on a stat error.
+  const preserveBackup = targetPath ? await markerPresent(targetPath, log) : false;
+
+  // Always clean up the transient staging sibling (guarded, nonfatal).
+  if (stagingPath) await removeImportSibling(stagingPath, libraryRoot, log, 'staging');
+  if (backupPath && !preserveBackup) await removeImportSibling(backupPath, libraryRoot, log, 'backup');
+  if (targetPath && !preserveBackup) await removeMarker(targetPath, libraryRoot, log);
+
+  // Only blanket-remove targetPath when it is NOT a protected pre-existing book
+  // folder, and never during a preserved recovery (the half-restored originals live
+  // there). `targetPath` is always derived from librarySettings.path via
+  // buildTargetPath() at the single call site (import.service.ts) — guarded by
+  // libraryRoot when provided (#759).
+  if (targetPath && !protectTarget && !preserveBackup) {
+    if (libraryRoot) {
+      try {
+        // Symlink-aware containment (#1591): reject an in-library symlink whose realpath escapes.
+        await assertRealPathInsideLibrary(targetPath, libraryRoot);
+      } catch (gateError: unknown) {
+        if (gateError instanceof PathOutsideLibraryError) {
+          log.error({ targetPath, libraryRoot }, 'Refusing to clean up target path outside library root — leaving foreign path untouched');
+          return revertAndRethrow(args);
+        }
+        throw gateError;
+      }
+      // Delete only MANAGED files (#1589): a pre-existing/populated library target's foreign files
+      // (a bundled e-book/PDF) are preserved instead of being blanket-wiped, while a genuine scratch
+      // target containing only import-written audio is still fully removed (folder gone). Lives
+      // INSIDE the `if (libraryRoot)` block so `libraryRoot` narrows to `string` and is passed
+      // directly — no `?? targetPath` self-root footgun (#1591). Containment was asserted just
+      // above, so the helper runs without re-asserting. Nonfatal — a per-file failure is
+      // recorded+logged inside the helper; we still revertAndRethrow the original error.
+      await deleteManagedBookFiles(targetPath, libraryRoot, log, { assertInsideLibrary: false })
+        .catch((cleanupError) => log.warn({ error: serializeError(cleanupError), targetPath }, 'Failed to clean up target path after import failure'));
+    } else {
+      // No library root → no library-rooted blanket target cleanup. Unreachable in production:
+      // `import.service.ts` assigns `libraryRoot` before deriving `targetPath`, so a defined
+      // `targetPath` always implies a defined `libraryRoot`. Absent-root reaches here only via an
+      // early pre-flight throw that never set a target worth sweeping (#1591).
+      log.debug({ targetPath }, 'No library root for target cleanup — skipping blanket managed-file delete');
+    }
   }
 
-  // Revert download to failed
-  await db.update(downloads).set({
-    status: 'failed',
-    errorMessage: getErrorMessage(error),
-  }).where(eq(downloads.id, downloadId));
+  return revertAndRethrow(args);
+}
 
-  // Recover book status
-  const revertStatus = await revertBookStatus(db, book);
+/** Revert download + book statuses after a failed import, then rethrow the original error. */
+async function revertAndRethrow(args: HandleImportFailureArgs): Promise<never> {
+  const { error, db, downloadId, book, bookStatusAtGrab, log, elapsedMs } = args;
+
+  // Import failure → canonical failure tuple in one guarded UPDATE.
+  await transitionDownloadState(db, downloadId, {
+    clientStatus: 'failed',
+    pipelineStage: 'idle',
+    errorMessage: getErrorMessage(error),
+  });
+
+  // Recover book status to its explicit pre-grab lifecycle (snapshot), not a path guess.
+  const revertStatus = await revertBookStatus(db, book, bookStatusAtGrab ?? null);
 
   log.error({ error: serializeError(error), downloadId, bookStatus: revertStatus, elapsedMs }, 'Import failed');
 

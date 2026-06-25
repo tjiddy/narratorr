@@ -20,7 +20,14 @@ export function normalizeMemberTitleForMatch(title: string): string {
   const colonIdx = stripped.indexOf(':');
   if (colonIdx >= 0) stripped = stripped.slice(0, colonIdx);
   stripped = stripped.replace(/\([^)]*\)/g, ' ').replace(/\[[^\]]*\]/g, ' ');
-  return stripped.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return stripped
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // fold combining diacritics (é -> e) before the alnum strip, so the accented spelling keeps its letter instead of dropping to a space
+    .replace(/\s*[&+]\s*/g, ' and ') // & / + -> "and" before the alnum strip, so neither spelling drops
+    .replace(/[^a-z0-9' ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export interface LibraryBookSummary {

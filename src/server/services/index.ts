@@ -8,10 +8,11 @@ export { BookImportService, type ImportJobListing, type RetryImportResult } from
 export { BookListService, type BookListOptions, type BookStats } from './book-list.service.js';
 export { DownloadService, type DownloadWithBook, type RetryResult } from './download.service.js';
 export { DownloadOrchestrator } from './download-orchestrator.js';
-export { MetadataService } from './metadata.service.js';
+export { MetadataService, isRejectedByWords } from './metadata.service.js';
 export { ImportService } from './import.service.js';
 export { ImportOrchestrator } from './import-orchestrator.js';
 export { NotifierService } from './notifier.service.js';
+export { ConnectorService } from './connector.service.js';
 export { BlacklistService } from './blacklist.service.js';
 export { RemotePathMappingService } from './remote-path-mapping.service.js';
 export { RenameService, RenameError, type RenameResult } from './rename.service.js';
@@ -29,6 +30,7 @@ export { TaskRegistry } from './task-registry.js';
 export { type RetrySearchDeps, retrySearch } from './retry-search.js';
 export { DiscoveryService, type LibrarySignals } from './discovery.service.js';
 export { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
+export { BookDeletionService, type BookDeletionResult } from './book-deletion.service.js';
 export { refreshScanBook, RefreshScanError, type RefreshScanResult } from './refresh-scan.service.js';
 export {
   SeriesCardService,
@@ -36,5 +38,6 @@ export {
   type BookSeriesCardData,
   type BookSeriesMemberCard,
 } from './series-card.service.js';
+export { ReferenceReadService, type ReferenceRow, type ReferenceListResult } from './reference-read.service.js';
 export { normalizeSeriesName } from '../utils/series-normalize.js';
 export type { SuggestionReason } from '../../shared/schemas/discovery.js';

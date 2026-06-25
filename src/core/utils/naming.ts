@@ -5,6 +5,7 @@ import {
   FILE_ALLOWED_TOKENS,
   TOKEN_PATTERN_SOURCE,
 } from '../../shared/naming-constants.js';
+import { IMPORT_SIBLING_SUFFIXES } from './import-sibling-suffixes.js';
 
 export {
   TOKEN_PATTERN_SOURCE,
@@ -124,6 +125,31 @@ const ILLEGAL_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
 /** Max length for a single path segment (filesystem limit). */
 const MAX_SEGMENT_LENGTH = 255;
 
+/**
+ * Strip a trailing reserved import-sibling suffix (#1341) so a metadata-derived folder can
+ * never end in `.import-bak` / `.import-tmp` / `.import-commit-pending` — names that a
+ * library scan would mistake for transient scratch (excluding a real book) or that would
+ * collide destructively with the commit-pending marker path. Loops so a doubled suffix
+ * (`Foo.import-bak.import-bak`) unwinds fully, re-trimming trailing dots/whitespace exposed
+ * by each strip. Case-sensitive against the lowercase constants. A title that merely
+ * CONTAINS the substring but does not END in it (`My .import-bak Notes`) is untouched, as
+ * is a title ending in a partial token without the `.import` prefix (`Project Backup-bak`).
+ */
+function stripReservedSuffixes(segment: string): string {
+  let result = segment;
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const suffix of IMPORT_SIBLING_SUFFIXES) {
+      if (result.endsWith(suffix)) {
+        result = result.slice(0, -suffix.length).replace(/[\s.]+$/, '');
+        stripped = true;
+      }
+    }
+  }
+  return result;
+}
+
 /** Sanitize a string for use as a filesystem path segment. */
 export function sanitizePath(segment: string): string {
   let result = segment
@@ -132,10 +158,16 @@ export function sanitizePath(segment: string): string {
     .replace(/\.+$/, '') // trailing dots (Windows)
     .trim();
 
-  // Truncate to filesystem limit
+  // Truncate to filesystem limit FIRST — truncation can itself slice a longer title down to
+  // a segment that ends in a reserved suffix (#1341 F1: `'A'.repeat(244) + '.import-bak' + 'x'`
+  // truncates to a 255-char `…A.import-bak`), so the suffix reservation must be the FINAL pass.
   if (result.length > MAX_SEGMENT_LENGTH) {
     result = result.slice(0, MAX_SEGMENT_LENGTH).trim();
   }
+
+  // Reserve the import-sibling suffixes (#1341): never emit a segment ending in one — whether
+  // the suffix came from the raw title or was produced by the truncation above.
+  result = stripReservedSuffixes(result);
 
   return result || 'Unknown';
 }

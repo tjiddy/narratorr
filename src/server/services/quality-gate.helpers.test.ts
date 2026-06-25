@@ -3,18 +3,18 @@ import { buildQualityAssessment } from './quality-gate.helpers.js';
 import * as qualityModule from '../../core/utils/quality.js';
 
 const baseBook = {
-  id: 1, title: 'Test Book', status: 'imported' as const,
+  id: 1, publicId: 'bk_test000000000000000', title: 'Test Book', status: 'imported' as const,
   narrators: [{ name: 'John Smith' }], size: 400_000_000, duration: 600,
   audioTotalSize: null, audioDuration: 36000, path: '/library/test',
-  asin: null, isbn: null, coverUrl: null, description: null,
+  asin: null, isbn: null, coverUrl: null, subtitle: null, description: null,
   publishedDate: null, publisher: null, language: null,
   seriesName: null, seriesPosition: null, genres: null, tags: null,
   rating: null, ratingCount: null, pageCount: null,
   audioBitrate: null, audioCodec: 'AAC', audioSampleRate: null,
   audioChannels: 2, updatedAt: new Date(), addedAt: new Date(),
-  createdAt: new Date(), enrichmentStatus: 'pending' as const,
+  createdAt: new Date(), enrichmentStatus: 'pending' as const, enrichmentAttempts: 0,
   audioBitrateMode: null, audioFileFormat: null, audioFileCount: null, topLevelAudioFileCount: null,
-  audibleId: null, goodreadsId: null, seriesId: null, importListId: null,
+  seriesId: null, importListId: null,
   lastGrabGuid: null, lastGrabInfoHash: null,
 };
 

@@ -9,7 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
 import { buildGrabPayload } from './grab-payload.js';
-import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -105,7 +105,8 @@ export async function retrySearch(
 
     // Enrich Usenet results before filtering. The LAN allowlist lets NZB-body
     // fetches reach a configured-indexer host:port even at a private IP (#1149).
-    await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist());
+    // Auto-grab path: cap Phase-2 fetches to the top-ranked candidates (#1315).
+    await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
     // Quality filtering and ranking
     const qualitySettings = await settingsService.get('quality');

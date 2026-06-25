@@ -120,6 +120,31 @@ export default tseslint.config(
       }],
     },
   },
+  {
+    // Services are a lower layer than routes — they must not import from routes/.
+    // Production-only: test files legitimately reach into routes/ (e.g.
+    // indexer.service.test.ts dynamically imports routes/prowlarr-compat.js).
+    files: ['**/src/server/services/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/routes/**', '**/routes/*'],
+      }],
+    },
+  },
+  {
+    // Jobs are a lower layer than routes — they must not import from routes/.
+    // Production-only: test files legitimately reach into routes/. The DI
+    // container type (`Services`) now lives in services/di.ts so jobs import it
+    // from there, not "upward" from routes/.
+    files: ['**/src/server/jobs/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: ['**/routes/**', '**/routes/*'],
+      }],
+    },
+  },
 
   // Custom rules for all files
   {
@@ -166,6 +191,23 @@ export default tseslint.config(
       'max-lines-per-function': 'off',
       'complexity': 'off',
       'narratorr/no-tautological-expect': 'error',
+      // Allow inline `typeof import('...')` annotations in vi.mock/vi.importActual
+      // partial-mock helpers — type-only, fully-erased, harmless in test factories.
+      // Keep the import-style preference for ordinary `import type` usage.
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'inline-type-imports', disallowTypeAnnotations: false },
+      ],
+    },
+  },
+
+  // src/db/schema.ts is a declarative Drizzle table catalog — its length scales
+  // linearly with the data model, so the generic max-lines cap adds no value and
+  // would force an arbitrary split of co-located table definitions.
+  {
+    files: ['src/db/schema.ts'],
+    rules: {
+      'max-lines': 'off',
     },
   }
 );

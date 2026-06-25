@@ -12,6 +12,8 @@ import { serializeError } from '../utils/serialize-error.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
+import { sweepCommitPendingMarkers } from '../utils/import-staging.js';
+import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
 
@@ -22,6 +24,7 @@ export class ImportQueueWorker {
   private readonly db: Db;
   private readonly log: FastifyBaseLogger;
   private readonly broadcaster: EventBroadcasterService | null;
+  private readonly getLibraryRoot: (() => Promise<string | null | undefined>) | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
@@ -30,10 +33,21 @@ export class ImportQueueWorker {
   private drainInProgress = false;
   private drainRequested = false;
 
-  constructor(db: Db, log: FastifyBaseLogger, broadcaster?: EventBroadcasterService) {
+  /**
+   * `getLibraryRoot` resolves the configured library root for the boot-time stranded-marker
+   * sweep (#1338). Injected (rather than holding a `SettingsService`) to keep the worker's
+   * dependency surface minimal; omitted in unit tests that don't exercise the sweep.
+   */
+  constructor(
+    db: Db,
+    log: FastifyBaseLogger,
+    broadcaster?: EventBroadcasterService,
+    getLibraryRoot?: () => Promise<string | null | undefined>,
+  ) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });
     this.broadcaster = broadcaster ?? null;
+    this.getLibraryRoot = getLibraryRoot ?? null;
   }
 
   /** Nudge the worker to check for new pending jobs. */
@@ -43,13 +57,17 @@ export class ImportQueueWorker {
     }
   }
 
-  /** Start the worker: run boot recovery, then enter the drain loop. */
+  /** Start the worker: run boot recovery, sweep stranded markers, then enter the drain loop. */
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
     this.stopping = false;
 
     await this.bootRecovery();
+    // Converge stranded commit-pending markers BEFORE the drain loop starts (#1338). Both
+    // steps are awaited here, so the sweep is the single recovery actor per marker — no
+    // draining import can `rename()` from the same `.import-bak` concurrently.
+    await this.sweepStrandedMarkers();
     this.drainLoop();
   }
 
@@ -100,10 +118,12 @@ export class ImportQueueWorker {
           }).where(eq(importJobs.id, orphan.id));
 
           if (orphan.bookId != null) {
-            await tx.update(books).set({
-              status: 'failed',
-              updatedAt: now,
-            }).where(eq(books.id, orphan.bookId));
+            // Guarded book write in the SAME transaction as the job write (#1448):
+            // both rows commit together or neither does. The `importing` guard (#1470)
+            // settles the book to `failed` only when it's still mid-import (the normal
+            // interrupted-orphan case where no revert ran); a book already moved off
+            // `importing` by a revert is left untouched — the guard misses (no-op).
+            await transitionBookStatus(tx, orphan.bookId, { status: 'failed', expected: { status: 'importing' } });
           }
         });
         recovered++;
@@ -118,6 +138,34 @@ export class ImportQueueWorker {
     }
 
     this.log.info({ count: orphans.length, recovered, failed }, 'Boot recovery complete');
+  }
+
+  /**
+   * Boot-time sweep of stranded `.import-commit-pending` markers (#1338). Walks the library
+   * root and converges each marker through the existing `prepareImportSiblings` recovery
+   * semantics, decoupling recovery from the same-target retry trigger so failed-download,
+   * manual-job, and recomputed-target orphans also converge. Best-effort: a missing library
+   * root (unconfigured / not yet set) is a no-op, and any sweep-level throw is caught so a
+   * traversal hiccup never prevents the worker from starting and draining.
+   */
+  private async sweepStrandedMarkers(): Promise<void> {
+    if (!this.getLibraryRoot) return;
+    let libraryRoot: string | null | undefined;
+    try {
+      libraryRoot = await this.getLibraryRoot();
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error) }, 'Marker sweep: failed to resolve library root — skipping');
+      return;
+    }
+    if (!libraryRoot) {
+      this.log.debug('Marker sweep: no library root configured — skipping');
+      return;
+    }
+    try {
+      await sweepCommitPendingMarkers(libraryRoot, this.log);
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error), libraryRoot }, 'Marker sweep failed unexpectedly — continuing startup');
+    }
   }
 
   /**
@@ -255,8 +303,14 @@ export class ImportQueueWorker {
 
     const startTime = Date.now();
     this.currentJobPromise = this.processJob(job.id, job.bookId, adapter, job, ctx, phaseHistory, startTime);
-    await this.currentJobPromise;
-    this.currentJobPromise = null;
+    try {
+      await this.currentJobPromise;
+    } finally {
+      // Null on EVERY outcome — success and rejection. A rejected processJob
+      // (e.g. markJobFailed's transaction aborts) must not leave a parked
+      // rejected promise that stop() would later re-await and re-reject.
+      this.currentJobPromise = null;
+    }
 
     return true;
   }
@@ -318,21 +372,31 @@ export class ImportQueueWorker {
 
   private async markJobFailed(jobId: number, bookId: number | null, currentPhase: string, bookTitle: string, lastError: string, phaseHistory?: PhaseHistoryEntry[]): Promise<void> {
     const now = new Date();
-    await this.db.update(importJobs).set({
-      status: 'failed',
-      phase: 'failed',
-      lastError,
-      ...(phaseHistory ? { phaseHistory: JSON.stringify(phaseHistory) } : {}),
-      completedAt: now,
-      updatedAt: now,
-    }).where(eq(importJobs.id, jobId));
-
-    if (bookId != null) {
-      await this.db.update(books).set({
+    // Wrap the import_jobs + books failed-state writes in a single transaction so an
+    // observer joining the two rows never sees the job `status='failed'` while the book
+    // is still `status='importing'`. Mirrors the bootRecovery pattern (see above): both
+    // writes commit together or neither commits. The SSE emit stays outside — a
+    // broadcaster failure must not roll back the durable failure write.
+    await this.db.transaction(async (tx) => {
+      await tx.update(importJobs).set({
         status: 'failed',
+        phase: 'failed',
+        lastError,
+        ...(phaseHistory ? { phaseHistory: JSON.stringify(phaseHistory) } : {}),
+        completedAt: now,
         updatedAt: now,
-      }).where(eq(books.id, bookId));
-    }
+      }).where(eq(importJobs.id, jobId));
+
+      if (bookId != null) {
+        // Guarded book write in the SAME transaction as the job write (#1448):
+        // both rows commit together or neither does. The `importing` guard (#1470)
+        // prevents this failure write from clobbering an earlier `bookStatusAtGrab`
+        // revert: `handleImportFailure`'s revert commits the book off `importing`
+        // before this catch-path runs, so the guard misses (no-op) and the reverted
+        // status survives. When no revert ran (book still `importing`) it settles to `failed`.
+        await transitionBookStatus(tx, bookId, { status: 'failed', expected: { status: 'importing' } });
+      }
+    });
 
     // Parse error message for SSE
     let errorMessage: string;

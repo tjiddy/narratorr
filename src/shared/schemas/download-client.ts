@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES, type DownloadClientType } from '../download-client-registry';
+import { protocolSchema } from './download-protocol';
 
 // ============================================================================
 // Download Client schemas
@@ -50,7 +51,7 @@ export const delugeSettingsSchema = z.object({
 
 export const blackholeSettingsSchema = z.object({
   watchDir: z.string().trim().min(1),
-  protocol: z.enum(['torrent', 'usenet']),
+  protocol: protocolSchema,
 }).strict();
 
 // ── Settings types and dispatch map ─────────────────────────────────────────
@@ -151,7 +152,7 @@ export const createDownloadClientFormSchema = z.object({
     apiKey: z.string().trim().optional(),
     category: z.string().trim().optional(),
     watchDir: z.string().trim().optional(),
-    protocol: z.enum(['torrent', 'usenet']).optional(),
+    protocol: protocolSchema.optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = DOWNLOAD_CLIENT_REGISTRY[data.type];

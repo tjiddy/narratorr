@@ -1,13 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
 const validImportList = {
-  name: 'My ABS List',
-  type: 'abs',
+  name: 'My NYT List',
+  type: 'nyt',
   enabled: true,
   syncIntervalMinutes: 1440,
-  settings: { serverUrl: 'http://abs.local', apiKey: 'test-key', libraryId: 'lib-1' },
+  settings: { apiKey: 'test-key', list: 'audio-fiction' },
 };
 
 const savedList = {
@@ -52,7 +52,7 @@ describe('import-lists routes', () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body).toHaveLength(1);
-      expect(body[0].name).toBe('My ABS List');
+      expect(body[0].name).toBe('My NYT List');
       // Settings should have apiKey masked
       expect(body[0].settings.apiKey).toBe('********');
     });
@@ -65,7 +65,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/import-lists/1' });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json().name).toBe('My ABS List');
+      expect(res.json().name).toBe('My NYT List');
       expect(res.json().settings.apiKey).toBe('********');
     });
   });
@@ -82,7 +82,7 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(201);
       expect(services.importList.create).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'My ABS List', type: 'abs' }),
+        expect.objectContaining({ name: 'My NYT List', type: 'nyt' }),
       );
     });
 
@@ -100,7 +100,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists',
-        payload: { type: 'abs', settings: {} },
+        payload: { type: 'nyt', settings: {} },
       });
 
       expect(res.statusCode).toBe(400);
@@ -110,7 +110,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists',
-        payload: { name: 'Bad ABS', type: 'abs', settings: { serverUrl: 'http://abs.local' } },
+        payload: { name: 'Bad NYT', type: 'nyt', settings: { list: 'audio-fiction' } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -147,7 +147,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({
         method: 'PUT',
         url: '/api/import-lists/1',
-        payload: { type: 'abs', settings: { serverUrl: 'http://abs.local' } },
+        payload: { type: 'nyt', settings: { list: 'audio-fiction' } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -159,7 +159,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({
         method: 'PUT',
         url: '/api/import-lists/1',
-        payload: { settings: { apiKey: 'key', serverUrl: 'http://test', libraryId: 'lib' } },
+        payload: { settings: { apiKey: 'key', list: 'audio-fiction' } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -213,11 +213,11 @@ describe('import-lists routes', () => {
         method: 'POST',
         url: '/api/import-lists/test',
         payload: {
-          name: 'abs-edit',
-          type: 'abs',
+          name: 'nyt-edit',
+          type: 'nyt',
           enabled: true,
           syncIntervalMinutes: 1440,
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          settings: { apiKey: '********', list: 'audio-fiction' },
           id: 11,
         },
       });
@@ -240,153 +240,17 @@ describe('import-lists routes', () => {
     });
   });
 
-  describe('POST /api/import-lists/abs/libraries', () => {
-    it('returns libraries from ABS API', async () => {
-      const mockLibraries = [{ id: 'lib-1', name: 'Audiobooks' }, { id: 'lib-2', name: 'Podcasts' }];
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ libraries: mockLibraries }),
-      } as Response);
-
+  // The ABS import-list provider was removed (#1618). The custom library-fetch
+  // route went with it; no generic CRUD route shadows this path, so it 404s.
+  describe('POST /api/import-lists/abs/libraries (removed)', () => {
+    it('returns 404 — the ABS import-list provider was removed', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists/abs/libraries',
         payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ libraries: mockLibraries });
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'http://abs.local/api/libraries',
-        expect.objectContaining({ headers: { Authorization: 'Bearer test-key' } }),
-      );
-      vi.restoreAllMocks();
-    });
-
-    it('returns 400 when apiKey is missing', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'http://abs.local' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when serverUrl is empty', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: '', apiKey: 'k' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when serverUrl is not a URL', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'not-a-url', apiKey: 'k' },
-      });
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 502 when ABS API returns non-OK status', async () => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-      } as Response);
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'http://abs.local', apiKey: 'bad-key' },
-      });
-
-      expect(res.statusCode).toBe(502);
-      expect(res.json().error).toContain('ABS API returned 401');
-      vi.restoreAllMocks();
-    });
-
-    it('returns 502 when connection fails', async () => {
-      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'http://abs.local', apiKey: 'test-key' },
-      });
-
-      expect(res.statusCode).toBe(502);
-      expect(res.json().error).toContain('Connection failed: ECONNREFUSED');
-      vi.restoreAllMocks();
-    });
-
-    // ===== #844 — sentinel resolution =====
-
-    it('resolves sentinel apiKey against persisted list and forwards plaintext to ABS', async () => {
-      (services.importList.getById as Mock).mockResolvedValue({
-        ...savedList,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'real-abs-key', libraryId: 'lib-1' },
-      });
-      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ libraries: [] }),
-      } as Response);
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'http://abs.local', apiKey: '********', id: 1 },
-      });
-
-      expect(res.statusCode).toBe(200);
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'http://abs.local/api/libraries',
-        expect.objectContaining({ headers: { Authorization: 'Bearer real-abs-key' } }),
-      );
-      // Sentinel literal must never reach ABS
-      const fetchCall = (globalThis.fetch as unknown as Mock).mock.calls[0];
-      const headers = (fetchCall?.[1] as RequestInit).headers as Record<string, string>;
-      expect(headers.Authorization).not.toContain('********');
-      vi.restoreAllMocks();
-    });
-
-    it('returns 400 when sentinel apiKey is sent without id', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'http://abs.local', apiKey: '********' },
-      });
-
-      expect(res.statusCode).toBe(400);
-      expect(res.json().error).toContain('id is required');
-    });
-
-    it('returns 404 when sentinel apiKey + id but list not found', async () => {
-      (services.importList.getById as Mock).mockResolvedValue(null);
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: 'http://abs.local', apiKey: '********', id: 999 },
       });
 
       expect(res.statusCode).toBe(404);
-      expect(res.json().error).toBe('Import list not found');
-    });
-
-    it('returns 400 for sentinel on non-secret field (top-level serverUrl)', async () => {
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/import-lists/abs/libraries',
-        payload: { serverUrl: '********', apiKey: 'real-key', id: 1 },
-      });
-
-      expect(res.statusCode).toBe(400);
-      expect(res.json().error).toContain('non-secret field: serverUrl');
     });
   });
 
@@ -442,7 +306,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists/preview',
-        payload: { type: 'abs', settings: { serverUrl: 'http://abs.local' } }, // missing apiKey, libraryId
+        payload: { type: 'nyt', settings: { list: 'audio-fiction' } }, // missing apiKey
       });
 
       expect(res.statusCode).toBe(400);
@@ -452,10 +316,10 @@ describe('import-lists routes', () => {
 
     // ===== #844 — sentinel resolution =====
 
-    it('resolves sentinel apiKey against persisted list and dispatches plaintext (abs)', async () => {
+    it('resolves sentinel apiKey against persisted list and dispatches plaintext (nyt)', async () => {
       (services.importList.getById as Mock).mockResolvedValue({
         ...savedList,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'real-abs-key', libraryId: 'lib-1' },
+        settings: { apiKey: 'real-nyt-key', list: 'audio-fiction' },
       });
       (services.importList.preview as Mock).mockResolvedValue({ items: [], total: 0 });
 
@@ -463,16 +327,16 @@ describe('import-lists routes', () => {
         method: 'POST',
         url: '/api/import-lists/preview',
         payload: {
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: '********', list: 'audio-fiction' },
           id: 1,
         },
       });
 
       expect(res.statusCode).toBe(200);
       expect(services.importList.preview).toHaveBeenCalledWith({
-        type: 'abs',
-        settings: expect.objectContaining({ apiKey: 'real-abs-key' }),
+        type: 'nyt',
+        settings: expect.objectContaining({ apiKey: 'real-nyt-key' }),
       });
     });
 
@@ -481,8 +345,8 @@ describe('import-lists routes', () => {
         method: 'POST',
         url: '/api/import-lists/preview',
         payload: {
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: '********', list: 'audio-fiction' },
         },
       });
 
@@ -498,8 +362,8 @@ describe('import-lists routes', () => {
         method: 'POST',
         url: '/api/import-lists/preview',
         payload: {
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: '********', list: 'audio-fiction' },
           id: 999,
         },
       });
@@ -516,32 +380,32 @@ describe('import-lists routes', () => {
         method: 'POST',
         url: '/api/import-lists/preview',
         payload: {
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: 'plaintext-key', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: 'plaintext-key', list: 'audio-fiction' },
         },
       });
 
       expect(res.statusCode).toBe(200);
       expect(services.importList.preview).toHaveBeenCalledWith({
-        type: 'abs',
+        type: 'nyt',
         settings: expect.objectContaining({ apiKey: 'plaintext-key' }),
       });
       expect(services.importList.getById).not.toHaveBeenCalled();
     });
 
-    it('returns 400 for sentinel on non-secret field (settings.serverUrl)', async () => {
+    it('returns 400 for sentinel on non-secret field (settings.list)', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists/preview',
         payload: {
-          type: 'abs',
-          settings: { serverUrl: '********', apiKey: 'real', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { list: '********', apiKey: 'real' },
           id: 1,
         },
       });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toContain('non-secret field: serverUrl');
+      expect(res.json().error).toContain('non-secret field: list');
       expect(services.importList.preview).not.toHaveBeenCalled();
     });
 

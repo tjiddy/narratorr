@@ -27,7 +27,7 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+  system: { backupIntervalMinutes: 10080, backupRetention: 7 },
 });
 
 describe('BackupScheduleForm', () => {

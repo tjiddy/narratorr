@@ -5,6 +5,7 @@ import {
   HardDriveIcon,
   DownloadIcon,
   HistoryIcon,
+  TrashIcon,
 } from '@/components/icons';
 
 interface BackupTableProps {
@@ -12,9 +13,10 @@ interface BackupTableProps {
   isLoading: boolean;
   onDownload: (backup: BackupMetadata) => void;
   onRestore: (backup: BackupMetadata) => void;
+  onDelete: (backup: BackupMetadata) => void;
 }
 
-export function BackupTable({ backups, isLoading, onDownload, onRestore }: BackupTableProps) {
+export function BackupTable({ backups, isLoading, onDownload, onRestore, onDelete }: BackupTableProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -43,7 +45,7 @@ export function BackupTable({ backups, isLoading, onDownload, onRestore }: Backu
             <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Filename</th>
             <th className="text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Date</th>
             <th className="text-right text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3">Size</th>
-            <th className="w-16" />
+            <th className="w-24" />
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -80,6 +82,14 @@ export function BackupTable({ backups, isLoading, onDownload, onRestore }: Backu
                     title="Download backup"
                   >
                     <DownloadIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDelete(backup)}
+                    className="p-2 text-muted-foreground hover:text-destructive transition-colors rounded-lg hover:bg-destructive/10 focus-ring"
+                    title="Delete backup"
+                  >
+                    <TrashIcon className="w-4 h-4" />
                   </button>
                 </div>
               </td>

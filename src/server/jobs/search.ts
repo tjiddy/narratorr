@@ -64,7 +64,11 @@ export async function runSearchJob(
   for (const book of wantedBooks) {
     try {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, indexerService, eventHistory, broadcaster);
+      const result = await searchAndGrabForBook(book, {
+        indexerSearchService, downloadOrchestrator,
+        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        log, blacklistService, indexerService, eventHistory, broadcaster,
+      });
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -114,7 +118,11 @@ export async function searchAllWanted(
   for (const book of wantedBooks) {
     try {
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(book, indexerSearchService, downloadOrchestrator, { ...qualitySettings, languages: metadataSettings.languages, narratorPriority }, log, blacklistService, indexerService, eventHistory, broadcaster);
+      const result = await searchAndGrabForBook(book, {
+        indexerSearchService, downloadOrchestrator,
+        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        log, blacklistService, indexerService, eventHistory, broadcaster,
+      });
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;

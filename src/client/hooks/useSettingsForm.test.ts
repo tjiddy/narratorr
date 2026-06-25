@@ -42,16 +42,16 @@ const testDefaults: TestFormData = { enabled: false, value: 10 };
 const fullSettings = {
   import: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true },
   search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' },
-  general: { logLevel: 'info', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false },
+  general: { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false },
   metadata: { audibleRegion: 'us', languages: ['english'] },
-  processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+  processing: { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
   tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
   quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 1, searchImmediately: false, rejectWords: '', requiredWords: '' },
   network: { proxyUrl: '' },
   rss: { intervalMinutes: 30, enabled: false },
-  system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+  system: { backupIntervalMinutes: 10080, backupRetention: 7 },
   library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
-  discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: {} },
+  discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
   testSection: { enabled: true, value: 42 },
 };
 

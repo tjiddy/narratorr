@@ -7,9 +7,19 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+# Cancel an in-progress run when a newer commit lands on the same ref, so a
+# stuck/superseded run frees the runner instead of grinding to its timeout.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality-gates:
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # fail fast on a hung step instead of running to GitHub's 6h default
 
     steps:
       - name: Checkout repository
@@ -76,6 +86,13 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: quality-gates
+    timeout-minutes: 20
+    # Run inside Playwright's official image: Chromium and all of its system deps
+    # are baked into the image, so there is no 170MB browser download to hang on
+    # (the failure mode that stalled this job repeatedly). The image tag MUST
+    # track the @playwright/test version in package.json — currently v1.59.1.
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
 
     steps:
       - name: Checkout repository
@@ -103,25 +120,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: playwright-${{ runner.os }}-
-
-      - name: Install Playwright browser
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install chromium
-
-      - name: Drop broken Microsoft apt sources
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.list
-
-      - name: Install Playwright system deps
-        run: pnpm exec playwright install-deps chromium
 
       - name: Build
         run: pnpm build

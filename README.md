@@ -2,7 +2,11 @@
 
 > *arr for audiobooks
 
-Narratorr is a self-hosted audiobook acquisition and organization application. Search indexers for audiobooks, send downloads to your preferred client, and automatically import completed downloads into an organized library folder structure.
+<p align="center">
+  <img src="docs/screenshots/library.webp" width="820" alt="Narratorr library">
+</p>
+
+Narratorr is the automation layer for your audiobook library: it searches your indexers, sends releases to your download client, and imports finished downloads into a clean, organized folder structure — ready for Audiobookshelf, Plex, or however you listen. The missing piece between "I want this book" and "it's on my shelf."
 
 **[Documentation](https://docs.narratorr.dev)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
 
@@ -10,7 +14,7 @@ Narratorr is a self-hosted audiobook acquisition and organization application. S
 
 - **Search & Grab** — Search Torznab, Newznab, and private tracker indexers. Grab releases to qBittorrent, Transmission, Deluge, SABnzbd, NZBGet, or a blackhole watch folder.
 - **Automated Pipeline** — Scheduled search for wanted books, RSS polling for wanted books, retry with blacklisting.
-- **Quality Gate** — Auto-import the first release for a wanted book, hold questionable releases for review, auto-reject low-quality re-downloads. Imported books are never automatically replaced.
+- **Quality Gate** — Auto-import the first qualifying release for a wanted book and hold questionable ones for manual review. Imported books are never automatically replaced — re-importing a better version is a deliberate, manual choice.
 - **Library Management** — Configurable folder/file naming, audio enrichment from file tags, grid and list views with filtering and bulk actions.
 - **Discovery** — Personalized book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
 - **Audio Processing** — Optional FFmpeg-based conversion, merging, ID3 tag embedding, and cover art embedding.
@@ -18,6 +22,19 @@ Narratorr is a self-hosted audiobook acquisition and organization application. S
 - **Import Lists** — Sync wanted books from external sources.
 - **Security** — Forms or Basic auth with CSRF defenses, rate-limited login, AES-256-GCM credential encryption at rest, CSP with nonce-based script execution, SSRF protection on attacker-influenced fetches, library-root ancestry checks on filesystem mutations.
 - **Docker** — Multi-arch images (amd64/arm64) with linuxserver.io base and s6-overlay.
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/book-detail.webp" alt="Book detail with series tracking"><br><sub><b>Book detail</b> — metadata, narrator, audio quality, and live series tracking</sub></td>
+<td width="50%"><img src="docs/screenshots/releases.webp" alt="Search releases across indexers"><br><sub><b>Search</b> — releases across every indexer, with quality, size, and seeders</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/discover.webp" alt="Personalized discovery"><br><sub><b>Discover</b> — personalized suggestions from your own library</sub></td>
+<td valign="top"><br><sub>More in the <b><a href="https://docs.narratorr.dev">documentation</a></b>.</sub></td>
+</tr>
+</table>
 
 ## Quick Start
 

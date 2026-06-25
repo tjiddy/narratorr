@@ -1,7 +1,8 @@
 import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableColumns, type SQL } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
-import type { BookSortField, BookSortDirection, BookStatus } from '../../shared/schemas/book.js';
+import type { BookSortField, BookSortDirection, BookStatus, LibraryFilterBucket } from '../../shared/schemas/book.js';
+import { LIBRARY_FILTER_BUCKETS } from '../../shared/schemas/book.js';
 import type { LibraryBookListItem } from '../../shared/schemas/library-book.js';
 import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-list-collapse.js';
 import type { BookWithAuthor } from './book.service.js';
@@ -36,22 +37,31 @@ export interface BookListOptions {
   narrator?: string;
   sortField?: BookSortField;
   sortDirection?: BookSortDirection;
+  /**
+   * Filter `status` by EXACT canonical match instead of bucket-expanding the
+   * overlapping keys (`downloading`/`imported`) through `BUCKET_EXPANSION`.
+   * Default `false` preserves the legacy bucket-aware behavior for internal
+   * `/api/books` and library callers; the native public `/api/v1` boundary sets
+   * it `true` so `status=downloading` means exactly-`downloading`, not the
+   * library `searching+downloading` bucket (#1449).
+   */
+  exactStatus?: boolean;
 }
 
-/** Tab-model status → actual DB status values */
-const TAB_STATUS_MAP: Partial<Record<BookStatus, BookStatus[]>> = {
-  downloading: ['searching', 'downloading'],
-  imported: ['importing', 'imported'],
-};
+/**
+ * Filter-value → canonical DB status values. The library route passes a
+ * `LibraryFilterBucket` (bucket key); the generic `/api/books` route passes a
+ * `BookStatus`. Both expand through the single canonical map: a bucket key
+ * resolves to its member states (`downloading` → `[searching, downloading]`),
+ * and a non-bucket `BookStatus` (e.g. `searching`) falls through to an exact
+ * `eq` match. This preserves the legacy generic-route behavior — `downloading`
+ * and `imported` are both bucket keys, so passing them to `/api/books` still
+ * expands exactly as the retired `TAB_STATUS_MAP` did.
+ */
+const BUCKET_EXPANSION: Record<string, readonly BookStatus[]> = LIBRARY_FILTER_BUCKETS;
 
 export interface BookStats {
-  counts: {
-    wanted: number;
-    downloading: number;
-    imported: number;
-    failed: number;
-    missing: number;
-  };
+  counts: Record<LibraryFilterBucket, number>;
   authors: string[];
   series: string[];
   narrators: string[];
@@ -79,15 +89,15 @@ export class BookListService {
    *  title/series/genres + author name subquery, no narrator subquery.
    *  Author/series/narrator filters (#1143) are case-insensitive exact matches
    *  pushed to the DB so pagination operates on the filtered set. */
-  private buildListWhere(status?: BookStatus, filters?: { search?: string; author?: string; series?: string; narrator?: string }): SQL | undefined {
+  private buildListWhere(status?: BookStatus | LibraryFilterBucket, filters?: { search?: string; author?: string; series?: string; narrator?: string }, exactStatus = false): SQL | undefined {
     const conditions: SQL[] = [];
 
     if (status) {
-      const mapped = TAB_STATUS_MAP[status];
-      if (mapped) {
-        conditions.push(inArray(books.status, mapped));
+      const bucket = exactStatus ? undefined : BUCKET_EXPANSION[status];
+      if (bucket) {
+        conditions.push(inArray(books.status, [...bucket]));
       } else {
-        conditions.push(eq(books.status, status));
+        conditions.push(eq(books.status, status as BookStatus));
       }
     }
 
@@ -121,7 +131,10 @@ export class BookListService {
     pagination?: { limit?: number; offset?: number },
     options?: BookListOptions,
   ): Promise<{ data: BookWithAuthor[]; total: number }> {
-    const where = this.buildListWhere(status, pickFilters(options));
+    // Destructure once (single `?? {}` branch) instead of repeated `options?.`
+    // optional chains — keeps getAll under the cyclomatic-complexity cap.
+    const { slim, sortField, sortDirection, exactStatus } = options ?? {};
+    const where = this.buildListWhere(status, pickFilters(options), exactStatus);
 
     // Get total count (filters only, no pagination)
     const [{ value: total } = { value: 0 }] = await this.db
@@ -130,10 +143,10 @@ export class BookListService {
       .where(where);
 
     // Build select — slim mode excludes description, genres for list views
-    const bookFields = options?.slim ? getSlimBookColumns() : books;
+    const bookFields = slim ? getSlimBookColumns() : books;
 
     // Build ORDER BY — join position-0 author for author sort
-    const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
+    const orderClauses = this.buildOrderBy(sortField, sortDirection);
 
     let query = this.db
       .select({ book: bookFields, importListName: importLists.name, primaryAuthorName: authors.name })
@@ -207,7 +220,7 @@ export class BookListService {
   }
 
   async getAllForLibrary(
-    status?: BookStatus,
+    status?: LibraryFilterBucket,
     pagination?: { limit?: number; offset?: number },
     options?: { search?: string; author?: string; series?: string; narrator?: string; sortField?: BookSortField; sortDirection?: BookSortDirection; collapse?: boolean },
   ): Promise<LibraryBookListResponseRow> {
@@ -360,13 +373,13 @@ export class BookListService {
 
     const statusMap = new Map(statusRows.map((r) => [r.status, Number(r.count)]));
 
-    const counts = {
-      wanted: statusMap.get('wanted') ?? 0,
-      downloading: (statusMap.get('searching') ?? 0) + (statusMap.get('downloading') ?? 0),
-      imported: (statusMap.get('importing') ?? 0) + (statusMap.get('imported') ?? 0),
-      failed: statusMap.get('failed') ?? 0,
-      missing: statusMap.get('missing') ?? 0,
-    };
+    // Derive per-bucket counts from the canonical partition so every BookStatus
+    // is summed into exactly one bucket — no state can be silently uncounted, and
+    // a future status added to a bucket is picked up automatically.
+    const counts = Object.fromEntries(
+      (Object.entries(LIBRARY_FILTER_BUCKETS) as [LibraryFilterBucket, readonly BookStatus[]][])
+        .map(([bucket, states]) => [bucket, states.reduce((sum, s) => sum + (statusMap.get(s) ?? 0), 0)]),
+    ) as Record<LibraryFilterBucket, number>;
 
     // Get unique filter values
     const [authorRows, seriesRows, narratorRows] = await Promise.all([

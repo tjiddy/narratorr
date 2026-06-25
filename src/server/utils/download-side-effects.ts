@@ -34,15 +34,22 @@ export interface EmitBookStatusChangeOnGrabArgs {
   broadcaster: EventBroadcasterService | undefined;
   bookId: number;
   isHandoff: boolean;
+  /**
+   * The book's real lifecycle BEFORE the grab (the `bookStatusAtGrab` snapshot).
+   * A re-grab from `failed`/`missing`/`imported` must report that true prior
+   * state, not a hardcoded `'wanted'`. Falls back to `'wanted'` only when no
+   * snapshot is available (legacy rows / orphan grabs).
+   */
+  oldStatus: BookStatus | null;
   log: FastifyBaseLogger;
 }
 
-/** Emit book_status_change SSE for a grab (wanted → downloading or missing). */
+/** Emit book_status_change SSE for a grab (prior lifecycle → downloading or missing). */
 export function emitBookStatusChangeOnGrab(args: EmitBookStatusChangeOnGrabArgs): void {
-  const { broadcaster, bookId, isHandoff, log } = args;
+  const { broadcaster, bookId, isHandoff, oldStatus, log } = args;
   const newStatus = isHandoff ? 'missing' : 'downloading';
   safeEmit(broadcaster, 'book_status_change', {
-    book_id: bookId, old_status: 'wanted', new_status: newStatus,
+    book_id: bookId, old_status: oldStatus ?? 'wanted', new_status: newStatus,
   }, log);
 }
 

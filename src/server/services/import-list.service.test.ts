@@ -4,28 +4,28 @@ import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
-import type { ImmediateSearchDeps } from '../routes/trigger-immediate-search.js';
+import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 
 // Mock the adapter factories
 vi.mock('../../core/import-lists/index.js', () => ({
   IMPORT_LIST_ADAPTER_FACTORIES: {
-    abs: vi.fn(),
     nyt: vi.fn(),
     hardcover: vi.fn(),
   },
 }));
 
 // Stub the trigger so search-pipeline isn't actually invoked from these unit tests
-vi.mock('../routes/trigger-immediate-search.js', () => ({
+vi.mock('./trigger-immediate-search.js', () => ({
   triggerImmediateSearch: vi.fn(),
 }));
 
 const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('../../core/import-lists/index.js');
 const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as Record<string, ReturnType<typeof vi.fn>>;
-const { triggerImmediateSearch } = await import('../routes/trigger-immediate-search.js');
+const { triggerImmediateSearch } = await import('./trigger-immediate-search.js');
 const mockTriggerImmediateSearch = triggerImmediateSearch as unknown as ReturnType<typeof vi.fn>;
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
@@ -42,11 +42,12 @@ function makeBookService(overrides: {
   const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue(null);
   const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
     id: 100,
+    publicId: 'bk_test000000000000000',
     title: data.title,
+    subtitle: null,
     description: null,
+    publisher: null,
     coverUrl: null,
-    goodreadsId: null,
-    audibleId: null,
     asin: null,
     isbn: null,
     seriesName: null,
@@ -56,6 +57,7 @@ function makeBookService(overrides: {
     genres: null,
     status: 'wanted',
     enrichmentStatus: 'pending',
+    enrichmentAttempts: 0,
     path: null,
     size: null,
     audioCodec: null,
@@ -92,17 +94,17 @@ describe('ImportListService', () => {
   describe('testConfig', () => {
     it('calls provider test with provided config', async () => {
       const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
-      mockFactories.abs!.mockReturnValue(mockProvider);
+      mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.testConfig({
-        type: 'abs',
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+        type: 'nyt',
+        settings: { apiKey: 'key', list: 'audio-fiction' },
       });
       expect(result).toEqual({ success: true });
-      expect(mockFactories.abs).toHaveBeenCalledWith({ serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' });
+      expect(mockFactories.nyt).toHaveBeenCalledWith({ apiKey: 'key', list: 'audio-fiction' });
     });
 
     it('returns failure for unknown provider type', async () => {
@@ -127,42 +129,42 @@ describe('ImportListService', () => {
     describe('sentinel resolution (#827)', () => {
       it('with id, replaces sentinel apiKey with saved (decrypted) value before factory call', async () => {
         const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const encryptedApiKey = encrypt('real-api-key', getKey());
         const db = createMockDb();
         db.select.mockReturnValue(mockDbChain([{
-          id: 1, name: 'Existing', type: 'abs', enabled: true,
-          settings: { serverUrl: 'http://abs.local', apiKey: encryptedApiKey, libraryId: 'lib-1' },
+          id: 1, name: 'Existing', type: 'nyt', enabled: true,
+          settings: { apiKey: encryptedApiKey, list: 'audio-fiction' },
           syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: null,
           lastSyncError: null, createdAt: new Date(),
         }]));
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
         const result = await service.testConfig({
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: '********', list: 'audio-fiction' },
           id: 1,
         });
 
         expect(result).toEqual({ success: true });
-        expect(mockFactories.abs).toHaveBeenCalledWith(
+        expect(mockFactories.nyt).toHaveBeenCalledWith(
           expect.objectContaining({ apiKey: 'real-api-key' }),
         );
       });
 
       it('without id, passes sentinel literally to provider (no resolution)', async () => {
         const mockProvider = { test: vi.fn().mockResolvedValue({ success: false }), fetchItems: vi.fn() };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
         const db = createMockDb();
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
         await service.testConfig({
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: '********', list: 'audio-fiction' },
         });
 
-        expect(mockFactories.abs).toHaveBeenCalledWith(
+        expect(mockFactories.nyt).toHaveBeenCalledWith(
           expect.objectContaining({ apiKey: '********' }),
         );
       });
@@ -173,13 +175,13 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
         const result = await service.testConfig({
-          type: 'abs',
-          settings: { serverUrl: 'http://abs.local', apiKey: '********', libraryId: 'lib-1' },
+          type: 'nyt',
+          settings: { apiKey: '********', list: 'audio-fiction' },
           id: 999,
         });
 
         expect(result).toEqual({ success: false, message: 'Import list not found' });
-        expect(mockFactories.abs).not.toHaveBeenCalled();
+        expect(mockFactories.nyt).not.toHaveBeenCalled();
       });
     });
   });
@@ -271,56 +273,6 @@ describe('ImportListService', () => {
     });
   });
 
-  // #786 — ABS libraryId URL-path injection tightening
-  describe('ABS libraryId saved-row parsing (#786)', () => {
-    function makeAbsList(settings: Record<string, unknown>) {
-      return {
-        id: 1, name: 'My ABS', type: 'abs', enabled: true,
-        settings,
-        syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
-        lastSyncError: null, createdAt: new Date(),
-      };
-    }
-
-    it('test(id) rejects saved row with path-injection libraryId without invoking provider factory', async () => {
-      mockFactories.abs!.mockClear();
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
-      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
-
-      const result = await service.test(1);
-      expect(result.success).toBe(false);
-      expect(result.message).toBeTruthy();
-      expect(mockFactories.abs).not.toHaveBeenCalled();
-    });
-
-    it('syncDueLists records lastSyncError when saved libraryId fails validation', async () => {
-      mockFactories.abs!.mockClear();
-      const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([makeAbsList({ serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' })]));
-      const updateChain = mockDbChain([]);
-      db.update.mockReturnValue(updateChain);
-
-      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
-      await service.syncDueLists();
-
-      const setCall = updateChain.set.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
-      expect(setCall?.lastSyncError).toBeTruthy();
-      expect(mockFactories.abs).not.toHaveBeenCalled();
-    });
-
-    it('preview rejects invalid ABS libraryId without invoking provider factory', async () => {
-      mockFactories.abs!.mockClear();
-      const db = createMockDb();
-      service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
-
-      await expect(
-        service.preview({ type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'k', libraryId: 'lib/../x' } }),
-      ).rejects.toThrow();
-      expect(mockFactories.abs).not.toHaveBeenCalled();
-    });
-  });
-
   describe('preview', () => {
     it('returns first 10 items capped with total count', async () => {
       const items = Array.from({ length: 15 }, (_, i) => ({ title: `Book ${i}` }));
@@ -358,7 +310,7 @@ describe('ImportListService', () => {
   describe('CRUD', () => {
     it('getAll returns all import lists', async () => {
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));
+      db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'nyt', settings: {}, enabled: true }]));
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const results = await service.getAll();
@@ -366,18 +318,40 @@ describe('ImportListService', () => {
       expect(db.select).toHaveBeenCalled();
     });
 
+    // #1404 — decryptRow threads the injected service logger into decryptFields so a
+    // corrupt/wrong-key secret surfaces a diagnostic. Uses a freshly-captured logger
+    // (not the shared module-scope mockLog) and asserts the warn reaches THIS caller's
+    // injected logger (would fail if `this.log` were dropped from the call).
+    it('getById threads this.log: corrupt apiKey warns with entity/failedFields, passthrough preserved', async () => {
+      const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { id: 1, name: 'Test', type: 'nyt', enabled: true, settings: { apiKey: CORRUPT, list: 'audio-fiction' } },
+      ]));
+      const log = createMockLogger();
+      const loggedService = new ImportListService(inject<Db>(db), inject<FastifyBaseLogger>(log), makeBookService());
+
+      const row = await loggedService.getById(1);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        { entity: 'importList', failedFields: ['apiKey'] },
+        expect.stringContaining('secret.key'),
+      );
+      expect((row!.settings as Record<string, unknown>).apiKey).toBe(CORRUPT);
+    });
+
     it('create encrypts API key and sets nextRunAt', async () => {
       const db = createMockDb();
-      const insertChain = mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key' }, createdAt: new Date() }]);
+      const insertChain = mockDbChain([{ id: 1, name: 'Test', type: 'nyt', settings: { apiKey: 'key', list: 'audio-fiction' }, createdAt: new Date() }]);
       db.insert.mockReturnValue(insertChain);
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.create({
         name: 'Test',
-        type: 'abs',
+        type: 'nyt',
         enabled: true,
         syncIntervalMinutes: 1440,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'test-key', libraryId: 'lib-1' },
+        settings: { apiKey: 'test-key', list: 'audio-fiction' },
       });
 
       expect(result).toBeDefined();
@@ -391,8 +365,8 @@ describe('ImportListService', () => {
       const db = createMockDb();
       const encryptedApiKey = encrypt('real-api-key', getKey());
       const existingRow = {
-        id: 1, name: 'Test', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://old.local', apiKey: encryptedApiKey, libraryId: 'lib-1' },
+        id: 1, name: 'Test', type: 'nyt', enabled: true,
+        settings: { apiKey: encryptedApiKey, list: 'audio-fiction' },
       };
 
       db.select.mockReturnValue(mockDbChain([existingRow]));
@@ -402,14 +376,14 @@ describe('ImportListService', () => {
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       await service.update(1, {
-        settings: { serverUrl: 'http://new.local', apiKey: '********', libraryId: 'lib-2' },
+        settings: { apiKey: '********', list: 'audio-nonfiction' },
       });
 
       expect(updateChain.set).toHaveBeenCalledWith(
         expect.objectContaining({
           settings: expect.objectContaining({
             apiKey: encryptedApiKey,
-            libraryId: 'lib-2',
+            list: 'audio-nonfiction',
           }),
         }),
       );
@@ -419,8 +393,8 @@ describe('ImportListService', () => {
     it('update rejects sentinel on a non-secret field rather than silently substituting it', async () => {
       const db = createMockDb();
       const existingRow = {
-        id: 1, name: 'Test', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://persisted.local', apiKey: 'real', libraryId: 'lib-1' },
+        id: 1, name: 'Test', type: 'nyt', enabled: true,
+        settings: { apiKey: 'real', list: 'audio-fiction' },
       };
       db.select.mockReturnValue(mockDbChain([existingRow]));
       db.update.mockReturnValue(mockDbChain([existingRow]));
@@ -428,14 +402,14 @@ describe('ImportListService', () => {
 
       await expect(
         service.update(1, {
-          settings: { serverUrl: '********', apiKey: 'still-real', libraryId: 'lib-1' },
+          settings: { list: '********', apiKey: 'still-real' },
         }),
-      ).rejects.toThrow(/non-secret field: serverUrl/);
+      ).rejects.toThrow(/non-secret field: list/);
     });
 
     it('delete removes row from DB', async () => {
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));
+      db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'nyt', settings: {}, enabled: true }]));
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
 
       const result = await service.delete(1);
@@ -445,9 +419,9 @@ describe('ImportListService', () => {
   });
 
   describe('syncDueLists', () => {
-    const dueAbsList = (overrides: Record<string, unknown> = {}) => ({
-      id: 1, name: 'My ABS', type: 'abs', enabled: true,
-      settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+    const dueNytList = (overrides: Record<string, unknown> = {}) => ({
+      id: 1, name: 'My NYT', type: 'nyt', enabled: true,
+      settings: { apiKey: 'key', list: 'audio-fiction' },
       syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
       lastSyncError: null, createdAt: new Date(),
       ...overrides,
@@ -458,11 +432,12 @@ describe('ImportListService', () => {
      * Tests assert against this shape's id/title — other fields just satisfy types.
      */
     const createdBook = (id: number, title: string): BookWithAuthor => ({
-      id, title,
-      description: null, coverUrl: null, goodreadsId: null, audibleId: null,
+      id, publicId: `bk_test`, title,
+      subtitle: null, description: null, publisher: null, coverUrl: null,
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,
       status: 'wanted', enrichmentStatus: 'pending',
+      enrichmentAttempts: 0,
       path: null, size: null,
       audioCodec: null, audioBitrate: null, audioSampleRate: null,
       audioChannels: null, audioBitrateMode: null, audioFileFormat: null,
@@ -489,10 +464,10 @@ describe('ImportListService', () => {
         fetchItems: vi.fn().mockResolvedValue([{ title: 'New Book', author: 'Author Name' }]),
         test: vi.fn(),
       };
-      mockFactories.abs!.mockReturnValue(mockProvider);
+      mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([dueAbsList({ id: 7, name: 'My List' })]));
+      db.select.mockReturnValue(mockDbChain([dueNytList({ id: 7, name: 'My List' })]));
       const eventInsertChain = mockDbChain([]);
       db.insert.mockReturnValue(eventInsertChain);
       db.update.mockReturnValue(mockDbChain([]));
@@ -511,7 +486,13 @@ describe('ImportListService', () => {
         importListId: 7,
       }));
       expect(eventInsertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 42, eventType: 'grabbed', source: 'import_list', authorName: 'Author Name' }),
+        expect.objectContaining({
+          bookId: 42,
+          eventType: 'book_added',
+          source: 'import_list',
+          authorName: 'Author Name',
+          reason: expect.objectContaining({ importListName: 'My List' }),
+        }),
       );
       expect(mockLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42, title: 'New Book', listName: 'My List' }),
@@ -527,10 +508,10 @@ describe('ImportListService', () => {
         ]),
         test: vi.fn(),
       };
-      mockFactories.abs!.mockReturnValue(mockProvider);
+      mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([dueAbsList({ name: 'Mixed List' })]));
+      db.select.mockReturnValue(mockDbChain([dueNytList({ name: 'Mixed List' })]));
       db.insert.mockReturnValue(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain([]));
 
@@ -550,10 +531,10 @@ describe('ImportListService', () => {
 
     it('persists lastRunAt, nextRunAt, clears lastSyncError on success', async () => {
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
-      mockFactories.abs!.mockReturnValue(mockProvider);
+      mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([dueAbsList({ id: 5, syncIntervalMinutes: 60, lastSyncError: 'old error' })]));
+      db.select.mockReturnValue(mockDbChain([dueNytList({ id: 5, syncIntervalMinutes: 60, lastSyncError: 'old error' })]));
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
@@ -571,10 +552,10 @@ describe('ImportListService', () => {
 
     it('persists lastSyncError and advances nextRunAt on failure', async () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Connection timeout')), test: vi.fn() };
-      mockFactories.abs!.mockReturnValue(failProvider);
+      mockFactories.nyt!.mockReturnValue(failProvider);
 
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([dueAbsList({ id: 3, name: 'Failing List' })]));
+      db.select.mockReturnValue(mockDbChain([dueNytList({ id: 3, name: 'Failing List' })]));
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService());
@@ -593,10 +574,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Already Have', author: 'Someone', asin: 'B_DUP' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         const eventInsertChain = mockDbChain([]);
         db.insert.mockReturnValue(eventInsertChain);
         db.update.mockReturnValue(mockDbChain([]));
@@ -604,8 +585,7 @@ describe('ImportListService', () => {
         const findDuplicate = vi.fn().mockResolvedValue({ id: 999, title: 'Already Have' });
         const create = vi.fn();
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue(null),
-          search: vi.fn(),
+          resolveBook: vi.fn().mockResolvedValue(null),
         } as unknown as MetadataService;
         const searchDeps = makeSearchDeps({ searchImmediately: true });
         service = new ImportListService(
@@ -632,10 +612,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Anonymous Book' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -661,10 +641,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         const eventInsertChain = mockDbChain([]);
         db.insert.mockReturnValue(eventInsertChain);
         db.update.mockReturnValue(mockDbChain([]));
@@ -718,10 +698,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'Original Author', asin: 'B001', coverUrl: 'http://nyt.com/cover.jpg', description: 'desc' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -737,26 +717,26 @@ describe('ImportListService', () => {
 
       // #1119 — ASIN-bearing items now get rich metadata from enrichBook, and the
       // metadata's title/author win over the raw provider fields (ASIN is identity).
-      it('item has ASIN → enrichBook called, NOT search; metadata identity + side fields flow to BookService.create', async () => {
+      it('item has ASIN → resolveBook called with item identity; metadata identity + side fields flow to BookService.create', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B002', title: 'Different Title From Audnexus', authors: [{ name: 'Audnexus Author' }],
             narrators: ['Narrator A', 'Narrator B'],
             seriesPrimary: { name: 'Real Series', position: 3, asin: 'SER1' },
             series: [{ name: 'Broader Universe', position: 99, asin: 'UNI1' }],
             duration: 36000, publishedDate: '2020-01-01', genres: ['Fantasy'],
             description: 'rich description', coverUrl: 'http://audnexus/cover.jpg',
+            subtitle: 'Audnexus Subtitle', publisher: 'Audnexus Publisher',
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Item Title', author: 'Item Author', asin: 'B002' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -764,8 +744,9 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
-        expect(mockMetadata.enrichBook).toHaveBeenCalledWith('B002');
-        expect(mockMetadata.search).not.toHaveBeenCalled();
+        expect(mockMetadata.resolveBook).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: 'B002', title: 'Item Title', author: 'Item Author' }),
+        );
 
         // Metadata identity wins for title + authors; cover/description still
         // accept the raw item value as a hint (item.* ?? match.*); rich
@@ -775,6 +756,8 @@ describe('ImportListService', () => {
           authors: [{ name: 'Audnexus Author' }],
           asin: 'B002',
           narrators: ['Narrator A', 'Narrator B'],
+          subtitle: 'Audnexus Subtitle',
+          publisher: 'Audnexus Publisher',
           seriesName: 'Real Series',
           seriesPosition: 3,
           seriesAsin: 'SER1',
@@ -789,12 +772,11 @@ describe('ImportListService', () => {
       // validation` test that blessed the chimera behavior).
       it('ASIN-identity: metadata author + title win at create + findDuplicate', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B00R6S1RCY', title: 'Golden Son',
             authors: [{ name: 'Pierce Brown' }],
             narrators: ['Tim Gerard Reynolds'], duration: 64000,
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
@@ -802,10 +784,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -828,11 +810,10 @@ describe('ImportListService', () => {
       // #1119 AC test #2 — ASIN-identity: metadata title wins when item title differs
       it('ASIN-identity: metadata title wins when item title differs', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B00R6S1RCY', title: 'Golden Son',
             authors: [{ name: 'Pierce Brown' }],
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
@@ -840,10 +821,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -858,11 +839,12 @@ describe('ImportListService', () => {
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son' }));
       });
 
-      // #1119 AC test #3 — ASIN lookup failure: raw item fields used end-to-end
-      it('ASIN lookup failure: raw item fields used at create, no metadata side fields', async () => {
+      // #1622 — unresolvable item: raw item fields used end-to-end AND the book
+      // is created with enrichmentStatus 'failed' (still created so the import
+      // isn't dropped; re-enters the background job's retry-after-1h search).
+      it('unresolvable item (resolver null): raw item fields at create + enrichmentStatus failed, no metadata side fields', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue(null),
-          search: vi.fn(),
+          resolveBook: vi.fn().mockResolvedValue(null),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
@@ -870,10 +852,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -881,10 +863,16 @@ describe('ImportListService', () => {
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
         await service.syncDueLists();
 
+        // The resolver receives the transient item identity (asin NOT mutated on
+        // the import-list row — the adapter item is just passed through).
+        expect(mockMetadata.resolveBook).toHaveBeenCalledWith(
+          expect.objectContaining({ asin: 'B_NOTFOUND', title: 'Mystery Book', author: 'Some Author' }),
+        );
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'Mystery Book',
           authors: [{ name: 'Some Author' }],
           asin: 'B_NOTFOUND',
+          enrichmentStatus: 'failed',
         }));
         const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
         expect(callArgs.narrators).toBeUndefined();
@@ -892,16 +880,134 @@ describe('ImportListService', () => {
         expect(callArgs.seriesName).toBeUndefined();
       });
 
+      // #1622 — bad provider ASIN rescued via search: the resolved AUDIOBOOK ASIN
+      // (not the original print/Kindle ASIN) is what's persisted for the book.
+      it('search-rescued ASIN: resolved audiobook ASIN wins over the raw provider ASIN at create', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B0AUDIOBOOK', title: 'Catching Fire', authors: [{ name: 'Suzanne Collins' }],
+            narrators: ['Carolyn McCormick'], duration: 700,
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          // Print ASIN (ISBN-10 shaped) from a Hardcover-style provider row.
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Catching Fire', author: 'Suzanne Collins', asin: '1338589016' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Catching Fire'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Catching Fire',
+          asin: 'B0AUDIOBOOK',
+          narrators: ['Carolyn McCormick'],
+          duration: 700,
+        }));
+        // The book record gets the audiobook ASIN — NOT the print ASIN.
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.asin).not.toBe('1338589016');
+      });
+
+      // #1622 — a provider RateLimitError is transient, NOT a no-match: the book
+      // is still created but left resolvable later (no 'failed' status); logged.
+      it('rate limit during resolution: book left pending (not failed), warn logged', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockRejectedValue(new RateLimitError(30000, 'Audible.com')),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Rate Limited Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Rate Limited Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Rate Limited Book', provider: 'Audible.com', retryAfterMs: 30000 }),
+          expect.stringContaining('rate limited'),
+        );
+      });
+
+      // #1628 — a transient provider failure during the fallback search is NOT a
+      // no-match: the book is still created but left pending (no 'failed' status),
+      // so the background job retries it. Mirrors the rate-limit case above.
+      it('transient error during resolution: book left pending (not failed), warn logged', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockRejectedValue(new TransientError('Audible.com', 'HTTP 503')),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Transient Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Transient Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Transient Book', provider: 'Audible.com' }),
+          expect.stringContaining('transient'),
+        );
+      });
+
+      // #1628 — a generic (non-typed) error during resolution is also treated as
+      // transient: book created but left pending, not failed.
+      it('generic error during resolution: book left pending (not failed)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockRejectedValue(new Error('Network error')),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Network Book', author: 'Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(10, 'Network Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        const callArgs = create.mock.calls[0]![0] as Record<string, unknown>;
+        expect(callArgs.enrichmentStatus).toBeUndefined(); // default 'pending', NOT 'failed'
+      });
+
       // #1119 AC test #4 — Search-candidate validation success: metadata identity wins at create payload
       it('search-candidate path: metadata identity wins at create payload when item differs', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn(),
-          search: vi.fn().mockResolvedValue({
-            books: [{
-              title: 'Game On', authors: [{ name: 'Navessa Allen' }],
-              narrators: ['Real Narrator'], duration: 30000,
-            }],
-            authors: [], series: [],
+          resolveBook: vi.fn().mockResolvedValue({
+            title: 'Game On', authors: [{ name: 'Navessa Allen' }],
+            narrators: ['Real Narrator'], duration: 30000,
           }),
         } as unknown as MetadataService;
         const mockProvider = {
@@ -910,10 +1016,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'navessa allen' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -936,11 +1042,10 @@ describe('ImportListService', () => {
       // #1119 AC test #7 — Mismatch logging on ASIN identity
       it('ASIN-identity: emits warn log when raw and metadata fields disagree', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B00R6S1RCY', title: 'Golden Son',
             authors: [{ name: 'Pierce Brown' }],
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
@@ -948,10 +1053,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -964,18 +1069,17 @@ describe('ImportListService', () => {
             listAuthor: 'Navessa Allen',
             metadataAuthor: 'Pierce Brown',
           }),
-          expect.stringContaining('Import-list ASIN identity disagrees'),
+          expect.stringContaining('Import-list metadata disagrees with raw provider fields'),
         );
       });
 
       // #1119 AC test #7 (negative) — no mismatch log when raw and metadata agree
       it('ASIN-identity: no mismatch log when raw and metadata agree', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B00R6S1RCY', title: 'Golden Son',
             authors: [{ name: 'Pierce Brown' }],
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
@@ -983,10 +1087,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -996,7 +1100,103 @@ describe('ImportListService', () => {
         const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
         const mismatchWarn = warnCalls.find((call) => {
           const msg = call[1] as string;
-          return typeof msg === 'string' && msg.includes('Import-list ASIN identity disagrees');
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1626 — case-only title divergence does NOT warn (author agrees)
+      it('case-only title divergence does not emit mismatch warn when author agrees', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Game On',
+            authors: [{ name: 'Navessa Allen' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'GAME ON', author: 'Navessa Allen', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1626 — case-only title divergence does NOT warn (author absent)
+      it('case-only title divergence does not emit mismatch warn when author is absent', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Game On',
+            authors: [{ name: 'Navessa Allen' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'GAME ON', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1626 — case-only author divergence does NOT warn (title agrees)
+      it('case-only author divergence does not emit mismatch warn when title agrees', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Golden Son',
+            authors: [{ name: 'Pierce Brown' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Golden Son', author: 'pierce brown', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
         });
         expect(mismatchWarn).toBeUndefined();
       });
@@ -1004,20 +1204,19 @@ describe('ImportListService', () => {
       // #1119 AC test #8 — Item with no author + metadata has authors
       it('ASIN-identity: item without author still adopts metadata author', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B_AUTHORLESS', title: 'X',
             authors: [{ name: 'Real Author' }],
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'X', asin: 'B_AUTHORLESS' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1030,26 +1229,20 @@ describe('ImportListService', () => {
         }));
       });
 
-      // §4 — search-candidate path applies fuzzy validation
-      it('search-candidate path: fuzzy mismatch falls back to provider raw fields, no enriched data', async () => {
+      // §4 — resolver rejects the candidate (validation lives in resolveBook now)
+      // → null → raw provider fields fall through, no enriched data.
+      it('resolver returns null (validation rejected) → falls back to provider raw fields, no enriched data', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn(),
-          search: vi.fn().mockResolvedValue({
-            books: [{
-              title: 'Game On', authors: [{ name: 'Janet Evanovich' }],
-              narrators: ['Wrong Narrator'], coverUrl: 'http://wrong.com/cover.jpg', asin: 'B_WRONG',
-            }],
-            authors: [], series: [],
-          }),
+          resolveBook: vi.fn().mockResolvedValue(null),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'GAME ON', author: 'Navessa Allen', coverUrl: 'http://nyt/cover.jpg' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1068,27 +1261,23 @@ describe('ImportListService', () => {
         expect(callArgs.asin).toBeUndefined();
       });
 
-      it('search-candidate path: title fuzzy match + author overlap → match adopted, rich fields flow', async () => {
+      it('search-candidate path: resolver returns a validated match → rich fields flow (incl. resolved audiobook ASIN)', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn(),
-          search: vi.fn().mockResolvedValue({
-            books: [{
-              title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }],
-              narrators: ['Michael Kramer'], duration: 50000, asin: 'B_MATCH',
-              seriesPrimary: { name: 'The Stormlight Archive', position: 1, asin: 'SA' },
-              coverUrl: 'http://match.com/cover.jpg',
-            }],
-            authors: [], series: [],
+          resolveBook: vi.fn().mockResolvedValue({
+            title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }],
+            narrators: ['Michael Kramer'], duration: 50000, asin: 'B_MATCH',
+            seriesPrimary: { name: 'The Stormlight Archive', position: 1, asin: 'SA' },
+            coverUrl: 'http://match.com/cover.jpg',
           }),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'The Way of Kings', author: 'Brandon Sanderson' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1109,19 +1298,18 @@ describe('ImportListService', () => {
         }));
       });
 
-      it('search returns no books → match=null, raw item fields used', async () => {
+      it('resolver returns null (no match) → raw item fields used', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn(),
-          search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
+          resolveBook: vi.fn().mockResolvedValue(null),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Obscure Book', author: 'Nobody' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1135,19 +1323,18 @@ describe('ImportListService', () => {
         expect(callArgs.asin).toBeUndefined();
       });
 
-      it('metadata search throws → match=null, item still processed, warn logged', async () => {
+      it('resolver throws (non-rate-limit) → match=null, item still processed, warn logged', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn(),
-          search: vi.fn().mockRejectedValue(new Error('API timeout')),
+          resolveBook: vi.fn().mockRejectedValue(new Error('API timeout')),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Resilient Book', author: 'Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1165,23 +1352,19 @@ describe('ImportListService', () => {
       // Cover precedence at insert: provider wins over match
       it('cover precedence: item.coverUrl wins over match.coverUrl', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn(),
-          search: vi.fn().mockResolvedValue({
-            books: [{
-              title: 'My Book', authors: [{ name: 'My Author' }],
-              coverUrl: 'http://match-cover.jpg',
-            }],
-            authors: [], series: [],
+          resolveBook: vi.fn().mockResolvedValue({
+            title: 'My Book', authors: [{ name: 'My Author' }],
+            coverUrl: 'http://match-cover.jpg',
           }),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'My Book', author: 'My Author', coverUrl: 'http://item-cover.jpg' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1195,21 +1378,20 @@ describe('ImportListService', () => {
       // seriesPrimary preferred over series[0] (#1088 prior art)
       it('series identity: match.seriesPrimary wins over match.series[0]', async () => {
         const mockMetadata = {
-          enrichBook: vi.fn().mockResolvedValue({
+          resolveBook: vi.fn().mockResolvedValue({
             asin: 'B', title: 'X', authors: [{ name: 'A' }],
             seriesPrimary: { name: 'Real Series', position: 2, asin: 'PRIM' },
             series: [{ name: 'Universe', position: 50, asin: 'UNI' }],
           }),
-          search: vi.fn(),
         } as unknown as MetadataService;
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'X', author: 'A', asin: 'B' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1232,10 +1414,10 @@ describe('ImportListService', () => {
         ]),
         test: vi.fn(),
       };
-      mockFactories.abs!.mockReturnValue(mockProvider);
+      mockFactories.nyt!.mockReturnValue(mockProvider);
 
       const db = createMockDb();
-      db.select.mockReturnValue(mockDbChain([dueAbsList({ syncIntervalMinutes: 60, name: 'Failing Items' })]));
+      db.select.mockReturnValue(mockDbChain([dueNytList({ syncIntervalMinutes: 60, name: 'Failing Items' })]));
       const updateChain = mockDbChain([]);
       db.update.mockReturnValue(updateChain);
 
@@ -1289,10 +1471,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Search Me', author: 'Search Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1314,10 +1496,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Anonymous Book' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1338,10 +1520,10 @@ describe('ImportListService', () => {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Quiet Book', author: 'Author' }]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1364,10 +1546,10 @@ describe('ImportListService', () => {
           ]),
           test: vi.fn(),
         };
-        mockFactories.abs!.mockReturnValue(mockProvider);
+        mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueAbsList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
@@ -1388,13 +1570,13 @@ describe('ImportListService', () => {
     it('isolates provider failures — one list failing does not block others', async () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Provider down')), test: vi.fn() };
       const successProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
-      mockFactories.abs!.mockReturnValue(failProvider);
+      mockFactories.hardcover!.mockReturnValue(failProvider);
       mockFactories.nyt!.mockReturnValue(successProvider);
 
       const db = createMockDb();
       const list1 = {
-        id: 1, name: 'Failing ABS', type: 'abs', enabled: true,
-        settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
+        id: 1, name: 'Failing Hardcover', type: 'hardcover', enabled: true,
+        settings: { apiKey: 'key', listType: 'trending' },
         syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: null, createdAt: new Date(),
       };
@@ -1414,7 +1596,7 @@ describe('ImportListService', () => {
       expect(failProvider.fetchItems).toHaveBeenCalled();
       expect(successProvider.fetchItems).toHaveBeenCalled();
       expect(mockLog.error).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'Failing ABS' }),
+        expect.objectContaining({ name: 'Failing Hardcover' }),
         expect.stringContaining('sync failed'),
       );
     });

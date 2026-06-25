@@ -13,17 +13,12 @@ import {
 import { DEFAULT_REJECT_WORDS } from '../../shared/schemas/settings/quality.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames, type SecretEntity } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
 export type { AppSettings };
-
-/** Categories that contain secret fields (only categories managed by SettingsService). */
-const SECRET_CATEGORIES: Partial<Record<SettingsCategory, SecretEntity>> = {
-  network: 'network',
-  metadata: 'metadata',
-};
 
 function parseCategory<K extends SettingsCategory>(
   key: K,
@@ -80,7 +75,7 @@ export class SettingsService {
     let raw = result[0]!.value;
     const entity = SECRET_CATEGORIES[key];
     if (entity && raw && typeof raw === 'object') {
-      raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
+      raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey(), this.log);
     }
 
     const parsed = parseCategory(key, raw, this.log);
@@ -102,7 +97,7 @@ export class SettingsService {
         let raw = settingsMap.get(key);
         const entity = SECRET_CATEGORIES[key];
         if (entity && raw && typeof raw === 'object') {
-          raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
+          raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey(), this.log);
         }
         return [key, parseCategory(key, raw, this.log)];
       }),
@@ -291,6 +286,66 @@ export class SettingsService {
         .onConflictDoNothing();
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'rejectWords abridged migration failed — will retry on next boot');
+    }
+  }
+
+  /**
+   * One-time write migration (#1367): #1302 wired `processing.maxConcurrentProcessing`
+   * to the manual-merge semaphore and flipped the packaged default 2→1 to preserve
+   * de-facto serial behavior. But `bootstrapProcessingDefaults` froze the then-packaged
+   * `2` into every Docker install's processing row at first boot, so the default flip
+   * never reached the dominant cohort. This rewrites a stored `2` (the old packaged
+   * default) back to `1`.
+   *
+   * Reads the RAW stored blob (not via `parseCategory`) so a value `> 8` — persistable
+   * during the pre-#1368 develop window when the field was unbounded but UI-editable —
+   * is still visible: `parseCategory` falls back to the WHOLE `DEFAULT_SETTINGS.processing`
+   * category on any parse failure, silently wiping `ffmpegPath`/`postProcessingScript`.
+   * The raw read lets us clamp `> 8` to `8` and rescue the category. Realistic `> 8`
+   * population is ~zero (develop-only, days old), but the same pass rescues it for free.
+   *
+   * Only `=== 2` is reset, NOT any non-1 value: a stored `3`–`8` can only exist via a
+   * deliberate UI edit, so those users expressed intent and are left untouched. The flag
+   * is marked applied UNCONDITIONALLY (including no-row / missing-field / already-`1`
+   * paths) so a deliberate post-upgrade value is never re-flipped on a later boot.
+   */
+  async migrateMaxConcurrentProcessingDefaults(): Promise<void> {
+    const MIGRATION_ID = 'maxConcurrentProcessing-defaults-v1';
+    try {
+      const flagRow = await this.db
+        .select()
+        .from(settingsMigrations)
+        .where(eq(settingsMigrations.id, MIGRATION_ID))
+        .limit(1);
+      if (flagRow.length > 0) return;
+
+      const processingRow = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
+      if (processingRow.length > 0) {
+        const stored = { ...(processingRow[0]!.value as Record<string, unknown>) };
+        const value = stored.maxConcurrentProcessing;
+        let rewrite: number | null = null;
+        if (value === 2) {
+          rewrite = 1; // old packaged default → new serial default
+        } else if (typeof value === 'number' && value > 8) {
+          rewrite = 8; // clamp out-of-range value that would otherwise wipe the category on read
+        }
+        if (rewrite !== null) {
+          stored.maxConcurrentProcessing = rewrite;
+          await this.db
+            .insert(settings)
+            .values({ key: 'processing', value: stored })
+            .onConflictDoUpdate({ target: settings.key, set: { value: stored } });
+          this.invalidateCache('processing');
+          this.log.info({ migration: MIGRATION_ID, from: value, to: rewrite }, 'Migrated stored maxConcurrentProcessing');
+        }
+      }
+
+      await this.db
+        .insert(settingsMigrations)
+        .values({ id: MIGRATION_ID })
+        .onConflictDoNothing();
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error), migration: MIGRATION_ID }, 'maxConcurrentProcessing defaults migration failed — will retry on next boot');
     }
   }
 }

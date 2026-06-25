@@ -36,9 +36,12 @@ function torrentBytesArtifact(data?: Buffer): DownloadArtifact {
 }
 
 function rpcHandler(methodHandlers: Record<string, (params: unknown[]) => unknown>) {
+  // Default the daemon handshake to "already connected" so the web.connect path
+  // short-circuits; tests that exercise the handshake override web.connected.
+  const handlers: Record<string, (params: unknown[]) => unknown> = { 'web.connected': () => true, ...methodHandlers };
   return http.post(`${BASE_URL}/json`, async ({ request }) => {
     const body = await request.json() as { method: string; params: unknown[]; id: number };
-    const handler = methodHandlers[body.method];
+    const handler = handlers[body.method];
     if (handler) {
       const headers: Record<string, string> = {};
       // Login responses set session cookie
@@ -68,7 +71,7 @@ describe('DelugeClient', () => {
     it('authenticates via auth.login JSON-RPC call', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'daemon.info': () => '2.1.1',
+        'daemon.get_version': () => '2.1.1',
       }));
 
       const result = await client.test();
@@ -111,6 +114,9 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         callCount++;
         if (callCount === 1) {
           // First call: session expired
@@ -134,6 +140,9 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         capturedCookie = request.headers.get('cookie');
         return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
       }));
@@ -152,6 +161,9 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         callCount++;
         if (callCount === 1) {
           return new HttpResponse(null, { status: 403 });
@@ -161,6 +173,224 @@ describe('DelugeClient', () => {
 
       const result = await client.test();
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('daemon handshake (web.connect)', () => {
+    // Builds a handler that auths, answers the handshake methods per the supplied
+    // config, then answers daemon.get_version. Records every method seen + connect params.
+    function handshakeHandler(opts: {
+      connected: boolean;
+      hosts?: unknown;
+      onCall?: (method: string, params: unknown[], cookie: string | null) => void;
+    }) {
+      return http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string; params: unknown[]; id: number };
+        opts.onCall?.(body.method, body.params, request.headers.get('cookie'));
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: body.id, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: opts.connected, error: null });
+        if (body.method === 'web.get_hosts') return HttpResponse.json({ id: body.id, result: opts.hosts ?? null, error: null });
+        if (body.method === 'web.connect') return HttpResponse.json({ id: body.id, result: [], error: null });
+        if (body.method === 'daemon.get_version') return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+        return HttpResponse.json({ id: body.id, result: null, error: { message: `Unknown method: ${body.method}`, code: 2 } });
+      });
+    }
+
+    it('connects web→daemon when web.connected is false', async () => {
+      const methods: string[] = [];
+      let connectParams: unknown[] = [];
+      server.use(handshakeHandler({
+        connected: false,
+        hosts: [['host-id-1', '127.0.0.1', 58846, 'localhost']],
+        onCall: (method, params) => {
+          methods.push(method);
+          if (method === 'web.connect') connectParams = params;
+        },
+      }));
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+      expect(methods).toContain('web.get_hosts');
+      expect(methods).toContain('web.connect');
+      expect(connectParams[0]).toBe('host-id-1');
+    });
+
+    it('does not reconnect when web.connected is true', async () => {
+      const methods: string[] = [];
+      server.use(handshakeHandler({
+        connected: true,
+        onCall: (method) => methods.push(method),
+      }));
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+      expect(methods).not.toContain('web.get_hosts');
+      expect(methods).not.toContain('web.connect');
+    });
+
+    it('throws an actionable error when web.get_hosts is empty', async () => {
+      server.use(handshakeHandler({ connected: false, hosts: [] }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('Connection Manager');
+      expect((error as DownloadClientError).message).not.toContain('Unknown method');
+    });
+
+    it('throws an actionable error when web.get_hosts is null', async () => {
+      server.use(handshakeHandler({ connected: false, hosts: null }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('Connection Manager');
+    });
+
+    it.each([
+      { label: 'first entry null', hosts: [null] },
+      { label: 'first entry object', hosts: [{}] },
+      { label: 'first entry empty array', hosts: [[]] },
+      { label: 'first entry id null', hosts: [[null, '127.0.0.1']] },
+      { label: 'first entry id empty string', hosts: [['', '127.0.0.1']] },
+    ])('throws actionable error and never calls web.connect — $label', async ({ hosts }) => {
+      const methods: string[] = [];
+      let connectParams: unknown[] | null = null;
+      server.use(handshakeHandler({
+        connected: false,
+        hosts,
+        onCall: (method, params) => {
+          methods.push(method);
+          if (method === 'web.connect') connectParams = params;
+        },
+      }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('Connection Manager');
+      expect(methods).not.toContain('web.connect');
+      expect(connectParams).toBeNull();
+    });
+
+    it('test() succeeds end-to-end against a WebUI that starts un-connected', async () => {
+      server.use(handshakeHandler({
+        connected: false,
+        hosts: [['host-id-1', '127.0.0.1', 58846, 'localhost']],
+      }));
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Deluge 2.1.1');
+    });
+
+    it('carries the auth.login session cookie on every handshake call', async () => {
+      const cookies: Record<string, string | null> = {};
+      server.use(handshakeHandler({
+        connected: false,
+        hosts: [['host-id-1', '127.0.0.1', 58846, 'localhost']],
+        onCall: (method, _params, cookie) => {
+          if (method !== 'auth.login') cookies[method] = cookie;
+        },
+      }));
+
+      await client.test();
+      expect(cookies['web.connected']).toContain(SESSION_COOKIE);
+      expect(cookies['web.get_hosts']).toContain(SESSION_COOKIE);
+      expect(cookies['web.connect']).toContain(SESSION_COOKIE);
+    });
+
+    it('surfaces a rawRpc() data.error as a plain DownloadClientError without re-login/retry', async () => {
+      // A `data.error` (even code 1) reached through rawRpc() during the handshake
+      // must NOT trigger the auth-retry path — rawRpc keeps its own plain-throw
+      // policy at the helper boundary, so no inner re-login loop occurs.
+      const methods: string[] = [];
+      server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string; params: unknown[]; id: number };
+        methods.push(body.method);
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: body.id, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        // web.connected goes through rawRpc(); return an RPC error with code 1.
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
+        }
+        return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+      }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('Deluge RPC error');
+      // No retry: auth.login ran exactly once, web.connected was not re-attempted.
+      expect(methods.filter((m) => m === 'auth.login')).toHaveLength(1);
+      expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
+    });
+
+    it('surfaces a rawRpc() non-401/403 transport failure as a plain DownloadClientError without re-login/retry', async () => {
+      // A generic HTTP failure (e.g. 500) reached through rawRpc()'s shared parse
+      // path must surface as a plain DownloadClientError and NOT set wasAuthFailure
+      // or trigger the auth re-login/retry — locking the divergence at the helper
+      // boundary (the 401/403 auth pre-check lives in rpc(), not in the helper).
+      const methods: string[] = [];
+      server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string; params: unknown[]; id: number };
+        methods.push(body.method);
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: body.id, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        // web.connected goes through rawRpc(); fail it with a non-401/403 HTTP status.
+        if (body.method === 'web.connected') {
+          return new HttpResponse(null, { status: 500 });
+        }
+        return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+      }));
+
+      const error = await client.getAllDownloads().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect(error).not.toBeInstanceOf(DownloadClientAuthError);
+      expect((error as DownloadClientError).message).toContain('HTTP 500');
+      // No retry: auth.login ran exactly once, web.connected was not re-attempted.
+      expect(methods.filter((m) => m === 'auth.login')).toHaveLength(1);
+      expect(methods.filter((m) => m === 'web.connected')).toHaveLength(1);
+    });
+
+    it('re-runs the handshake on the re-login retry path without looping', async () => {
+      const methods: string[] = [];
+      let daemonInfoCalls = 0;
+      server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string; params: unknown[]; id: number };
+        methods.push(body.method);
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: body.id, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: false, error: null });
+        if (body.method === 'web.get_hosts') return HttpResponse.json({ id: body.id, result: [['host-id-1', '127.0.0.1', 58846, 'localhost']], error: null });
+        if (body.method === 'web.connect') return HttpResponse.json({ id: body.id, result: [], error: null });
+        // daemon.get_version: first call reports an expired session (code 1) → forces re-login.
+        daemonInfoCalls++;
+        if (daemonInfoCalls === 1) {
+          return HttpResponse.json({ id: body.id, result: null, error: { message: 'Not authenticated', code: 1 } });
+        }
+        return HttpResponse.json({ id: body.id, result: '2.1.1', error: null });
+      }));
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+      // Handshake ran on both the initial login and the retry re-login.
+      expect(methods.filter((m) => m === 'web.connected')).toHaveLength(2);
+      expect(methods.filter((m) => m === 'web.connect')).toHaveLength(2);
     });
   });
 
@@ -199,6 +429,7 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
         if (body.method === 'core.add_torrent_magnet') return HttpResponse.json({ id: body.id, result: 'hash123', error: null });
         if (body.method === 'label.set_torrent') return HttpResponse.json({ id: body.id, result: true, error: null });
         return HttpResponse.json({ id: body.id, result: null, error: null });
@@ -220,6 +451,7 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
         if (body.method === 'core.add_torrent_magnet') return HttpResponse.json({ id: body.id, result: 'hash123', error: null });
         if (body.method === 'label.set_torrent') return HttpResponse.json({ id: body.id, result: null, error: { message: 'Unknown method', code: 0 } });
         return HttpResponse.json({ id: body.id, result: null, error: null });
@@ -240,6 +472,7 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
         if (body.method === 'core.add_torrent_magnet') return HttpResponse.json({ id: body.id, result: 'hash123', error: null });
         if (body.method === 'label.set_torrent') return HttpResponse.json({ id: body.id, result: null, error: { message: 'Unknown method', code: 0 } });
         return HttpResponse.json({ id: body.id, result: null, error: null });
@@ -257,6 +490,85 @@ describe('DelugeClient', () => {
       }));
 
       await expect(client.addDownload(artifact)).rejects.toThrow('no torrent hash');
+    });
+
+    describe('duplicate-add adoption (AddTorrentError)', () => {
+      const dupHash = 'abc123def456';
+      const dupErrorMessage =
+        "Failure: <Fault 4: \"<class 'deluge.error.AddTorrentError'>: Torrent already in session (" + dupHash + ').">';
+
+      function dupAddHandler(addMethod: string, statusResult: unknown) {
+        return http.post(`${BASE_URL}/json`, async ({ request }) => {
+          const body = await request.json() as { method: string; params: unknown[]; id: number };
+          if (body.method === 'auth.login') {
+            return HttpResponse.json(
+              { id: body.id, result: true, error: null },
+              { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+            );
+          }
+          if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
+          if (body.method === addMethod) {
+            return HttpResponse.json({ id: body.id, result: null, error: { message: dupErrorMessage, code: 4 } });
+          }
+          if (body.method === 'core.get_torrent_status') {
+            return HttpResponse.json({ id: body.id, result: statusResult, error: null });
+          }
+          return HttpResponse.json({ id: body.id, result: null, error: null });
+        });
+      }
+
+      it('magnet path: adopts existing torrent on AddTorrentError when present', async () => {
+        const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        server.use(dupAddHandler('core.add_torrent_magnet', { ...mockTorrentStatus, hash: dupHash }));
+
+        const result = await client.addDownload(artifact);
+        expect(result).toBe(dupHash);
+      });
+
+      it('torrent-file path: adopts existing torrent on AddTorrentError when present', async () => {
+        const artifact: DownloadArtifact = { type: 'torrent-bytes', data: Buffer.from('fake'), infoHash: dupHash };
+        server.use(dupAddHandler('core.add_torrent_file', { ...mockTorrentStatus, hash: dupHash }));
+
+        const result = await client.addDownload(artifact);
+        expect(result).toBe(dupHash);
+      });
+
+      it('rethrows original error when torrent absent (race/removed)', async () => {
+        const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        server.use(dupAddHandler('core.add_torrent_magnet', {}));
+
+        const error = await client.addDownload(artifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('AddTorrentError');
+      });
+
+      it('does NOT adopt on a non-duplicate RPC error', async () => {
+        const artifact = magnetArtifact(`magnet:?xt=urn:btih:${dupHash}&dn=test`);
+        let statusCalled = false;
+        server.use(http.post(`${BASE_URL}/json`, async ({ request }) => {
+          const body = await request.json() as { method: string; params: unknown[]; id: number };
+          if (body.method === 'auth.login') {
+            return HttpResponse.json(
+              { id: body.id, result: true, error: null },
+              { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+            );
+          }
+          if (body.method === 'web.connected') return HttpResponse.json({ id: body.id, result: true, error: null });
+          if (body.method === 'core.add_torrent_magnet') {
+            return HttpResponse.json({ id: body.id, result: null, error: { message: 'Some other failure', code: 4 } });
+          }
+          if (body.method === 'core.get_torrent_status') {
+            statusCalled = true;
+            return HttpResponse.json({ id: body.id, result: { ...mockTorrentStatus, hash: dupHash }, error: null });
+          }
+          return HttpResponse.json({ id: body.id, result: null, error: null });
+        }));
+
+        const error = await client.addDownload(artifact).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('Some other failure');
+        expect(statusCalled).toBe(false);
+      });
     });
 
     it('rejects nzb-url artifact with torrent-only error', async () => {
@@ -387,6 +699,9 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         if (body.method === 'core.get_torrents_status') {
           receivedFilter = body.params[0] as Record<string, unknown>;
           return HttpResponse.json({ id: body.id, result: {}, error: null });
@@ -441,6 +756,9 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         if (body.method === 'core.remove_torrent') {
           receivedParams = body.params;
           return HttpResponse.json({ id: body.id, result: true, error: null });
@@ -464,6 +782,9 @@ describe('DelugeClient', () => {
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
         }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
+        }
         // Return HTML instead of JSON (e.g., reverse proxy error page)
         return new HttpResponse('<html>Bad Gateway</html>', { headers: { 'Content-Type': 'text/html' } });
       }));
@@ -479,6 +800,9 @@ describe('DelugeClient', () => {
             { id: body.id, result: true, error: null },
             { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
           );
+        }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: body.id, result: true, error: null });
         }
         return new HttpResponse(null, { status: 500 });
       }));
@@ -499,7 +823,7 @@ describe('DelugeClient', () => {
     it('returns success with version on valid auth', async () => {
       server.use(rpcHandler({
         'auth.login': () => true,
-        'daemon.info': () => '2.1.1',
+        'daemon.get_version': () => '2.1.1',
       }));
 
       const result = await client.test();
@@ -607,6 +931,9 @@ describe('DelugeClient', () => {
         const body = await request.json() as { method: string };
         if (body.method === 'auth.login') {
           return HttpResponse.json({ id: 1, result: true, error: null });
+        }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: 3, result: true, error: null });
         }
         // Malformed envelope: no `result` property at all and no error
         return HttpResponse.json({ id: 2 });

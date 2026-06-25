@@ -4,6 +4,8 @@ import { formatDate } from '@/lib/format';
 import { ArrowUpDownIcon } from '@/components/icons';
 import type { DisplayBook, SortField, SortDirection } from './helpers.js';
 import { computeMbPerHour } from './helpers.js';
+import { bookStatusChipStyles } from '@/lib/status';
+import { requireDefined } from '../../../shared/utils/assert.js';
 
 function formatMbHr(book: DisplayBook): string {
   const val = computeMbPerHour(book);
@@ -16,16 +18,6 @@ function formatSize(book: DisplayBook): string {
   if (!size) return '—';
   return formatBytes(size);
 }
-
-const statusStyles: Record<string, { text: string; bg: string }> = {
-  wanted: { text: 'text-amber-500', bg: 'bg-amber-500/10' },
-  searching: { text: 'text-blue-400', bg: 'bg-blue-400/10' },
-  downloading: { text: 'text-blue-500', bg: 'bg-blue-500/10' },
-  importing: { text: 'text-purple-400', bg: 'bg-purple-400/10' },
-  imported: { text: 'text-success', bg: 'bg-success/10' },
-  missing: { text: 'text-destructive', bg: 'bg-destructive/10' },
-  failed: { text: 'text-destructive', bg: 'bg-destructive/10' },
-};
 
 type SortableColumn = { field: SortField; label: string; align?: 'right'; hidden?: string };
 
@@ -130,7 +122,10 @@ export function LibraryTableView({
           <tbody>
             {books.map((book, i) => {
               const selected = selectedIds.has(book.id);
-              const style = statusStyles[book.status];
+              const style = requireDefined(
+                bookStatusChipStyles[book.status],
+                `LibraryTableView: bookStatusChipStyles missing entry for "${book.status}"`,
+              );
               return (
                 <tr
                   key={book.id}
@@ -151,7 +146,7 @@ export function LibraryTableView({
                     />
                   </td>
                   <td className="px-3 py-2.5">
-                    <span className={`inline-flex items-center capitalize text-[11px] font-semibold px-2 py-0.5 rounded-md ${style?.text ?? ''} ${style?.bg ?? ''}`}>
+                    <span className={`inline-flex items-center capitalize text-[11px] font-semibold px-2 py-0.5 rounded-md ${style.text} ${style.bg}`}>
                       {book.status}
                     </span>
                   </td>

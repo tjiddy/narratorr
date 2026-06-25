@@ -4,8 +4,7 @@ import type { QualityGateService } from './quality-gate.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { DownloadRow } from './types.js';
-import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
-import { rm, stat } from 'node:fs/promises';
+import { removeOrDeferTorrent, deleteDownloadOutputPath } from './torrent-removal.helpers.js';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -57,67 +56,30 @@ async function processDeferredCandidate(
 ): Promise<void> {
   const { downloadClientService, db, log } = deps;
 
-  let currentRatio = 0;
-  if (importSettings.minSeedRatio > 0 && download.downloadClientId && download.externalId) {
-    const adapter = await downloadClientService.getAdapter(download.downloadClientId);
-    const liveState = adapter ? await adapter.getDownload(download.externalId) : null;
-    currentRatio = liveState?.ratio ?? 0;
-  }
+  // Deferred cleanup folds a missing adapter / live state into ratio 0 (deferOnUnavailableRatio:
+  // false) and treats a null adapter on the proceed path as adapter-success (so file deletion
+  // may still clear markers per `filesDeleted`).
+  const result = await removeOrDeferTorrent(download, importSettings,
+    { downloadClientService, log },
+    { deferOnUnavailableRatio: false });
 
-  if (isTorrentRemovalDeferred(download, importSettings, currentRatio)) {
+  if (result.outcome === 'deferred' || result.outcome === 'live-state-unavailable') {
     log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup skipped — seed conditions not met');
-    return;
+    return; // Leave the existing pendingCleanup marker untouched for next cycle.
   }
 
-  const adapterSuccess = await deferredRemoveFromClient(download, deps);
-  const filesDeleted = await deferredDeleteFiles(download, deps);
+  if (result.outcome === 'removed') {
+    log.info({ downloadId: download.id }, 'Quality gate: deferred cleanup — removed download from client');
+  } else if (result.outcome === 'remove-failed') {
+    log.warn({ downloadId: download.id, error: serializeError(result.error) }, 'Quality gate: deferred cleanup — failed to remove from client');
+  }
+  // A null adapter ('no-adapter') counts as adapter-success — no removeDownload call was needed.
+  const adapterSuccess = result.outcome !== 'remove-failed';
+  const filesDeleted = await deleteDownloadOutputPath(download, log);
 
   if (adapterSuccess && filesDeleted) {
     await db.update(downloads).set({ pendingCleanup: null, outputPath: null }).where(eq(downloads.id, download.id));
   } else if (filesDeleted && !adapterSuccess) {
     await db.update(downloads).set({ outputPath: null }).where(eq(downloads.id, download.id));
-  }
-}
-
-async function deferredRemoveFromClient(download: DownloadRow, deps: DeferredCleanupDeps): Promise<boolean> {
-  const { downloadClientService, log } = deps;
-  try {
-    if (download.downloadClientId && download.externalId) {
-      const adapter = await downloadClientService.getAdapter(download.downloadClientId);
-      if (adapter) {
-        await adapter.removeDownload(download.externalId, true);
-        log.info({ downloadId: download.id }, 'Quality gate: deferred cleanup — removed download from client');
-      }
-    }
-    return true;
-  } catch (error: unknown) {
-    log.warn({ downloadId: download.id, error: serializeError(error) }, 'Quality gate: deferred cleanup — failed to remove from client');
-    return false;
-  }
-}
-
-async function deferredDeleteFiles(download: DownloadRow, deps: DeferredCleanupDeps): Promise<boolean> {
-  const { log } = deps;
-  if (!download.outputPath) return true;
-
-  try {
-    await stat(download.outputPath);
-  } catch (error: unknown) {
-    const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
-    if (code === 'ENOENT') {
-      log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup — outputPath does not exist or already removed');
-      return true;
-    }
-    log.warn({ downloadId: download.id, outputPath: download.outputPath, error: serializeError(error) }, 'Quality gate: deferred cleanup — stat failed (non-ENOENT)');
-    return false;
-  }
-
-  try {
-    await rm(download.outputPath, { recursive: true, force: true });
-    log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: deferred cleanup — deleted files');
-    return true;
-  } catch (error: unknown) {
-    log.warn({ downloadId: download.id, outputPath: download.outputPath, error: serializeError(error) }, 'Quality gate: deferred cleanup — file deletion failed');
-    return false;
   }
 }

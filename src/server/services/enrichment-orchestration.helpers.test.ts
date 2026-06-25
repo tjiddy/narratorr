@@ -16,6 +16,15 @@ vi.mock('../../core/utils/ffprobe-path.js', () => ({
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helpers.js';
+import { mockDbChain } from '../__tests__/helpers.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
+
+/** A db whose `update().set().where()` chain resolves; returns the captured chain for assertions. */
+function dbWithUpdateChain() {
+  const updateChain = mockDbChain();
+  const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+  return { db, updateChain };
+}
 
 const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
 const mockResolveFfprobePath = vi.mocked(resolveFfprobePathFromSettings);
@@ -25,8 +34,8 @@ function createMockDeps() {
     db: {} as Db,
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as FastifyBaseLogger,
     settingsService: { get: vi.fn().mockResolvedValue({ ffmpegPath: '/usr/bin/ffmpeg' }) } as unknown as SettingsService,
-    bookService: { update: vi.fn() } as unknown as BookService,
-    metadataService: { enrichBook: vi.fn() } as unknown as MetadataService,
+    bookService: { update: vi.fn(), findAsinCollision: vi.fn().mockResolvedValue(null) } as unknown as BookService,
+    metadataService: { enrichBook: vi.fn(), resolveBook: vi.fn() } as unknown as MetadataService,
   };
 }
 
@@ -180,6 +189,251 @@ describe('applyAudnexusEnrichment', () => {
       'Audnexus enrichment failed',
     );
   });
+
+  it('fills blank subtitle/publisher from the enrichment data (#1614)', async () => {
+    const updateChain = mockDbChain();
+    const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+
+    expect(updateChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' }),
+    );
+  });
+
+  it('does NOT overwrite an existing subtitle/publisher (#1614)', async () => {
+    const updateChain = mockDbChain();
+    const db = { update: vi.fn().mockReturnValue(updateChain) } as unknown as Db;
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Provider Subtitle', publisher: 'Provider Publisher' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: 'Kept Subtitle', existingPublisher: 'Kept Publisher' }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('subtitle');
+    expect(setArg).not.toHaveProperty('publisher');
+  });
+
+  // ─── #1625: title/author search fallback ──────────────────────────────
+
+  const mockEnrichBook = (d: typeof deps) => d.metadataService.enrichBook as ReturnType<typeof vi.fn>;
+  const mockResolveBook = (d: typeof deps) => d.metadataService.resolveBook as ReturnType<typeof vi.fn>;
+  const mockFindCollision = (d: typeof deps) => d.bookService.findAsinCollision as ReturnType<typeof vi.fn>;
+
+  it('fast path: primary ASIN resolves — no search, no collision check, ASIN not rewritten', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValueOnce({ duration: 7200 });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    expect(mockFindCollision(deps)).not.toHaveBeenCalled();
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ enrichmentStatus: 'enriched' });
+    expect(setArg).not.toHaveProperty('asin');
+  });
+
+  it('alternate ASIN resolves — collision-checked, ASIN written back, search NOT called', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValueOnce(null).mockResolvedValueOnce({ duration: 7200 });
+    mockFindCollision(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book' }, { ...deps, db });
+
+    expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B002');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ asin: 'B002', enrichmentStatus: 'enriched' });
+  });
+
+  it('(F2) alternate ASIN collides — ASIN write skipped, fields kept + enriched, warn logged, NOT failed', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValueOnce(null).mockResolvedValueOnce({ duration: 7200 });
+    mockFindCollision(deps).mockResolvedValueOnce({ conflictBookId: 9, conflictTitle: 'Other' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book' }, { ...deps, db });
+
+    expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B002');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ duration: 7200, enrichmentStatus: 'enriched' });
+    expect(setArg).not.toHaveProperty('asin');
+    expect(setArg.enrichmentStatus).not.toBe('failed');
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, conflictBookId: 9 }),
+      expect.stringContaining('collides'),
+    );
+  });
+
+  it('all ASINs miss → search fallback hits with a new ASIN, written back', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce({ asin: 'B999', duration: 3600 });
+    mockFindCollision(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    expect(mockResolveBook(deps)).toHaveBeenCalledWith({ title: 'My Book', author: 'An Author' });
+    expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B999');
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ asin: 'B999', duration: 3600, enrichmentStatus: 'enriched' });
+  });
+
+  it('(F1) search fallback hits with NO asin — fields written, no asin write, no collision check', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce({ duration: 3600, subtitle: 'Sub' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
+
+    expect(mockFindCollision(deps)).not.toHaveBeenCalled();
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ duration: 3600, subtitle: 'Sub', enrichmentStatus: 'enriched' });
+    expect(setArg).not.toHaveProperty('asin');
+  });
+
+  it('(F2) resolved ASIN collides — fields kept + enriched, ASIN write skipped, warn logged, NOT failed', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce({ asin: 'B999', duration: 3600 });
+    mockFindCollision(deps).mockResolvedValueOnce({ conflictBookId: 7, conflictTitle: 'Other' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ duration: 3600, enrichmentStatus: 'enriched' });
+    expect(setArg).not.toHaveProperty('asin');
+    expect(setArg.enrichmentStatus).not.toBe('failed');
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, conflictBookId: 7 }),
+      expect.stringContaining('collides'),
+    );
+  });
+
+  it('all ASINs miss AND search misses — no writes, status not enriched', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+  });
+
+  it('no ASINs and no title — early return, neither enrichBook nor resolveBook called', async () => {
+    await applyAudnexusEnrichment(42, { primaryAsin: null, alternateAsins: [] }, deps);
+
+    expect(mockEnrichBook(deps)).not.toHaveBeenCalled();
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+  });
+
+  it('no ASINs but title present — ASIN loop skipped, search fallback runs directly', async () => {
+    const { db } = dbWithUpdateChain();
+    mockResolveBook(deps).mockResolvedValueOnce({ asin: 'B999', duration: 3600 });
+    mockFindCollision(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: null, title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    expect(mockEnrichBook(deps)).not.toHaveBeenCalled();
+    expect(mockResolveBook(deps)).toHaveBeenCalledWith({ title: 'My Book', author: 'An Author' });
+  });
+
+  it('RateLimitError on the ASIN path propagates (book left retryable, not enriched)', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockRejectedValueOnce(new RateLimitError(5000, 'Audnexus'));
+
+    await expect(
+      applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    expect(updateChain.set).not.toHaveBeenCalled();
+  });
+
+  it('RateLimitError on the search fallback propagates (not swallowed)', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockRejectedValueOnce(new RateLimitError(5000, 'Audnexus'));
+
+    await expect(
+      applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db }),
+    ).rejects.toBeInstanceOf(RateLimitError);
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+  });
+
+  // #1628 — a transient (non-rate-limit) error on the supplementary post-import
+  // search fallback is a NON-FATAL miss: the import completes, nothing is written,
+  // the book stays pending for the scheduled job to retry. (Contrast the
+  // RateLimitError case above, which still propagates and fails the import.)
+  it('#1628: TransientError on the search fallback is a non-fatal miss (no throw, no writes)', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
+
+    // Resolves without throwing — the manual import must not be failed by a
+    // transient during supplementary enrichment.
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, title: 'My Book' }),
+      expect.stringContaining('transient'),
+    );
+  });
+
+  it('#1628: a generic Error on the search fallback is also a non-fatal miss (no throw, no writes)', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockRejectedValueOnce(new Error('Network error'));
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+  });
+
+  it('conditional fill guards hold even when the search fallback returns values', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce({ duration: 3600, subtitle: 'New Sub', publisher: 'New Pub', narrators: ['New Narrator'], genres: ['New Genre'] });
+
+    await applyAudnexusEnrichment(42, {
+      primaryAsin: 'B001', title: 'My Book',
+      existingDuration: 1000, existingSubtitle: 'Kept Sub', existingPublisher: 'Kept Pub', existingNarrator: 'Kept Narrator', existingGenres: ['Kept Genre'],
+    }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('duration');
+    expect(setArg).not.toHaveProperty('subtitle');
+    expect(setArg).not.toHaveProperty('publisher');
+    expect(deps.bookService.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildBackgroundAudnexusConfig (#1625 — search-fallback title/author threading)', () => {
+  // AC2: title/author must be threaded from the import payload into the config so the
+  // production manual-import path can call resolveBook after the ASIN loop misses.
+  it('threads title/author from the import payload onto the config', async () => {
+    const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const item = { path: '/x', title: 'Mistborn', authorName: 'Brandon Sanderson', asin: 'B001' };
+    const extracted = extractImportMetadata(item);
+
+    const config = buildBackgroundAudnexusConfig(item, extracted, null);
+
+    expect(config.title).toBe('Mistborn');
+    expect(config.author).toBe('Brandon Sanderson');
+  });
+
+  it('leaves author null when the payload omits authorName (title still threaded)', async () => {
+    const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const item = { path: '/x', title: 'Mistborn' };
+    const extracted = extractImportMetadata(item);
+
+    const config = buildBackgroundAudnexusConfig(item, extracted, null);
+
+    expect(config.title).toBe('Mistborn');
+    expect(config.author).toBeNull();
+  });
 });
 
 describe('extractImportMetadata (#1028)', () => {
@@ -257,6 +511,24 @@ describe('buildBookCreatePayload (#1028)', () => {
       'importing',
     );
     expect(payload.narrators).toEqual(['Stephen Fry']);
+  });
+
+  it('snapshots subtitle and publisher from the provider meta (#1614)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], subtitle: 'A Subtitle', publisher: 'Macmillan Audio' },
+      'importing',
+    );
+    expect(payload.subtitle).toBe('A Subtitle');
+    expect(payload.publisher).toBe('Macmillan Audio');
+  });
+
+  it('leaves subtitle/publisher undefined when meta is null', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload({ path: '/x', title: 'T' }, null, 'importing');
+    expect(payload.subtitle).toBeUndefined();
+    expect(payload.publisher).toBeUndefined();
   });
 
   it('meta.series[0].position: 0 wins over item.seriesPosition (provider-truth, regression guard for falsy)', async () => {

@@ -5,15 +5,18 @@ import { indexerTypeSchema } from './schemas/indexer.js';
 import { downloadClientTypeSchema } from './schemas/download-client.js';
 import { notifierTypeSchema } from './schemas/notifier.js';
 import { importListTypeSchema } from './schemas/import-list.js';
-import { downloadStatusSchema, DOWNLOAD_STATUSES } from './schemas/activity.js';
-import { eventSourceSchema } from './schemas/event-history.js';
+import { downloadStatusSchema, DOWNLOAD_STATUSES, clientStatusSchema, CLIENT_STATUSES, pipelineStageSchema, PIPELINE_STAGES } from './schemas/activity.js';
+import { eventSourceSchema, eventTypeSchema } from './schemas/event-history.js';
 import { INDEXER_REGISTRY, INDEXER_TYPES } from './indexer-registry.js';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from './download-client-registry.js';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from './notifier-registry.js';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from './import-list-registry.js';
-import { blacklistReasonSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
+import { blacklistReasonSchema, blacklistTypeSchema, BLACKLIST_REASONS } from './schemas/blacklist.js';
 import { suggestionReasonSchema, SUGGESTION_REASONS } from './schemas/discovery.js';
-import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents } from '../db/schema.js';
+import { connectorTypeSchema } from './schemas/connector.js';
+import { importJobTypeSchema, importJobStatusSchema, importJobPhaseSchema } from './schemas/import-job.js';
+import { protocolSchema, PROTOCOLS } from './schemas/download-protocol.js';
+import { blacklist, books, indexers, downloadClients, notifiers, importLists, downloads, suggestions, bookEvents, connectors, importJobs } from '../db/schema.js';
 
 describe('schema-DB alignment', () => {
   describe('adapter type enums derive from registries', () => {
@@ -87,8 +90,22 @@ describe('schema-DB alignment', () => {
       expect([...importLists.type.enumValues].sort()).toEqual([...IMPORT_LIST_TYPES].sort());
     });
 
-    it('downloads.status DB column enum matches DOWNLOAD_STATUSES', () => {
-      expect([...downloads.status.enumValues].sort()).toEqual([...DOWNLOAD_STATUSES].sort());
+    // The two-axis split (#1445): Drizzle SQLite text-enums emit no DB CHECK, so
+    // these set-equality tests are the only guard against the Zod enum and the
+    // Drizzle column drifting apart for each axis.
+    it('downloads.clientStatus DB column enum matches CLIENT_STATUSES', () => {
+      expect([...downloads.clientStatus.enumValues].sort()).toEqual([...CLIENT_STATUSES].sort());
+    });
+
+    it('downloads.pipelineStage DB column enum matches PIPELINE_STAGES', () => {
+      expect([...downloads.pipelineStage.enumValues].sort()).toEqual([...PIPELINE_STAGES].sort());
+    });
+
+    // #1599: PROTOCOLS is the single source for the torrent/usenet enum across the
+    // Zod schemas, the DownloadProtocol type, and this DB column. SQLite text-enums
+    // emit no DB CHECK, so this set-equality test is the guard against drift.
+    it('downloads.protocol DB column enum matches protocolSchema.options', () => {
+      expect([...downloads.protocol.enumValues].sort()).toEqual([...protocolSchema.options].sort());
     });
 
     it('suggestions.reason DB column enum matches SUGGESTION_REASONS', () => {
@@ -97,6 +114,33 @@ describe('schema-DB alignment', () => {
 
     it('bookEvents.source DB column enum matches eventSourceSchema.options', () => {
       expect([...bookEvents.source.enumValues].sort()).toEqual([...eventSourceSchema.options].sort());
+    });
+
+    it('bookEvents.eventType DB column enum matches eventTypeSchema.options', () => {
+      expect([...bookEvents.eventType.enumValues].sort()).toEqual([...eventTypeSchema.options].sort());
+    });
+
+    it('connectors.type DB column enum matches connectorTypeSchema.options', () => {
+      expect([...connectors.type.enumValues].sort()).toEqual([...connectorTypeSchema.options].sort());
+    });
+
+    it('importJobs.type DB column enum matches importJobTypeSchema.options', () => {
+      expect([...importJobs.type.enumValues].sort()).toEqual([...importJobTypeSchema.options].sort());
+    });
+
+    it('importJobs.status DB column enum matches importJobStatusSchema.options', () => {
+      expect([...importJobs.status.enumValues].sort()).toEqual([...importJobStatusSchema.options].sort());
+    });
+
+    it('importJobs.phase DB column enum matches importJobPhaseSchema.options', () => {
+      expect([...importJobs.phase.enumValues].sort()).toEqual([...importJobPhaseSchema.options].sort());
+    });
+
+    // blacklist.blacklistType inlines its enum literal (schema.ts) rather than
+    // importing blacklistTypeSchema, so the two can genuinely drift — this is the
+    // only guard. (SQLite text-enums emit no DB CHECK: drizzle-sqlite-text-enum-no-db-check.)
+    it('blacklist.blacklistType DB column enum matches blacklistTypeSchema.options', () => {
+      expect([...blacklist.blacklistType.enumValues].sort()).toEqual([...blacklistTypeSchema.options].sort());
     });
   });
 
@@ -111,6 +155,18 @@ describe('schema-DB alignment', () => {
 
     it('DOWNLOAD_STATUSES equals downloadStatusSchema.options', () => {
       expect([...DOWNLOAD_STATUSES].sort()).toEqual([...downloadStatusSchema.options].sort());
+    });
+
+    it('CLIENT_STATUSES equals clientStatusSchema.options', () => {
+      expect([...CLIENT_STATUSES].sort()).toEqual([...clientStatusSchema.options].sort());
+    });
+
+    it('PIPELINE_STAGES equals pipelineStageSchema.options', () => {
+      expect([...PIPELINE_STAGES].sort()).toEqual([...pipelineStageSchema.options].sort());
+    });
+
+    it('PROTOCOLS equals protocolSchema.options', () => {
+      expect([...PROTOCOLS].sort()).toEqual([...protocolSchema.options].sort());
     });
   });
 
@@ -146,8 +202,13 @@ describe('schema-DB alignment', () => {
     });
 
     it('import list type values match original hardcoded enum', () => {
-      const original = ['abs', 'nyt', 'hardcover'];
+      const original = ['nyt', 'hardcover'];
       expect([...importListTypeSchema.options].sort()).toEqual(original.sort());
+    });
+
+    it('protocol values match original hardcoded enum', () => {
+      const original = ['torrent', 'usenet'];
+      expect([...protocolSchema.options].sort()).toEqual(original.sort());
     });
   });
 });

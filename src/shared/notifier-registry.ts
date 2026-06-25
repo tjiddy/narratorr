@@ -1,19 +1,11 @@
 import type { CreateNotifierFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
+import { extractHostname } from './registry-utils.js';
 
 export const NOTIFIER_TYPES = ['webhook', 'discord', 'script', 'email', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify'] as const;
 export type NotifierType = typeof NOTIFIER_TYPES[number];
 
 export type NotifierTypeMetadata = RegistryEntry<CreateNotifierFormData['settings']>;
-
-function extractHostname(url: string, fallback: string): string {
-  if (!url) return fallback;
-  try {
-    return new URL(url).hostname || fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export const NOTIFIER_REGISTRY = {
   webhook: {
@@ -70,9 +62,9 @@ export const NOTIFIER_REGISTRY = {
   },
   ntfy: {
     label: 'ntfy',
-    defaultSettings: { ntfyTopic: '', ntfyServer: '' },
+    defaultSettings: { ntfyTopic: '', ntfyServer: '', ntfyAccessToken: '', ntfyPriority: '' },
     requiredFields: [{ path: 'ntfyTopic', message: 'Topic is required' }],
-    viewSubtitle: (s) => (s.ntfyTopic as string) || 'Ntfy',
+    viewSubtitle: (s) => extractHostname(s.ntfyServer as string, 'ntfy.sh'),
   },
   gotify: {
     label: 'Gotify',

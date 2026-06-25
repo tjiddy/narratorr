@@ -1,11 +1,18 @@
-import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
+import { eq, desc, inArray, and, or, count, sql } from 'drizzle-orm';
 import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers, importJobs } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
-import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import { isTerminalState, isReplaceableState, deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import {
+  inProgressDownloadCondition,
+  terminalDownloadCondition,
+  completedCountDownloadCondition,
+  displayStatusCondition,
+  transitionDownloadState,
+} from '../utils/download-state.js';
+import type { ClientStatus, DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
 import type { IndexerService } from './indexer.service.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
@@ -18,8 +25,11 @@ import { resolveArtifact, insertDownloadRecord } from './download-record.js';
 import type { BookRow, DownloadRow } from './types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 
 export interface DownloadWithBook extends DownloadRow {
+  /** Derived legacy display status — the REST/SSE/client compatibility seam (#1445). */
+  status: DownloadStatus;
   book?: BookRow;
   indexerName: string | null;
 }
@@ -29,25 +39,11 @@ export type RetryResult =
   | { status: 'no_candidates' }
   | { status: 'retry_error'; error: string };
 
-export class DownloadError extends Error {
-  constructor(
-    message: string,
-    public code: 'NOT_FOUND' | 'INVALID_STATUS' | 'NO_BOOK_LINKED' | 'IMPORTED_BOOK_NO_RETRY',
-  ) {
-    super(message);
-    this.name = 'DownloadError';
-  }
-}
-
-export class DuplicateDownloadError extends Error {
-  constructor(
-    message: string,
-    public code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE',
-  ) {
-    super(message);
-    this.name = 'DuplicateDownloadError';
-  }
-}
+// Back-compat: these error classes now live in the dependency-free leaf module
+// `download-errors.js` (#1551), imported above for local use. Re-exported here so
+// importers resolving them from `download.service.js` keep working and `instanceof`
+// identity is preserved.
+export { DownloadError, DuplicateDownloadError };
 
 export interface DownloadServiceWireDeps {
   retrySearchDeps: RetrySearchDeps;
@@ -75,11 +71,13 @@ export class DownloadService {
   ): Promise<{ data: DownloadWithBook[]; total: number }> {
     let where;
     if (section === 'queue') {
-      where = inArray(downloads.status, getInProgressStatuses());
+      where = inProgressDownloadCondition();
     } else if (section === 'history') {
-      where = inArray(downloads.status, getTerminalStatuses());
+      where = terminalDownloadCondition();
     } else if (status) {
-      where = eq(downloads.status, status as DownloadRow['status']);
+      // The `?status=` filter speaks the derived display status — translate it
+      // into the equivalent two-axis predicate.
+      where = displayStatusCondition(status as DownloadStatus);
     }
 
     // Get total count (with filters, before pagination)
@@ -112,6 +110,7 @@ export class DownloadService {
 
     const data = results.map((r) => ({
       ...r.download,
+      status: deriveDisplayStatus(r.download.clientStatus, r.download.pipelineStage),
       ...(r.book && { book: r.book }),
       indexerName: r.indexer?.name ?? null,
     }));
@@ -136,14 +135,13 @@ export class DownloadService {
 
     return {
       ...results[0]!.download,
+      status: deriveDisplayStatus(results[0]!.download.clientStatus, results[0]!.download.pipelineStage),
       ...(results[0]!.book && { book: results[0]!.book }),
       indexerName: results[0]!.indexer?.name ?? null,
     };
   }
 
   async getActive(): Promise<DownloadWithBook[]> {
-    const activeStatuses = getInProgressStatuses();
-
     const results = await this.db
       .select({
         download: downloads,
@@ -153,27 +151,28 @@ export class DownloadService {
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
       .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
-      .where(inArray(downloads.status, activeStatuses))
+      .where(inProgressDownloadCondition())
       .orderBy(desc(downloads.addedAt));
 
     return results.map((r) => ({
       ...r.download,
+      status: deriveDisplayStatus(r.download.clientStatus, r.download.pipelineStage),
       ...(r.book && { book: r.book }),
       indexerName: r.indexer?.name ?? null,
     }));
   }
 
   async getCounts(): Promise<{ active: number; completed: number }> {
-    const activeStatuses = getInProgressStatuses();
-    const completedStatuses = getCompletedStatuses();
+    const activeCond = inProgressDownloadCondition();
+    const completedCond = completedCountDownloadCondition();
 
     const rows = await this.db
       .select({
-        isActive: sql<number>`CASE WHEN ${downloads.status} IN (${sql.join(activeStatuses.map(s => sql`${s}`), sql`, `)}) THEN 1 ELSE 0 END`,
+        isActive: sql<number>`CASE WHEN ${activeCond} THEN 1 ELSE 0 END`,
         cnt: count(),
       })
       .from(downloads)
-      .where(inArray(downloads.status, [...activeStatuses, ...completedStatuses]))
+      .where(or(activeCond, completedCond))
       .groupBy(sql`1`);
 
     let active = 0;
@@ -187,8 +186,6 @@ export class DownloadService {
   }
 
   async getActiveByBookId(bookId: number): Promise<DownloadWithBook[]> {
-    const activeStatuses = getInProgressStatuses();
-
     const results = await this.db
       .select({
         download: downloads,
@@ -199,13 +196,14 @@ export class DownloadService {
       .leftJoin(books, eq(downloads.bookId, books.id))
       .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(and(
-        inArray(downloads.status, activeStatuses),
+        inProgressDownloadCondition(),
         eq(downloads.bookId, bookId),
       ))
       .orderBy(desc(downloads.addedAt));
 
     return results.map((r) => ({
       ...r.download,
+      status: deriveDisplayStatus(r.download.clientStatus, r.download.pipelineStage),
       ...(r.book && { book: r.book }),
       indexerName: r.indexer?.name ?? null,
     }));
@@ -233,14 +231,16 @@ export class DownloadService {
 
   private async checkDuplicateDownloads(bookId: number): Promise<void> {
     const allActive = await this.getActiveByBookId(bookId);
-    const replaceableSet = new Set<string>(getReplaceableStatuses());
-    const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
+    // Derive replaceability straight from the canonical `(clientStatus,
+    // pipelineStage)` axes (S2b) rather than re-deriving the display status and
+    // doing a set membership check — same result, one fewer indirection.
+    const replaceableActive = allActive.filter((dl) => isReplaceableState(dl.clientStatus, dl.pipelineStage));
 
     if (replaceableActive.length > 0) {
       throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0]!.id})`, 'ACTIVE_DOWNLOAD_EXISTS');
     }
 
-    const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+    const pipelineActive = allActive.filter((dl) => !isReplaceableState(dl.clientStatus, dl.pipelineStage));
     if (pipelineActive.length > 0) {
       throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0]!.id})`, 'PIPELINE_ACTIVE');
     }
@@ -306,33 +306,31 @@ export class DownloadService {
   }
 
   async updateProgress(id: number, progress: number, _bookId?: number): Promise<void> {
-    const status: DownloadStatus = progress >= 1 ? 'completed' : 'downloading';
+    // Progress is pure client truth — write only the `clientStatus` axis.
+    const clientStatus: ClientStatus = progress >= 1 ? 'completed' : 'downloading';
     const completedAt = progress >= 1 ? new Date() : null;
 
     // Only update progressUpdatedAt when progress actually changes (for stuck download detection)
     const existing = await this.db.select({ progress: downloads.progress }).from(downloads).where(eq(downloads.id, id));
     const progressChanged = !existing[0] || existing[0].progress !== progress;
 
-    await this.db
-      .update(downloads)
-      .set({ progress, status, completedAt, ...(progressChanged ? { progressUpdatedAt: new Date() } : {}) })
-      .where(eq(downloads.id, id));
+    await transitionDownloadState(this.db, id, {
+      clientStatus,
+      progress,
+      completedAt,
+      ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
+    });
 
     if (progress >= 1) {
       this.log.info({ id }, 'Download completed');
     }
   }
 
-  async updateStatus(id: number, status: DownloadRow['status'], _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
-    await this.db.update(downloads).set({ status }).where(eq(downloads.id, id));
-    this.log.info({ id, status }, 'Download status changed');
-  }
-
   async setError(id: number, errorMessage: string, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
-    await this.db
-      .update(downloads)
-      .set({ status: 'failed', errorMessage })
-      .where(eq(downloads.id, id));
+    // Failure: write the sanctioned failure tuple atomically so the row derives
+    // as `failed` even if the pipeline stage was non-idle (correct by
+    // construction regardless of caller). See `download-state.ts` contract.
+    await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage });
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
@@ -352,11 +350,11 @@ export class DownloadService {
       }
     }
 
-    // Update download status
-    await this.db
-      .update(downloads)
-      .set({ status: 'failed', errorMessage: reason })
-      .where(eq(downloads.id, id));
+    // Cancellation → write the sanctioned failure tuple atomically. Resetting
+    // `pipelineStage` to 'idle' is required so a row cancelled mid-pipeline
+    // (checking/pending_review/importing) derives as `failed`, not its stale
+    // stage (see `download-state.ts` contract).
+    await transitionDownloadState(this.db, id, { clientStatus: 'failed', pipelineStage: 'idle', errorMessage: reason });
 
     this.log.info({ id }, 'Download cancelled');
     return true;
@@ -419,7 +417,7 @@ export class DownloadService {
     const existing = await this.getById(id);
     if (!existing) return false;
 
-    if (!isTerminalStatus(existing.status)) {
+    if (!isTerminalState(existing.clientStatus, existing.pipelineStage)) {
       throw new DownloadError(`Cannot delete download with status '${existing.status}' — use cancel instead`, 'INVALID_STATUS');
     }
 
@@ -429,10 +427,9 @@ export class DownloadService {
   }
 
   async deleteHistory(): Promise<{ deleted: number }> {
-    const terminalStatuses = getTerminalStatuses();
     const rows = await this.db
       .delete(downloads)
-      .where(inArray(downloads.status, terminalStatuses))
+      .where(terminalDownloadCondition())
       .returning({ id: downloads.id });
     const deleted = rows.length;
     this.log.info({ deleted }, 'Download history bulk deleted');

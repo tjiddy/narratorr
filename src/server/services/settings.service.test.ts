@@ -58,7 +58,24 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('search');
-      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
+    });
+
+    // #1345: post-#1301 upgraded installs still carry the removed `seriesCacheRetentionDays`
+    // key in their stored general blob. Zod's default strip mode must drop the fossil key
+    // WITHOUT routing parseCategory down its failure branch — that branch returns the whole
+    // DEFAULT_SETTINGS.general and silently resets non-default siblings. The logLevel: 'debug'
+    // assertion is what distinguishes strip-tolerance from full-category-reset; making
+    // generalSettingsSchema .strict() flips this test to red (logLevel falls back to 'info').
+    it('strips removed seriesCacheRetentionDays key while preserving non-default siblings', async () => {
+      const fossilGeneral = { logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false, seriesCacheRetentionDays: 30 };
+      db.select.mockReturnValue(mockDbChain([{ key: 'general', value: fossilGeneral }]));
+
+      const result = await service.get('general');
+
+      expect(result).not.toHaveProperty('seriesCacheRetentionDays');
+      expect(result.logLevel).toBe('debug');
+      expect(result).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false });
     });
   });
 
@@ -73,9 +90,9 @@ describe('SettingsService', () => {
       // Zod fills missing fileFormat with default
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' });
       // Other sections fall back to defaults
-      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
-      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: false });
+      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false });
     });
 
     it('returns all defaults when nothing stored', async () => {
@@ -372,6 +389,24 @@ describe('SettingsService', () => {
       expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
     });
 
+    it('no-migration: stored keepOriginalBitrate: false survives a patch of an unrelated field', async () => {
+      // Existing user opted out of keep-original before the 1.0 default flip to true.
+      // Patching an unrelated field must NOT overwrite their stored false with the new default.
+      const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'processing', value: existingProcessing }]))  // get('processing')
+        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('processing', { bitrate: 192 });
+
+      const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
+      expect(storedValue.keepOriginalBitrate).toBe(false);
+      expect(storedValue.bitrate).toBe(192);
+      expect(result.keepOriginalBitrate).toBe(false);
+    });
+
     it('preserves existing deleteAfterImport and minSeedTime when patching minFreeSpaceGB', async () => {
       const existingImport = { deleteAfterImport: true, minSeedTime: 120, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true };
       db.select
@@ -438,8 +473,8 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
-      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
-      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'quality' });
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'accuracy' });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7, searchPriority: 'accuracy' });
     });
 
     it('sentinel passthrough preserves existing encrypted value', async () => {
@@ -496,7 +531,7 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
-      expect(storedValue).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, seriesCacheRetentionDays: 30, welcomeSeen: true });
+      expect(storedValue).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: true });
     });
 
     it('stores welcomeSeen: false when only welcomeSeen is patched', async () => {
@@ -551,7 +586,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
       outputFormat: 'm4b',
       bitrate: 128,
       mergeBehavior: 'multi-file-only',
-      maxConcurrentProcessing: 2,
+      maxConcurrentProcessing: 1,
     });
     expect(call![0].value).not.toHaveProperty('enabled');
   });
@@ -1112,6 +1147,270 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
   });
 });
 
+describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+  const FLAG_ID = 'maxConcurrentProcessing-defaults-v1';
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('rewrites stored maxConcurrentProcessing=2 to 1, preserving other fields, and marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]); // flag check — not present
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2, postProcessingScript: '/x.sh' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    // Two writes: processing update + flag insert
+    expect(db.insert.mock.calls.length).toBe(2);
+    const processingWrite = getInsertCall(db, 0);
+    expect(processingWrite.table).toBe(settings);
+    expect((processingWrite.row as { value: Record<string, unknown> }).value).toEqual({
+      ffmpegPath: '/usr/bin/ffmpeg',
+      maxConcurrentProcessing: 1,
+      postProcessingScript: '/x.sh',
+    });
+
+    const flagWrite = getInsertCall(db, 1);
+    expect(flagWrite.table).toBe(settingsMigrations);
+    expect(flagWrite.row).toEqual({ id: FLAG_ID });
+  });
+
+  it('clamps a raw stored value >8 to 8 (rescuing the category), reading the raw blob not parseCategory', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      // 10 would fail the .max(8) Zod schema; raw read still sees it.
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 10, postProcessingScript: '/x.sh' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(2);
+    const processingWrite = getInsertCall(db, 0);
+    expect(processingWrite.table).toBe(settings);
+    expect((processingWrite.row as { value: Record<string, unknown> }).value).toEqual({
+      ffmpegPath: '/usr/bin/ffmpeg',
+      maxConcurrentProcessing: 8,
+      postProcessingScript: '/x.sh',
+    });
+    expect(getInsertCall(db, 1).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 1).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('logs at info with migration metadata when it rewrites 2 -> 1', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+    const log = createMockLogger();
+    const loggingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await loggingService.migrateMaxConcurrentProcessingDefaults();
+
+    expect(log.info).toHaveBeenCalledWith(
+      { migration: FLAG_ID, from: 2, to: 1 },
+      'Migrated stored maxConcurrentProcessing',
+    );
+  });
+
+  it('logs at info with migration metadata when it clamps >8 -> 8', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 10 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+    const log = createMockLogger();
+    const loggingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await loggingService.migrateMaxConcurrentProcessingDefaults();
+
+    expect(log.info).toHaveBeenCalledWith(
+      { migration: FLAG_ID, from: 10, to: 8 },
+      'Migrated stored maxConcurrentProcessing',
+    );
+  });
+
+  it('leaves an in-range deliberate value (4) untouched but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 4 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    // Only the flag insert — no processing write.
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('leaves a stored value of 1 untouched but marks flag applied', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { maxConcurrentProcessing: 1 } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('marks flag applied with the correct id when no processing row exists', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([]); // no processing row
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('does not rewrite when the field is missing or a non-numeric "2" string, but marks flag applied', async () => {
+    // Missing field
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+
+    // String "2" — strict === 2 fails on the string.
+    db.insert.mockClear();
+    db.select.mockReset();
+    callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([{ key: 'processing', value: { maxConcurrentProcessing: '2' } }]);
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+    expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
+  });
+
+  it('is idempotent: returns early when the flag is already set, no processing read, value stays 2', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert).not.toHaveBeenCalled();
+    // Only the flag check happened — no processing read, so a stored 2 is never re-flipped.
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('end-to-end: no-row install sets flag -> user later stores 2 -> rerun does not re-flip it', async () => {
+    // First boot: no flag, no processing row — writes only the flag.
+    let phase1 = 0;
+    db.select.mockImplementation(() => {
+      phase1++;
+      if (phase1 === 1) return mockDbChain([]); // flag check
+      if (phase1 === 2) return mockDbChain([]); // no processing row
+      return mockDbChain([]);
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert.mock.calls.length).toBe(1);
+    expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
+
+    // Later boot: flag present (user has since deliberately stored 2). Migration must NOT re-fire.
+    db.insert.mockClear();
+    db.select.mockReset();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    expect(db.insert).not.toHaveBeenCalled();
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates processing cache after a rewrite', async () => {
+    let callCount = 0;
+    db.select.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]); // prime cache
+      if (callCount === 2) return mockDbChain([]); // flag check
+      if (callCount === 3) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]); // raw read
+      return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 1 } }]); // post-migration get
+    });
+    db.insert.mockReturnValue(mockDbChain());
+
+    const before = await service.get('processing');
+    expect(before.maxConcurrentProcessing).toBe(2);
+
+    await service.migrateMaxConcurrentProcessingDefaults();
+
+    const after = await service.get('processing');
+    expect(after.maxConcurrentProcessing).toBe(1);
+  });
+
+  it('logs warning and does not throw on DB error, leaving the flag unwritten', async () => {
+    db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
+    const log = createMockLogger();
+    const failingService = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+    await failingService.migrateMaxConcurrentProcessingDefaults();
+
+    expect(log.warn).toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+});
+
 describe('SettingsService — cache (#554)', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: SettingsService;
@@ -1368,5 +1667,95 @@ describe('SettingsService — cache (#554)', () => {
       expect(result2.path).toBe('/audiobooks');
       expect(db.select).not.toHaveBeenCalled();
     });
+  });
+});
+
+// #1404 — SettingsService threads `this.log` into decryptFields so the
+// network/metadata secret read paths surface a lost/regenerated `secret.key`.
+describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let service: SettingsService;
+
+  // A registered secret value whose auth tag is corrupted under the right key —
+  // the lost/regenerated-key symptom (#1404).
+  async function corruptBlob(plaintext: string): Promise<string> {
+    const { encrypt } = await import('../utils/secret-codec.js');
+    const valid = encrypt(plaintext, TEST_KEY);
+    const payload = Buffer.from(valid.slice('$ENC$'.length), 'base64');
+    payload[13] = payload[13]! ^ 0xff;
+    return '$ENC$' + payload.toString('base64');
+  }
+
+  /** The decrypt diagnostic warn (vs. the unrelated parse-fallback warn). */
+  function decryptWarn(): Array<[unknown, unknown]> {
+    return (log.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => typeof call[1] === 'string' && call[1].includes('secret.key'),
+    ) as Array<[unknown, unknown]>;
+  }
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    log = createMockLogger();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('get("network") warns naming the network entity and proxyUrl when it fails to decrypt', async () => {
+    const blob = await corruptBlob('http://user:pass@proxy:8080');
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: blob } }]));
+
+    await service.get('network');
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'network', failedFields: ['proxyUrl'] });
+    // Negative-leak: neither the plaintext nor the raw blob may appear in the warn args.
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain('proxy:8080');
+    expect(serialized).not.toContain('$ENC$');
+  });
+
+  it('get("metadata") warns naming the metadata entity and hardcoverApiKey on decrypt failure', async () => {
+    const blob = await corruptBlob('sk-secret-7777');
+    db.select.mockReturnValue(mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: blob } }]));
+
+    await service.get('metadata');
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'metadata', failedFields: ['hardcoverApiKey'] });
+    expect(JSON.stringify(warns)).not.toContain('sk-secret-7777');
+  });
+
+  it('get("network") does not emit the decrypt warn when proxyUrl decrypts cleanly', async () => {
+    const { encrypt } = await import('../utils/secret-codec.js');
+    const encrypted = encrypt('http://proxy:8080', TEST_KEY);
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: encrypted } }]));
+
+    await service.get('network');
+
+    expect(decryptWarn()).toHaveLength(0);
+  });
+
+  // getAll() decrypts every secret category through its own decryptFields call; the
+  // logger must thread there too (the `:105` caller, distinct from get()'s `:83`).
+  it('getAll() warns for the network category when its stored proxyUrl fails to decrypt', async () => {
+    const blob = await corruptBlob('http://user:pass@proxy:8080');
+    // getAll() does an unfiltered select over all settings rows.
+    db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: blob } }]));
+
+    await service.getAll();
+
+    const warns = decryptWarn();
+    expect(warns).toHaveLength(1);
+    expect(warns[0]![0]).toEqual({ entity: 'network', failedFields: ['proxyUrl'] });
+    const serialized = JSON.stringify(warns);
+    expect(serialized).not.toContain('proxy:8080');
+    expect(serialized).not.toContain('$ENC$');
   });
 });

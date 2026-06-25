@@ -440,6 +440,53 @@ describe('createNotifierSchema — typed settings validation', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('accepts ntfy with accessToken and priority (#1607)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks', ntfyAccessToken: 'tk_abc', ntfyPriority: 'high' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it.each(['min', 'low', 'default', 'high', 'max'])('accepts ntfy priority %s (#1607)', (priority) => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks', ntfyPriority: priority },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts ntfy with empty-string priority (unselected select) (#1607)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks', ntfyPriority: '' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts ntfy with priority absent (#1607)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects ntfy with an invalid priority value (#1607)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks', ntfyPriority: 'urgent' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ path: ['settings', 'ntfyPriority'] }),
+        );
+      }
+    });
+
+    it('accepts the masked sentinel for ntfyAccessToken (#1607)', () => {
+      const result = createNotifierSchema.safeParse({
+        ...base, type: 'ntfy', settings: { ntfyTopic: 'audiobooks', ntfyAccessToken: '********' },
+      });
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('negative cases', () => {

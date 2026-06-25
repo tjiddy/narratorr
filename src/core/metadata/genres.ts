@@ -23,15 +23,73 @@ const SYNONYM_MAP = new Map<string, string>([
   ['self help', 'Self-Help'],
   ['self-improvement', 'Self-Help'],
   ['true crime', 'True Crime'],
+  // Audible category-taxonomy strings harvested from unmatched_genres (#1322)
+  ['teen & young adult', 'Young Adult'],
+  ['epic', 'Epic Fantasy'],
+  ['comedy & humor', 'Humor'],
+  ['humorous', 'Humor'],
+  ['paranormal & urban', 'Urban Fantasy'],
+  ['thriller & suspense', 'Thriller'],
+  ['fantasy & magic', 'Fantasy'],
+  ["children's audiobooks", "Children's"],
+  // NOTE: bare 'historical' is NOT a static synonym — it is context-gated in
+  // normalizeGenres (step 2b) so it maps to 'Historical Fiction' only when no
+  // non-fiction marker co-occurs. See NONFICTION_HISTORICAL_MARKERS (#1383).
 ]);
 
-/** Generic parent genres that should be removed when children exist */
+/**
+ * Non-fiction context markers (lowercase). Audible files non-fiction
+ * "Historical" categories under these parents (Biographies & Memoirs, History,
+ * Computers & Technology). When any co-occurs in the same genre array, a bare
+ * 'historical' entry is a non-fiction descriptor and must NOT be remapped to
+ * the fiction-side 'Historical Fiction' — doing so fabricates a wrong fiction
+ * label on narrative non-fiction (#1383, live-verified on Endurance B002V9ZA6C).
+ *
+ * These three strings are load-bearing GATE INPUTS — they must NEVER be added to
+ * SYNONYM_MAP or otherwise "handled" by a harvest. Doing so would silently break
+ * the gate's marker matching at the `.has(...)` check below. Note that two of
+ * them ('biographies & memoirs', 'computers & technology') legitimately appear in
+ * unmatched_genres and remain TRACKED by design — they are real Audible category
+ * names carrying useful signal; 'history' is already an untracked known child
+ * (GENRE_CHILDREN). A harvest operator seeing any of these in the tracking table
+ * must leave them as gate inputs, not synonym-map them away (#1383, #1405).
+ */
+const NONFICTION_HISTORICAL_MARKERS = new Set([
+  'biographies & memoirs',
+  'history',
+  'computers & technology',
+]);
+
+/**
+ * Non-genres to delete outright during normalization — pure noise that
+ * carries no meaning even when it's the only signal. Unlike GENERIC_PARENTS
+ * (removed only when a known child is present), DROP_GENRES is always removed.
+ * Keys are lowercase. Harvested from unmatched_genres (#1322).
+ */
+const DROP_GENRES = new Set([
+  'genre fiction',
+  'movie, tv & video game tie-ins',
+  'united states',
+  'difficult situations',
+]);
+
+/**
+ * Generic parent genres that should be removed when children exist.
+ * Dual consumer: `splitBisacPath` (BISAC leaf extraction — a generic parent
+ * collapses a path to its leaf) AND `removeGenericParents` (step-6 parent
+ * removal). Editing this set changes both behaviors; pin both when adding keys.
+ */
 const GENERIC_PARENTS = new Set([
   'fiction',
   'non-fiction',
   'nonfiction',
   'juvenile fiction',
   'juvenile nonfiction',
+  // Audible category parents harvested from unmatched_genres (#1322) —
+  // removed only when a recognized GENRE_CHILDREN member is present.
+  'science fiction & fantasy',
+  'literature & fiction',
+  'mystery, thriller & suspense',
 ]);
 
 /** Known child genres that make their parent redundant */
@@ -43,6 +101,12 @@ const GENRE_CHILDREN = new Set([
   'dystopian', 'urban fantasy', 'epic fantasy', 'high fantasy',
   'dark fantasy', 'paranormal', 'contemporary', 'action & adventure',
   'young adult', 'litrpg',
+  // Audible fiction subcategories harvested from unmatched_genres (#1322)
+  'space opera', 'hard science fiction', 'sword & sorcery', 'military',
+  'classics', "women's fiction", 'family life', 'psychological',
+  'domestic thrillers', 'crime thrillers', 'espionage', 'fairy tales',
+  'superhero', 'dragons & mythical creatures', 'sagas', 'world literature',
+  "children's",
   // Non-fiction children
   'true crime', 'biography', 'autobiography', 'memoir', 'history',
   'science', 'philosophy', 'psychology', 'self-help', 'travel',
@@ -90,6 +154,12 @@ function splitBisacPath(genre: string): string {
  * Remove compound genres when their components exist separately.
  * e.g., "Science Fiction & Fantasy" is redundant if both
  * "Science Fiction" and "Fantasy" are present.
+ *
+ * INVARIANT — remove-only: this function never rewrites, splits, or emits a
+ * genre, it only drops compounds whose every component already exists. Several
+ * compound-shaped GENERIC_PARENTS (e.g. "Science Fiction & Fantasy",
+ * "Mystery, Thriller & Suspense") rely on this: a splitter rewrite here would
+ * fragment those parents and break the parent-removal lists. Keep it a filter.
  */
 function removeCompounds(genres: string[]): string[] {
   const lowerSet = new Set(genres.map((g) => g.toLowerCase()));
@@ -126,9 +196,11 @@ function removeGenericParents(genres: string[]): string[] {
  * Rules applied in order:
  * 1. Split BISAC paths
  * 2. Apply synonym map
- * 3. Deduplicate (case-insensitive, preserves first occurrence)
- * 4. Remove compound genres when components exist separately
- * 5. Remove generic parent genres when children exist
+ * 2b. Context-gate bare 'historical' → 'Historical Fiction'
+ * 3. Drop pure-noise non-genres
+ * 4. Deduplicate (case-insensitive, preserves first occurrence)
+ * 5. Remove compound genres when components exist separately
+ * 6. Remove generic parent genres when children exist
  */
 export function normalizeGenres(genres: string[] | undefined | null): string[] | undefined {
   if (!genres || genres.length === 0) return undefined;
@@ -142,7 +214,27 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
     return normalized ?? genre;
   });
 
-  // Step 3: Deduplicate (case-insensitive, keep first occurrence)
+  // Step 2b: Context-gate bare 'historical'. Both a raw 'Historical' entry and
+  // a BISAC 'Fiction / Historical' path (collapsed to 'Historical' in step 1)
+  // become the fiction-side 'Historical Fiction' — but only when no non-fiction
+  // marker co-occurs in the same array. Audible files non-fiction "Historical"
+  // under Biographies & Memoirs / History / Computers & Technology, where the
+  // remap would fabricate a wrong fiction label (#1383).
+  const hasNonfictionMarker = result.some((g) =>
+    NONFICTION_HISTORICAL_MARKERS.has(g.toLowerCase()),
+  );
+  if (!hasNonfictionMarker) {
+    result = result.map((genre) =>
+      genre.toLowerCase() === 'historical' ? 'Historical Fiction' : genre,
+    );
+  }
+
+  // Step 3: Drop pure-noise non-genres (after synonym mapping so a synonym
+  // can never map into a dropped key, and before dedup so dropped entries
+  // don't occupy dedup slots).
+  result = result.filter((genre) => !DROP_GENRES.has(genre.toLowerCase()));
+
+  // Step 4: Deduplicate (case-insensitive, keep first occurrence)
   const seen = new Set<string>();
   result = result.filter((genre) => {
     const lower = genre.toLowerCase();
@@ -151,10 +243,10 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
     return true;
   });
 
-  // Step 4: Remove compounds
+  // Step 5: Remove compounds
   result = removeCompounds(result);
 
-  // Step 5: Remove generic parents
+  // Step 6: Remove generic parents
   result = removeGenericParents(result);
 
   return result.length > 0 ? result : undefined;
@@ -166,7 +258,6 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
  * synonym map.
  */
 export function findUnmatchedGenres(
-  _raw: string[] | undefined | null,
   normalized: string[] | undefined | null,
 ): string[] {
   if (!normalized) return [];
@@ -183,6 +274,14 @@ export function findUnmatchedGenres(
     if (GENRE_CHILDREN.has(lower)) return false;
     // If it's a generic parent, it's "known"
     if (GENERIC_PARENTS.has(lower)) return false;
+    // If it's a dropped non-genre, it's "known" (removed by normalizeGenres
+    // before it ever reaches tracking; checked here for defense in depth).
+    if (DROP_GENRES.has(lower)) return false;
+    // 'historical' is context-gated (#1383, #1405), not unhandled — when the
+    // gate declines to remap it (a non-fiction marker co-occurs), that IS the
+    // rule outcome. Tracking it would bait the next harvest into re-adding the
+    // exact 'historical' → 'Historical Fiction' synonym #1383 removed.
+    if (lower === 'historical') return false;
     // Otherwise it passed through unmatched
     return true;
   });

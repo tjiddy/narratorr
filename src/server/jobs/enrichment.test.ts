@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError } from '../../core/index.js';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
+import { RateLimitError, TransientError } from '../../core/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -8,31 +9,61 @@ import type { BookService } from '../services/book.service.js';
 
 import { runEnrichment } from './enrichment.js';
 
+// Serialize a Drizzle SQL predicate (the arg passed to `.where()`) to raw SQL +
+// bound params, so we assert the REAL captured-ASIN guard shape instead of just
+// "`.where()` was called" — a regression to `where(eq(books.id, ...))` only
+// would leave `"asin"` out of the SQL and the captured value out of the params.
+// Mirrors discovery.service.test.ts / blacklist.service.test.ts.
+const dialect = new SQLiteSyncDialect();
+function whereSql(expr: unknown): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).sql;
+}
+function whereParams(expr: unknown): unknown[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).params;
+}
+
 describe('enrichment job', () => {
   let db: ReturnType<typeof createMockDb>;
-  let metadataService: { enrichBook: ReturnType<typeof vi.fn> };
-  let bookService: { update: ReturnType<typeof vi.fn> };
+  let metadataService: { resolveBook: ReturnType<typeof vi.fn> };
+  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn> };
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
     db = createMockDb();
-    metadataService = { enrichBook: vi.fn().mockResolvedValue(null) };
-    bookService = { update: vi.fn().mockResolvedValue(null) };
+    metadataService = { resolveBook: vi.fn().mockResolvedValue(null) };
+    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null) };
     log = createMockLogger();
   });
 
-  it('marks books without ASIN as skipped', async () => {
-    // First select: no-asin books
+  it('selects null-ASIN pending books and routes them through resolveBook (no longer skipped)', async () => {
+    // A pending book WITHOUT an asin is now a candidate; its title + joined
+    // primary author are passed to resolveBook, which resolves via search.
     db.select
-      .mockReturnValueOnce(mockDbChain([{ id: 1 }, { id: 2 }]))  // no-asin query
-      .mockReturnValueOnce(mockDbChain([]));  // candidates query (empty)
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'No ASIN Book', author: 'Some Author' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'No ASIN Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    db.update.mockReturnValue(mockDbChain());
+    metadataService.resolveBook.mockResolvedValueOnce({ title: 'No ASIN Book', authors: [{ name: 'Some Author' }], duration: 600 });
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-    expect(db.update).toHaveBeenCalledTimes(2);
-    expect(log.info).toHaveBeenCalledWith({ count: 2 }, 'Books without ASIN marked as skipped');
+    expect(metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'No ASIN Book', author: 'Some Author' });
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Books without ASIN marked as skipped');
+  });
+
+  it('calls resolveBook title-only when the candidate has no author row', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'Authorless Book', author: null }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Authorless Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
+
+    metadataService.resolveBook.mockResolvedValueOnce({ title: 'Authorless Book', authors: [{ name: 'Found' }], duration: 600 });
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+    expect(metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'Authorless Book', author: undefined });
   });
 
   it('enriches book with ASIN successfully', async () => {
@@ -45,16 +76,15 @@ describe('enrichment job', () => {
 
     // First select: no-asin books (none)
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin query
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing book fields
 
-    metadataService.enrichBook.mockResolvedValueOnce(enrichedData);
+    metadataService.resolveBook.mockResolvedValueOnce(enrichedData);
     db.update.mockReturnValue(mockDbChain());
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-    expect(metadataService.enrichBook).toHaveBeenCalledWith('B003P2WO5E');
+    expect(metadataService.resolveBook).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003P2WO5E' }));
     expect(db.update).toHaveBeenCalled();
     expect(log.info).toHaveBeenCalledWith(
       { bookId: 1, asin: 'B003P2WO5E' },
@@ -64,11 +94,11 @@ describe('enrichment job', () => {
 
   it('marks book as failed when enrichment returns null', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B000BROKEN' }]));  // candidates
 
-    metadataService.enrichBook.mockResolvedValueOnce(null);
-    db.update.mockReturnValue(mockDbChain());
+    metadataService.resolveBook.mockResolvedValueOnce(null);
+    // The guarded no-match write returns the matched row → genuine fail-mark.
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
@@ -88,11 +118,10 @@ describe('enrichment job', () => {
     };
 
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: 1234, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    metadataService.enrichBook.mockResolvedValueOnce(enrichedData);
+    metadataService.resolveBook.mockResolvedValueOnce(enrichedData);
     db.update.mockReturnValue(mockDbChain());
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
@@ -107,22 +136,20 @@ describe('enrichment job', () => {
 
   it('does nothing when no candidates exist', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([]));  // candidates (none)
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-    expect(metadataService.enrichBook).not.toHaveBeenCalled();
+    expect(metadataService.resolveBook).not.toHaveBeenCalled();
     expect(db.update).not.toHaveBeenCalled();
   });
 
   it('enriches with only narrators (no duration) from Audnexus', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_PARTIAL' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    metadataService.enrichBook.mockResolvedValueOnce({
+    metadataService.resolveBook.mockResolvedValueOnce({
       title: 'Partial Book',
       authors: [{ name: 'Author' }],
       narrators: ['Jim Dale'],
@@ -140,11 +167,10 @@ describe('enrichment job', () => {
 
   it('enriches with only duration (no narrators) from Audnexus', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_DUR_ONLY' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    metadataService.enrichBook.mockResolvedValueOnce({
+    metadataService.resolveBook.mockResolvedValueOnce({
       title: 'Duration Only',
       authors: [{ name: 'Author' }],
       duration: 480,
@@ -162,11 +188,10 @@ describe('enrichment job', () => {
 
   it('handles empty narrators array without setting narrator field', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_EMPTY_NARR' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    metadataService.enrichBook.mockResolvedValueOnce({
+    metadataService.resolveBook.mockResolvedValueOnce({
       title: 'Empty Narrators',
       authors: [{ name: 'Author' }],
       narrators: [],  // empty array — should not set narrator
@@ -183,26 +208,24 @@ describe('enrichment job', () => {
     );
   });
 
-  it('does not call enrichBook for no-ASIN books', async () => {
+  it('does not call resolveBook when there are no candidates at all', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([{ id: 1 }, { id: 2 }]))  // no-asin query
       .mockReturnValueOnce(mockDbChain([]));  // candidates (empty)
 
     db.update.mockReturnValue(mockDbChain());
 
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-    expect(metadataService.enrichBook).not.toHaveBeenCalled();
+    expect(metadataService.resolveBook).not.toHaveBeenCalled();
   });
 
   it('treats narrators: undefined differently from narrators: [] (undefined skips, empty array skips)', async () => {
     // narrators: undefined — the `result.narrators?.length` check short-circuits via optional chaining
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_UNDEF_NARR' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    metadataService.enrichBook.mockResolvedValueOnce({
+    metadataService.resolveBook.mockResolvedValueOnce({
       title: 'Undefined Narrators',
       authors: [{ name: 'Author' }],
       // narrators key entirely absent → undefined
@@ -222,11 +245,10 @@ describe('enrichment job', () => {
   it('handles empty existing array from DB query (existing.length === 0)', async () => {
     // Edge case: the book row is somehow missing between candidate selection and field lookup
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_MISSING' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([]));  // existing book fields — empty!
 
-    metadataService.enrichBook.mockResolvedValueOnce({
+    metadataService.resolveBook.mockResolvedValueOnce({
       title: 'Ghost Book',
       authors: [{ name: 'Author' }],
       narrators: ['Some Narrator'],
@@ -246,12 +268,11 @@ describe('enrichment job', () => {
 
   it('sets enrichmentStatus to enriched even when metadata returns null for all optional fields', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_ALL_NULL' }]))  // candidates
       .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-    // enrichBook returns a result object but with no narrators and no duration
-    metadataService.enrichBook.mockResolvedValueOnce({
+    // resolveBook returns a result object but with no narrators and no duration
+    metadataService.resolveBook.mockResolvedValueOnce({
       title: null,
       authors: null,
       narrators: undefined,
@@ -276,7 +297,6 @@ describe('enrichment job', () => {
 
   it('breaks batch on RateLimitError and leaves remaining candidates pending', async () => {
     db.select
-      .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([
         { id: 1, asin: 'B001' },
         { id: 2, asin: 'B002' },
@@ -284,7 +304,7 @@ describe('enrichment job', () => {
       ]));  // candidates
 
     // First enrichment succeeds, second throws rate limit
-    metadataService.enrichBook
+    metadataService.resolveBook
       .mockResolvedValueOnce({ title: 'Book 1', authors: [], narrators: ['Narrator'], duration: 100 })
       .mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
 
@@ -294,11 +314,11 @@ describe('enrichment job', () => {
     await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
     // Only first book's enrichment should have been processed, second throws, third skipped
-    expect(metadataService.enrichBook).toHaveBeenCalledTimes(2);
-    expect(metadataService.enrichBook).toHaveBeenCalledWith('B001');
-    expect(metadataService.enrichBook).toHaveBeenCalledWith('B002');
+    expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+    expect(metadataService.resolveBook).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B001' }));
+    expect(metadataService.resolveBook).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B002' }));
     // Third book should NOT have been called
-    expect(metadataService.enrichBook).not.toHaveBeenCalledWith('B003');
+    expect(metadataService.resolveBook).not.toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003' }));
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ provider: 'Audnexus', retryAfterMs: 30000 }),
@@ -310,11 +330,10 @@ describe('enrichment job', () => {
   describe('batch completion logging (#229)', () => {
     it('enrichment batch completion log includes elapsedMs', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Book', authors: [{ name: 'Author' }], duration: 600,
       });
       db.update.mockReturnValue(mockDbChain());
@@ -329,11 +348,10 @@ describe('enrichment job', () => {
 
     it('enrichment batch completion log includes filled flags (duration, narrators)', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing: both empty
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Book', authors: [{ name: 'Author' }],
         narrators: ['Jim Dale'],
         duration: 600,
@@ -355,11 +373,10 @@ describe('enrichment job', () => {
 
     it('helper failure for first narrator does not abort batch — second narrator still gets bookNarrators insert and book update completes (#482)', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_NAR_FAIL' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Book', authors: [{ name: 'Author' }],
         narrators: ['Failing Narrator', 'Good Narrator'],
         duration: 600,
@@ -407,12 +424,11 @@ describe('enrichment job', () => {
   describe('genre persistence', () => {
     it('persists genres via bookService.update() when book has null genres in DB', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_GENRE' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]))  // existing: genres null
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_GENRE' }]));  // isStillSameAsin (genres) — #1129
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Genre Book', authors: [{ name: 'Author' }],
         genres: ['Fantasy', 'Science Fiction'],
       });
@@ -425,12 +441,11 @@ describe('enrichment job', () => {
 
     it('persists genres via bookService.update() when book has empty array genres in DB', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_GENRE_EMPTY' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: [], title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]))  // existing: genres empty array
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_GENRE_EMPTY' }]));  // isStillSameAsin (genres) — #1129
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Genre Book', authors: [{ name: 'Author' }],
         genres: ['Mystery'],
       });
@@ -443,11 +458,10 @@ describe('enrichment job', () => {
 
     it('does NOT update genres when book already has non-empty genres', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_HAS_GENRES' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: ['Existing Genre'], title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing: has genres
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Genre Book', authors: [{ name: 'Author' }],
         genres: ['New Genre'],
       });
@@ -458,13 +472,12 @@ describe('enrichment job', () => {
       expect(bookService.update).not.toHaveBeenCalled();
     });
 
-    it('does NOT update genres when enrichBook returns no genres (undefined)', async () => {
+    it('does NOT update genres when resolveBook returns no genres (undefined)', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_NO_GENRE' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'No Genre Book', authors: [{ name: 'Author' }],
         duration: 600,
         // genres undefined
@@ -476,13 +489,12 @@ describe('enrichment job', () => {
       expect(bookService.update).not.toHaveBeenCalled();
     });
 
-    it('does NOT update genres when enrichBook returns empty genres array', async () => {
+    it('does NOT update genres when resolveBook returns empty genres array', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_EMPTY_GENRE' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Empty Genre Book', authors: [{ name: 'Author' }],
         genres: [],
       });
@@ -495,7 +507,6 @@ describe('enrichment job', () => {
 
     it('increments filledGenres counter only when genres are actually filled', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([
           { id: 1, asin: 'B_FILL' },
           { id: 2, asin: 'B_SKIP' },
@@ -504,7 +515,7 @@ describe('enrichment job', () => {
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_FILL' }]))  // isStillSameAsin (book 1 genres) — #1129
         .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: ['Existing'], title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // book 2: has genres
 
-      metadataService.enrichBook
+      metadataService.resolveBook
         .mockResolvedValueOnce({ title: 'Book 1', authors: [], genres: ['Fantasy'] })
         .mockResolvedValueOnce({ title: 'Book 2', authors: [], genres: ['New Genre'] });
       db.update.mockReturnValue(mockDbChain());
@@ -519,11 +530,10 @@ describe('enrichment job', () => {
 
     it('includes filledGenres in batch completion log message', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_LOG' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Book', authors: [{ name: 'Author' }], duration: 600,
       });
       db.update.mockReturnValue(mockDbChain());
@@ -537,16 +547,56 @@ describe('enrichment job', () => {
     });
   });
 
+  // ── #1614 subtitle/publisher fill-empty guard ─────────────────────────
+  describe('subtitle/publisher fill-empty (#1614)', () => {
+    it('fills blank subtitle and publisher from the enrichment result', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_FILL_SP' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: ['x'], title: 'Some Book', subtitle: null, description: null, publisher: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing: blank subtitle/publisher
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        title: 'Some Book', authors: [{ name: 'Author' }],
+        subtitle: 'Filled Subtitle', publisher: 'Filled Publisher',
+      });
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' }),
+      );
+    });
+
+    it('does NOT overwrite an existing non-empty subtitle/publisher', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_KEEP_SP' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: 600, genres: ['x'], title: 'Some Book', subtitle: 'Existing Subtitle', description: null, publisher: 'Existing Publisher', coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing: both set
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        title: 'Some Book', authors: [{ name: 'Author' }],
+        subtitle: 'Provider Subtitle', publisher: 'Provider Publisher',
+      });
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).not.toHaveProperty('subtitle');
+      expect(setArg).not.toHaveProperty('publisher');
+    });
+  });
+
   // ── #398 Title normalization (ALL CAPS guard) ─────────────────────────
   describe('title normalization (#398)', () => {
     const allFields = { duration: null, genres: null, title: 'PROJECT HAIL MARY', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null };
 
     function setupEnrichment(existingFields: Record<string, unknown>, enrichedData: Record<string, unknown>) {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_TITLE' }]))  // candidates
         .mockReturnValueOnce(mockDbChain([{ ...allFields, ...existingFields }]));  // existing
-      metadataService.enrichBook.mockResolvedValueOnce({ title: 'Enriched', authors: [{ name: 'Author' }], ...enrichedData });
+      metadataService.resolveBook.mockResolvedValueOnce({ title: 'Enriched', authors: [{ name: 'Author' }], ...enrichedData });
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -610,10 +660,9 @@ describe('enrichment job', () => {
 
     function setupEnrichment(existingFields: Record<string, unknown>, enrichedData: Record<string, unknown>) {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_DESC' }]))
         .mockReturnValueOnce(mockDbChain([{ ...allFields, ...existingFields }]));
-      metadataService.enrichBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
+      metadataService.resolveBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -639,16 +688,15 @@ describe('enrichment job', () => {
     });
   });
 
-  // ── #398 Cover URL fill ───────────────────────────────────────────────
-  describe('cover URL fill (#398)', () => {
+  // ── #1634 Cover URL — Audnexus cover always wins (carve-out from fill-empty) ──
+  describe('cover URL fill — Audnexus override (#1634)', () => {
     const allFields = { duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null };
 
     function setupEnrichment(existingFields: Record<string, unknown>, enrichedData: Record<string, unknown>) {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_COVER' }]))
         .mockReturnValueOnce(mockDbChain([{ ...allFields, ...existingFields }]));
-      metadataService.enrichBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
+      metadataService.resolveBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -659,11 +707,38 @@ describe('enrichment job', () => {
       expect(setCall).toHaveProperty('coverUrl', 'https://example.com/cover.jpg');
     });
 
-    it('does NOT overwrite existing coverUrl', async () => {
-      setupEnrichment({ coverUrl: 'https://existing.com/cover.jpg' }, { coverUrl: 'https://new.com/cover.jpg' });
+    it('OVERWRITES an existing provider cover with the Audnexus cover', async () => {
+      // The audiobook cover is authoritative for an audiobook app — the at-add
+      // Hardcover print cover is a placeholder that the Audnexus square cover wins over.
+      setupEnrichment(
+        { coverUrl: 'https://assets.hardcover.app/edition/30615590/print.jpg' },
+        { coverUrl: 'https://m.media-amazon.com/images/I/81bRC7xFElL.jpg' },
+      );
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('coverUrl', 'https://m.media-amazon.com/images/I/81bRC7xFElL.jpg');
+    });
+
+    it('preserves the existing cover when Audnexus returns no image', async () => {
+      // Audnexus maps a missing cover to `undefined` (not null/empty) — the override
+      // guards on the result value's presence so a no-image result never blanks a cover.
+      setupEnrichment({ coverUrl: 'https://existing.com/cover.jpg' }, { coverUrl: undefined });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
       const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('coverUrl');
+    });
+
+    it('keeps fill-empty semantics for sibling fields while overriding the cover', async () => {
+      // The carve-out is scoped to coverUrl only: a sibling fill-empty field
+      // (description) with an existing value is NOT overwritten in the same pass.
+      setupEnrichment(
+        { coverUrl: 'https://existing.com/cover.jpg', description: 'Existing description' },
+        { coverUrl: 'https://m.media-amazon.com/images/I/new.jpg', description: 'New description' },
+      );
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('coverUrl', 'https://m.media-amazon.com/images/I/new.jpg');
+      expect(setCall).not.toHaveProperty('description');
     });
   });
 
@@ -673,10 +748,9 @@ describe('enrichment job', () => {
 
     function setupEnrichment(existingFields: Record<string, unknown>, enrichedData: Record<string, unknown>) {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_DATE' }]))
         .mockReturnValueOnce(mockDbChain([{ ...allFields, ...existingFields }]));
-      metadataService.enrichBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
+      metadataService.resolveBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -701,10 +775,9 @@ describe('enrichment job', () => {
 
     function setupEnrichment(existingFields: Record<string, unknown>, enrichedData: Record<string, unknown>) {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_SERIES' }]))
         .mockReturnValueOnce(mockDbChain([{ ...allFields, ...existingFields }]));
-      metadataService.enrichBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
+      metadataService.resolveBook.mockResolvedValueOnce({ title: 'Book', authors: [{ name: 'Author' }], ...enrichedData });
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -788,7 +861,6 @@ describe('enrichment job', () => {
 
     it('increments filledTitle only when title is actually updated', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // no-asin
         .mockReturnValueOnce(mockDbChain([
           { id: 1, asin: 'B_T1' },
           { id: 2, asin: 'B_T2' },
@@ -796,7 +868,7 @@ describe('enrichment job', () => {
         .mockReturnValueOnce(mockDbChain([{ ...allFields, title: 'PROJECT HAIL MARY' }]))  // book 1: ALL CAPS
         .mockReturnValueOnce(mockDbChain([{ ...allFields, title: 'Already Good' }]));  // book 2: mixed case
 
-      metadataService.enrichBook
+      metadataService.resolveBook
         .mockResolvedValueOnce({ title: 'Project Hail Mary', authors: [] })
         .mockResolvedValueOnce({ title: 'Already Good', authors: [] });
       db.update.mockReturnValue(mockDbChain());
@@ -811,7 +883,6 @@ describe('enrichment job', () => {
 
     it('increments filledDescription only when description is actually filled', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([
           { id: 1, asin: 'B_D1' },
           { id: 2, asin: 'B_D2' },
@@ -819,7 +890,7 @@ describe('enrichment job', () => {
         .mockReturnValueOnce(mockDbChain([{ ...allFields, description: null }]))
         .mockReturnValueOnce(mockDbChain([{ ...allFields, description: 'Existing' }]));
 
-      metadataService.enrichBook
+      metadataService.resolveBook
         .mockResolvedValueOnce({ title: 'Book 1', authors: [], description: 'New desc' })
         .mockResolvedValueOnce({ title: 'Book 2', authors: [], description: 'Another desc' });
       db.update.mockReturnValue(mockDbChain());
@@ -834,12 +905,11 @@ describe('enrichment job', () => {
 
     it('existing filledDuration/filledNarrators/filledGenres still work', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_ALL' }]))
         .mockReturnValueOnce(mockDbChain([{ ...allFields, duration: null }]))
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_ALL' }]));  // isStillSameAsin (genres) — #1129
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Book', authors: [{ name: 'Author' }],
         duration: 600,
         genres: ['Fantasy'],
@@ -873,11 +943,10 @@ describe('enrichment job', () => {
 
     it('full enrichment cycle populates all new fields in single pass', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_FULL' }]))
         .mockReturnValueOnce(mockDbChain([emptyFields]));
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Project Hail Mary',
         authors: [{ name: 'Andy Weir' }],
         description: 'An astronaut wakes up alone',
@@ -902,19 +971,19 @@ describe('enrichment job', () => {
 
     it('select query requests all required fields for field-fill logic', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_PROJ' }]))
         .mockReturnValueOnce(mockDbChain([emptyFields]));
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Project Hail Mary', authors: [{ name: 'Author' }],
       });
       db.update.mockReturnValue(mockDbChain());
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
-      // The third db.select() call is the existing-fields lookup — assert its projection
-      const projectionArg = db.select.mock.calls[2]![0];
+      // The second db.select() call is the existing-fields lookup (the first is
+      // the candidate query) — assert its projection
+      const projectionArg = db.select.mock.calls[1]![0];
       expect(projectionArg).toHaveProperty('duration');
       expect(projectionArg).toHaveProperty('genres');
       expect(projectionArg).toHaveProperty('title');
@@ -925,9 +994,8 @@ describe('enrichment job', () => {
       expect(projectionArg).toHaveProperty('seriesPosition');
     });
 
-    it('does not overwrite any fields when all already populated', async () => {
+    it('overwrites only coverUrl (Audnexus carve-out) when all fields already populated', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_FULL2' }]))
         .mockReturnValueOnce(mockDbChain([{
           duration: 900, genres: ['Sci-Fi'], title: 'Project Hail Mary',
@@ -935,7 +1003,7 @@ describe('enrichment job', () => {
           publishedDate: '2020-01-01', seriesName: 'Old Series', seriesPosition: 2,
         }]));
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'Project Hail Mary: A Novel',
         authors: [{ name: 'Andy Weir' }],
         description: 'New description',
@@ -949,12 +1017,13 @@ describe('enrichment job', () => {
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
       const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
-      // Only enrichmentStatus and updatedAt should be in the update
+      // enrichmentStatus, updatedAt, and the Audnexus cover override (#1634); all
+      // other fill-empty fields keep fill-empty semantics and are untouched.
       expect(setCall).toHaveProperty('enrichmentStatus', 'enriched');
       expect(setCall).toHaveProperty('updatedAt');
+      expect(setCall).toHaveProperty('coverUrl', 'https://new.com/cover.jpg');
       expect(setCall).not.toHaveProperty('title');
       expect(setCall).not.toHaveProperty('description');
-      expect(setCall).not.toHaveProperty('coverUrl');
       expect(setCall).not.toHaveProperty('publishedDate');
       expect(setCall).not.toHaveProperty('seriesName');
       expect(setCall).not.toHaveProperty('seriesPosition');
@@ -965,7 +1034,6 @@ describe('enrichment job', () => {
   describe('stale-enrichment guard (#1129)', () => {
     it('genres path: drops write when row asin no longer matches captured asin', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))                                                  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD' }]))                          // candidates
         .mockReturnValueOnce(mockDbChain([{                                                    // existing
           duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
@@ -973,7 +1041,7 @@ describe('enrichment job', () => {
         }]))
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_NEW' }]));                                // isStillSameAsin (genres)
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'X',
         authors: [{ name: 'A' }],
         genres: ['Fantasy'],
@@ -991,7 +1059,6 @@ describe('enrichment job', () => {
 
     it('genres path: writes when row asin still matches captured asin', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))                                                  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_SAME' }]))                         // candidates
         .mockReturnValueOnce(mockDbChain([{
           duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
@@ -999,7 +1066,7 @@ describe('enrichment job', () => {
         }]))
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_SAME' }]));                               // isStillSameAsin (genres)
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'X',
         authors: [{ name: 'A' }],
         genres: ['Fantasy'],
@@ -1013,7 +1080,6 @@ describe('enrichment job', () => {
 
     it('narrators path: drops inserts when row asin no longer matches captured asin', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))                                                  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD' }]))                          // candidates
         .mockReturnValueOnce(mockDbChain([{
           duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
@@ -1023,7 +1089,7 @@ describe('enrichment job', () => {
         .mockReturnValueOnce(mockDbChain([]))                                                  // existingNarrators
         .mockReturnValueOnce(mockDbChain([{ asin: 'B_NEW' }]));                                // isStillSameAsin (narrators)
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'X',
         authors: [{ name: 'A' }],
         narrators: ['Some Narrator'],
@@ -1042,14 +1108,13 @@ describe('enrichment job', () => {
 
     it('scalar UPDATE is scoped WHERE id = ? AND asin = capturedAsin (logs debug when 0 rows match)', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))                                                  // no-asin
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD' }]))                          // candidates
         .mockReturnValueOnce(mockDbChain([{
           duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
           publishedDate: null, seriesName: null, seriesPosition: null,
         }]));
 
-      metadataService.enrichBook.mockResolvedValueOnce({
+      metadataService.resolveBook.mockResolvedValueOnce({
         title: 'X',
         authors: [{ name: 'A' }],
         description: 'desc',
@@ -1063,6 +1128,397 @@ describe('enrichment job', () => {
         expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
         'stale enrichment dropped (scalar update)',
       );
+    });
+  });
+
+  // ── #1627 Guarded failure writes (Fix-Match race + unique-constraint abort) ──
+  describe('guarded failure writes (#1627)', () => {
+    it('collision-failed stale-drop: drops the failed-mark and logs when the row was re-identified mid-flight', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD', title: 'Dupe', author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B_OWNED', title: 'Dupe', authors: [{ name: 'Author' }], duration: 700,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce({ conflictBookId: 99, conflictTitle: 'Other' });
+      // Guarded failed-mark matches 0 rows → Fix Match swapped the row to B_NEW.
+      db.update.mockReturnValue(mockDbChain([]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Built with the captured-ASIN guard + .returning({ id }); 0 rows → stale-drop, not failed.
+      const failedChain = db.update();
+      const collisionWhere = failedChain.where.mock.calls[0]![0];
+      expect(whereSql(collisionWhere)).toContain('"id"');
+      expect(whereSql(collisionWhere)).toContain('"asin"');     // captured-ASIN guard, not id-only
+      expect(whereParams(collisionWhere)).toEqual([1, 'B_OLD']); // candidate.id + capturedAsin
+      expect(failedChain.returning.mock.calls[0]![0]).toHaveProperty('id');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
+        'stale enrichment dropped (collision)',
+      );
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Resolved ASIN collides with an existing book — marking failed',
+      );
+    });
+
+    it('no-match stale-drop: drops the failed-mark and logs when the row was re-identified mid-flight', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD', title: 'Some Book', author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce(null);
+      // Guarded failed-mark matches 0 rows.
+      db.update.mockReturnValue(mockDbChain([]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const noMatchWhere = db.update().where.mock.calls[0]![0];
+      expect(whereSql(noMatchWhere)).toContain('"id"');
+      expect(whereSql(noMatchWhere)).toContain('"asin"');     // captured-ASIN guard, not id-only
+      expect(whereParams(noMatchWhere)).toEqual([1, 'B_OLD']);
+      expect(db.update().returning.mock.calls[0]![0]).toHaveProperty('id');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
+        'stale enrichment dropped (no-match)',
+      );
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Book enrichment failed',
+      );
+    });
+
+    it('unique-constraint recovery: marks the candidate failed, logs the error, and continues the batch', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: 'B_OLD', title: 'Race', author: 'Author' },
+          { id: 2, asin: 'B_TWO', title: 'Next', author: 'Author' },
+        ]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Race', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing (candidate 1)
+
+      // Candidate 1 recovers a different ASIN; the point-in-time collision check is
+      // clean but a concurrent writer takes it before the scalar write lands.
+      metadataService.resolveBook
+        .mockResolvedValueOnce({ asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }], description: 'desc' })
+        .mockResolvedValueOnce(null);  // candidate 2 → no-match
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+
+      const recoveryChain = mockDbChain([{ id: 1 }]);  // guarded recovery matches the row
+      db.update
+        .mockReturnValueOnce(mockDbChain([], { error: new Error('UNIQUE constraint failed: books.asin') }))  // scalar write throws
+        .mockReturnValueOnce(recoveryChain)                                                                   // recovery → mark failed
+        .mockReturnValueOnce(mockDbChain([{ id: 2 }]));                                                       // candidate 2 no-match write
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Recovery write marked candidate 1 failed (guarded set).
+      const recoverySet = recoveryChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(recoverySet).toHaveProperty('enrichmentStatus', 'failed');
+      // Caught error logged (via serializeError → object), not the raw error.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, resolvedAsin: 'B_OWNED', error: expect.any(Object) }),
+        'Resolved ASIN hit a unique-constraint race — marking failed',
+      );
+      // The batch continued — candidate 2 was still processed.
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+      expect(log.warn).toHaveBeenCalledWith({ bookId: 2, asin: 'B_TWO' }, 'Book enrichment failed');
+    });
+
+    it('unique-constraint recovery: detects the violation when the ASIN UNIQUE text is only in error.cause.message', async () => {
+      // Drizzle/libSQL nests the SQLite message under `.cause` — the top-level
+      // message is generic. If isAsinUniqueViolation only checked error.message,
+      // this would rethrow and abort the batch instead of recovering.
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: 'B_OLD', title: 'Race', author: 'Author' },
+          { id: 2, asin: 'B_TWO', title: 'Next', author: 'Author' },
+        ]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Race', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing (candidate 1)
+
+      metadataService.resolveBook
+        .mockResolvedValueOnce({ asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }], description: 'desc' })
+        .mockResolvedValueOnce(null);  // candidate 2 → no-match
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+
+      // Generic top-level message; the ASIN UNIQUE text lives only under .cause.
+      const nestedCauseError = new Error('SQLITE_CONSTRAINT: constraint failed');
+      (nestedCauseError as Error & { cause?: unknown }).cause = {
+        message: 'UNIQUE constraint failed: books.asin',
+      };
+      const recoveryChain = mockDbChain([{ id: 1 }]);
+      db.update
+        .mockReturnValueOnce(mockDbChain([], { error: nestedCauseError }))  // scalar write throws nested-cause unique error
+        .mockReturnValueOnce(recoveryChain)                                 // recovery → mark failed
+        .mockReturnValueOnce(mockDbChain([{ id: 2 }]));                     // candidate 2 no-match write
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Nested-cause violation was recognized → guarded recovery marked failed.
+      const recoverySet = recoveryChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(recoverySet).toHaveProperty('enrichmentStatus', 'failed');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, resolvedAsin: 'B_OWNED', error: expect.any(Object) }),
+        'Resolved ASIN hit a unique-constraint race — marking failed',
+      );
+      // Batch continued rather than aborting on the nested-cause error.
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+    });
+
+    it('unique-constraint recovery stale-drop: drops the failed-mark when Fix Match swapped the identity after the throw', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: 'B_OLD', title: 'Race', author: 'Author' },
+          { id: 2, asin: 'B_TWO', title: 'Next', author: 'Author' },
+        ]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Race', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing (candidate 1)
+
+      metadataService.resolveBook
+        .mockResolvedValueOnce({ asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }], description: 'desc' })
+        .mockResolvedValueOnce(null);  // candidate 2 → no-match
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+
+      const recoveryChain = mockDbChain([]);  // guarded recovery matches 0 rows → identity swapped
+      db.update
+        .mockReturnValueOnce(mockDbChain([], { error: new Error('UNIQUE constraint failed: idx_books_asin_unique') }))  // scalar write throws
+        .mockReturnValueOnce(recoveryChain)                                                                              // recovery → 0 rows
+        .mockReturnValueOnce(mockDbChain([{ id: 2 }]));                                                                  // candidate 2 no-match write
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // The guarded recovery write is scoped to the captured ASIN, not id-only.
+      const recoveryWhere = recoveryChain.where.mock.calls[0]![0];
+      expect(whereSql(recoveryWhere)).toContain('"id"');
+      expect(whereSql(recoveryWhere)).toContain('"asin"');
+      expect(whereParams(recoveryWhere)).toEqual([1, 'B_OLD']);
+      expect(recoveryChain.returning.mock.calls[0]![0]).toHaveProperty('id');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
+        'stale enrichment dropped (unique recovery)',
+      );
+      // Loop continued without marking the new identity failed.
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+    });
+
+    it('negative guard: a non-unique-constraint UPDATE error is rethrown, not swallowed', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD', title: 'Race', author: 'Author' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Race', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
+
+      metadataService.resolveBook.mockResolvedValueOnce({ title: 'Race', authors: [{ name: 'Author' }], description: 'desc' });
+      db.update.mockReturnValue(mockDbChain([], { error: new Error('SQLITE_BUSY: database is locked') }));
+
+      await expect(
+        runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log)),
+      ).rejects.toThrow('SQLITE_BUSY');
+    });
+  });
+
+  // ── #1622 Audiobook resolution fallback (resolveBook + ASIN writeback) ──
+  describe('audiobook resolution fallback (#1622)', () => {
+    it('writes back the resolved audiobook ASIN when the search recovers a different ASIN', async () => {
+      // A previously-failed book with a bad (print/Kindle) ASIN; the resolver
+      // searches and returns the real audiobook ASIN, which must be persisted so
+      // the next cycle stops retrying the dead ASIN.
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: '1338589016', title: 'Catching Fire', isbn: null, author: 'Suzanne Collins' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'Catching Fire', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B009SP2WO5', title: 'Catching Fire', authors: [{ name: 'Suzanne Collins' }], duration: 700,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(bookService.findAsinCollision).toHaveBeenCalledWith(1, 'B009SP2WO5');
+      // The scalar UPDATE set includes the new audiobook ASIN
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('asin', 'B009SP2WO5');
+      expect(log.info).toHaveBeenCalledWith({ bookId: 1, asin: 'B009SP2WO5' }, 'Book enriched successfully');
+    });
+
+    it('does NOT write the ASIN and marks the row failed when the resolved ASIN collides with another book', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_BAD', title: 'Dupe', isbn: null, author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B_OWNED', title: 'Dupe', authors: [{ name: 'Author' }], duration: 700,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce({ conflictBookId: 99, conflictTitle: 'Other' });
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Only the failed-status update should fire; no audiobook ASIN written.
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('enrichmentStatus', 'failed');
+      expect(setArg).not.toHaveProperty('asin');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, resolvedAsin: 'B_OWNED', conflictBookId: 99 }),
+        'Resolved ASIN collides with an existing book — marking failed',
+      );
+    });
+
+    it('null-ASIN row: persists the resolved ASIN + fields via the null-safe predicate (F6)', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'NYT Book', isbn: '9780000000', author: 'Author' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'NYT Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B_FOUND', title: 'NYT Book', authors: [{ name: 'Author' }], duration: 800,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // The captured ASIN was null → the scalar update must still match the row
+      // (isNull predicate) and persist the resolved ASIN + duration.
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('asin', 'B_FOUND');
+      expect(setArg).toHaveProperty('duration', 800);
+      expect(log.debug).not.toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        'stale enrichment dropped (scalar update)',
+      );
+    });
+
+    it('breaks the batch when resolveBook throws RateLimitError (incl. fallback-search rate limits)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: null, title: 'A', isbn: null, author: null },
+          { id: 2, asin: null, title: 'B', isbn: null, author: null },
+        ]));  // candidates
+
+      metadataService.resolveBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audible.com'));
+      db.update.mockReturnValue(mockDbChain());
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // First throws → break; second never attempted; rate-limited row NOT marked failed.
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(1);
+      expect(db.update).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'Audible.com', retryAfterMs: 30000 }),
+        'Rate limited during enrichment — remaining candidates stay pending',
+      );
+    });
+
+    it('#1628: a transient resolveBook error leaves the candidate unchanged (NOT failed) and continues the batch', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: null, title: 'A', isbn: null, author: null },
+          { id: 2, asin: null, title: 'B', isbn: null, author: null },
+        ]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'B', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing fields for book 2
+
+      // First candidate throws a transient provider failure; second succeeds.
+      metadataService.resolveBook
+        .mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'))
+        .mockResolvedValueOnce({ title: 'B', authors: [{ name: 'Found' }], duration: 100 });
+      const updateChain = mockDbChain([{ id: 2 }]);
+      db.update.mockReturnValue(updateChain);
+
+      // The batch must NOT throw — a transient is not a fatal error.
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Both candidates attempted (continue, not break); the transient row was
+      // never marked failed (no update set enrichmentStatus 'failed').
+      expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
+      const failedSets = updateChain.set.mock.calls.filter(
+        (c: unknown[]) => (c[0] as Record<string, unknown>).enrichmentStatus === 'failed',
+      );
+      expect(failedSets).toHaveLength(0);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        'Transient provider error during enrichment — leaving candidate for next cycle',
+      );
+    });
+
+    it('#1628: a generic resolveBook error is also transient — candidate not failed, batch does not throw', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null, title: 'A', isbn: null, author: null }]));  // candidates
+
+      metadataService.resolveBook.mockRejectedValueOnce(new Error('Network error'));
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // No 'failed' write for the transiently-erroring row.
+      const failedSets = updateChain.set.mock.calls.filter(
+        (c: unknown[]) => (c[0] as Record<string, unknown>).enrichmentStatus === 'failed',
+      );
+      expect(failedSets).toHaveLength(0);
+    });
+  });
+
+  // ── #1630 Enrichment robustness: re-queue skipped, cap retries ──
+  describe('retry cap + skipped re-queue (#1630)', () => {
+    it('candidate query re-queues skipped rows and caps maxed-out failed rows', async () => {
+      // Capture the candidate-query `.where()` predicate and serialize it so a
+      // regression that drops the cap or the skipped branch fails the assertion.
+      const candChain = mockDbChain([]);
+      db.select.mockReturnValueOnce(candChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const candWhere = candChain.where.mock.calls[0]![0];
+      const sql = whereSql(candWhere);
+      const params = whereParams(candWhere);
+      // Pre-existing 'skipped' rows flow through the search rescue once.
+      expect(params).toContain('skipped');
+      // The failed branch is capped on the persisted attempt counter.
+      expect(sql).toContain('"enrichment_attempts"');
+      expect(sql).toContain('"enrichment_attempts" < ?');
+      // The cap constant (5) is bound — distinct from the retry-threshold timestamp.
+      expect(params).toContain(5);
+      // Existing pending + failed branches survive.
+      expect(params).toContain('pending');
+      expect(params).toContain('failed');
+    });
+
+    it('no-match increments enrichment_attempts alongside the failed status, keeping the captured-ASIN guard', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_CAP', title: 'Unresolvable', author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce(null);
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('enrichmentStatus', 'failed');
+      // The attempt counter is incremented via a `col + 1` SQL expression.
+      expect(setArg.enrichmentAttempts).toBeDefined();
+      expect(whereSql(setArg.enrichmentAttempts)).toContain('"enrichment_attempts" + 1');
+      // The guarded write still carries the captured-ASIN guard (#1627).
+      const where = updateChain.where.mock.calls[0]![0];
+      expect(whereSql(where)).toContain('"asin"');
+      expect(whereParams(where)).toEqual([1, 'B_CAP']);
+    });
+
+    it('collision-failed increments enrichment_attempts through the shared guarded helper', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD', title: 'Dupe', author: 'Author' }]));  // candidates
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B_OWNED', title: 'Dupe', authors: [{ name: 'Author' }], duration: 700,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce({ conflictBookId: 99, conflictTitle: 'Other' });
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('enrichmentStatus', 'failed');
+      expect(whereSql(setArg.enrichmentAttempts)).toContain('"enrichment_attempts" + 1');
     });
   });
 

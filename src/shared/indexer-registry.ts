@@ -1,5 +1,6 @@
 import type { CreateIndexerFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
+import { extractHostname } from './registry-utils.js';
 
 export const INDEXER_TYPES = ['newznab', 'torznab', 'myanonamouse', 'abb'] as const;
 
@@ -62,7 +63,7 @@ export const INDEXER_REGISTRY = {
       { path: 'apiUrl', message: 'API URL is required' },
       { path: 'apiKey', message: 'API key is required' },
     ],
-    viewSubtitle: (s) => (s.apiUrl as string) || 'newznab',
+    viewSubtitle: (s) => extractHostname(s.apiUrl as string, 'newznab'),
   },
   torznab: {
     label: 'Torznab',
@@ -71,7 +72,7 @@ export const INDEXER_REGISTRY = {
         { path: 'apiUrl', message: 'API URL is required' },
         { path: 'apiKey', message: 'API key is required' },
     ],
-    viewSubtitle: (s) => (s.apiUrl as string) || 'torznab',
+    viewSubtitle: (s) => extractHostname(s.apiUrl as string, 'torznab'),
   },
   myanonamouse: {
     label: 'MyAnonamouse',

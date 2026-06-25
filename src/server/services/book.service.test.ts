@@ -17,13 +17,19 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rm: vi.fn(),
     rmdir: vi.fn(),
     readdir: vi.fn(),
+    // Default to the real stat so non-delete code paths are unaffected; the deleteBookFiles
+    // suite overrides this per-test to drive the managed-file helper (#1589).
+    stat: vi.fn((...args: unknown[]) => (actual.stat as (...a: unknown[]) => unknown)(...args)),
+    // #1598: deleteManagedBookFiles classifies the top-level bookPath via `lstat` (not `stat`) so a
+    // symlinked source is never followed. Default to real lstat; the deleteBookFiles suite overrides it.
+    lstat: vi.fn((...args: unknown[]) => (actual.lstat as (...a: unknown[]) => unknown)(...args)),
     writeFile: vi.fn(),
     rename: vi.fn(),
     unlink: vi.fn(),
   };
 });
 
-import { rm, rmdir, readdir, writeFile, rename, unlink } from 'node:fs/promises';
+import { rm, rmdir, readdir, stat, lstat, writeFile, rename, unlink } from 'node:fs/promises';
 import type { Mock } from 'vitest';
 
 const mockAuthor = createMockDbAuthor();
@@ -302,6 +308,67 @@ describe('BookService', () => {
     });
   });
 
+  describe('findLibraryStatusByAsins', () => {
+    it('returns a Map keyed by UPPERCASED asin with { bookId: publicId, status } values', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_abc123', status: 'imported', asin: 'B00ASIN' },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+
+      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_abc123', status: 'imported' });
+      // bookId is the bk_ publicId, NOT the internal numeric id.
+      expect(map.get('B00ASIN')!.bookId).toMatch(/^bk_/);
+    });
+
+    // Map-SHAPE only: proves the returned map is keyed by the UPPERCASED asin even
+    // when the row's stored asin is lowercase (the `.toUpperCase()` in the method).
+    // It does NOT prove the SQL predicate is case-insensitive — a mock returns its
+    // preloaded row regardless of the WHERE clause. The case-insensitive `lower(asin)`
+    // PREDICATE is proven behaviorally in the DB-backed
+    // `book.service.find-library-status.integration.test.ts` (#1537 PR-review F1).
+    it('keys the map by the UPPERCASED asin even when the stored row is lowercase', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_drift', status: 'imported', asin: 'b00asin' },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+
+      expect(map.has('B00ASIN')).toBe(true);
+      expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_drift', status: 'imported' });
+    });
+
+    it('returns an empty map WITHOUT issuing a query for an empty input array (no IN ())', async () => {
+      const map = await service.findLibraryStatusByAsins([]);
+
+      expect(map.size).toBe(0);
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('skips a null-asin row (partial index excludes null-asin owned books)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_null', status: 'wanted', asin: null },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00ASIN']);
+
+      expect(map.size).toBe(0);
+    });
+
+    it('resolves multiple asins in a single batch lookup (one query, not N)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 'bk_a', status: 'imported', asin: 'B00AAA' },
+        { bookId: 'bk_b', status: 'downloading', asin: 'B00BBB' },
+      ]));
+
+      const map = await service.findLibraryStatusByAsins(['B00AAA', 'B00BBB']);
+
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(map.get('B00AAA')).toEqual({ bookId: 'bk_a', status: 'imported' });
+      expect(map.get('B00BBB')).toEqual({ bookId: 'bk_b', status: 'downloading' });
+    });
+  });
+
   describe('create() junction table CRUD', () => {
     it('inserts bookAuthors junction rows with correct positions for multiple authors', async () => {
       const author2 = { id: 2, name: 'Second Author', slug: 'second-author', asin: null, createdAt: new Date(), updatedAt: new Date() };
@@ -513,6 +580,61 @@ describe('BookService', () => {
     });
   });
 
+  describe('update() scalar + JSON field persistence (#1609)', () => {
+    it('passes publishedDate, genres, description, and coverUrl through to .set()', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, {
+        description: 'A revised description.',
+        coverUrl: 'https://example.com/new.jpg',
+        publishedDate: '2015-03-14',
+        genres: ['Science Fiction', 'Horror'],
+      });
+
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({
+        description: 'A revised description.',
+        coverUrl: 'https://example.com/new.jpg',
+        publishedDate: '2015-03-14',
+        genres: ['Science Fiction', 'Horror'],
+      }));
+    });
+
+    it('passes null clears through to .set() for description/coverUrl/publishedDate/genres', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, {
+        description: null,
+        coverUrl: null,
+        publishedDate: null,
+        genres: null,
+      });
+
+      expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({
+        description: null,
+        coverUrl: null,
+        publishedDate: null,
+        genres: null,
+      }));
+    });
+
+    it('does not include an omitted field in the .set() payload', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, { publishedDate: '2015-03-14' });
+
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).not.toHaveProperty('description');
+      expect(setArg).not.toHaveProperty('genres');
+      expect(setArg.publishedDate).toBe('2015-03-14');
+    });
+  });
+
   describe('create', () => {
     it('creates book without authors', async () => {
       db.select.mockReturnValue(
@@ -541,6 +663,50 @@ describe('BookService', () => {
 
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ importListId: 7 }),
+      );
+    });
+
+    it('passes enrichmentStatus to the insert payload when supplied (#1622)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Unresolvable Book', authors: [], enrichmentStatus: 'failed' });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ enrichmentStatus: 'failed' }),
+      );
+    });
+
+    it('leaves enrichmentStatus undefined (DB default applies) when not supplied (#1622)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Default Book', authors: [] });
+
+      const valuesArg = insertChain.values.mock.calls[0][0] as Record<string, unknown>;
+      expect(valuesArg.enrichmentStatus).toBeUndefined();
+    });
+
+    it('writes a bk_-prefixed publicId to the books insert payload (#1443)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Opaque Id Book', authors: [] });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ publicId: expect.stringMatching(/^bk_/) }),
       );
     });
 
@@ -586,6 +752,41 @@ describe('BookService', () => {
       });
 
       expect(result.title).toBe('The Way of Kings');
+    });
+
+    it('persists subtitle and publisher to the books insert (#1614)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        title: 'Subtitled Book',
+        authors: [],
+        subtitle: 'A Grand Subtitle',
+        publisher: 'Macmillan Audio',
+      });
+
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ subtitle: 'A Grand Subtitle', publisher: 'Macmillan Audio' }),
+      );
+    });
+
+    it('stores undefined subtitle/publisher (no value → column left null) (#1614)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({ title: 'Bare Book', authors: [] });
+
+      const valuesArg = insertChain.values.mock.calls[0][0] as Record<string, unknown>;
+      expect(valuesArg.subtitle).toBeUndefined();
+      expect(valuesArg.publisher).toBeUndefined();
     });
   });
 
@@ -743,69 +944,94 @@ describe('BookService', () => {
   });
 
   describe('deleteBookFiles', () => {
+    // #1589: deleteBookFiles now deletes only MANAGED files (audio + cover sidecar) via the shared
+    // helper, preserves foreign files, returns a {deletedManaged, preservedForeign, failedManaged}
+    // summary, and still runs cleanEmptyParents. readdir is driven by `withFileTypes`: the helper
+    // sweep reads dirents; cleanEmptyParents reads a plain name list.
+    const dirent = (name: string, isDir = false) =>
+      ({ name, isFile: () => !isDir, isDirectory: () => isDir });
+    const baseName = (p: string) => p.split(/[\\/]/).pop();
+
     beforeEach(() => {
       vi.mocked(rm).mockReset();
+      vi.mocked(rmdir).mockReset();
       vi.mocked(readdir).mockReset();
+      vi.mocked(stat).mockReset();
+      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true, isFile: () => false } as never);
+      // #1598: the helper now classifies the top-level bookPath via `lstat`. A non-symlink directory
+      // keeps these tests on the directory-sweep path (the symlink branch is covered in delete-managed-files.test.ts).
+      vi.mocked(lstat).mockReset();
+      vi.mocked(lstat).mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false } as never);
+      vi.mocked(rm).mockResolvedValue(undefined);
+      vi.mocked(rmdir).mockResolvedValue(undefined);
     });
 
-    it('deletes book directory recursively', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValue(['other-file.txt']);
+    it('deletes managed files, preserves foreign files, and returns the summary', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes
+          ? [dirent('ch1.mp3'), dirent('cover.jpg'), dirent('book.epub'), dirent('notes.pdf')]
+          : ['book.epub', 'notes.pdf']) as never);
+
+      const result = await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      expect(result.deletedManaged.map(baseName).sort()).toEqual(['ch1.mp3', 'cover.jpg']);
+      expect(result.preservedForeign.map(baseName).sort()).toEqual(['book.epub', 'notes.pdf']);
+      expect(result.failedManaged).toEqual([]);
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
+      expect(rm).not.toHaveBeenCalledWith(expect.stringContaining('book.epub'), expect.anything());
+    });
+
+    it('cleans up empty parent directories up to library root when only managed files existed', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('ch1.mp3')] : []) as never);
 
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
-      expect(rm).toHaveBeenCalledWith('/audiobooks/Author/Book', { recursive: true, force: true });
-    });
-
-    it('cleans up empty parent directories up to library root', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (rmdir as Mock).mockResolvedValue(undefined);
-      (readdir as Mock)
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([]);
-
-      await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
-
-      expect(rm).toHaveBeenCalledTimes(1);
-      expect(rmdir).toHaveBeenCalledTimes(1);
+      // Helper rmdirs the emptied book folder; cleanEmptyParents rmdirs the now-empty Author folder.
+      expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Book'));
       expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Author'));
     });
 
-    it('stops cleaning parents at non-empty directory', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValueOnce(['other-book']);
+    it('stops cleaning parents at a non-empty directory', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('ch1.mp3')] : ['other-book']) as never);
 
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
-      expect(rm).toHaveBeenCalledTimes(1);
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
+      // The non-empty Author parent is never removed (the emptied Book folder itself may be).
+      expect(rmdir).not.toHaveBeenCalledWith('/audiobooks/Author');
     });
 
     it('never deletes the library root', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValue([]);
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('a.mp3')] : []) as never);
 
       await service.deleteBookFiles('/audiobooks/Book', '/audiobooks');
 
-      expect(rm).toHaveBeenCalledTimes(1);
-      expect(rm).toHaveBeenCalledWith('/audiobooks/Book', { recursive: true, force: true });
+      expect(rmdir).not.toHaveBeenCalledWith('/audiobooks');
     });
 
-    it('throws when rm fails', async () => {
-      (rm as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
+    it('records a failed managed deletion in failedManaged without throwing', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('a.mp3')] : []) as never);
+      vi.mocked(rm).mockRejectedValue(new Error('EACCES: permission denied'));
 
-      await expect(
-        service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks'),
-      ).rejects.toThrow('EACCES: permission denied');
+      const result = await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      expect(result.failedManaged.map(baseName)).toEqual(['a.mp3']);
+      expect(result.deletedManaged).toEqual([]);
     });
 
-    it('happy path: in-library path triggers rm and parent cleanup (regression)', async () => {
-      (rm as Mock).mockResolvedValue(undefined);
-      (readdir as Mock).mockResolvedValue(['other-file.txt']);
+    it('happy path: in-library path returns a summary and runs parent cleanup (regression)', async () => {
+      vi.mocked(readdir).mockImplementation(async (_p: unknown, opts?: unknown) =>
+        ((opts as { withFileTypes?: boolean })?.withFileTypes ? [dirent('ch1.mp3'), dirent('keep.txt')] : ['keep.txt']) as never);
 
-      await service.deleteBookFiles('/library/Author/Title', '/library');
+      const result = await service.deleteBookFiles('/library/Author/Title', '/library');
 
-      expect(rm).toHaveBeenCalledTimes(1);
-      expect(rm).toHaveBeenCalledWith('/library/Author/Title', { recursive: true, force: true });
+      expect(result.deletedManaged.map(baseName)).toEqual(['ch1.mp3']);
+      expect(result.preservedForeign.map(baseName)).toEqual(['keep.txt']);
+      expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
       expect(readdir).toHaveBeenCalled();
     });
 
@@ -1443,6 +1669,19 @@ describe('BookService — transaction atomicity (#214)', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect(insertChain.onConflictDoUpdate).toHaveBeenCalled();
+    });
+
+    it('does NOT track genres the normalizer already handles', async () => {
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      setupGetById(db);
+
+      // 'Sci-Fi' is a synonym-map key — normalization maps it to
+      // 'Science Fiction', so nothing should reach the unmatched table.
+      await service.update(1, { genres: ['Sci-Fi'] });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('does NOT call trackUnmatchedGenres when genres are absent from update payload', async () => {

@@ -5,7 +5,10 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { ImportListsSettings } from './ImportListsSettings';
 import type { Mock } from 'vitest';
 
-vi.mock('@/lib/api', () => ({
+vi.mock('@/lib/api', async (importOriginal) => ({
+  // Preserve the real ApiError export — useCrudSettings references it at runtime
+  // (#1404) when surfacing server error messages on mutation rejection.
+  ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     getImportLists: vi.fn(),
     createImportList: vi.fn(),
@@ -14,7 +17,6 @@ vi.mock('@/lib/api', () => ({
     testImportListConfig: vi.fn(),
     testImportList: vi.fn(),
     previewImportList: vi.fn(),
-    fetchAbsLibraries: vi.fn(),
   },
 }));
 
@@ -27,11 +29,11 @@ import { toast } from 'sonner';
 
 const mockList = {
   id: 1,
-  name: 'My ABS List',
-  type: 'abs' as const,
+  name: 'My NYT List',
+  type: 'nyt' as const,
   enabled: true,
   syncIntervalMinutes: 1440,
-  settings: { serverUrl: 'http://abs.local', apiKey: '***', libraryId: 'lib-1' },
+  settings: { apiKey: '***', list: 'audio-fiction' },
   lastRunAt: null,
   nextRunAt: null,
   lastSyncError: null,
@@ -57,13 +59,13 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
-    expect(screen.getByText(/Audiobookshelf/)).toBeInTheDocument();
+    expect(screen.getByText(/NYT Bestsellers/)).toBeInTheDocument();
     expect(screen.getByText(/every 1440m/)).toBeInTheDocument();
   });
 
-  it('shows ABS-specific fields by default when adding', async () => {
+  it('shows NYT fields by default when adding', async () => {
     (api.getImportLists as Mock).mockResolvedValue([]);
     const user = userEvent.setup();
     renderWithProviders(<ImportListsSettings />);
@@ -74,33 +76,31 @@ describe('ImportListsSettings', () => {
 
     await user.click(screen.getByText('Add Import List').closest('button')!);
 
-    // ABS fields: Server URL, API Key, Library
-    expect(screen.getByLabelText('Server URL')).toBeInTheDocument();
-    expect(screen.getByLabelText('API Key')).toBeInTheDocument();
-    expect(screen.getByLabelText('Library')).toBeInTheDocument();
-  });
-
-  it('switches to NYT fields when type changes', async () => {
-    (api.getImportLists as Mock).mockResolvedValue([]);
-    const user = userEvent.setup();
-    renderWithProviders(<ImportListsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('No import lists configured')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Add Import List').closest('button')!);
-
-    // Switch to NYT
-    const typeSelect = screen.getByLabelText('Provider Type');
-    await user.selectOptions(typeSelect, 'nyt');
-
-    // NYT fields: API Key + Bestseller List dropdown
+    // NYT fields (nyt is the default provider): API Key + Bestseller List
     expect(screen.getByLabelText('API Key')).toBeInTheDocument();
     expect(screen.getByLabelText('Bestseller List')).toBeInTheDocument();
-    // ABS-specific fields gone
-    expect(screen.queryByLabelText('Server URL')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Library')).not.toBeInTheDocument();
+  });
+
+  it('switches to Hardcover fields when type changes', async () => {
+    (api.getImportLists as Mock).mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderWithProviders(<ImportListsSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Add Import List').closest('button')!);
+
+    // Switch to Hardcover
+    const typeSelect = screen.getByLabelText('Provider Type');
+    await user.selectOptions(typeSelect, 'hardcover');
+
+    // Hardcover fields: API Key + List Type dropdown
+    expect(screen.getByLabelText('API Key')).toBeInTheDocument();
+    expect(screen.getByLabelText('List Type')).toBeInTheDocument();
+    // NYT-specific field gone
+    expect(screen.queryByLabelText('Bestseller List')).not.toBeInTheDocument();
   });
 
   it('shows Hardcover shelf ID field when listType is shelf', async () => {
@@ -129,10 +129,10 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
-    const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
+    const listCard = screen.getByText('My NYT List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
     await user.click(buttons[0]!);
 
@@ -143,11 +143,11 @@ describe('ImportListsSettings', () => {
 
   it('creates a new import list via the add form', async () => {
     const user = userEvent.setup();
-    (api.createImportList as Mock).mockResolvedValue({ id: 2, name: 'New List', type: 'abs' });
+    (api.createImportList as Mock).mockResolvedValue({ id: 2, name: 'New List', type: 'nyt' });
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
     await user.click(screen.getByText('Add Import List').closest('button')!);
@@ -174,7 +174,7 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
     await user.click(screen.getByText('Add Import List').closest('button')!);
@@ -195,13 +195,13 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
     await user.click(screen.getByText('Edit'));
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('My ABS List')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('My NYT List')).toBeInTheDocument();
     });
   });
 
@@ -211,10 +211,10 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
-    const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
+    const listCard = screen.getByText('My NYT List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
     const trashButton = buttons[buttons.length - 1];
     await user.click(trashButton!);
@@ -242,10 +242,10 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
-    const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
+    const listCard = screen.getByText('My NYT List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
     await user.click(buttons[0]!);
 
@@ -260,10 +260,10 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
-    const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
+    const listCard = screen.getByText('My NYT List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
     await user.click(buttons[buttons.length - 1]!);
 
@@ -282,10 +282,10 @@ describe('ImportListsSettings', () => {
     renderWithProviders(<ImportListsSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
     });
 
-    const listCard = screen.getByText('My ABS List').closest('.glass-card')!;
+    const listCard = screen.getByText('My NYT List').closest('.glass-card')!;
     const buttons = listCard.querySelectorAll('button');
     await user.click(buttons[buttons.length - 1]!);
 
@@ -421,58 +421,6 @@ describe('ImportListsSettings', () => {
     });
   });
 
-  describe('ABS library fetching', () => {
-    it('populates library dropdown after fetch', async () => {
-      (api.getImportLists as Mock).mockResolvedValue([]);
-      (api.fetchAbsLibraries as Mock).mockResolvedValue({
-        libraries: [
-          { id: 'lib-1', name: 'Audiobooks' },
-          { id: 'lib-2', name: 'Podcasts' },
-        ],
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<ImportListsSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByText('Add Import List').closest('button')!);
-
-      // Fill server URL and API key
-      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
-      await user.type(screen.getByLabelText('API Key'), 'test-key');
-
-      // Fetch libraries
-      await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
-
-      await waitFor(() => {
-        expect(screen.getByText('Audiobooks')).toBeInTheDocument();
-      });
-      expect(screen.getByText('Podcasts')).toBeInTheDocument();
-    });
-
-    it('shows error when fetch fails', async () => {
-      (api.getImportLists as Mock).mockResolvedValue([]);
-      (api.fetchAbsLibraries as Mock).mockRejectedValue(new Error('fail'));
-      const user = userEvent.setup();
-      renderWithProviders(<ImportListsSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByText('Add Import List').closest('button')!);
-      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
-      await user.type(screen.getByLabelText('API Key'), 'test-key');
-      await user.click(screen.getByRole('button', { name: 'Fetch Libraries' }));
-
-      await waitFor(() => {
-        expect(screen.getByText('Failed to fetch libraries')).toBeInTheDocument();
-      });
-    });
-  });
-
   describe('add form cancel button', () => {
     it('add form shows Cancel button in bottom row', async () => {
       (api.getImportLists as Mock).mockResolvedValue([]);
@@ -532,7 +480,7 @@ describe('ImportListsSettings', () => {
       renderWithProviders(<ImportListsSettings />);
 
       await waitFor(() => {
-        expect(screen.getByText('My ABS List')).toBeInTheDocument();
+        expect(screen.getByText('My NYT List')).toBeInTheDocument();
       });
 
       await user.click(screen.getByText('Add Import List').closest('button')!);
@@ -581,13 +529,13 @@ describe('ImportListsSettings', () => {
       renderWithProviders(<ImportListsSettings />);
 
       await waitFor(() => {
-        expect(screen.getByText('My ABS List')).toBeInTheDocument();
+        expect(screen.getByText('My NYT List')).toBeInTheDocument();
       });
 
       await user.click(screen.getByText('Edit'));
 
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('My ABS List')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('My NYT List')).toBeInTheDocument();
     });
 
     it('pressing Escape closes the modal when no mutation pending', async () => {
@@ -707,7 +655,6 @@ describe('ImportListsSettings', () => {
       await screen.findByText('No import lists configured');
       await user.click(screen.getByText('Add Import List').closest('button')!);
       await user.type(screen.getByLabelText('Name'), 'Test List');
-      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
       await user.type(screen.getByLabelText('API Key'), 'key');
 
       await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
@@ -784,40 +731,6 @@ describe('ImportListsSettings', () => {
       const listTypeSelect = screen.getByLabelText('List Type');
       expect(listTypeSelect).toHaveClass('appearance-none');
       expect(listTypeSelect.parentElement!.querySelector('svg')).toBeInTheDocument();
-    });
-
-    it('ABS library select uses shared SelectWithChevron contract after fetch', async () => {
-      (api.getImportLists as Mock).mockResolvedValue([]);
-      (api.fetchAbsLibraries as Mock).mockResolvedValue({
-        libraries: [
-          { id: 'lib1', name: 'Audiobooks' },
-          { id: 'lib2', name: 'Podcasts' },
-        ],
-      });
-      const user = userEvent.setup();
-      renderWithProviders(<ImportListsSettings />);
-
-      await screen.findByText('No import lists configured');
-      await user.click(screen.getByText('Add Import List').closest('button')!);
-
-      // Fill required fields to enable Fetch
-      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
-      await user.type(screen.getByLabelText('API Key'), 'test-key');
-      await user.click(screen.getByRole('button', { name: /fetch libraries/i }));
-
-      await waitFor(() => {
-        const librarySelect = screen.getByLabelText('Library');
-        expect(librarySelect.tagName).toBe('SELECT');
-      });
-
-      const librarySelect = screen.getByLabelText('Library') as HTMLSelectElement;
-      expect(librarySelect).toHaveClass('appearance-none');
-      expect(librarySelect.parentElement!.querySelector('svg')).toBeInTheDocument();
-      expect(librarySelect.querySelectorAll('option')).toHaveLength(3); // placeholder + 2 libs
-
-      // Verify selecting an option updates the value through the onChange handler
-      await user.selectOptions(librarySelect, 'lib1');
-      expect(librarySelect.value).toBe('lib1');
     });
 
     it('existing labels (il-name, il-type, il-syncInterval) remain accessible via getByLabelText', async () => {

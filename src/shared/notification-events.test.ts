@@ -120,6 +120,25 @@ describe('notification-events (leaf module)', () => {
       expect(result).toBe('Failure: Timeout');
     });
 
+    it('on_failure with book and error leads with the book, preserves message and stage', () => {
+      const result = formatEventMessage('on_failure', makePayload({
+        book: { title: 'Wool', author: 'Hugh Howey' },
+        error: { message: 'Duplicate filename found', stage: 'import' },
+      }));
+      expect(result).toContain('Wool');
+      expect(result).toContain('Hugh Howey');
+      expect(result).toContain('Duplicate filename found');
+      expect(result).toContain('(import)');
+      expect(result).toBe('Failure — Wool by Hugh Howey: Duplicate filename found (import)');
+    });
+
+    it('on_failure with book and no error uses the fallback with the book', () => {
+      const result = formatEventMessage('on_failure', makePayload({
+        book: { title: 'Wool' },
+      }));
+      expect(result).toBe('Failure occurred — Wool');
+    });
+
     it('on_health_issue with health payload includes check name and state transition', () => {
       const result = formatEventMessage('on_health_issue', makePayload({
         health: {

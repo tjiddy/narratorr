@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { generatePublicId } from '../utils/public-id.js';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -159,13 +160,17 @@ export async function seedBookAndDownload(
   // Set book to 'downloading' (realistic pre-import state after grab)
   await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
 
-  const [download] = await e2e.db.insert(downloads).values({
+  const [download] = await e2e.db.insert(downloads).values({ publicId: generatePublicId('dl'),
     bookId,
     downloadClientId,
     title,
     protocol: 'torrent' as const,
     externalId: opts.externalId ?? 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
-    status: 'completed' as const,
+    clientStatus: 'completed' as const,
+    pipelineStage: 'idle' as const,
+    // Pre-grab lifecycle snapshot — the book was 'wanted' when grabbed, so a failed
+    // import reverts it to 'wanted' (the authoritative revert reads this, not path).
+    bookStatusAtGrab: 'wanted' as const,
     completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
   }).returning();
 

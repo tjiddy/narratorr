@@ -4,7 +4,16 @@ import { BulkOpError } from '../services/bulk-operation.service.js';
 
 function makeBulkService(overrides?: Record<string, unknown>) {
   return {
-    countRenameEligible: vi.fn().mockResolvedValue({ mismatched: 3, alreadyMatching: 2 }),
+    previewRenameEligible: vi.fn().mockResolvedValue({
+      libraryRoot: '/library',
+      folderFormat: '{author}/{title}',
+      fileFormat: '',
+      items: [{ bookId: 2, title: 'Book2', from: 'Author/OldName', to: 'Author/Book2' }],
+      mismatchedTotal: 3,
+      folderMatching: 2,
+      importedTotal: 5,
+      jobTotal: 3,
+    }),
     countRetagEligible: vi.fn().mockResolvedValue({ total: 5 }),
     getActiveJob: vi.fn().mockReturnValue(null),
     startRenameJob: vi.fn().mockResolvedValue('job-uuid-1'),
@@ -15,28 +24,50 @@ function makeBulkService(overrides?: Record<string, unknown>) {
   };
 }
 
-describe('GET /api/books/bulk/rename/count', () => {
+// Wave (#1493) — GET /api/books/bulk/rename/count retired; the modal reads the richer preview.
+describe('GET /api/books/bulk/rename/count (removed)', () => {
+  it('returns 404', async () => {
+    const services = createMockServices({ bulkOperation: makeBulkService() });
+    const app = await createTestApp(services);
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/count' });
+    expect(resp.statusCode).toBe(404);
+  });
+});
+
+describe('GET /api/books/bulk/rename/preview', () => {
   beforeEach(() => {
     vi.resetAllMocks();
   });
 
-  it('returns 200 { mismatched, alreadyMatching }', async () => {
+  it('returns 200 with the capped mismatch list and totals', async () => {
     const services = createMockServices({ bulkOperation: makeBulkService() });
     const app = await createTestApp(services);
-    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/count' });
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/preview' });
     expect(resp.statusCode).toBe(200);
-    expect(resp.json()).toEqual({ mismatched: 3, alreadyMatching: 2 });
+    expect(resp.json()).toEqual({
+      libraryRoot: '/library',
+      folderFormat: '{author}/{title}',
+      fileFormat: '',
+      items: [{ bookId: 2, title: 'Book2', from: 'Author/OldName', to: 'Author/Book2' }],
+      mismatchedTotal: 3,
+      folderMatching: 2,
+      importedTotal: 5,
+      jobTotal: 3,
+    });
   });
 
-  it('returns { mismatched: 0, alreadyMatching: 0 } when library is empty', async () => {
+  it('returns an empty list and zero totals when nothing is mismatched', async () => {
     const bulkOperation = makeBulkService({
-      countRenameEligible: vi.fn().mockResolvedValue({ mismatched: 0, alreadyMatching: 0 }),
+      previewRenameEligible: vi.fn().mockResolvedValue({
+        libraryRoot: '/library', folderFormat: '{author}/{title}', fileFormat: '',
+        items: [], mismatchedTotal: 0, folderMatching: 12, importedTotal: 12, jobTotal: 0,
+      }),
     });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
-    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/count' });
+    const resp = await app.inject({ method: 'GET', url: '/api/books/bulk/rename/preview' });
     expect(resp.statusCode).toBe(200);
-    expect(resp.json()).toEqual({ mismatched: 0, alreadyMatching: 0 });
+    expect(resp.json()).toMatchObject({ items: [], mismatchedTotal: 0, folderMatching: 12, importedTotal: 12, jobTotal: 0 });
   });
 });
 

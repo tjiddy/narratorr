@@ -86,6 +86,8 @@ import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-warnings.js';
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
+import { registerV1OpenApi } from './routes/v1/openapi.js';
+import { gracefulShutdown } from './shutdown.js';
 
 async function main() {
   const app = Fastify(buildFastifyOptions()).withTypeProvider<ZodTypeProvider>();
@@ -164,6 +166,11 @@ async function main() {
   // URL_BASE prefix — routes, static files, and SPA fallback are scoped under urlBase
   const urlBasePrefix = config.urlBase === '/' ? '' : config.urlBase;
 
+  // OpenAPI/Swagger for the native /api/v1 surface (#1454). MUST register before
+  // the routes so the swagger `onRoute` hook captures the v1 routes registered
+  // below. The docs subtree is public (exempted in the auth plugin).
+  await registerV1OpenApi(app, urlBasePrefix);
+
   // Register API routes under URL_BASE scope
   await app.register(async (scoped) => {
     await registerRoutes(scoped, services, db);
@@ -178,13 +185,15 @@ async function main() {
   await services.importQueueWorker.start();
 
   // Start background jobs (includes download startup recovery which may re-enqueue downloads)
-  startJobs(db, services, app.log);
+  const jobScheduler = startJobs(db, services, app.log);
 
-  // Graceful shutdown — ensures port is released on tsx watch restarts
+  // Graceful shutdown — ensures port is released on tsx watch restarts. The
+  // ordered teardown (job scheduler stop → import worker → connector queue drain →
+  // app.close) lives in gracefulShutdown() so its contract is unit-tested without
+  // booting the server. The scheduler stop runs first so no cron/timeout callback
+  // can enqueue work into the queues being drained (#1515).
   const shutdown = async () => {
-    app.log.info('Shutting down server…');
-    await services.importQueueWorker.stop();
-    await app.close();
+    await gracefulShutdown(app, services, jobScheduler);
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

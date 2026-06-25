@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { protocolSchema } from './download-protocol.js';
 
 // ============================================================================
 // Search stream SSE event schemas (per-request, not broadcast)
@@ -38,7 +39,7 @@ export const searchResultSchema = z.object({
   rawTitle: z.string().optional(),
   author: z.string().optional(),
   narrator: z.string().optional(),
-  protocol: z.enum(['torrent', 'usenet']),
+  protocol: protocolSchema,
   downloadUrl: z.string().optional(),
   infoHash: z.string().optional(),
   size: z.number().optional(),

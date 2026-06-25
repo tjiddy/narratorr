@@ -28,7 +28,7 @@ export function UseProxyField({ register, watch }: { register: UseFormRegister<C
         </label>
       </div>
       {useProxy && !hasGlobalProxy && (
-        <p className="text-sm text-amber-500 mt-1">
+        <p className="text-sm text-destructive mt-1">
           No proxy URL configured in Settings &gt; General
         </p>
       )}

@@ -26,6 +26,7 @@ describe('findOrCreateAuthor', () => {
 
       expect(id).toBe(43);
       expect(insertChain.values).toHaveBeenCalledWith({
+        publicId: expect.stringMatching(/^au_/),
         name: 'Joe Abercrombie',
         slug: 'joe-abercrombie',
         asin: 'B001ASINFAKE',
@@ -112,6 +113,27 @@ describe('findOrCreateAuthor', () => {
       await expect(findOrCreateAuthor(inject<DbOrTx>(db), 'Ghost Author'))
         .rejects.toThrow('Failed to find or create author: Ghost Author');
     });
+
+    // #1443 — publicId must be generated PER insert attempt (not hoisted), so a
+    // retried create after a unique conflict carries a fresh, non-colliding id.
+    it('generates a fresh publicId on each insert attempt (not a hoisted constant)', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      const first = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValueOnce(first);
+      await findOrCreateAuthor(inject<DbOrTx>(db), 'Author One');
+
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      const second = mockDbChain([{ id: 2 }]);
+      db.insert.mockReturnValueOnce(second);
+      await findOrCreateAuthor(inject<DbOrTx>(db), 'Author Two');
+
+      const firstId = (first.values.mock.calls[0]![0] as { publicId: string }).publicId;
+      const secondId = (second.values.mock.calls[0]![0] as { publicId: string }).publicId;
+      expect(firstId).toMatch(/^au_/);
+      expect(secondId).toMatch(/^au_/);
+      expect(firstId).not.toBe(secondId);
+    });
   });
 
   describe('DbOrTx context', () => {
@@ -143,6 +165,7 @@ describe('findOrCreateNarrator', () => {
 
       expect(id).toBe(77);
       expect(insertChain.values).toHaveBeenCalledWith({
+        publicId: expect.stringMatching(/^nr_/),
         name: 'Tim Gerard Reynolds',
         slug: 'tim-gerard-reynolds',
       });

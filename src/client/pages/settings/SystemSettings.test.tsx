@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -25,6 +25,7 @@ vi.mock('@/lib/api', async () => {
       getBackupDownloadUrl: vi.fn((filename: string) => `/api/system/backups/${filename}/download`),
       uploadRestore: vi.fn(),
       restoreBackupDirect: vi.fn(),
+      deleteBackup: vi.fn(),
       confirmRestore: vi.fn(),
       getHealthStatus: vi.fn().mockResolvedValue([]),
       getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
@@ -48,6 +49,7 @@ const mockApi = api as unknown as {
   createBackup: ReturnType<typeof vi.fn>;
   uploadRestore: ReturnType<typeof vi.fn>;
   restoreBackupDirect: ReturnType<typeof vi.fn>;
+  deleteBackup: ReturnType<typeof vi.fn>;
   confirmRestore: ReturnType<typeof vi.fn>;
 };
 
@@ -55,7 +57,7 @@ describe('SystemSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
     }));
   });
 
@@ -416,6 +418,120 @@ describe('SystemSettings', () => {
     });
   });
 
+  describe('delete backup flow', () => {
+    const backupEntry = {
+      filename: 'narratorr-backup-20260101T000000000Z.zip',
+      timestamp: '2026-01-01T00:00:00Z',
+      size: 102400,
+    };
+
+    it('confirming delete calls deleteBackup with the raw filename, refreshes the list, and toasts success', async () => {
+      mockApi.getBackups.mockResolvedValue([backupEntry]);
+      mockApi.deleteBackup.mockResolvedValue({ success: true });
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Delete backup'));
+
+      // Confirmation modal appears
+      await waitFor(() => {
+        expect(screen.getByText(/delete backup/i)).toBeInTheDocument();
+      });
+
+      const modal = screen.getByRole('dialog');
+      const confirmButton = within(modal).getByRole('button', { name: /^delete$/i });
+      await user.click(confirmButton);
+
+      await waitFor(() => {
+        expect(mockApi.deleteBackup).toHaveBeenCalledWith(backupEntry.filename);
+      });
+
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('Backup deleted');
+      });
+
+      // Cache invalidation refetches the backup list
+      await waitFor(() => {
+        expect(mockApi.getBackups.mock.calls.length).toBeGreaterThanOrEqual(2);
+      });
+    });
+
+    it('cancel path makes no deleteBackup call', async () => {
+      mockApi.getBackups.mockResolvedValue([backupEntry]);
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Delete backup'));
+
+      await waitFor(() => {
+        expect(screen.getByText(/delete backup/i)).toBeInTheDocument();
+      });
+
+      const modal = screen.getByRole('dialog');
+      await user.click(within(modal).getByRole('button', { name: /cancel/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+      expect(mockApi.deleteBackup).not.toHaveBeenCalled();
+    });
+
+    it('delete failure shows an error toast and leaves the row intact', async () => {
+      mockApi.getBackups.mockResolvedValue([backupEntry]);
+      mockApi.deleteBackup.mockRejectedValue(new Error('Failed to delete backup'));
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Delete backup'));
+
+      const modal = await screen.findByRole('dialog');
+      await user.click(within(modal).getByRole('button', { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Failed to delete backup');
+      });
+
+      // Row remains
+      expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+    });
+
+    it('deleting the last backup renders the empty state after refetch', async () => {
+      mockApi.getBackups.mockResolvedValueOnce([backupEntry]);
+      mockApi.getBackups.mockResolvedValue([]);
+      mockApi.deleteBackup.mockResolvedValue({ success: true });
+
+      const user = userEvent.setup();
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Delete backup'));
+      const modal = await screen.findByRole('dialog');
+      await user.click(within(modal).getByRole('button', { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
+      });
+    });
+  });
+
   describe('page-level section wiring', () => {
     it('renders Health Checks, Backup & Restore, System Information, and Scheduled Tasks sections together', async () => {
       mockApi.getBackups.mockResolvedValue([]);
@@ -435,7 +551,7 @@ describe('SystemSettings', () => {
 describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('renders housekeeping retention and log level fields on System tab', async () => {
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
       general: { logLevel: 'info', housekeepingRetentionDays: 30, welcomeSeen: false },
     }));
     mockApi.getBackups.mockResolvedValue([]);
@@ -451,7 +567,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('submits general settings with correct payload when log level changed', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
       general: { logLevel: 'warn', housekeepingRetentionDays: 30, welcomeSeen: false },
     }));
     mockApi.getBackups.mockResolvedValue([]);
@@ -468,7 +584,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: { logLevel: 'debug', housekeepingRetentionDays: 30, seriesCacheRetentionDays: 30 },
+        general: { logLevel: 'debug', housekeepingRetentionDays: 30 },
       });
     });
   });
@@ -476,7 +592,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('shows error toast when general settings save fails', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
       general: { logLevel: 'warn', housekeepingRetentionDays: 30, welcomeSeen: false },
     }));
     mockApi.getBackups.mockResolvedValue([]);
@@ -501,7 +617,7 @@ describe('#324 — restore modal contract change', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.getSettings.mockResolvedValue(createMockSettings({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
     }));
     mockApi.getBackups.mockResolvedValue([]);
   });

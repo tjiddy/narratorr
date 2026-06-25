@@ -7,7 +7,6 @@ import { RenamePreviewModal } from './RenamePreviewModal';
 import { api, RenameConflictError, type RenamePreviewResult } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
     ...actual,
@@ -61,6 +60,15 @@ function renderModal(props: Partial<React.ComponentProps<typeof RenamePreviewMod
 describe('RenamePreviewModal', () => {
   beforeEach(() => {
     vi.mocked(api.getBookRenamePreview).mockReset();
+  });
+
+  it('renders the dialog at max-w-4xl, not max-w-2xl (F1)', async () => {
+    vi.mocked(api.getBookRenamePreview).mockResolvedValue(fullPlan);
+    renderModal();
+
+    await screen.findByText('a.m4b');
+    expect(document.querySelector('.max-w-4xl')).toBeInTheDocument();
+    expect(document.querySelector('.max-w-2xl')).not.toBeInTheDocument();
   });
 
   it('renders the header banner with libraryRoot, folderFormat, and fileFormat', async () => {

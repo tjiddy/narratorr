@@ -9,7 +9,6 @@ import { encrypt, isEncrypted } from './secret-codec.js';
 import { migrateSecretsToEncrypted } from './secret-migration.js';
 
 vi.mock('drizzle-orm', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('drizzle-orm')>();
   return {
     ...actual,
@@ -111,20 +110,6 @@ describe('Secret Migration', () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([
         createSettingsRow('network', { proxyUrl: 'http://user:pass@proxy:8080', timeout: 30 }),
-      ]));
-      db.insert.mockReturnValue(mockDbChain());
-
-      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
-
-      expect(db.insert).toHaveBeenCalled();
-    });
-
-    it('encrypts prowlarr config apiKey', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      db.select.mockReturnValueOnce(mockDbChain([
-        createSettingsRow('prowlarr', { url: 'http://prowlarr', apiKey: 'prowlarr-key' }),
       ]));
       db.insert.mockReturnValue(mockDbChain());
 
@@ -306,6 +291,69 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('#1307 encrypts plaintext pushoverUser and ntfyTopic on startup', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { pushoverToken: 'tok', pushoverUser: 'u-abc' } },
+        { id: 2, settings: { ntfyTopic: 't-xyz', ntfyServer: 'https://ntfy.sh' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // settings
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(2);
+      // mockReturnValue hands back one shared chain, so both .set() calls land on it.
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
+      const pushoverSettings = setCalls[0][0].settings;
+      expect(isEncrypted(pushoverSettings.pushoverToken)).toBe(true);
+      expect(isEncrypted(pushoverSettings.pushoverUser)).toBe(true);
+      const ntfySettings = setCalls[1][0].settings;
+      expect(isEncrypted(ntfySettings.ntfyTopic)).toBe(true);
+      // Non-secret sibling stays plaintext
+      expect(ntfySettings.ntfyServer).toBe('https://ntfy.sh');
+    });
+
+    it('#1307 idempotent — already-encrypted pushoverUser/ntfyTopic are not re-written', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { pushoverToken: encrypt('tok', TEST_KEY), pushoverUser: encrypt('u-abc', TEST_KEY) } },
+        { id: 2, settings: { ntfyTopic: encrypt('t-xyz', TEST_KEY), ntfyServer: 'https://ntfy.sh' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // settings
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('#1357 realistic upgrade row: pushoverToken already $ENC$, pushoverUser plaintext — only pushoverUser is rewritten, token ciphertext byte-identical', async () => {
+      // The universal post-#731 upgrade state: a row whose token was encrypted by
+      // the prior build but whose user key is still plaintext. Encrypting the
+      // sibling must NOT touch the already-encrypted token (idempotent skip via
+      // isEncrypted) — the token ciphertext must come back byte-for-byte identical.
+      const tokenCiphertext = encrypt('po-token', TEST_KEY);
+      db.select.mockReturnValueOnce(mockDbChain([])); // indexers
+      db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, settings: { pushoverToken: tokenCiphertext, pushoverUser: 'u-plaintext' } },
+      ]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // settings
+      db.update.mockReturnValue(mockDbChain());
+
+      await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
+
+      expect(db.update).toHaveBeenCalledTimes(1);
+      const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
+      const updatedSettings = setCalls[0][0].settings;
+      // The plaintext user key is now encrypted...
+      expect(isEncrypted(updatedSettings.pushoverUser)).toBe(true);
+      // ...and the pre-encrypted token is untouched, byte-identical to the seed.
+      expect(updatedSettings.pushoverToken).toBe(tokenCiphertext);
     });
 
     it('#811 encrypts plaintext apiUrl alone in indexer settings', async () => {

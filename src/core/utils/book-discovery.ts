@@ -1,8 +1,13 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join, extname, relative, basename } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { IMPORT_SIBLING_SUFFIXES } from './import-sibling-suffixes.js';
 import { classifyLeafFolder, hasStrongChapterSetEvidence } from './book-classifier.js';
 import { readAlbumTag } from './audio-scanner.js';
+import { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
+
+// Re-exported so existing importers (import-helpers.ts, tests) keep a single entry point.
+export { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
 
 /** Minimal logger interface — matches Pino/Fastify logger shape */
 export interface DiscoveryLogger {
@@ -103,6 +108,13 @@ async function scanDir(dirPath: string): Promise<DirInfo> {
 
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue;
+    // Exclude stranded import siblings (#1341): a `Title.import-bak` / `.import-tmp` /
+    // `.import-commit-pending` entry does NOT begin with a dot, so it slips past the
+    // leading-dot skip above and would otherwise be walked as a normal directory (or, for
+    // a marker file, ignored only because it lacks an audio extension). Drop any entry —
+    // directory or file — ending in a reserved suffix before recursion/candidate collection
+    // so a preserved-by-design backup never surfaces as a phantom importable book.
+    if (IMPORT_SIBLING_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue;
     const fullPath = join(dirPath, entry.name);
 
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
@@ -187,6 +199,10 @@ async function collectBooks(
     }
     return;
   }
+
+  // Sibling-stem coalescing: per-disc usenet folder sets share a common stem with the
+  // disc marker embedded in a longer release string (e.g. "… 1776 Disc 1 of 10 - yEnc …").
+  if (await coalesceEmbeddedDiscGroups(info, audioChildren, rootPath, results, log)) return;
 
   for (const child of audioChildren) {
     await collectBooks(child, rootPath, results, log);
@@ -305,6 +321,145 @@ async function mergeDiscChildren(
   results.push(makeFolderEntry(info, rootPath, mergedAudioFiles, { reviewReason }));
 }
 
+/** Folder name (final path segment) of a scanned directory — separator-agnostic. */
+function folderNameOf(info: DirInfo): string {
+  return info.path.split(/[\\/]/).pop() ?? '';
+}
+
+interface EmbeddedDiscGroup {
+  /** Raw common stem of the lowest-disc member, used to synthesize folderParts. */
+  stem: string;
+  /** Member disc folders, ordered by parsed disc number ascending. */
+  members: DirInfo[];
+  /**
+   * Agreed `of M` total parsed from the members' markers, when present. The consistency
+   * guard (`discGroupGuardsPass`) guarantees every member agrees on this value, so it is
+   * taken from the lowest-disc member's marker. Undefined when no member carried `of M`.
+   */
+  total?: number;
+}
+
+/**
+ * Group sibling audio folders that carry an embedded disc marker by their common stem.
+ *
+ * A group is collapsible only when ≥2 members share an identical normalized stem AND the
+ * shared `discGroupGuardsPass` consistency (`of M` totals agree) + all-or-nothing (every
+ * stem-sharing sibling carries a marker) guards hold. Bare-token names (empty stem) are
+ * excluded so the DISC_FOLDER_PATTERN path is untouched. Import-time reconstruction replays
+ * the same `discGroupGuardsPass` guards so both sides coalesce identical sets.
+ */
+function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
+  const siblingNames = audioChildren.map(folderNameOf);
+  const byStem = new Map<string, { info: DirInfo; marker: EmbeddedDiscMarker }[]>();
+  for (const child of audioChildren) {
+    const name = folderNameOf(child);
+    // Bare tokens (DISC_FOLDER_PATTERN) and parenthesized titled-disc folders are owned by
+    // the existing merge paths — the embedded path is strictly for markers in longer strings.
+    if (DISC_FOLDER_PATTERN.test(name) || parseTitledDiscFolder(name) !== null) continue;
+    const marker = parseEmbeddedDiscMarker(name);
+    if (!marker || !marker.stem) continue;
+    const key = normalizeStem(marker.stem);
+    const members = byStem.get(key) ?? [];
+    members.push({ info: child, marker });
+    byStem.set(key, members);
+  }
+
+  const groups: EmbeddedDiscGroup[] = [];
+  for (const [key, members] of byStem) {
+    if (members.length < 2) continue;
+    if (!discGroupGuardsPass(siblingNames, key)) continue;
+
+    const sorted = members.slice().sort((a, b) => a.marker.discNumber - b.marker.discNumber);
+    const group: EmbeddedDiscGroup = { stem: sorted[0]!.marker.stem, members: sorted.map(m => m.info) };
+    // The agreed total can live on ANY member — the consistency guard filters out members that
+    // omit `of M` before checking agreement, so a group like `Disc 1`, `Disc 2 of 10` coalesces
+    // with a known total even though the lowest-disc member carries none. Take the first explicit
+    // total (the guard guarantees all explicit totals agree).
+    const explicitTotal = sorted.find(m => m.marker.total !== undefined)?.marker.total;
+    if (explicitTotal !== undefined) group.total = explicitTotal;
+    groups.push(group);
+  }
+  return groups;
+}
+
+/**
+ * Synthesize folderParts from a coalesced group's cleaned common stem. Strips a leading
+ * 4-digit year token and a leading release-category run (Fiction / Non Fiction / Nonfiction)
+ * so the dash parser resolves the author rather than the yEnc release prefix.
+ *
+ * The leading-year strip fires ONLY when the year is immediately followed by the
+ * release-category run — the two strips are tied together so a real year-title stem
+ * (`2001 A Space Odyssey`) keeps its leading token instead of degrading to `A Space Odyssey`
+ * (#1280). yEnc prefixes are always `<year> <Fiction|Non Fiction> …`, so requiring the
+ * category lookahead preserves the strip for real release prefixes while protecting titles.
+ */
+function synthesizeStemParts(stem: string): string[] {
+  const cleaned = stem
+    .replace(/^(?:19|20)\d{2}\s+(?=(?:non[\s-]?fiction|fiction)\s+)/i, '')
+    .replace(/^(?:non[\s-]?fiction|fiction)\s+/i, '')
+    .trim();
+  return [cleaned || stem];
+}
+
+/**
+ * Coalesce every embedded-disc sibling group under `info`, then recurse into the remaining
+ * (non-grouped) children. Returns true when at least one group was found and handled.
+ */
+async function coalesceEmbeddedDiscGroups(
+  info: DirInfo,
+  audioChildren: DirInfo[],
+  rootPath: string,
+  results: DiscoveredFolder[],
+  log?: DiscoveryLogger,
+): Promise<boolean> {
+  const discGroups = findEmbeddedDiscGroups(audioChildren);
+  if (discGroups.length === 0) return false;
+
+  const grouped = new Set<DirInfo>();
+  for (const group of discGroups) {
+    await mergeEmbeddedDiscGroup(group, results, log);
+    for (const member of group.members) grouped.add(member);
+  }
+  for (const child of info.children) {
+    if (!grouped.has(child)) {
+      await collectBooks(child, rootPath, results, log);
+    }
+  }
+  return true;
+}
+
+/** Coalesce an embedded-disc group into a single discovery row (AC2 contract). */
+async function mergeEmbeddedDiscGroup(
+  group: EmbeddedDiscGroup,
+  results: DiscoveredFolder[],
+  log?: DiscoveryLogger,
+): Promise<void> {
+  const anchor = group.members[0]!; // lowest-disc member — stable path identity + reconstruction anchor
+  const mergedAudioFiles = group.members.flatMap(m => collectAllAudioFiles(m));
+
+  // detectBonusContent over a synthetic parent so the member discs read as descendants,
+  // mirroring the bare-token merge's review-reason flow.
+  const parentPath = anchor.path.split(/[\\/]/).slice(0, -1).join('/');
+  const synthetic: DirInfo = { path: parentPath, audioFiles: [], children: group.members };
+  const bonusReason = await detectBonusContent(synthetic, mergedAudioFiles);
+  const incompleteReason = incompleteDiscSetMessage(group.members.length, group.total);
+  const reviewReason = composeReviewReason(incompleteReason, bonusReason);
+
+  log?.debug(
+    { path: anchor.path, stem: group.stem, members: group.members.map(m => m.path), mergedAudioFiles: mergedAudioFiles.length },
+    'Embedded disc-marker group coalesced',
+  );
+
+  const entry: DiscoveredFolder = {
+    path: anchor.path,
+    folderParts: synthesizeStemParts(group.stem),
+    audioFileCount: mergedAudioFiles.length,
+    totalSize: mergedAudioFiles.reduce((sum, f) => sum + f.size, 0),
+  };
+  if (reviewReason) entry.reviewReason = reviewReason;
+  results.push(entry);
+}
+
 function countAudioFilesDeep(info: DirInfo): number {
   let count = info.audioFiles.length;
   for (const child of info.children) {
@@ -341,6 +496,29 @@ function makeFolderEntry(
 }
 
 const BONUS_REVIEW_REASON = 'Additional non-book content possibly merged';
+
+/**
+ * Incomplete-disc-set warning message for a coalesced group, or undefined when the set is
+ * complete / its expected total is unknown. A set is incomplete only when the agreed `of M`
+ * total is a known positive number AND the coalesced member count is strictly less than it —
+ * over-complete sets (count > M, e.g. duplicate discs) never produce an `N of M` string.
+ */
+function incompleteDiscSetMessage(memberCount: number, total: number | undefined): string | undefined {
+  if (total === undefined || !Number.isFinite(total) || total <= 0) return undefined;
+  if (memberCount >= total) return undefined;
+  return `Incomplete disc set: ${memberCount} of ${total} discs`;
+}
+
+/**
+ * Compose the two display-only review-reason signals for a coalesced disc group into the
+ * single `reviewReason` slot. When both are present, the incomplete-set message comes first,
+ * then the bonus message, joined by `"; "`; when only one is present, that single message;
+ * when neither, undefined (caller leaves `reviewReason` unset).
+ */
+export function composeReviewReason(incomplete?: string, bonus?: string): string | undefined {
+  const parts = [incomplete, bonus].filter((p): p is string => !!p);
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
 const BONUS_SUBDIR_RE = /excerpt|bonus|behind[\s_-]*the[\s_-]*scenes|sample|preview|extra/i;
 
 /**

@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { mkdir, rm, writeFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -11,6 +15,7 @@ import { ImportOrchestrator } from './import-orchestrator.js';
 import type { ImportService, ImportContext, ImportResult, ImportProgressCallbacks } from './import.service.js';
 import type { ImportPipelineDeps } from './import-orchestration.helpers.js';
 import { importFailedPayload } from '../../shared/schemas/sse-events.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 
 function createMockLogger(): FastifyBaseLogger {
   return {
@@ -33,18 +38,80 @@ function createMockDb() {
     values: vi.fn().mockReturnThis(),
     returning: vi.fn().mockResolvedValue([]),
   };
+  const db = {
+    select: vi.fn().mockReturnValue(chainMethods),
+    update: vi.fn().mockReturnValue({ ...chainMethods, where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
+    insert: vi.fn().mockReturnValue(chainMethods),
+    delete: vi.fn().mockReturnValue(chainMethods),
+    // Default transaction executes the callback and delegates `tx.update` to the live
+    // `db.update` (resolved at call time, so tests that reassign `db.update` to a
+    // payload-recording spy transparently capture the transactional writes). Rollback
+    // tests override `db.transaction` per-test with their own staging impl.
+    transaction: vi.fn((cb: (tx: { update: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
+      cb({ update: (...args: unknown[]) => db.update(...(args as [])) })),
+  };
   return {
-    db: {
-      select: vi.fn().mockReturnValue(chainMethods),
-      update: vi.fn().mockReturnValue({ ...chainMethods, where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
-      insert: vi.fn().mockReturnValue(chainMethods),
-      delete: vi.fn().mockReturnValue(chainMethods),
-      transaction: vi.fn(),
-    },
+    db,
     setMock,
     whereMock,
     limitMock,
   };
+}
+
+/**
+ * An `update().set().where(...)` terminus that is BOTH awaitable (unguarded
+ * writes — import_jobs writes and the CAS claim — `await ...where()` directly)
+ * AND exposes `.returning()` (the #1470 guarded book write: `transitionBookStatus`
+ * with `expected: { status: 'importing' }` compiles to `.where(...).returning(...)`).
+ * `rows` controls the guard outcome the source reads — non-empty = match, [] = miss.
+ * Default match (`[{ id: 1 }]`) preserves the prior "book settles to failed" behavior
+ * for the still-importing case every legacy test implicitly exercises.
+ */
+function updateWhereTerminus(rows: Array<{ id: number }> = [{ id: 1 }]) {
+  return {
+    then: (resolve: (v: { rowsAffected: number }) => void) => resolve({ rowsAffected: 1 }),
+    returning: vi.fn().mockResolvedValue(rows),
+  };
+}
+
+/**
+ * A transaction `update` mock that faithfully models `transitionBookStatus`'s
+ * #1470 expected-guard against a mutable book status. `import_jobs` writes
+ * (payload carries `phase`) always land. `books` writes (no `phase`) take the
+ * guarded path — `.where(...).returning(...)` — and only mutate `state.bookStatus`
+ * when it is still `'importing'`; otherwise `.returning()` resolves `[]` (guard
+ * miss) and the prior status survives, exactly as the production guard behaves.
+ * This lets a worker test prove "the failure write no longer clobbers an
+ * already-reverted book" end-state without a live DB.
+ */
+function makeGuardedTxUpdate(state: { bookStatus: BookStatus | null }) {
+  const jobWrites: Record<string, unknown>[] = [];
+  const bookWrites: Array<{ payload: Record<string, unknown>; returningCalled: boolean; guardMatched: boolean }> = [];
+  const update = vi.fn().mockImplementation(() => ({
+    set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+      if ('phase' in payload) {
+        jobWrites.push(payload);
+        return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+      }
+      const rec = { payload, returningCalled: false, guardMatched: false };
+      bookWrites.push(rec);
+      return {
+        where: vi.fn().mockImplementation(() => ({
+          returning: vi.fn().mockImplementation(async () => {
+            rec.returningCalled = true;
+            // Guard predicate: `expected: { status: 'importing' }`.
+            if (state.bookStatus === 'importing') {
+              rec.guardMatched = true;
+              state.bookStatus = payload.status as BookStatus;
+              return [{ id: 1 }];
+            }
+            return [];
+          }),
+        })),
+      };
+    }),
+  }));
+  return { update, jobWrites, bookWrites };
 }
 
 describe('ImportQueueWorker', () => {
@@ -92,7 +159,7 @@ describe('ImportQueueWorker', () => {
       const makeUpdate = (viaTx: boolean) => vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push({ payload, viaTx });
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -144,17 +211,18 @@ describe('ImportQueueWorker', () => {
         const tx = {
           update: vi.fn().mockImplementation(() => ({
             set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
-              where: vi.fn().mockImplementation(async () => {
+              where: vi.fn().mockImplementation(() => {
                 // First update() in each tx = import_jobs, second = books (matches source order)
                 const table: 'jobs' | 'books' = writeCount === 0 ? 'jobs' : 'books';
                 writeCount++;
                 if (table === 'books') {
-                  // Throw AFTER the jobs write has been staged. A real libSQL tx
-                  // would roll the jobs write back because this throw aborts the tx.
-                  throw new Error('books write failed');
+                  // Guarded book write (#1470): source does `.where(...).returning(...)`.
+                  // The tx-aborting throw surfaces at the returning() round-trip — AFTER
+                  // the jobs write was staged. A real libSQL tx rolls the jobs write back.
+                  return { returning: vi.fn().mockImplementation(async () => { throw new Error('books write failed'); }) };
                 }
                 staged.push({ table, payload });
-                return { rowsAffected: 1 };
+                return Promise.resolve({ rowsAffected: 1 });
               }),
             })),
           })),
@@ -220,15 +288,19 @@ describe('ImportQueueWorker', () => {
         const tx = {
           update: vi.fn().mockImplementation(() => ({
             set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
-              where: vi.fn().mockImplementation(async () => {
+              where: vi.fn().mockImplementation(() => {
                 const table: 'jobs' | 'books' = writeCount === 0 ? 'jobs' : 'books';
                 writeCount++;
-                // Orphan B (index 1): throw after the jobs write is staged
+                // Orphan B (index 1): abort on its first (jobs) write — nothing stages.
                 if (thisOrphanIdx === 1) {
                   throw new Error('orphan B blew up');
                 }
                 staged.push({ orphanIdx: thisOrphanIdx, table, payload });
-                return { rowsAffected: 1 };
+                // Guarded book write (#1470): source does `.where(...).returning(...)`.
+                if (table === 'books') {
+                  return { returning: vi.fn().mockResolvedValue([{ id: 1 }]) };
+                }
+                return Promise.resolve({ rowsAffected: 1 });
               }),
             })),
           })),
@@ -305,9 +377,11 @@ describe('ImportQueueWorker', () => {
         const tx = {
           update: vi.fn().mockImplementation(() => ({
             set: vi.fn().mockImplementation(() => ({
-              where: vi.fn().mockImplementation(async () => {
-                if (writeCount++ === 0) return { rowsAffected: 1 };
-                throw thrown;
+              where: vi.fn().mockImplementation(() => {
+                // jobs write (first) awaitable; guarded book write (#1470, second)
+                // throws at the `.where(...).returning(...)` round-trip.
+                if (writeCount++ === 0) return Promise.resolve({ rowsAffected: 1 });
+                return { returning: vi.fn().mockImplementation(async () => { throw thrown; }) };
               }),
             })),
           })),
@@ -524,7 +598,7 @@ describe('ImportQueueWorker', () => {
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn().mockImplementation(() => updateWhereTerminus()),
         }),
       }));
 
@@ -571,7 +645,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -657,7 +731,7 @@ describe('ImportQueueWorker', () => {
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn().mockImplementation(() => updateWhereTerminus()),
         }),
       }));
 
@@ -775,7 +849,7 @@ describe('ImportQueueWorker', () => {
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn().mockImplementation(() => updateWhereTerminus()),
         }),
       }));
 
@@ -902,7 +976,7 @@ describe('ImportQueueWorker', () => {
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          where: vi.fn().mockImplementation(() => updateWhereTerminus()),
         }),
       }));
 
@@ -1013,7 +1087,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1061,7 +1135,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1113,7 +1187,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1158,7 +1232,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1200,7 +1274,7 @@ describe('ImportQueueWorker', () => {
       });
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
 
       await workerWithBroadcaster.start();
@@ -1245,7 +1319,7 @@ describe('ImportQueueWorker', () => {
       });
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
 
       await workerWithBroadcaster.start();
@@ -1287,7 +1361,7 @@ describe('ImportQueueWorker', () => {
       });
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
 
       await workerWithBroadcaster.start();
@@ -1332,7 +1406,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1355,6 +1429,428 @@ describe('ImportQueueWorker', () => {
       // Should not throw with 3rd arg
       const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
       expect(w).toBeDefined();
+    });
+  });
+
+  // ===========================================================================
+  // #1448 (S2e) — Import-job failure-window atomicity (phase/status)
+  //
+  // markJobFailed wraps its import_jobs + books failed-state writes in a single
+  // transaction so an observer joining the two rows never sees the job
+  // status='failed' while the book is still importing. Mirrors bootRecovery.
+  // The SSE emit stays OUTSIDE the transaction (side effect, must not roll back
+  // the durable DB write on a broadcaster error).
+  // ===========================================================================
+
+  describe('#1448 failure-window atomicity', () => {
+    /**
+     * Drives a single pending manual job whose adapter throws, through the
+     * claim → process → failure path. selectCallCount walks: boot recovery
+     * (empty), candidate select, full-row fetch, then idle.
+     */
+    function setupFailingJob(jobRow: Record<string, unknown>) {
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process() { throw new Error('copy verification failed'); },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: jobRow.id }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([jobRow]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+    }
+
+    it('a normal job failure commits BOTH the import_jobs (status+phase) and books (status) writes via the tx handle', async () => {
+      // Locks the within-row invariant (status='failed' AND phase='failed' in one
+      // import_jobs write) AND the cross-row commit (books status='failed' too),
+      // both routed through the default callback-executing transaction handle.
+      setupFailingJob({ id: 8, bookId: 80, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      // The default createMockDb transaction delegates tx.update → live db.update,
+      // so reassigning db.update to a recorder captures the transactional writes.
+      const updateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updateSets.push(payload);
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
+        }),
+      }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      // The failure ran through a transaction (not two bare writes).
+      expect(mockDb.db.transaction).toHaveBeenCalled();
+
+      // import_jobs failed write carries BOTH status AND phase in one payload.
+      const failedJob = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
+      expect(failedJob).toBeDefined();
+      expect(failedJob!.lastError).toBeDefined();
+
+      // books failed write carries status only — no phase / lastError discriminator.
+      const failedBook = updateSets.find(s => s.status === 'failed' && !('phase' in s) && !('lastError' in s));
+      expect(failedBook).toBeDefined();
+    });
+
+    it('atomicity: when the books write throws inside the failure transaction, the import_jobs failed-state write is rolled back', async () => {
+      // Mirror of the bootRecovery rollback test: stage writes inside the tx
+      // callback; only commit them if the callback resolves cleanly. The second
+      // write (books) throws, so the staged import_jobs failed write is discarded.
+      setupFailingJob({ id: 9, bookId: 90, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      // Record bare (non-transactional) db.update payloads — the CAS claim
+      // (status:'processing') and any setPhase (phase-only) writes legitimately
+      // run outside a transaction and must NEVER carry status:'failed'.
+      const bareUpdateSets: Record<string, unknown>[] = [];
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
+          bareUpdateSets.push(payload);
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
+        }),
+      }));
+
+      const committed: Record<string, unknown>[] = [];
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const staged: Record<string, unknown>[] = [];
+        let writeCount = 0;
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
+              where: vi.fn().mockImplementation(() => {
+                // First write in the tx = import_jobs, second = books (source order).
+                const isBooks = writeCount > 0;
+                writeCount++;
+                // Guarded book write (#1470): source does `.where(...).returning(...)`.
+                // The tx-aborting throw surfaces at the returning() round-trip.
+                if (isBooks) return { returning: vi.fn().mockImplementation(async () => { throw new Error('books write failed'); }) };
+                staged.push(payload);
+                return Promise.resolve({ rowsAffected: 1 });
+              }),
+            })),
+          })),
+        };
+        // Commit staged writes only if the callback resolves cleanly (rollback
+        // contract: an exception aborts the tx and discards staged changes).
+        await cb(tx);
+        committed.push(...staged);
+      });
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      // The failure transaction was attempted...
+      expect(mockDb.db.transaction).toHaveBeenCalled();
+      // ...but nothing committed — the books throw rolled back the import_jobs write.
+      expect(committed).toEqual([]);
+      // No failed-state write leaked through the bare (non-transactional) path.
+      // (CAS claim / setPhase writes are legitimate but must not be status:'failed'.)
+      expect(bareUpdateSets.find(s => s.status === 'failed')).toBeUndefined();
+
+      // No manual settle/clear of currentJobPromise needed: drainOne's finally
+      // (#1462) nulls the parked rejected promise, so the shared afterEach stop()
+      // does not re-await a rejection.
+    });
+
+    it('#1462: a job whose markJobFailed transaction aborts leaves currentJobPromise null', async () => {
+      // Drive the adapter-throws → markJobFailed path, and make markJobFailed's
+      // transaction reject (guarded books write's .returning() throws, mirroring
+      // the rollback test). drainOne's finally must null the parked rejected
+      // promise on the failure outcome — asserted WITHOUT any manual settle.
+      setupFailingJob({ id: 10, bookId: 100, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
+      }));
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        let writeCount = 0;
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation(() => ({
+              where: vi.fn().mockImplementation(() => {
+                const isBooks = writeCount > 0;
+                writeCount++;
+                if (isBooks) return { returning: vi.fn().mockImplementation(async () => { throw new Error('books write failed'); }) };
+                return Promise.resolve({ rowsAffected: 1 });
+              }),
+            })),
+          })),
+        };
+        await cb(tx);
+      });
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      const seam = worker as unknown as { currentJobPromise: Promise<void> | null };
+      expect(seam.currentJobPromise).toBeNull();
+    });
+
+    it('#1462: stop() after a job whose markJobFailed transaction aborts resolves without rejecting', async () => {
+      // Regression the prior #1448 workaround masked: with the parked rejected
+      // promise cleared, stop() must not re-await/re-reject during shutdown.
+      setupFailingJob({ id: 11, bookId: 110, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
+      }));
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        let writeCount = 0;
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation(() => ({
+              where: vi.fn().mockImplementation(() => {
+                const isBooks = writeCount > 0;
+                writeCount++;
+                if (isBooks) return { returning: vi.fn().mockImplementation(async () => { throw new Error('books write failed'); }) };
+                return Promise.resolve({ rowsAffected: 1 });
+              }),
+            })),
+          })),
+        };
+        await cb(tx);
+      });
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      await expect(worker.stop()).resolves.toBeUndefined();
+    });
+
+    it('#1462: a rejected processJob still reaches runDrain — the canonical failure log is emitted', async () => {
+      // The fix only clears the parked promise; it must not swallow the drain
+      // error. After a markJobFailed transaction abort, runDrain's catch still
+      // logs 'Drain runner failed unexpectedly'.
+      setupFailingJob({ id: 12, bookId: 120, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
+
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
+      }));
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        let writeCount = 0;
+        const tx = {
+          update: vi.fn().mockImplementation(() => ({
+            set: vi.fn().mockImplementation(() => ({
+              where: vi.fn().mockImplementation(() => {
+                const isBooks = writeCount > 0;
+                writeCount++;
+                if (isBooks) return { returning: vi.fn().mockImplementation(async () => { throw new Error('books write failed'); }) };
+                return Promise.resolve({ rowsAffected: 1 });
+              }),
+            })),
+          })),
+        };
+        await cb(tx);
+      });
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      const logErrMock = log as unknown as { error: ReturnType<typeof vi.fn> };
+      const runnerErrCalls = logErrMock.error.mock.calls.filter((call: unknown[]) => call[1] === 'Drain runner failed unexpectedly');
+      expect(runnerErrCalls).toHaveLength(1);
+    });
+
+    it('#1462: a successful import also leaves currentJobPromise null (finally guards the resolve path)', async () => {
+      // Guards against a finally that mishandles the resolve path: success must
+      // still null the promise, same observable end state as today.
+      const okAdapter: ImportAdapter = { type: 'manual', async process() { /* resolves */ } };
+      registerImportAdapter(okAdapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 13 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 13, bookId: 130, type: 'manual', status: 'processing', metadata: '{"title":"Good Book"}', phaseHistory: null }]) };
+        if (selectCallCount === 4) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ title: 'Good Book' }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
+      }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      const seam = worker as unknown as { currentJobPromise: Promise<void> | null };
+      expect(seam.currentJobPromise).toBeNull();
+    });
+  });
+
+  // ===========================================================================
+  // #1470 — Failure write must not clobber a reverted books.status. The
+  // failure-time `books.status='failed'` write is guarded with
+  // `expected: { status: 'importing' }`, so once `handleImportFailure`'s
+  // `bookStatusAtGrab` revert has moved the book off `importing` the guarded
+  // write is a no-op and the reverted status stands.
+  // ===========================================================================
+
+  describe('#1470 guarded failure write preserves the bookStatusAtGrab revert', () => {
+    /**
+     * Drives a single pending manual job whose adapter throws, through claim →
+     * process → failure. selectCallCount walks: boot recovery (empty), candidate
+     * select, full-row fetch, then idle. Wires a bare `db.update` recorder (the
+     * CAS claim / setPhase writes) and a stateful guarded `db.transaction` so the
+     * test observes the end-state of the guarded `books` write.
+     */
+    function setupGuardedFailingJob(jobRow: Record<string, unknown>, state: { bookStatus: BookStatus | null }) {
+      const adapter: ImportAdapter = {
+        type: 'manual',
+        async process() { throw new Error('copy verification failed'); },
+      };
+      registerImportAdapter(adapter);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: jobRow.id }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([jobRow]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+
+      // Bare writes (claim / setPhase) are import_jobs writes — awaitable terminus.
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
+      }));
+
+      const guarded = makeGuardedTxUpdate(state);
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb({ update: guarded.update }));
+      return guarded;
+    }
+
+    it('re-import failure: a book already reverted to imported is NOT clobbered to failed (guard miss)', async () => {
+      // Models the headline bug: handleImportFailure already reverted the book off
+      // `importing` (to its `imported` pre-grab snapshot) before markJobFailed runs
+      // in the worker catch. The guarded failure write must miss and leave it.
+      const state = { bookStatus: 'imported' as BookStatus | null };
+      const guarded = setupGuardedFailingJob(
+        { id: 8, bookId: 80, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Reimported Book"}', phaseHistory: null },
+        state,
+      );
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      // import_jobs is still durably failed...
+      expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
+      // ...but the guarded books write was attempted, missed, and left the revert.
+      expect(guarded.bookWrites).toHaveLength(1);
+      expect(guarded.bookWrites[0]!.payload).toMatchObject({ status: 'failed' });
+      expect(guarded.bookWrites[0]!.returningCalled).toBe(true); // guarded path, not unconditional
+      expect(guarded.bookWrites[0]!.guardMatched).toBe(false);
+      expect(state.bookStatus).toBe('imported'); // NOT 'failed'
+    });
+
+    it('fresh-grab failure: a book already reverted to wanted is NOT clobbered to failed (guard miss)', async () => {
+      const state = { bookStatus: 'wanted' as BookStatus | null };
+      const guarded = setupGuardedFailingJob(
+        { id: 9, bookId: 90, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Wanted Book"}', phaseHistory: null },
+        state,
+      );
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
+      expect(guarded.bookWrites[0]!.guardMatched).toBe(false);
+      expect(state.bookStatus).toBe('wanted'); // NOT 'failed'
+    });
+
+    it('no revert ran: a still-importing book settles to failed (guard match)', async () => {
+      // The no-revert path (e.g. a failure before handleImportFailure's revert):
+      // the book is still `importing`, the guard matches, and it settles to failed.
+      const state = { bookStatus: 'importing' as BookStatus | null };
+      const guarded = setupGuardedFailingJob(
+        { id: 10, bookId: 100, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Importing Book"}', phaseHistory: null },
+        state,
+      );
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
+      expect(guarded.bookWrites[0]!.returningCalled).toBe(true);
+      expect(guarded.bookWrites[0]!.guardMatched).toBe(true);
+      expect(state.bookStatus).toBe('failed');
+    });
+
+    it('boot recovery: an orphaned job whose book is still importing settles to failed (guard match)', async () => {
+      const state = { bookStatus: 'importing' as BookStatus | null };
+      const guarded = makeGuardedTxUpdate(state);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([{ id: 99, bookId: 42 }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb({ update: guarded.update }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
+      expect(guarded.bookWrites[0]!.returningCalled).toBe(true);
+      expect(guarded.bookWrites[0]!.guardMatched).toBe(true);
+      expect(state.bookStatus).toBe('failed');
+    });
+
+    it('boot recovery: an orphaned job whose book already moved off importing is left unchanged (guard miss)', async () => {
+      const state = { bookStatus: 'imported' as BookStatus | null };
+      const guarded = makeGuardedTxUpdate(state);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([{ id: 99, bookId: 42 }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb({ update: guarded.update }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 50));
+
+      // import_jobs is still written failed, but the book write missed the guard.
+      expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
+      expect(guarded.bookWrites[0]!.returningCalled).toBe(true);
+      expect(guarded.bookWrites[0]!.guardMatched).toBe(false);
+      expect(state.bookStatus).toBe('imported'); // unchanged
+    });
+
+    it('unknown adapter: a still-importing book settles to failed via the guarded markJobFailed write', async () => {
+      // No adapters registered — 'manual' is unknown, routes through markJobFailed.
+      const state = { bookStatus: 'importing' as BookStatus | null };
+      const guarded = makeGuardedTxUpdate(state);
+
+      let selectCallCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCallCount++;
+        if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5 }]) };
+        if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{}' }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
+      });
+      // The CAS claim runs through bare db.update — awaitable terminus.
+      mockDb.db.update = vi.fn().mockImplementation(() => ({
+        set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
+      }));
+      mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb({ update: guarded.update }));
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      const failedJob = guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed');
+      expect(failedJob).toBeDefined();
+      expect(JSON.parse(failedJob!.lastError as string).message).toContain('No import adapter registered');
+      expect(guarded.bookWrites[0]!.returningCalled).toBe(true);
+      expect(guarded.bookWrites[0]!.guardMatched).toBe(true);
+      expect(state.bookStatus).toBe('failed');
     });
   });
 
@@ -1400,7 +1896,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1451,7 +1947,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1484,7 +1980,7 @@ describe('ImportQueueWorker', () => {
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
     }
 
@@ -1556,7 +2052,7 @@ describe('ImportQueueWorker', () => {
       });
 
       const txUpdate = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
       mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb({ update: txUpdate }));
 
@@ -1583,7 +2079,7 @@ describe('ImportQueueWorker', () => {
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
           updateSets.push(payload);
-          return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          return { where: vi.fn().mockImplementation(() => updateWhereTerminus()) };
         }),
       }));
 
@@ -1634,7 +2130,7 @@ describe('ImportQueueWorker', () => {
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
     }
 
@@ -1850,7 +2346,7 @@ describe('ImportQueueWorker', () => {
           return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
         });
         mockDb.db.update = vi.fn().mockImplementation(() => ({
-          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+          set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
         }));
       }
 
@@ -1929,7 +2425,7 @@ describe('ImportQueueWorker', () => {
           return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
         });
         mockDb.db.update = vi.fn().mockImplementation(() => ({
-          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+          set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
         }));
 
         await w.start();
@@ -1984,7 +2480,7 @@ describe('ImportQueueWorker', () => {
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
     }
 
@@ -2176,6 +2672,7 @@ describe('ImportQueueWorker', () => {
       bookId: 601,
       bookTitle: 'Test Book',
       bookStatus: 'wanted',
+      bookStatusAtGrab: 'wanted',
       bookPath: null,
       authorName: 'Test Author',
       narratorStr: null,
@@ -2232,7 +2729,7 @@ describe('ImportQueueWorker', () => {
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
       mockDb.db.update = vi.fn().mockImplementation(() => ({
-        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) }),
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
       }));
 
       await workerWithBroadcaster.start();
@@ -2313,6 +2810,103 @@ describe('ImportQueueWorker', () => {
 
       // No additional selects after stop
       expect(selectCallCount).toBe(countAfterStop);
+    });
+  });
+
+  describe('startup marker sweep (#1338)', () => {
+    /** Mock select so call #1 is boot-recovery (orphans []), the rest are drain selects ([]). */
+    function trackingSelect(): () => number {
+      let selectCount = 0;
+      mockDb.db.select = vi.fn().mockImplementation(() => {
+        selectCount++;
+        if (selectCount === 1) {
+          return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        }
+        return {
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        };
+      });
+      return () => selectCount;
+    }
+
+    it('awaits the marker sweep before the drain loop issues its first job select (single recovery actor)', async () => {
+      const selectCount = trackingSelect();
+      const root = mkdtempSync(join(tmpdir(), 'narratorr-1338-order-'));
+      // Block the sweep on library-root resolution so we can observe that the drain loop has
+      // NOT issued any select while the sweep is still in flight.
+      let releaseRoot!: (value: string) => void;
+      const rootReady = new Promise<string>((res) => { releaseRoot = res; });
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, undefined, () => rootReady);
+
+      const startPromise = w.start();
+      // Drain boot-recovery's microtasks.
+      await new Promise((r) => setImmediate(r));
+      // Boot recovery selected once; the sweep is parked on the resolver, so the drain loop
+      // has NOT started — no second (drain) select has happened.
+      expect(selectCount()).toBe(1);
+
+      releaseRoot(root);
+      await startPromise;
+
+      // Sweep resolved → drain loop started and issued its first job select.
+      expect(selectCount()).toBeGreaterThan(1);
+
+      await w.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('converges a real stranded marker during start(), before draining (exactly one recovery actor)', async () => {
+      trackingSelect();
+      const root = mkdtempSync(join(tmpdir(), 'narratorr-1338-converge-'));
+      const target = join(root, 'Author', 'Title');
+      const backup = `${target}.import-bak`;
+      const marker = `${target}.import-commit-pending`;
+      await mkdir(backup, { recursive: true });
+      await writeFile(join(backup, 'old.m4b'), Buffer.alloc(64, 7));
+      await writeFile(marker, '');
+
+      const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, undefined, async () => root);
+      await w.start();
+
+      // The sweep converged the marker as part of boot — backup + marker cleared, original restored.
+      const exists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+      expect(await exists(marker)).toBe(false);
+      expect(await exists(backup)).toBe(false);
+      expect(await exists(join(target, 'old.m4b'))).toBe(true);
+
+      await w.stop();
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('is a no-op when no library-root resolver is injected', async () => {
+      trackingSelect();
+      // The default unit-test worker has no resolver — start() must not throw and must still drain.
+      await expect(worker.start()).resolves.toBeUndefined();
+    });
+
+    it('F2: a rejecting library-root resolver warns and still lets the worker start + drain', async () => {
+      const selectCount = trackingSelect();
+      const resolverError = new Error('settings read failed');
+      const w = new ImportQueueWorker(
+        inject<Db>(mockDb.db), log, undefined,
+        () => Promise.reject(resolverError),
+      );
+
+      // start() must not reject even though the resolver throws inside the sweep.
+      await expect(w.start()).resolves.toBeUndefined();
+
+      // The failure is surfaced as a warn (not swallowed silently)...
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        expect.stringContaining('failed to resolve library root'),
+      );
+      // ...and startup continued: the drain loop issued its first job select.
+      expect(selectCount()).toBeGreaterThan(1);
+
+      await w.stop();
     });
   });
 });

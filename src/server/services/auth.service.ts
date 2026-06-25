@@ -36,6 +36,23 @@ export interface AuthPublicConfig {
 
 interface SessionPayload {
   username: string;
+  // Token-type discriminator (#1453). Written on every new session cookie;
+  // optional on read for backward-compat with cookies issued before #1453
+  // (those carry a `username` but no `kind`, and stay valid until they expire
+  // or the session secret rotates).
+  kind?: 'session';
+  issuedAt: number;
+  expiresAt: number;
+}
+
+/**
+ * Short-lived, session-scoped token (#1453) used to authenticate the SSE/stream
+ * endpoints (`/api/events`, `/api/search/stream`) without putting a long-lived
+ * secret in the URL. Carries no `username` and a `kind: 'stream'` discriminator
+ * so it can never be mistaken for a session cookie.
+ */
+interface StreamTokenPayload {
+  kind: 'stream';
   issuedAt: number;
   expiresAt: number;
 }
@@ -46,6 +63,13 @@ export interface SessionVerifyResult {
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+/**
+ * Stream-token TTL (#1453). Deliberately short (minutes) and independent of
+ * SESSION_TTL_MS — a stream token is not sliding-renewed, so a session renewal
+ * neither extends nor invalidates a live stream token. The frontend re-mints
+ * transparently before/at expiry.
+ */
+export const STREAM_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SCRYPT_KEYLEN = 64;
 
 // Generated once at module load, stable for the process lifetime. Used to run a
@@ -114,7 +138,7 @@ export class AuthService {
       throw new Error('Auth settings not initialized — call initialize() first');
     }
     const raw = result[0]!.value as Record<string, unknown>;
-    return authConfigSchema.parse(decryptFields('auth', { ...raw }, getKey()));
+    return authConfigSchema.parse(decryptFields('auth', { ...raw }, getKey(), this.log));
   }
 
   private async setAuthConfig(config: AuthConfig): Promise<void> {
@@ -350,12 +374,93 @@ export class AuthService {
     const now = Date.now();
     const payload: SessionPayload = {
       username,
+      kind: 'session',
       issuedAt: now,
       expiresAt: now + SESSION_TTL_MS,
     };
     const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
     const signature = createHmac('sha256', secret).update(payloadB64).digest('base64url');
     return `${payloadB64}.${signature}`;
+  }
+
+  /**
+   * Domain-separated signing key for stream tokens (#1453). Derived from the
+   * session secret so a stream token signed with this key cannot pass the
+   * session-cookie HMAC check (which uses the raw `secret`) and vice versa —
+   * the two token domains are non-interchangeable even under secret reuse.
+   */
+  private deriveStreamSecret(secret: string): Buffer {
+    return createHmac('sha256', secret).update('stream-token').digest();
+  }
+
+  /**
+   * Mint a short-lived, session-scoped stream token (#1453). Carries no
+   * `username` and `kind: 'stream'`, signed with the domain-separated stream
+   * secret. Used to authenticate the SSE endpoints without exposing the API key
+   * or a long-lived session secret in the stream URL.
+   */
+  mintStreamToken(secret: string): string {
+    const now = Date.now();
+    const payload: StreamTokenPayload = {
+      kind: 'stream',
+      issuedAt: now,
+      expiresAt: now + STREAM_TOKEN_TTL_MS,
+    };
+    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const streamSecret = this.deriveStreamSecret(secret);
+    const signature = createHmac('sha256', streamSecret).update(payloadB64).digest('base64url');
+    return `${payloadB64}.${signature}`;
+  }
+
+  /**
+   * Verify a stream token (#1453). Mirrors verifySessionCookie's timing-safe,
+   * fixed-length HMAC comparison but uses the domain-separated stream secret and
+   * requires `kind === 'stream'`. A session cookie (signed with the raw secret,
+   * `kind: 'session'`) therefore fails here at the signature check.
+   */
+  verifyStreamToken(token: string, secret: string): StreamTokenPayload | null {
+    const parts = token.split('.');
+    const payloadB64 = parts[0];
+    const signature = parts[1];
+    if (parts.length !== 2 || payloadB64 === undefined || signature === undefined) {
+      this.log.debug('Auth: malformed stream token');
+      return null;
+    }
+
+    const streamSecret = this.deriveStreamSecret(secret);
+    const expectedSig = createHmac('sha256', streamSecret).update(payloadB64).digest('base64url');
+
+    // SHA-256 both sides to a fixed length — avoids leaking signature length via early
+    // length-mismatch return. Buffers are always 32 bytes so timingSafeEqual is safe.
+    const sigHash = createHash('sha256').update(signature).digest();
+    const expectedHash = createHash('sha256').update(expectedSig).digest();
+    if (!timingSafeEqual(sigHash, expectedHash)) {
+      this.log.debug('Auth: stream token signature mismatch');
+      return null;
+    }
+
+    let payload: StreamTokenPayload;
+    try {
+      payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
+    } catch {
+      this.log.debug('Auth: stream token payload parse failed');
+      return null;
+    }
+
+    // Domain separation (defense in depth beyond the derived signing key): reject
+    // anything that isn't an explicit stream token, so a session cookie can never
+    // authenticate a stream-token check even if the secret were reused raw.
+    if (payload.kind !== 'stream') {
+      this.log.debug('Auth: stream token wrong kind');
+      return null;
+    }
+
+    if (Date.now() >= payload.expiresAt) {
+      this.log.debug('Auth: stream token expired');
+      return null;
+    }
+
+    return payload;
   }
 
   verifySessionCookie(cookie: string, secret: string): SessionVerifyResult | null {
@@ -383,6 +488,20 @@ export class AuthService {
       payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString());
     } catch {
       this.log.debug('Auth: cookie payload parse failed');
+      return null;
+    }
+
+    // Token-type domain separation (#1453): a session cookie MUST carry a
+    // username and must not bear a foreign `kind`. A stream token (no username,
+    // `kind: 'stream'`) is rejected here even if its HMAC otherwise validated —
+    // so a stream token can never authenticate a session-cookie check. Legacy
+    // cookies (pre-#1453, username present, `kind` absent) stay valid.
+    if (typeof payload.username !== 'string' || payload.username.length === 0) {
+      this.log.debug('Auth: session cookie missing username');
+      return null;
+    }
+    if (payload.kind !== undefined && payload.kind !== 'session') {
+      this.log.debug('Auth: session cookie wrong kind');
       return null;
     }
 

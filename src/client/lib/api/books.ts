@@ -1,10 +1,12 @@
-import type { BookStatus, EnrichmentStatus } from '../../../shared/schemas.js';
+import type { BookStatus, EnrichmentStatus, LibraryFilterBucket } from '../../../shared/schemas.js';
 import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
+import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 export type { LibraryBookListItem, LibraryBookListResponse };
+export type { BookSeriesMemberCard, BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 
 export interface Author {
   id: number;
@@ -24,7 +26,9 @@ export interface BookWithAuthor {
   title: string;
   authors: Author[];
   narrators: Narrator[];
+  subtitle?: string | null;
   description?: string | null;
+  publisher?: string | null;
   coverUrl?: string | null;
   asin?: string | null;
   isbn?: string | null;
@@ -60,7 +64,9 @@ export interface CreateBookPayload {
   title: string;
   authors?: { name: string; asin?: string | undefined }[] | undefined;
   narrators?: string[] | undefined;
+  subtitle?: string | undefined;
   description?: string | undefined;
+  publisher?: string | undefined;
   coverUrl?: string | undefined;
   asin?: string | undefined;
   isbn?: string | undefined;
@@ -92,8 +98,14 @@ export interface UpdateBookPayload {
   title?: string | undefined;
   authors?: { name: string; asin?: string | undefined }[] | undefined;
   narrators?: string[] | undefined;
-  description?: string | undefined;
-  coverUrl?: string | undefined;
+  // `null` clears the stored column (detail page falls back to provider value);
+  // `undefined`/omitted = unchanged. Mirrors `updateBookBodySchema` (#1609).
+  subtitle?: string | null | undefined;
+  description?: string | null | undefined;
+  publisher?: string | null | undefined;
+  coverUrl?: string | null | undefined;
+  publishedDate?: string | null | undefined;
+  genres?: string[] | null | undefined;
   status?: BookStatus | undefined;
   seriesName?: string | null | undefined;
   seriesPosition?: number | null | undefined;
@@ -104,6 +116,19 @@ export interface RenameResult {
   newPath: string;
   message: string;
   filesRenamed: number;
+}
+
+/**
+ * Result of `DELETE /api/books/:id`. `fileSummary` is present only when files were removed from
+ * disk (`deleteFiles=true` and the book had a path); it drives the "kept N files" disclosure when
+ * foreign files (e-books, PDFs, …) were preserved alongside the audiobook (#1589).
+ */
+export interface DeleteBookResult {
+  success: boolean;
+  fileSummary?: {
+    deletedManaged: number;
+    preservedForeign: string[];
+  };
 }
 
 export interface RenamePreviewResult {
@@ -241,18 +266,15 @@ export interface BookListParams {
   offset?: number;
 }
 
-export interface LibraryBookListParams extends BookListParams {
+// The library list filter carries a `LibraryFilterBucket` (bucket key), not a
+// per-book `BookStatus` — `all` is a client-only sentinel omitted from the wire.
+export interface LibraryBookListParams extends Omit<BookListParams, 'status'> {
+  status?: LibraryFilterBucket;
   collapse?: boolean;
 }
 
 export interface BookStats {
-  counts: {
-    wanted: number;
-    downloading: number;
-    imported: number;
-    failed: number;
-    missing: number;
-  };
+  counts: Record<LibraryFilterBucket, number>;
   authors: string[];
   series: string[];
   narrators: string[];
@@ -300,7 +322,7 @@ export const booksApi = {
       body: JSON.stringify(data),
     }),
   deleteBook: (id: number, options?: { deleteFiles?: boolean }) =>
-    fetchApi<{ success: boolean }>(`/books/${id}${options?.deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
+    fetchApi<DeleteBookResult>(`/books/${id}${options?.deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   deleteMissingBooks: () =>
     fetchApi<{ deleted: number }>('/books/missing', { method: 'DELETE' }),
   getBookFiles: (id: number) =>
@@ -393,6 +415,13 @@ export const booksApi = {
     fetchApi<{ series: BookSeriesCardData | null }>(`/books/${id}/series`),
   refreshBookSeries: (id: number) =>
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/refresh`, { method: 'POST' }),
+  searchBookSeries: (id: number, query: string) =>
+    fetchApi<{ candidates: HardcoverSeriesCandidate[] }>(`/books/${id}/series/search?q=${encodeURIComponent(query)}`),
+  bindBookSeries: (id: number, hardcoverSeriesId: number) =>
+    fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/bind`, {
+      method: 'POST',
+      body: JSON.stringify({ hardcoverSeriesId }),
+    }),
   fixMatchBook: (id: number, payload: FixMatchPayload) =>
     fetchApi<BookWithAuthor>(`/books/${id}/fix-match`, {
       method: 'POST',
@@ -404,29 +433,4 @@ export interface FixMatchPayload {
   asin: string;
   renameFiles?: boolean;
   retagFiles?: boolean;
-}
-
-export interface BookSeriesMemberCard {
-  hardcoverBookId: number | null;
-  slug: string | null;
-  title: string;
-  position: number | null;
-  imageUrl: string | null;
-  inLibrary: boolean;
-  libraryBookId: number | null;
-}
-
-export interface BookSeriesCardData {
-  /** Local `series` row id; null in no-key mode or when no cached row exists. */
-  id: number | null;
-  name: string;
-  hardcoverSeriesId: number | null;
-  /** Persisted Hardcover `series.author.name`; null in no-key mode. */
-  seriesAuthor: string | null;
-  lastFetchedAt: string | null;
-  members: BookSeriesMemberCard[];
-}
-
-export interface RefreshBookSeriesResponse {
-  series: BookSeriesCardData | null;
 }

@@ -21,6 +21,48 @@ describe('normalizeMemberTitleForMatch', () => {
   it("normalizes curly apostrophes to straight", () => {
     expect(normalizeMemberTitleForMatch("Hitchhiker’s Guide")).toBe("hitchhiker's guide");
   });
+
+  // #1543: `&` and the word `and` must normalize identically — the `&` form
+  // was previously dropped to nothing, so it never matched the spelled-out form.
+  it('canonicalizes `&` to the word `and` so both spellings converge', () => {
+    expect(normalizeMemberTitleForMatch('Night of Cake & Puppets')).toBe('night of cake and puppets');
+    expect(normalizeMemberTitleForMatch('Night of Cake and Puppets')).toBe('night of cake and puppets');
+    expect(normalizeMemberTitleForMatch('Night of Cake & Puppets')).toBe(
+      normalizeMemberTitleForMatch('Night of Cake and Puppets'),
+    );
+  });
+
+  it('treats `+` the same as `&`, collapsing surrounding whitespace', () => {
+    expect(normalizeMemberTitleForMatch('Cake + Puppets')).toBe('cake and puppets');
+  });
+
+  // #1547: accented chars were dropped to a space by the alnum strip, so the
+  // accented and ASCII spellings of a title never converged. Folding combining
+  // diacritics to their base letter (NFD) before the strip keeps the letter.
+  it('folds combining diacritics so accented and ASCII spellings converge', () => {
+    // Assert the concrete value so a *drop* ('les mis rables') regression is caught, not just equality.
+    expect(normalizeMemberTitleForMatch('Les Misérables')).toBe('les miserables');
+    expect(normalizeMemberTitleForMatch('Les Miserables')).toBe('les miserables');
+    expect(normalizeMemberTitleForMatch('Les Misérables')).toBe(normalizeMemberTitleForMatch('Les Miserables'));
+  });
+
+  it('folds common author/title accents (ñ, ë) to base letters', () => {
+    expect(normalizeMemberTitleForMatch('García')).toBe('garcia');
+    expect(normalizeMemberTitleForMatch('Brontë')).toBe('bronte');
+  });
+
+  it('leaves plain-ASCII titles unchanged (no diacritic regression)', () => {
+    expect(normalizeMemberTitleForMatch('The Wind Through the Keyhole')).toBe('the wind through the keyhole');
+  });
+
+  // #1547 scope pin: the fold is NFD-only — non-decomposing letters (ß / ø / æ)
+  // are intentionally NOT folded (no transliteration). They have no combining
+  // marks, so the alnum strip drops them as before.
+  it('does NOT fold non-decomposing letters (ß is not transliterated to ss)', () => {
+    const out = normalizeMemberTitleForMatch('Straße');
+    expect(out).not.toBe('strasse');
+    expect(out).toBe('stra e');
+  });
 });
 
 describe('findInLibraryMatch', () => {
@@ -53,6 +95,34 @@ describe('findInLibraryMatch', () => {
   it('matches within floating-point tolerance for non-integer positions', () => {
     const candidates = [{ id: 1, title: 'Book', seriesPosition: 11.9 }];
     const match = findInLibraryMatch({ title: 'Different', position: 11.9 + 1e-12 }, candidates);
+    expect(match?.id).toBe(1);
+  });
+
+  // #1543: when both positions are null, only the title path can match — and
+  // `&` vs `and` drift must not block it, in either direction.
+  it('matches `&`-title book from an `and`-title member when both positions are null', () => {
+    const candidates = [{ id: 1, title: 'Night of Cake & Puppets', seriesPosition: null }];
+    const match = findInLibraryMatch({ title: 'Night of Cake and Puppets', position: null }, candidates);
+    expect(match?.id).toBe(1);
+  });
+
+  it('matches `and`-title book from an `&`-title member when both positions are null', () => {
+    const candidates = [{ id: 1, title: 'Night of Cake and Puppets', seriesPosition: null }];
+    const match = findInLibraryMatch({ title: 'Night of Cake & Puppets', position: null }, candidates);
+    expect(match?.id).toBe(1);
+  });
+
+  // #1547: when both positions are null, only the title path can match — and
+  // accented vs ASCII spelling drift must not block it, in either direction.
+  it('matches an ASCII-title book from an accented member when both positions are null', () => {
+    const candidates = [{ id: 1, title: 'Les Miserables', seriesPosition: null }];
+    const match = findInLibraryMatch({ title: 'Les Misérables', position: null }, candidates);
+    expect(match?.id).toBe(1);
+  });
+
+  it('matches an accented-title book from an ASCII member when both positions are null', () => {
+    const candidates = [{ id: 1, title: 'Les Misérables', seriesPosition: null }];
+    const match = findInLibraryMatch({ title: 'Les Miserables', position: null }, candidates);
     expect(match?.id).toBe(1);
   });
 

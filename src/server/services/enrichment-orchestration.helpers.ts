@@ -8,6 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import { RateLimitError } from '../../core/index.js';
 import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -24,9 +25,14 @@ export interface EnrichmentBookInput {
 export interface AudnexusConfig {
   primaryAsin?: string | null | undefined;
   alternateAsins?: string[] | undefined;
+  /** Search-fallback query inputs (post-import path): title + author from the import payload. */
+  title?: string | null | undefined;
+  author?: string | null | undefined;
   existingNarrator?: string | null | undefined;
   existingDuration?: number | null | undefined;
   existingGenres?: string[] | null | undefined;
+  existingSubtitle?: string | null | undefined;
+  existingPublisher?: string | null | undefined;
 }
 
 export interface EnrichmentDeps {
@@ -79,44 +85,117 @@ export async function applyAudnexusEnrichment(
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService' | 'metadataService'>,
 ): Promise<void> {
   const asinsToTry = [opts.primaryAsin, ...(opts.alternateAsins ?? [])].filter((a): a is string => !!a);
-  if (asinsToTry.length === 0) return;
+  const title = opts.title?.trim();
+  // Nothing to resolve from: no ASIN to look up AND no title to search.
+  if (asinsToTry.length === 0 && !title) return;
 
+  // ASIN recovery loop — precise identity fast path; first hit wins.
   for (const asin of asinsToTry) {
     try {
       const data = await deps.metadataService.enrichBook(asin);
       if (data) {
         await applyEnrichmentData(bookId, asin, data, opts, deps);
-        break;
+        return;
       }
     } catch (error: unknown) {
+      // A rate limit is a transient provider state, not a miss — propagate so the
+      // caller leaves the book pending/retryable (matches the import-list + job paths).
+      if (error instanceof RateLimitError) throw error;
       deps.log.warn({ error: serializeError(error), bookId, asin }, 'Audnexus enrichment failed');
     }
   }
+
+  // Search fallback — every ASIN missed (or there were none). When every embedded
+  // ASIN is a print/Kindle ASIN (or 404s), a title+author search re-finds the real
+  // audiobook. Skipped with no title (never called with an empty query).
+  if (!title) return;
+  let resolved;
+  try {
+    resolved = await deps.metadataService.resolveBook({ title, author: opts.author?.trim() || undefined });
+  } catch (error: unknown) {
+    // A RateLimitError propagates by design (the manual adapter treats it as a
+    // retryable import). Any OTHER thrown error is a transient provider failure
+    // during a SUPPLEMENTARY post-import fetch — treat it as a non-fatal miss so
+    // the import still completes and the book stays pending for the scheduled job
+    // to retry. Mirrors the ASIN-recovery loop's catch above.
+    if (error instanceof RateLimitError) throw error;
+    deps.log.warn({ error: serializeError(error), bookId, title }, 'Audnexus search fallback failed (transient) — leaving book pending');
+    return;
+  }
+  if (resolved) {
+    await applyEnrichmentData(bookId, resolved.asin, resolved, opts, deps);
+  }
+}
+
+/**
+ * Decide the ASIN to write back. The resolved ASIN (a concrete loop ASIN, or the
+ * search candidate's optional `asin`) is written only when it is a real string
+ * differing from `primaryAsin` AND collision-free — `books.asin` is uniquely
+ * indexed (`idx_books_asin_unique`). On collision we keep the just-fetched fields
+ * but skip the ASIN write (the deliberate divergence from the background job,
+ * which marks the row failed). Returns `undefined` when nothing should be written.
+ */
+async function resolveAsinWriteback(
+  bookId: number,
+  resolvedAsin: string | null | undefined,
+  primaryAsin: string | null | undefined,
+  deps: Pick<EnrichmentDeps, 'log' | 'bookService'>,
+): Promise<string | undefined> {
+  if (!resolvedAsin || resolvedAsin === primaryAsin) return undefined;
+  const collision = await deps.bookService.findAsinCollision(bookId, resolvedAsin);
+  if (collision) {
+    deps.log.warn(
+      { bookId, resolvedAsin, conflictBookId: collision.conflictBookId },
+      'Resolved ASIN collides with an existing book — keeping fetched fields, skipping ASIN writeback',
+    );
+    return undefined;
+  }
+  return resolvedAsin;
 }
 
 async function applyEnrichmentData(
   bookId: number,
-  asin: string,
-  data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined },
-  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined },
+  resolvedAsin: string | null | undefined,
+  data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined; subtitle?: string | undefined; publisher?: string | undefined },
+  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined; existingSubtitle?: string | null | undefined; existingPublisher?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
 ): Promise<void> {
-  const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; updatedAt: Date }> = {
+  const updates: Partial<{ enrichmentStatus: EnrichmentStatus; asin: string; duration: number; subtitle: string; publisher: string; updatedAt: Date }> = {
     enrichmentStatus: 'enriched',
     updatedAt: new Date(),
   };
-  if (asin !== opts.primaryAsin) updates.asin = asin;
+  const asinToWrite = await resolveAsinWriteback(bookId, resolvedAsin, opts.primaryAsin, deps);
+  if (asinToWrite) updates.asin = asinToWrite;
   if (!opts.existingDuration && data.duration) {
     updates.duration = data.duration;
   }
+  if (!opts.existingSubtitle && data.subtitle) {
+    updates.subtitle = data.subtitle;
+  }
+  if (!opts.existingPublisher && data.publisher) {
+    updates.publisher = data.publisher;
+  }
   await deps.db.update(books).set(updates).where(eq(books.id, bookId));
+  await applyEnrichmentArrayFields(bookId, data, opts, deps);
+  deps.log.info(
+    { bookId, asin: resolvedAsin ?? null, wasAlternate: !!resolvedAsin && resolvedAsin !== opts.primaryAsin },
+    'Audnexus enrichment applied',
+  );
+}
+
+/** Fill-guarded narrator/genre writes (separate rows, so they bypass the scalar `updates` set). */
+async function applyEnrichmentArrayFields(
+  bookId: number,
+  data: { narrators?: string[] | undefined; genres?: string[] | undefined },
+  opts: { existingNarrator?: string | null | undefined; existingGenres?: string[] | null | undefined },
+  deps: Pick<EnrichmentDeps, 'bookService'>,
+): Promise<void> {
   if (!opts.existingNarrator && data.narrators?.length) {
     await deps.bookService.update(bookId, { narrators: data.narrators });
   }
   if (data.genres?.length && !opts.existingGenres?.length) {
     await deps.bookService.update(bookId, { genres: data.genres });
   }
-  deps.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
 }
 
 // ─── Book creation payload ──────────────────────────────────────────────
@@ -143,20 +222,6 @@ export function buildEnrichmentBookInput(
     narrators: book.narrators ?? null,
     duration: book.duration ?? null,
     coverUrl: book.coverUrl ?? null,
-    existingGenres: book.genres ?? null,
-  };
-}
-
-export function buildAudnexusConfig(
-  item: { asin?: string | null },
-  meta: BookMetadata | null,
-  book: { narrators?: Array<{ name: string }> | null; duration?: number | null; genres?: string[] | null },
-): AudnexusConfig {
-  return {
-    primaryAsin: item.asin || meta?.asin,
-    alternateAsins: meta?.alternateAsins,
-    existingNarrator: book.narrators?.[0]?.name ?? null,
-    existingDuration: book.duration ?? null,
     existingGenres: book.genres ?? null,
   };
 }
@@ -211,16 +276,23 @@ export function extractImportMetadata(item: ImportConfirmItem) {
 }
 
 export function buildBackgroundAudnexusConfig(
-  item: { asin?: string | null | undefined },
+  item: { asin?: string | null | undefined; title?: string | null | undefined; authorName?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
   existingGenres: string[] | null,
+  existing?: { subtitle?: string | null | undefined; publisher?: string | null | undefined } | undefined,
 ): AudnexusConfig {
   return {
     primaryAsin: item.asin || extracted.meta?.asin,
     alternateAsins: extracted.meta?.alternateAsins,
+    // Search-fallback query: title/author come from the import payload (NOT the
+    // currentBook re-read, which does not select them).
+    title: item.title ?? null,
+    author: item.authorName ?? null,
     existingNarrator: extracted.narratorName,
     existingDuration: extracted.bookInput.duration,
     existingGenres,
+    existingSubtitle: existing?.subtitle ?? null,
+    existingPublisher: existing?.publisher ?? null,
   };
 }
 
@@ -250,7 +322,9 @@ export function buildBookCreatePayload(
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,
+    subtitle: meta?.subtitle,
     description: meta?.description,
+    publisher: meta?.publisher,
     duration: meta?.duration,
     publishedDate: meta?.publishedDate,
     genres: meta?.genres,

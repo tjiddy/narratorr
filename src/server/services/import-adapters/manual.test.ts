@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Dirent } from 'node:fs';
+import type { Dirent, Stats } from 'node:fs';
+import { join, extname } from 'node:path';
 import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
 import type { Db } from '../../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -13,11 +14,14 @@ import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
 
-// Boundary choice: this file mocks fs primitives + streamCopyWithProgress + getAudioPathSize,
-// NOT copyToLibrary / renameFilesWithTemplate. Real copyToLibrary and renameFilesWithTemplate
-// run against these lower mocks, so a regression at the adapter↔helper seam (wrong source/target
-// path, missing callback, broken rollback) surfaces here. streamCopyWithProgress is mocked rather
-// than the underlying stream primitives because its dedicated test exercises real streams.
+// Boundary choice: this file mocks fs primitives + stageSourceAudio (the import-steps `copyToLibrary`
+// the pipeline now calls per #1602) + getAudioPathSize, NOT the pipeline `copyToLibrary` /
+// renameFilesWithTemplate. Real pipeline copyToLibrary and renameFilesWithTemplate run against these
+// lower mocks, so a regression at the adapter↔helper seam (wrong source/target path, missing
+// callback, broken rollback) surfaces here. The audio-only copier (`stageSourceAudio`) is mocked
+// rather than its stream primitives because its dedicated tests (import-steps.test.ts,
+// copy-to-library-progress.test.ts) exercise real audio-filtering + streaming behavior; here it is
+// the copy boundary the pipeline forwards (sourcePath, targetPath, sourceStats, onProgress) into.
 
 vi.mock('../enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
@@ -28,13 +32,22 @@ vi.mock('../library-scan.helpers.js', () => ({
   getAudioStats: vi.fn().mockResolvedValue({ fileCount: 3, totalSize: 100_000 }),
 }));
 
-vi.mock('../streaming-copy.helpers.js', () => ({
-  streamCopyWithProgress: vi.fn(),
+// #1602: the empty-target fast path now reuses the import-steps `copyToLibrary` (aliased
+// stageSourceAudio in the pipeline) — the SAME copier the populated-target staged swap uses — instead
+// of streamCopyWithProgress. Mock it as the copy boundary; real audio-filtering/streaming lives in
+// its own suites. Preserve every other import-steps export (stagedAudioReplace, marker helpers, …).
+vi.mock('../../utils/import-steps.js', async () => ({
+  ...(await vi.importActual('../../utils/import-steps.js')),
+  copyToLibrary: vi.fn(),
 }));
 
 vi.mock('../../utils/import-helpers.js', async () => ({
   ...(await vi.importActual('../../utils/import-helpers.js')),
   getAudioPathSize: vi.fn(),
+  // copyDiscGroup uses real fs streams when given a progress callback; mock it so the disc-group
+  // wiring (reconstruct → flatten member set) is asserted without touching real fs. The actual
+  // flattening behavior is covered in import-helpers.test.ts.
+  copyDiscGroup: vi.fn(),
 }));
 
 vi.mock('node:fs/promises', async () => ({
@@ -44,10 +57,20 @@ vi.mock('node:fs/promises', async () => ({
   rename: vi.fn(),
   readdir: vi.fn(),
   cp: vi.fn(),
+  stat: vi.fn(),
 }));
 
 vi.mock('../../utils/safe-emit.js', () => ({
   safeEmit: vi.fn(),
+}));
+
+// #1598: empty-target move cleanup now routes through deleteManagedBookFiles (preserves foreign
+// files + symlink-safe) instead of a blanket fs.rm. Mock it here so the adapter↔helper move-cleanup
+// seam is asserted by the helper invocation — the real helper would lstat these fake paths to ENOENT.
+// Its foreign-preservation/symlink behavior is covered against real tmpdirs in delete-managed-files.test.ts
+// and import-orchestration.helpers.test.ts.
+vi.mock('../../utils/delete-managed-files.js', () => ({
+  deleteManagedBookFiles: vi.fn().mockResolvedValue({ deletedManaged: [], preservedForeign: [], failedManaged: [] }),
 }));
 
 function createMockLogger(): FastifyBaseLogger {
@@ -117,28 +140,50 @@ describe('ManualImportAdapter', () => {
   let mockDb: ReturnType<typeof createMockDb>;
   let mockEventHistory: { create: ReturnType<typeof vi.fn> };
   let mockBroadcaster: { emit: ReturnType<typeof vi.fn> };
+  let mockConnectorService: { notifyRefresh: ReturnType<typeof vi.fn> };
   let setPhase: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
 
     const fs = await import('node:fs/promises');
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     vi.mocked(fs.mkdir).mockResolvedValue(undefined as never);
     vi.mocked(fs.rm).mockResolvedValue(undefined);
     vi.mocked(fs.rename).mockResolvedValue(undefined);
     vi.mocked(fs.readdir).mockResolvedValue([] as never);
     vi.mocked(fs.cp).mockResolvedValue(undefined);
+    // #1602: the pipeline now `stat`s the source (item.path) before handing it to stageSourceAudio.
+    // Test sources live under /audiobooks (fake paths) — synthesize Stats for those (file when the
+    // basename has an extension, e.g. Doctor Sleep.m4b; directory otherwise). Any other path (a
+    // /library target/marker probed by recoverInterruptedCommit) delegates to the real stat so its
+    // ENOENT-tolerant behavior is unchanged.
+    vi.mocked(fs.stat).mockImplementation((async (p: Parameters<typeof realFs.stat>[0]) => {
+      const path = String(p);
+      if (path.startsWith('/audiobooks')) {
+        const isFile = extname(path) !== '';
+        return { isFile: () => isFile, isDirectory: () => !isFile, size: 1000 } as Stats;
+      }
+      return realFs.stat(p);
+    }) as typeof realFs.stat);
 
-    const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
-    vi.mocked(streamCopyWithProgress).mockResolvedValue(undefined);
+    const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+    vi.mocked(stageSourceAudio).mockResolvedValue(undefined);
 
     const { getAudioPathSize } = await import('../../utils/import-helpers.js');
     // Source/target return equal sizes so target/source >= 0.99 verification passes.
+    // mockReset drains any leftover *Once() queue from a prior test before we re-seed
+    // (clearAllMocks does not — see CLAUDE.md). The first read is the #1287 pre-copy
+    // target gate: default it to 0 (empty target) so standard tests exercise the
+    // direct-copy fast path; the staged-swap tests below override the gate to > 0.
+    vi.mocked(getAudioPathSize).mockReset();
     vi.mocked(getAudioPathSize).mockResolvedValue(100);
+    vi.mocked(getAudioPathSize).mockResolvedValueOnce(0);
 
     mockDb = createMockDb();
     mockEventHistory = { create: vi.fn().mockResolvedValue({}) };
     mockBroadcaster = { emit: vi.fn() };
+    mockConnectorService = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
     const log = createMockLogger();
     const mockSettingsService = createMockSettingsService({ library: { path: '/library', fileFormat: '' } });
 
@@ -157,6 +202,7 @@ describe('ManualImportAdapter', () => {
         metadataService: { searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() } as never,
       } satisfies EnrichmentDeps,
       broadcaster: mockBroadcaster as unknown as EventBroadcasterService,
+      connectorService: inject<never>(mockConnectorService),
     };
 
     setPhase = vi.fn().mockResolvedValue(undefined);
@@ -180,45 +226,72 @@ describe('ManualImportAdapter', () => {
       expect(phases).toContain('copying');
       expect(phases).toContain('fetching_metadata');
 
+      // Direct assertion on the helper-backed status promotion (#1446): the adapter
+      // must write `status: 'imported'` via transitionBookStatus → db.update(books).set(...).
+      // Without this, deleting/no-opping the promotion line still passes the phase/event
+      // assertions above. The adapter calls set() twice (path/size, then status); grab the
+      // status write from the shared set call log.
+      const statusUpdateSet = (mockDb.update.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> }).set;
+      const statusCall = statusUpdateSet.mock.calls.find((c: unknown[]) => {
+        const arg = c[0] as Record<string, unknown>;
+        return arg && typeof arg === 'object' && arg.status === 'imported';
+      });
+      expect(statusCall, 'expected a db.update(books).set({ status: "imported" }) write').toBeDefined();
+
       expect(mockEventHistory.create).toHaveBeenCalled();
     });
 
-    it('mode=copy: calls fs.mkdir(target, { recursive: true }) before streamCopyWithProgress', async () => {
-      const fs = await import('node:fs/promises');
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+    // ── #1491 connector refresh hook ───────────────────────────────────────
+    it('mode=copy: enqueues a connector refresh with reason "import"', async () => {
+      const job = makeJob();
+      await adapter.process(job, ctx);
 
-      const callOrder: string[] = [];
-      vi.mocked(fs.mkdir).mockImplementationOnce(async (...args: unknown[]) => {
-        callOrder.push(`mkdir:${String(args[0])}`);
-        return undefined as never;
-      });
-      vi.mocked(streamCopyWithProgress).mockImplementationOnce(async () => {
-        callOrder.push('streamCopy');
-      });
+      expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('import', [
+        expect.objectContaining({ bookId: 42, title: 'Test Book', libraryPath: TARGET_PATH }),
+      ]);
+    });
+
+    it('pointer mode (in-place adopt, no mode): enqueues a connector refresh with reason "adopt"', async () => {
+      // No `mode` key → pointer/adopt path; finalPath stays the source path.
+      const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
+      await adapter.process(job, ctx);
+
+      expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('adopt', [
+        expect.objectContaining({ bookId: 42, title: 'Test Book', libraryPath: '/audiobooks/Author/Title' }),
+      ]);
+    });
+
+    it('mode=copy: forwards the source stats to stageSourceAudio (the copier mkdirs the target itself)', async () => {
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      expect(vi.mocked(fs.mkdir)).toHaveBeenCalledWith(TARGET_PATH, { recursive: true });
-      expect(callOrder).toEqual([`mkdir:${TARGET_PATH}`, 'streamCopy']);
+      // #1602: target creation is the audio-only copier's responsibility now, so the pipeline no
+      // longer mkdirs ahead of the copy — it stats the source and hands the stats to stageSourceAudio.
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+        sourcePath: '/audiobooks/Author/Title',
+        targetPath: TARGET_PATH,
+        sourceStats: expect.objectContaining({ isDirectory: expect.any(Function) }),
+      }));
     });
 
-    it('mode=copy: invokes streamCopyWithProgress with (payload.path, target, callback)', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+    it('mode=copy: invokes stageSourceAudio with (payload.path, target, callback)', async () => {
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
-        '/audiobooks/Author/Title',
-        TARGET_PATH,
-        expect.any(Function),
-      );
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+        sourcePath: '/audiobooks/Author/Title',
+        targetPath: TARGET_PATH,
+        onProgress: expect.any(Function),
+      }));
     });
 
-    it('mode=move: calls fs.rm on source after copy verification', async () => {
-      const fs = await import('node:fs/promises');
+    it('mode=move: routes source cleanup through deleteManagedBookFiles after copy verification (#1598)', async () => {
+      const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'move',
@@ -226,12 +299,14 @@ describe('ManualImportAdapter', () => {
       const job = makeJob({ metadata: JSON.stringify(payload) });
       await adapter.process(job, ctx);
 
-      expect(vi.mocked(fs.rm)).toHaveBeenCalledWith('/audiobooks/Author/Title', { recursive: true });
+      // #1598: managed-file cleanup (foreign-preserving, symlink-safe) replaces the blanket fs.rm.
+      expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
+        '/audiobooks/Author/Title', expect.any(String), expect.anything(), { assertInsideLibrary: false },
+      );
     });
 
-    it('pointer mode: metadata mode is undefined — skips copy phase and streamCopyWithProgress', async () => {
-      const fs = await import('node:fs/promises');
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+    it('pointer mode: metadata mode is undefined — skips copy phase and stageSourceAudio', async () => {
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
@@ -247,8 +322,201 @@ describe('ManualImportAdapter', () => {
       expect(phases).toContain('analyzing');
       expect(phases).not.toContain('copying');
       expect(phases).toContain('fetching_metadata');
-      expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
-      expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalledWith(TARGET_PATH, expect.anything());
+      expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
+    });
+
+    describe('coalesced disc-group rows (#1272)', () => {
+      // Built with join() so they carry the same native separators reconstructDiscGroup emits
+      // (join(parent, name) → backslashes on Windows). Forward-slash literals would mismatch the
+      // reconstructed member paths on a Windows dev box while passing on Linux CI.
+      const MEMBER_PATHS = [
+        join('/audiobooks', 'Author - Book Disc 1 of 3'),
+        join('/audiobooks', 'Author - Book Disc 2 of 3'),
+        join('/audiobooks', 'Author - Book Disc 3 of 3'),
+      ];
+
+      /**
+       * Mock the reconstruction filesystem: readdir('/audiobooks') lists `names`, and each named
+       * subdir is audio-bearing (returns an audio file) unless listed in `audioless` (returns only
+       * non-audio). reconstructDiscGroup now filters siblings to audio-bearing dirs before the
+       * guard (#1280), so the per-sibling probe must be served, not just the parent listing.
+       */
+      async function mockSiblingTree(names: string[], audioless: string[] = []): Promise<void> {
+        const fs = await import('node:fs/promises');
+        vi.mocked(fs.readdir).mockImplementation(async (p: unknown) => {
+          // reconstructDiscGroup probes siblings with join(parent, name) → backslashes on Windows;
+          // normalize so the POSIX-keyed tree matches regardless of host separator.
+          const key = String(p).split('\\').join('/');
+          if (key === '/audiobooks') return names.map(n => makeDirent(n, false)) as never;
+          const name = key.slice('/audiobooks/'.length);
+          return (audioless.includes(name)
+            ? [makeDirent('cover.jpg', true)]
+            : [makeDirent('track.mp3', true)]) as never;
+        });
+      }
+
+      /** The standard 3-disc audio-bearing sibling set used by the copy/move tests. */
+      async function mockDiscSiblings(): Promise<void> {
+        await mockSiblingTree([
+          'Author - Book Disc 1 of 3',
+          'Author - Book Disc 2 of 3',
+          'Author - Book Disc 3 of 3',
+        ]);
+      }
+
+      it('mode=copy: reconstructs the group and flattens ALL members via copyDiscGroup', async () => {
+        await mockDiscSiblings();
+        const { copyDiscGroup, getAudioPathSize } = await import('../../utils/import-helpers.js');
+        const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+        // 3 member-size reads then the aggregated target size — verification passes (300 vs 300)
+        vi.mocked(getAudioPathSize)
+          .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
+          .mockResolvedValueOnce(300);
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', mode: 'copy',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
+        // Single-source copy must NOT run — the whole group is flattened, not just Disc 1
+        expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
+        // AC2: verification sums every member size, then reads the target — not item.path alone.
+        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
+        expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [TARGET_PATH],
+          [MEMBER_PATHS[0]],
+          [MEMBER_PATHS[1]],
+          [MEMBER_PATHS[2]],
+          [TARGET_PATH],
+        ]);
+      });
+
+      it('mode=move: cleans every reconstructed member folder via deleteManagedBookFiles after copy (#1598)', async () => {
+        await mockDiscSiblings();
+        const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
+        const { getAudioPathSize } = await import('../../utils/import-helpers.js');
+        vi.mocked(getAudioPathSize)
+          .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
+          .mockResolvedValueOnce(300);
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', mode: 'move',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // #1598: each member is swept by the managed-file helper (foreign-preserving, symlink-safe).
+        for (const member of MEMBER_PATHS) {
+          expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
+            member, expect.any(String), expect.anything(), { assertInsideLibrary: false },
+          );
+        }
+        // AC2: move-mode runs the same full-member copy verification before the rm sweep —
+        // every member size is read, then the target, not item.path alone.
+        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
+        expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [TARGET_PATH],
+          [MEMBER_PATHS[0]],
+          [MEMBER_PATHS[1]],
+          [MEMBER_PATHS[2]],
+          [TARGET_PATH],
+        ]);
+      });
+
+      it('pointer mode: rejects a disc-group row instead of silently registering Disc 1', async () => {
+        await mockDiscSiblings();
+        const { copyDiscGroup } = await import('../../utils/import-helpers.js');
+        const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', // mode omitted = pointer
+        };
+
+        await expect(adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx))
+          .rejects.toThrow(/multi-disc set/i);
+        expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+        expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
+      });
+
+      it('mode=copy: inconsistent-total sibling set falls back to single-source copy, not a flatten', async () => {
+        await mockSiblingTree(['Author - Book Disc 1 of 10', 'Author - Book Disc 2 of 8']);
+        const { copyDiscGroup } = await import('../../utils/import-helpers.js');
+        const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Author - Book Disc 1 of 10', title: 'Test Book', authorName: 'Author', mode: 'copy',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // Discovery left this row ungrouped → import copies only its single folder
+        expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+        expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+          sourcePath: '/audiobooks/Author - Book Disc 1 of 10',
+          targetPath: TARGET_PATH,
+          onProgress: expect.any(Function),
+        }));
+      });
+
+      it('pointer mode: AUDIO-bearing partial-marker sibling set is NOT rejected (discovery left it ungrouped)', async () => {
+        // An audio-bearing markerless sibling is genuinely ambiguous → all-or-nothing guard refuses.
+        await mockSiblingTree([
+          'Author - Book Disc 1 of 3',
+          'Author - Book Disc 2 of 3',
+          'Author - Book Bonus Material',
+        ]);
+        const { copyDiscGroup } = await import('../../utils/import-helpers.js');
+
+        const payload: ManualImportJobPayload = {
+          path: '/audiobooks/Author - Book Disc 1 of 3', title: 'Test Book', authorName: 'Author', // pointer
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // No multi-disc rejection, no flatten — ordinary pointer registration of the single folder
+        const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
+        expect(phases).toContain('fetching_metadata');
+        expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
+      });
+
+      it('mode=copy: an AUDIOLESS stem-sharing sibling no longer drops discs — flattens ALL members (#1280)', async () => {
+        // The data-loss case: previously an audioless `<stem> Artwork` sibling broke the import-side
+        // all-or-nothing guard, silently copying only Disc 1. Now it is filtered out before the guard.
+        await mockSiblingTree(
+          [
+            'Author - Book Disc 1 of 3',
+            'Author - Book Disc 2 of 3',
+            'Author - Book Disc 3 of 3',
+            'Author - Book Artwork',
+          ],
+          ['Author - Book Artwork'],
+        );
+        const { copyDiscGroup, getAudioPathSize } = await import('../../utils/import-helpers.js');
+        const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+        vi.mocked(getAudioPathSize)
+          .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
+          .mockResolvedValueOnce(300);
+
+        const payload: ManualImportJobPayload = {
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', mode: 'copy',
+        };
+        await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+
+        // All 3 audio-bearing discs flattened (Artwork excluded), not just Disc 1
+        expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
+        expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
+
+        // AC2: copy verification must sum EVERY reconstructed member's size, then read the target —
+        // not silently fall back to checking only the anchor disc (item.path) against the target.
+        // The exact call sequence proves all 3 member sizes are accumulated before the target read;
+        // a regression to single-path verification would yield only [item.path, target] (2 calls).
+        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
+        expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
+          [TARGET_PATH],
+          [MEMBER_PATHS[0]],
+          [MEMBER_PATHS[1]],
+          [MEMBER_PATHS[2]],
+          [TARGET_PATH],
+        ]);
+      });
     });
 
     describe('single-file payloads (issue #982)', () => {
@@ -294,8 +562,8 @@ describe('ManualImportAdapter', () => {
         });
       });
 
-      it('mode=copy + file-path payload: streamCopyWithProgress receives file source, persists target dir and copied-file size', async () => {
-        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      it('mode=copy + file-path payload: stageSourceAudio receives the file source, persists target dir and copied-file size', async () => {
+        const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
         const { getAudioStats } = await import('../library-scan.helpers.js');
         // After copy, getAudioStats is called against the target directory; size reflects copied file.
         vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 67_890 });
@@ -310,12 +578,14 @@ describe('ManualImportAdapter', () => {
 
         await adapter.process(job, ctx);
 
-        // The source forwarded to the streaming copy is the original file path
-        expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
-          '/audiobooks/Doctor Sleep.m4b',
-          TARGET_PATH,
-          expect.any(Function),
-        );
+        // The source forwarded to the audio-only copier is the original file path. The copier itself
+        // (import-steps copyToLibrary) handles the file-vs-directory branch — covered by its own suite.
+        expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+          sourcePath: '/audiobooks/Doctor Sleep.m4b',
+          targetPath: TARGET_PATH,
+          sourceStats: expect.objectContaining({ isFile: expect.any(Function) }),
+          onProgress: expect.any(Function),
+        }));
 
         // After copy completes, books.path is the target directory and size is the
         // copied-file size returned by getAudioStats(targetPath).
@@ -327,8 +597,7 @@ describe('ManualImportAdapter', () => {
       });
 
       it('mode=move + file-path payload: persists target dir + size and removes the source file', async () => {
-        const fs = await import('node:fs/promises');
-        const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+        const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
         const { getAudioStats } = await import('../library-scan.helpers.js');
         vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 33_333 });
 
@@ -342,16 +611,16 @@ describe('ManualImportAdapter', () => {
 
         await adapter.process(job, ctx);
 
-        expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
-          '/audiobooks/Doctor Sleep.m4b',
-          TARGET_PATH,
-          expect.any(Function),
-        );
+        expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+          sourcePath: '/audiobooks/Doctor Sleep.m4b',
+          targetPath: TARGET_PATH,
+          onProgress: expect.any(Function),
+        }));
 
-        // Move removes the original source file after copy verification
-        expect(vi.mocked(fs.rm)).toHaveBeenCalledWith(
-          '/audiobooks/Doctor Sleep.m4b',
-          { recursive: true },
+        // #1598: move cleans the original source via the managed-file helper after copy verification.
+        const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
+        expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
+          '/audiobooks/Doctor Sleep.m4b', expect.any(String), expect.anything(), { assertInsideLibrary: false },
         );
 
         const persisted = findPathSizeUpdate();
@@ -362,21 +631,21 @@ describe('ManualImportAdapter', () => {
       });
     });
 
-    it('throws when bookId is null (before any fs primitive or streamCopyWithProgress call)', async () => {
+    it('throws when bookId is null (before any fs primitive or stageSourceAudio call)', async () => {
       const fs = await import('node:fs/promises');
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
       const job = makeJob({ bookId: null });
 
       await expect(adapter.process(job, ctx)).rejects.toThrow('ManualImportAdapter requires a bookId');
-      expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
       expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
       expect(vi.mocked(fs.rename)).not.toHaveBeenCalled();
     });
 
-    it('throws when book row not found — before any fs primitive or streamCopyWithProgress call', async () => {
+    it('throws when book row not found — before any fs primitive or stageSourceAudio call', async () => {
       const fs = await import('node:fs/promises');
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
       mockDb.select = vi.fn().mockReturnValue({
         from: vi.fn().mockReturnThis(),
@@ -387,26 +656,26 @@ describe('ManualImportAdapter', () => {
 
       const job = makeJob();
       await expect(adapter.process(job, ctx)).rejects.toThrow('Book 42 not found');
-      expect(vi.mocked(streamCopyWithProgress)).not.toHaveBeenCalled();
+      expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
       expect(vi.mocked(fs.mkdir)).not.toHaveBeenCalled();
     });
 
     it('hydrates ManualImportJobPayload from job.metadata JSON including mode', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      // mode='copy' → streamCopyWithProgress should run
-      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalled();
+      // mode='copy' → stageSourceAudio should run
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalled();
     });
 
     it('onProgress wiring during copy: forwards captured callback values to ctx.emitProgress', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
-      vi.mocked(streamCopyWithProgress).mockImplementationOnce(async (_src, _dest, onProgress) => {
-        onProgress(0.25, { current: 25, total: 100 });
-        onProgress(0.5, { current: 50, total: 100 });
-        onProgress(1.0, { current: 100, total: 100 });
+      vi.mocked(stageSourceAudio).mockImplementationOnce(async ({ onProgress }) => {
+        onProgress?.(0.25, { current: 25, total: 100 });
+        onProgress?.(0.5, { current: 50, total: 100 });
+        onProgress?.(1.0, { current: 100, total: 100 });
       });
 
       const job = makeJob();
@@ -708,8 +977,8 @@ describe('ManualImportAdapter', () => {
 
     it('emits book_status_change SSE and records import_failed event on copy failure (#636 F2)', async () => {
       const { safeEmit } = await import('../../utils/safe-emit.js');
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
-      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+      vi.mocked(stageSourceAudio).mockRejectedValueOnce(new Error('Disk full'));
 
       const job = makeJob();
       await expect(adapter.process(job, ctx)).rejects.toThrow('Disk full');
@@ -731,8 +1000,8 @@ describe('ManualImportAdapter', () => {
     });
 
     it('failure path: forwards narratorName from payload.metadata.narrators[0] (#672)', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
-      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+      vi.mocked(stageSourceAudio).mockRejectedValueOnce(new Error('Disk full'));
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
@@ -813,8 +1082,7 @@ describe('ManualImportAdapter', () => {
       deps.settingsService = inject<SettingsService>(settingsSvc);
       adapter = new ManualImportAdapter(deps);
 
-      const fs = await import('node:fs/promises');
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Discworld 0/Test Book',
@@ -827,19 +1095,19 @@ describe('ManualImportAdapter', () => {
       const job = makeJob({ metadata: JSON.stringify(payload) });
       await adapter.process(job, ctx);
 
-      // The expected target rendered from {author}/{series} #{seriesPosition}/{title}
+      // The expected target rendered from {author}/{series} #{seriesPosition}/{title}. seriesPosition: 0
+      // must survive into the copier's target — a dropped conditional-spread would render a different path.
       const expectedTarget = '/library/Author/Discworld #0/Test Book';
-      expect(vi.mocked(fs.mkdir)).toHaveBeenCalledWith(expectedTarget, { recursive: true });
-      expect(vi.mocked(streamCopyWithProgress)).toHaveBeenCalledWith(
-        payload.path,
-        expectedTarget,
-        expect.any(Function),
-      );
+      expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
+        sourcePath: payload.path,
+        targetPath: expectedTarget,
+        onProgress: expect.any(Function),
+      }));
     });
 
     it('failure path: payload.narrators wins over payload.metadata.narrators[0] (F11/#1028)', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
-      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+      vi.mocked(stageSourceAudio).mockRejectedValueOnce(new Error('Disk full'));
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
@@ -864,8 +1132,8 @@ describe('ManualImportAdapter', () => {
     });
 
     it('failure path: falls back to metadata narrator when item has none (regression guard) (#1028)', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
-      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+      vi.mocked(stageSourceAudio).mockRejectedValueOnce(new Error('Disk full'));
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',
@@ -913,8 +1181,8 @@ describe('ManualImportAdapter', () => {
     });
 
     it('failure path: narratorName is null when payload.metadata is undefined (#672)', async () => {
-      const { streamCopyWithProgress } = await import('../streaming-copy.helpers.js');
-      vi.mocked(streamCopyWithProgress).mockRejectedValueOnce(new Error('Disk full'));
+      const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
+      vi.mocked(stageSourceAudio).mockRejectedValueOnce(new Error('Disk full'));
 
       const payload: ManualImportJobPayload = {
         path: '/audiobooks/Author/Title',

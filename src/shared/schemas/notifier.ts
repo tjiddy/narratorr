@@ -49,12 +49,34 @@ export const slackSettingsSchema = z.object({
 
 export const pushoverSettingsSchema = z.object({
   pushoverToken: z.string().trim().min(1),
+  // Sentinel passthrough: this field is a registered secret (#1307), so the
+  // masked sentinel '********' must survive validation on create/update. It does
+  // so today only because the validator is a bare `.trim().min(1)` (the sentinel
+  // is 8 non-space chars). If you tighten this to a format constraint (e.g.
+  // Pushover's 30-char alnum user key), add an explicit `z.union([z.literal('********'), ...])`
+  // — otherwise unrelated saves that round-trip the sentinel silently 400.
   pushoverUser: z.string().trim().min(1),
 }).strict();
 
+// ntfy's documented Priority header tokens (min|low|default|high|max). Empty/unset
+// means "send no Priority header" (server default applies).
+export const NTFY_PRIORITIES = ['min', 'low', 'default', 'high', 'max'] as const;
+
 export const ntfySettingsSchema = z.object({
+  // Sentinel passthrough: registered secret (#1307) — the masked '********' must
+  // pass validation. Safe today only because this is a bare `.trim().min(1)`. Any
+  // future format constraint must explicitly admit the sentinel literal, or
+  // sentinel round-trips on save will silently 400. See pushoverUser above.
   ntfyTopic: z.string().trim().min(1),
   ntfyServer: z.string().trim().optional(),
+  // Sentinel passthrough: registered secret (#1607) — the masked '********' must
+  // pass validation. Safe today only because this is a bare optional `.trim()`. Any
+  // future format constraint must explicitly admit the sentinel literal. See above.
+  ntfyAccessToken: z.string().trim().optional(),
+  // Optional enum that can also arrive as '' — the unselected <select> and the
+  // registry default both produce ''. `.enum([...]).optional()` would reject a
+  // present '', so admit the empty literal explicitly alongside absent.
+  ntfyPriority: z.enum(NTFY_PRIORITIES).or(z.literal('')).optional(),
 }).strict();
 
 export const gotifySettingsSchema = z.object({
@@ -182,6 +204,8 @@ export const createNotifierFormSchema = z.object({
     // ntfy
     ntfyTopic: z.string().trim().optional(),
     ntfyServer: z.string().trim().optional(),
+    ntfyAccessToken: z.string().trim().optional(),
+    ntfyPriority: z.enum(NTFY_PRIORITIES).or(z.literal('')).optional(),
     // Gotify
     gotifyUrl: z.string().trim().optional(),
     gotifyToken: z.string().trim().optional(),

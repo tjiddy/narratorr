@@ -12,9 +12,9 @@ export async function bulkOperationsRoutes(
   app: FastifyInstance,
   bulkOperationService: BulkOperationService,
 ): Promise<void> {
-  // Count endpoints
-  app.get('/api/books/bulk/rename/count', async () => {
-    return bulkOperationService.countRenameEligible();
+  // Rename preview — capped from→to folder-mismatch list + true totals (incl. job denominator)
+  app.get('/api/books/bulk/rename/preview', async () => {
+    return bulkOperationService.previewRenameEligible();
   });
 
   app.get('/api/books/bulk/retag/count', async () => {

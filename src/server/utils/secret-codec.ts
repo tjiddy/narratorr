@@ -1,11 +1,13 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { indexerSettingsSchemas } from '../../shared/schemas/indexer.js';
 import { downloadClientSettingsSchemas } from '../../shared/schemas/download-client.js';
 import { notifierSettingsSchemas } from '../../shared/schemas/notifier.js';
 import { importListSettingsSchemas } from '../../shared/schemas/import-list.js';
+import { connectorSettingsSchemas } from '../../shared/schemas/connector.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -22,29 +24,39 @@ const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
 export type SecretEntity =
   | 'indexer'
   | 'downloadClient'
-  | 'prowlarr'
   | 'auth'
   | 'network'
   | 'metadata'
   | 'importList'
-  | 'notifier';
+  | 'notifier'
+  | 'connector';
 
 // Notifier secret fields are flat across all subtypes (encryptFields skips
 // missing fields harmlessly). When adding a new notifier subtype with a secret
 // field, append it here. Contributors per subtype:
 //   webhook:  url, headers           discord:  webhookUrl
 //   slack:    webhookUrl             telegram: botToken
-//   email:    smtpPass               pushover: pushoverToken
-//   gotify:   gotifyToken            (script/ntfy: no secrets in current schema)
+//   email:    smtpPass               pushover: pushoverToken, pushoverUser
+//   gotify:   gotifyToken            ntfy:     ntfyTopic, ntfyAccessToken
+//   (script: no secrets in current schema)
+// pushoverUser (a documented-private user key) and ntfyTopic (the topic name IS
+// the publish/subscribe capability on public ntfy servers) are credential-shaped
+// and registered here so they are encrypted at rest and masked in responses (#1307).
+// ntfyAccessToken is the Bearer token for protected ntfy topics (#1607).
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   indexer: ['apiKey', 'apiUrl', 'flareSolverrUrl', 'mamId'],
   downloadClient: ['password', 'apiKey'],
-  prowlarr: ['apiKey'],
   auth: ['sessionSecret', 'apiKey'],
   network: ['proxyUrl'],
   metadata: ['hardcoverApiKey'],
   importList: ['apiKey'],
-  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'gotifyToken', 'headers'],
+  notifier: ['url', 'webhookUrl', 'botToken', 'smtpPass', 'pushoverToken', 'pushoverUser', 'gotifyToken', 'ntfyTopic', 'ntfyAccessToken', 'headers'],
+  // baseUrl is registered alongside apiKey/token per the issue spec: connector
+  // apiKey/token/baseUrl are encrypted at rest and masked in responses,
+  // consistent with operator-configured integrations like indexer apiUrl (#1491).
+  // token is the Plex secret (#1492); flat across subtypes (encryptFields skips
+  // fields not present in a given connector's settings).
+  connector: ['baseUrl', 'apiKey', 'token'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────
@@ -131,6 +143,7 @@ const PER_TYPE_SETTINGS_MAPS: Partial<Record<SecretEntity, Record<string, z.ZodT
   downloadClient: downloadClientSettingsSchemas,
   notifier: notifierSettingsSchemas,
   importList: importListSettingsSchemas,
+  connector: connectorSettingsSchemas,
 };
 
 function loosenSettingsSchema(
@@ -148,10 +161,28 @@ function loosenSettingsSchema(
   }
   if (Object.keys(overrides).length === 0) return schema;
   // safeExtend is the public API for overriding keys on objects that may carry
-  // chained refinements (e.g. Hardcover's listType/shelfId rule). It preserves
-  // strict mode and refinement checks; .extend() throws when overwriting keys
-  // on schemas with refinements.
+  // chained refinements (e.g. Hardcover's listType/shelfId rule, connector's
+  // baseUrl URL refinement). It preserves strict mode and refinement checks;
+  // .extend() throws when overwriting keys on schemas with refinements.
   return obj.safeExtend(overrides);
+}
+
+/**
+ * Loosen every per-type settings schema in a map so each registered secret
+ * field accepts the masked `'********'` sentinel OR its original validator. Used
+ * to build sentinel-aware update schemas for routes that pass the per-type map
+ * directly (e.g. the connector PUT route). Returns a new map; inputs untouched.
+ */
+export function loosenSettingsSchemas(
+  settingsMap: Record<string, z.ZodTypeAny>,
+  secretEntity: SecretEntity,
+): Record<string, z.ZodTypeAny> {
+  const secretFields = getSecretFieldNames(secretEntity);
+  const out: Record<string, z.ZodTypeAny> = {};
+  for (const [type, schema] of Object.entries(settingsMap)) {
+    out[type] = secretFields.length === 0 ? schema : loosenSettingsSchema(schema, secretFields);
+  }
+  return out;
 }
 
 /**
@@ -166,16 +197,28 @@ function loosenSettingsSchema(
  * introspected from the create schema's superRefine), so adapter-specific
  * validators like Hardcover's listType/shelfId rule are preserved on the
  * loosened secret field.
+ *
+ * `settingsMapOverride` swaps in a different per-type settings map than the
+ * entity default — e.g. the connector `/targets` route passes the
+ * targets-scoped map (selector field optional) so a new connector can fetch its
+ * dropdown before the selector is known, while the strict map governs
+ * create/update/test (#1523).
  */
 export function makeTestSchema<S extends z.ZodTypeAny>(
   createSchema: S,
   secretEntity: SecretEntity,
+  settingsMapOverride?: Record<string, z.ZodTypeAny>,
 ): z.ZodTypeAny {
   if (!(createSchema instanceof z.ZodObject)) return createSchema;
   const outer = createSchema as z.ZodObject<z.ZodRawShape>;
-  const withId = outer.extend({ id: z.number().int().positive().optional() });
+  // Rebuild the outer object from its shape so the create schema's own per-type
+  // `superRefine` (strict `validateSettingsPerType`) is dropped — this function
+  // re-derives per-type validation from the loosened settings map below, and
+  // re-running the strict refinement would reject a sentinel on any secret field
+  // that carries a format refinement (e.g. connector `baseUrl`'s URL check).
+  const withId = z.object(outer.shape).extend({ id: z.number().int().positive().optional() });
 
-  const settingsMap = PER_TYPE_SETTINGS_MAPS[secretEntity];
+  const settingsMap = settingsMapOverride ?? PER_TYPE_SETTINGS_MAPS[secretEntity];
   const secretFields = getSecretFieldNames(secretEntity);
   if (!settingsMap) return withId;
 
@@ -223,14 +266,41 @@ export function decryptFields(
   entity: SecretEntity,
   settings: Record<string, unknown>,
   key: Buffer,
+  logger?: FastifyBaseLogger,
 ): Record<string, unknown> {
-  const fields = getSecretFieldNames(entity);
-  for (const field of fields) {
-    if (!(field in settings)) continue;
-    const value = settings[field];
+  // Opportunistic decrypt: decrypt ANY `$ENC$`-prefixed string value regardless
+  // of SECRET_FIELDS membership. This rollback-proofs the read path (#1357) — a
+  // value encrypted by a build that registered a field the running build does
+  // not (e.g. after a rollback past the registration) is still decrypted rather
+  // than handed to an adapter as raw `$ENC$` ciphertext. Decrypting a value the
+  // running build doesn't consider secret is harmless; encrypt/mask stay
+  // registry-scoped so no field outside the registry is ever encrypted or masked.
+  //
+  // Decryption failures (malformed / undersized / non-base64 blobs, auth-tag
+  // mismatch) pass through unchanged via try/catch — read-path callers
+  // (notifier.service `decryptRow` et al.) invoke this without their own
+  // try/catch, so a corrupt blob must never crash a route handler.
+  //
+  // Diagnostic (#1404): a silent passthrough is correct but undiagnosable — if
+  // `secret.key` is lost/regenerated (volume wipe, manual deletion), every
+  // stored secret stops decrypting and the only symptom is mysterious downstream
+  // auth failures with nothing in the logs. Collect the failed field NAMES (never
+  // values) and emit one `warn` per call so the root cause is greppable. Logging
+  // is owned here — the single point that touches plaintext — so the
+  // "never log values" guarantee holds uniformly across all callers.
+  const failedFields: string[] = [];
+  for (const [field, value] of Object.entries(settings)) {
     if (typeof value === 'string' && isEncrypted(value)) {
-      settings[field] = decrypt(value, key);
+      try {
+        settings[field] = decrypt(value, key);
+      } catch {
+        // Passthrough: leave the original `$ENC$` value untouched on any failure.
+        failedFields.push(field);
+      }
     }
+  }
+  if (failedFields.length > 0) {
+    logger?.warn({ entity, failedFields }, 'Failed to decrypt stored secret fields — check secret.key');
   }
   return settings;
 }

@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { buildFfmpegArgs, tagFile, TaggingService, RetagError, type TagMetadata } from './tagging.service.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
-// Mock child_process
+// Mock child_process — the callback is the LAST arg, which may be the 3rd (cmd, args, cb)
+// or the 4th (cmd, args, options, cb) once an options object like `{ env }` is passed.
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn((_cmd: string, _args: string[], cb: (err: Error | null, result: { stdout: string; stderr: string }) => void) => {
+  execFile: vi.fn((...args: unknown[]) => {
+    const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
     cb(null, { stdout: '', stderr: '' });
   }),
 }));
@@ -184,6 +186,22 @@ describe('tagFile', () => {
     expect(result.status).toBe('tagged');
   });
 
+  it('writes tags with a sanitized env (no secret leak, PATH preserved)', async () => {
+    process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
+    try {
+      const result = await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', { artist: 'Author' }, 'overwrite');
+      expect(result.status).toBe('tagged');
+
+      const { execFile } = await import('node:child_process');
+      const opts = (execFile as unknown as Mock).mock.calls[0]![2] as { env?: Record<string, string> };
+      expect(opts.env).toBeDefined();
+      expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+      expect(opts.env).toHaveProperty('PATH');
+    } finally {
+      delete process.env.NARRATORR_SECRET_KEY;
+    }
+  });
+
   it('in populate_missing mode, reads existing tags and skips non-empty fields', async () => {
     (parseFile as Mock).mockResolvedValueOnce({
       common: { artist: 'Existing Author', album: '', title: '' },
@@ -259,11 +277,10 @@ describe('tagFile', () => {
 
   it('returns failed status when ffmpeg errors', async () => {
     const { execFile } = await import('node:child_process');
-    (execFile as unknown as Mock).mockImplementationOnce(
-      (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
-        cb(new Error('ffmpeg crashed'));
-      },
-    );
+    (execFile as unknown as Mock).mockImplementationOnce((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error | null) => void;
+      cb(new Error('ffmpeg crashed'));
+    });
 
     const result = await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', { artist: 'Author' }, 'overwrite');
     expect(result.status).toBe('failed');
@@ -294,11 +311,10 @@ describe('tagFile', () => {
 
   it('cleans up temp file on ffmpeg failure', async () => {
     const { execFile } = await import('node:child_process');
-    (execFile as unknown as Mock).mockImplementationOnce(
-      (_cmd: string, _args: string[], cb: (err: Error | null) => void) => {
-        cb(new Error('ffmpeg error'));
-      },
-    );
+    (execFile as unknown as Mock).mockImplementationOnce((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error | null) => void;
+      cb(new Error('ffmpeg error'));
+    });
 
     await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', { artist: 'Author' }, 'overwrite');
     expect(unlink).toHaveBeenCalledWith(expect.stringContaining('file.tmp.mp3'));

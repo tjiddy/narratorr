@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -22,7 +23,7 @@ async function seedBook(db: Db, opts: {
   authorNames?: string[];
   narratorNames?: string[];
 }): Promise<number> {
-  const [book] = await db.insert(books).values({
+  const [book] = await db.insert(books).values({ publicId: generatePublicId('bk'),
     title: opts.title,
     status: opts.status ?? 'imported',
     seriesName: opts.seriesName ?? null,
@@ -34,7 +35,7 @@ async function seedBook(db: Db, opts: {
       const name = opts.authorNames[i]!;
       const slug = slugify(name);
       const existing = await db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
-      const authorId = existing[0]?.id ?? (await db.insert(authors).values({ name, slug }).returning())[0]!.id;
+      const authorId = existing[0]?.id ?? (await db.insert(authors).values({ publicId: generatePublicId('au'), name, slug }).returning())[0]!.id;
       await db.insert(bookAuthors).values({ bookId, authorId, position: i });
     }
   }
@@ -44,7 +45,7 @@ async function seedBook(db: Db, opts: {
       const name = opts.narratorNames[i]!;
       const slug = slugify(name);
       const existing = await db.select().from(narrators).where(eq(narrators.slug, slug)).limit(1);
-      const narratorId = existing[0]?.id ?? (await db.insert(narrators).values({ name, slug }).returning())[0]!.id;
+      const narratorId = existing[0]?.id ?? (await db.insert(narrators).values({ publicId: generatePublicId('nr'), name, slug }).returning())[0]!.id;
       await db.insert(bookNarrators).values({ bookId, narratorId, position: i });
     }
   }

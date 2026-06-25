@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { sortBooks, collapseSeries, matchesStatusFilter, getStatusCount, extractNarrators, computeMbPerHour, filterTabs } from './helpers';
+import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, LIBRARY_FILTER_VALUES, type LibraryFilterBucket } from '../../../shared/schemas/book.js';
 import type { LibraryBookListItem } from '@/lib/api';
 
 function makeBook(overrides: Partial<LibraryBookListItem> = {}): LibraryBookListItem {
@@ -208,6 +209,30 @@ describe('filterTabs (#351)', () => {
 
   it('has 6 entries total', () => {
     expect(filterTabs).toHaveLength(6);
+  });
+
+  // #1447 (S2d) — tabs are derived from the canonical filter vocabulary
+  it('keys equal LIBRARY_FILTER_VALUES in order', () => {
+    expect(filterTabs.map((t) => t.key)).toEqual([...LIBRARY_FILTER_VALUES]);
+  });
+});
+
+// #1447 (S2d) — matchesStatusFilter membership must be driven by the canonical
+// bucket map, not hardcoded literals, so it stays in lockstep with getStats.
+describe('matchesStatusFilter — canonical bucket partition (#1447)', () => {
+  for (const bucket of Object.keys(LIBRARY_FILTER_BUCKETS) as LibraryFilterBucket[]) {
+    const members = new Set<string>(LIBRARY_FILTER_BUCKETS[bucket]);
+    it(`bucket "${bucket}" matches exactly its canonical member states`, () => {
+      for (const status of BOOK_STATUSES) {
+        expect(matchesStatusFilter(status, bucket)).toBe(members.has(status));
+      }
+    });
+  }
+
+  it('the "all" filter matches every canonical status', () => {
+    for (const status of BOOK_STATUSES) {
+      expect(matchesStatusFilter(status, 'all')).toBe(true);
+    }
   });
 });
 

@@ -1,13 +1,11 @@
 import type { FastifyInstance } from 'fastify';
-import { cleanCoverCache } from '../utils/cover-cache.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import { config } from '../config.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
-import { PathOutsideLibraryError } from '../utils/paths.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
+import type { BookDeletionService } from '../services/book-deletion.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -21,20 +19,22 @@ export interface BookRouteDeps {
   mergeService: MergeService;
   taggingService: TaggingService;
   eventHistory: EventHistoryService;
-  indexerSearchService?: IndexerSearchService;
-  indexerService?: IndexerService;
-  bookRejectionService?: BookRejectionService;
-  blacklistService?: BlacklistService;
-  eventBroadcaster?: EventBroadcasterService;
-  seriesCardService?: SeriesCardService;
-  metadataService?: MetadataService;
+  bookDeletionService: BookDeletionService;
+  indexerSearchService: IndexerSearchService;
+  indexerService: IndexerService;
+  bookRejectionService: BookRejectionService;
+  blacklistService: BlacklistService;
+  eventBroadcaster: EventBroadcasterService;
+  seriesCardService: SeriesCardService;
+  metadataService: MetadataService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { z } from 'zod';
-import { triggerImmediateSearch } from './trigger-immediate-search.js';
+import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
 import {
   idParamSchema,
   bookListQuerySchema,
+  libraryStatusFilterSchema,
   paginationParamsSchema,
   createBookBodySchema,
   updateBookBodySchema,
@@ -49,11 +49,17 @@ import {
   type RetagPreviewQuery,
 } from '../../shared/schemas.js';
 import { registerFixMatchRoute } from './books-fix-match.js';
+import { registerSeriesRoutes } from './books-series.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
 
+// The library list filter carries a `LibraryFilterBucket` (bucket key), distinct
+// from the generic route's per-book `BookStatus`. Override `status` to the
+// bucket-only schema so `?status=all` (client-only sentinel) and non-bucket
+// statuses like `?status=searching` are rejected with a 400.
 const libraryBooksListQuerySchema = booksListQuerySchema.extend({
+  status: libraryStatusFilterSchema.optional(),
   collapse: z.enum(['true', 'false']).optional().transform(v => v === undefined ? undefined : v === 'true'),
 });
 type LibraryBooksListQuery = z.infer<typeof libraryBooksListQuerySchema>;
@@ -63,7 +69,7 @@ type IdParam = z.infer<typeof idParamSchema>;
 import { refreshScanBook } from '../services/refresh-scan.service.js';
 
 
-async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory'>) {
+async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
@@ -71,66 +77,23 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     const { id } = request.params;
     const { deleteFiles } = request.query;
 
-    // Fetch book once for file deletion + event snapshot
-    const book = await deps.bookService.getById(id);
+    const result = await deps.bookDeletionService.deleteBook(id, { deleteFiles: deleteFiles === 'true' });
 
-    // If deleteFiles requested, delete from disk BEFORE cancelling downloads or removing DB record
-    if (deleteFiles === 'true') {
-      if (!book) {
+    switch (result.outcome) {
+      case 'not_found':
         return reply.status(404).send({ error: 'Book not found' });
-      }
-
-      if (book.path) {
-        try {
-          const librarySettings = await deps.settingsService.get('library');
-          await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
-        } catch (error: unknown) {
-          if (error instanceof PathOutsideLibraryError) {
-            request.log.warn({ bookId: id, error: serializeError(error) }, 'Refused book file deletion: path outside library root');
-            return reply.status(400).send({ error: error.message });
-          }
-          request.log.error({ bookId: id, error: serializeError(error) }, 'Failed to delete book files');
-          return reply.status(500).send({ error: 'Failed to delete book files from disk' });
-        }
-      }
+      case 'path_outside_library':
+        return reply.status(400).send({ error: result.error });
+      case 'file_deletion_failed':
+        return reply.status(500).send({ error: result.error });
+      case 'deleted':
+        // #1589: surface what an on-disk delete preserved ("kept N files") when present.
+        return result.fileSummary
+          ? { success: true, fileSummary: result.fileSummary }
+          : { success: true };
+      default:
+        return result satisfies never;
     }
-
-    // Cancel any active downloads for this book
-    const activeDownloads = await deps.downloadService.getActiveByBookId(id);
-    for (const download of activeDownloads) {
-      try {
-        await deps.downloadOrchestrator.cancel(download.id);
-      } catch (error: unknown) {
-        request.log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to cancel download during book deletion');
-      }
-    }
-    if (activeDownloads.length > 0) {
-      request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
-    }
-
-    // Record deleted event before DB deletion (snapshot preserved via event fields)
-    if (book && deps.eventHistory) {
-      deps.eventHistory.create({
-        bookId: id,
-        ...snapshotBookForEvent(book),
-        eventType: 'deleted',
-        source: 'manual',
-      }).catch((err) => request.log.warn({ error: serializeError(err) }, 'Failed to record deleted event'));
-    }
-
-    const deleted = await deps.bookService.delete(id);
-
-    if (!deleted) {
-      return reply.status(404).send({ error: 'Book not found' });
-    }
-
-    // Clean up cached cover after successful DB delete (best-effort)
-    cleanCoverCache(id, config.configPath, request.log).catch((error: unknown) => {
-      request.log.warn({ bookId: id, error: serializeError(error) }, 'Failed to clean cover cache during deletion');
-    });
-
-    request.log.info({ id, deleteFiles }, 'Book deleted');
-    return { success: true };
 });
 }
 
@@ -157,7 +120,7 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
 
       request.log.info({ title: body.title }, 'Book added');
 
-      if (body.searchImmediately && book.status === 'wanted' && deps.indexerSearchService && deps.blacklistService && deps.indexerService) {
+      if (body.searchImmediately && book.status === 'wanted') {
         const { downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, indexerSearchService, indexerService, eventHistory } = deps;
         triggerImmediateSearch(book, { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, eventHistory }, request.log);
       }
@@ -168,36 +131,6 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
       // enough to render the card immediately.
 
       return reply.status(201).send(book);
-    },
-  );
-}
-
-function registerSeriesRoutes(app: FastifyInstance, bookService: BookService, seriesCardService: SeriesCardService) {
-  app.get<{ Params: IdParam }>(
-    '/api/books/:id/series',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      const book = await bookService.getById(id);
-      if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
-      }
-      const card = await seriesCardService.getSeriesForBook(id);
-      return { series: card };
-    },
-  );
-
-  app.post<{ Params: IdParam }>(
-    '/api/books/:id/series/refresh',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      const book = await bookService.getById(id);
-      if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
-      }
-      const card = await seriesCardService.refreshSeriesForBook(id);
-      return { series: card };
     },
   );
 }
@@ -225,17 +158,16 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       const metadataSettings = await deps.settingsService.get('metadata');
       const searchSettings = await deps.settingsService.get('search');
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      const result = await searchAndGrabForBook(
-        book,
-        deps.indexerSearchService!,
-        deps.downloadOrchestrator,
-        { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
-        request.log,
-        deps.blacklistService!,
-        deps.indexerService!,
-        deps.eventHistory,
-        deps.eventBroadcaster,
-      );
+      const result = await searchAndGrabForBook(book, {
+        indexerSearchService: deps.indexerSearchService,
+        downloadOrchestrator: deps.downloadOrchestrator,
+        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        log: request.log,
+        blacklistService: deps.blacklistService,
+        indexerService: deps.indexerService,
+        eventHistory: deps.eventHistory,
+        broadcaster: deps.eventBroadcaster,
+      });
       if (result.result === 'grab_error') {
         throw result.error;
       }
@@ -321,7 +253,7 @@ function registerBookListRoutes(app: FastifyInstance, bookListService: BookRoute
 }
 
 export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
-  const { bookService, bookListService, renameService, mergeService, taggingService, indexerSearchService } = deps;
+  const { bookService, bookListService, renameService, mergeService, taggingService } = deps;
   registerBookListRoutes(app, bookListService);
 
   // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
@@ -406,9 +338,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  if (indexerSearchService) {
-    registerBookSearchRoute(app, deps);
-  }
+  registerBookSearchRoute(app, deps);
 
   // GET /api/books/:id/retag/preview — dry-run plan for the re-tag action
   app.get<{ Params: IdParam; Querystring: RetagPreviewQuery }>(
@@ -444,29 +374,23 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  if (deps.seriesCardService) {
-    registerSeriesRoutes(app, deps.bookService, deps.seriesCardService);
-  }
+  registerSeriesRoutes(app, deps.bookService, deps.seriesCardService);
 
   registerMergeRoutes(app, mergeService);
 
   // POST /api/books/:id/fix-match
-  if (deps.metadataService) {
-    registerFixMatchRoute(app, deps);
-  }
+  registerFixMatchRoute(app, deps);
 
   // POST /api/books/:id/wrong-release
-  if (deps.bookRejectionService) {
-    const bookRejectionService = deps.bookRejectionService;
-    app.post<{ Params: IdParam }>(
-      '/api/books/:id/wrong-release',
-      { schema: { params: idParamSchema } },
-      async (request) => {
-        const { id } = request.params;
-        await bookRejectionService.rejectAsWrongRelease(id);
-        request.log.info({ id }, 'Book marked as wrong release');
-        return { success: true };
-      },
-    );
-  }
+  const { bookRejectionService } = deps;
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/wrong-release',
+    { schema: { params: idParamSchema } },
+    async (request) => {
+      const { id } = request.params;
+      await bookRejectionService.rejectAsWrongRelease(id);
+      request.log.info({ id }, 'Book marked as wrong release');
+      return { success: true };
+    },
+  );
 }

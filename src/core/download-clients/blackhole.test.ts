@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { http, HttpResponse, delay } from 'msw';
-import { useMswServer } from '../__tests__/msw/server.js';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import type * as NetworkServiceModule from '../utils/network-service.js';
 import { BlackholeClient } from './blackhole.js';
 import type { DownloadArtifact } from './types.js';
 import { DownloadClientError, DownloadClientTimeoutError } from './errors.js';
@@ -11,15 +10,93 @@ vi.mock('node:fs/promises', () => ({
   constants: { R_OK: 4, W_OK: 2 },
 }));
 
+vi.mock('node:dns/promises', () => ({
+  lookup: vi.fn(),
+}));
+
+const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
+const createDispatcherSpy = vi.fn((_hostnameAllowlist?: Set<string>) => ({ close: dispatcherCloseSpy }));
+
+// Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so the
+// `vi.stubGlobal('fetch', mockFetch)` below intercepts download hops. Production
+// routes through undici's fetch when a dispatcher is attached (which bypasses
+// MSW); the helper's redirect routing is asserted in network-service.test.ts.
+// `createSsrfSafeDispatcher` is stubbed so we can spy on dispatcher.close() and on
+// the hostname allowlist it receives without standing up a real undici Agent.
+const ssrfRedirectWalker = vi.fn(async (startUrl: string, opts: NetworkServiceModule.FetchWithSsrfRedirectOptions = {}) => {
+  const actual = await import('../utils/network-service.js');
+  const MAX = 5;
+  const visited = new Set<string>();
+  let cur = startUrl;
+  const maxHops = opts.maxHops ?? MAX;
+  for (let hop = 0; hop <= maxHops; hop++) {
+    if (visited.has(cur)) throw new Error('Redirect loop detected');
+    visited.add(cur);
+    const parsed = new URL(cur);
+    await actual.resolveAndValidate(parsed.hostname, {
+      ...(opts.lanAllowlist && { lanAllowlist: opts.lanAllowlist }),
+      normalizedHostPort: actual.normalizedHostPortFromUrl(parsed),
+    });
+    const response = await globalThis.fetch(cur, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+      dispatcher: opts.dispatcher,
+    } as RequestInit);
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get('location');
+    if (!location) {
+      await response.body?.cancel().catch(() => { /* best-effort */ });
+      throw new Error('Redirect with no Location header');
+    }
+    const nextHref = new URL(location, cur).href;
+    await response.body?.cancel().catch(() => { /* best-effort */ });
+    cur = nextHref;
+  }
+  throw new Error('Too many redirects');
+});
+
+vi.mock('../utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof NetworkServiceModule>();
+  return {
+    ...actual,
+    fetchWithSsrfRedirect: ((url: string, opts?: NetworkServiceModule.FetchWithSsrfRedirectOptions) =>
+      ssrfRedirectWalker(url, opts)) as unknown as typeof actual.fetchWithSsrfRedirect,
+    createSsrfSafeDispatcher: ((hostname?: Set<string>) =>
+      createDispatcherSpy(hostname)) as unknown as typeof actual.createSsrfSafeDispatcher,
+  };
+});
+
 const { writeFile, access } = await import('node:fs/promises');
+const { lookup: dnsLookup } = await import('node:dns/promises');
+const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
+
+const mockFetch = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>();
+
+function nzbResponse(body: Uint8Array | string, init?: ResponseInit): Response {
+  return new Response(body as BodyInit, init);
+}
 
 describe('BlackholeClient', () => {
-  const server = useMswServer();
   let client: BlackholeClient;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.mocked(writeFile).mockClear();
+    vi.mocked(access).mockClear();
+    mockFetch.mockClear();
+    dispatcherCloseSpy.mockClear();
+    createDispatcherSpy.mockClear();
+    ssrfRedirectWalker.mockClear();
+    mockedDnsLookup.mockReset();
+    // Default every host to a public IP so the SSRF pre-flight gate is open.
+    mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+    vi.stubGlobal('fetch', mockFetch);
     client = new BlackholeClient({ watchDir: '/downloads/watch', protocol: 'torrent' });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // Restore GIT_TAG so the User-Agent test's env stub never leaks.
+    vi.unstubAllEnvs();
   });
 
   describe('addDownload', () => {
@@ -54,11 +131,7 @@ describe('BlackholeClient', () => {
 
     it('fetches nzb-url artifact and writes .nzb file', async () => {
       const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
-      server.use(
-        http.get('https://example.com/api/download/123', () => {
-          return new HttpResponse(nzbContent);
-        }),
-      );
+      mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
 
       const artifact: DownloadArtifact = {
         type: 'nzb-url',
@@ -70,6 +143,108 @@ describe('BlackholeClient', () => {
         expect.stringMatching(/download-\d+\.nzb$/),
         expect.any(Buffer),
       );
+    });
+
+    it('sends User-Agent: Narratorr/<version> on the nzb-url self-download (#1315)', async () => {
+      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
+      // ambient env (a CI/release env that exports GIT_TAG would otherwise flip
+      // the expected value) AND so deleting getUserAgent()'s tagged-version
+      // branch makes this fail. The unset/unknown fallbacks are covered in
+      // src/shared/user-agent.test.ts.
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
+      const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
+      mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
+
+      await client.addDownload({ type: 'nzb-url', url: 'https://example.com/api/download/123' });
+
+      expect(ssrfRedirectWalker).toHaveBeenCalledWith(
+        'https://example.com/api/download/123',
+        expect.objectContaining({ headers: { 'User-Agent': 'Narratorr/v9.9.9' } }),
+      );
+    });
+
+    // #1243 — follow indexer download redirects (302 getnzb links).
+    it('follows a 302 redirect to the real .nzb and writes the followed-redirect bytes', async () => {
+      const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62, 0x3e]); // <nzb>
+      mockFetch
+        .mockResolvedValueOnce(new Response(null, {
+          status: 302,
+          headers: { Location: 'https://cdn.drunkenslug.com/getnzb/abc.nzb' },
+        }))
+        .mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://drunkenslug.com/getnzb/abc.nzb',
+      };
+
+      await client.addDownload(artifact);
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/download-\d+\.nzb$/),
+        Buffer.from(nzbContent),
+      );
+    });
+
+    it('writes the exact bytes from a non-redirecting (direct 200) NZB URL', async () => {
+      const nzbContent = new Uint8Array([0x00, 0x01, 0xff, 0xfe]);
+      mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      await client.addDownload(artifact);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/download-\d+\.nzb$/),
+        Buffer.from(nzbContent),
+      );
+    });
+
+    // #1243 (F2) — LAN allowlist threaded through dispatcher + fetch options so a
+    // private/loopback configured-indexer NZB URL still resolves.
+    it('threads the LAN allowlist into the dispatcher and fetch for a private-host NZB URL', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+      const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
+      mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
+
+      const hostname = new Set(['192.168.0.22']);
+      const hostPort = new Set(['192.168.0.22:9696']);
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'http://192.168.0.22:9696/getnzb/abc.nzb',
+        lanAllowlist: { hostPort, hostname },
+      };
+
+      await client.addDownload(artifact);
+
+      expect(createDispatcherSpy).toHaveBeenCalledWith(hostname);
+      expect(ssrfRedirectWalker).toHaveBeenCalledWith(
+        'http://192.168.0.22:9696/getnzb/abc.nzb',
+        expect.objectContaining({ lanAllowlist: hostPort }),
+      );
+      expect(writeFile).toHaveBeenCalledWith(
+        expect.stringMatching(/download-\d+\.nzb$/),
+        Buffer.from(nzbContent),
+      );
+    });
+
+    it('refuses a private-host NZB URL with no allowlist (SSRF default → DownloadClientError)', async () => {
+      mockedDnsLookup.mockReset();
+      mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'http://192.168.0.22:9696/getnzb/abc.nzb',
+      };
+
+      await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientError);
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
 
     it('returns null externalId for torrent-bytes', async () => {
@@ -95,11 +270,7 @@ describe('BlackholeClient', () => {
     });
 
     it('returns null externalId for nzb-url', async () => {
-      server.use(
-        http.get('https://example.com/file.nzb', () => {
-          return new HttpResponse(new Uint8Array([0x3c]));
-        }),
-      );
+      mockFetch.mockResolvedValueOnce(nzbResponse(new Uint8Array([0x3c]), { status: 200 }));
 
       const artifact: DownloadArtifact = {
         type: 'nzb-url',
@@ -110,12 +281,10 @@ describe('BlackholeClient', () => {
       expect(result).toBeNull();
     });
 
-    it('throws DownloadClientError on nzb-url download failure', async () => {
-      server.use(
-        http.get('https://example.com/file.nzb', () => {
-          return new HttpResponse(null, { status: 404 });
-        }),
-      );
+    it('throws DownloadClientError on nzb-url non-OK final status and drains the body + closes dispatcher', async () => {
+      const resp = new Response('Not Found', { status: 404 });
+      const cancelSpy = vi.spyOn(resp.body!, 'cancel');
+      mockFetch.mockResolvedValueOnce(resp);
 
       const artifact: DownloadArtifact = {
         type: 'nzb-url',
@@ -125,35 +294,29 @@ describe('BlackholeClient', () => {
       const error = await client.addDownload(artifact).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(DownloadClientError);
       expect((error as DownloadClientError).message).toContain('HTTP 404');
+      expect(cancelSpy).toHaveBeenCalledTimes(1);
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('throws DownloadClientTimeoutError on nzb-url fetch timeout', async () => {
-      server.use(
-        http.get('https://example.com/file.nzb', async () => {
-          await delay('infinite');
-          return new HttpResponse('');
-        }),
-      );
-
-      const originalTimeout = AbortSignal.timeout;
-      AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
+    // #1243 (F1) — raw AbortSignal.timeout DOMException maps to DownloadClientTimeoutError.
+    it('maps a per-hop timeout (DOMException TimeoutError) to DownloadClientTimeoutError', async () => {
+      mockFetch.mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'));
 
       const artifact: DownloadArtifact = {
         type: 'nzb-url',
         url: 'https://example.com/file.nzb',
       };
 
-      await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientTimeoutError);
-
-      AbortSignal.timeout = originalTimeout;
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientTimeoutError);
+      // The timeout branch must stay reachable before redaction; its message is the
+      // URL-free literal isTimeoutError matches by strict equality (#1246).
+      expect((error as DownloadClientTimeoutError).message).toContain('Request timed out');
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
 
     it('throws DownloadClientError on nzb-url network error', async () => {
-      server.use(
-        http.get('https://example.com/file.nzb', () => {
-          return HttpResponse.error();
-        }),
-      );
+      mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
 
       const artifact: DownloadArtifact = {
         type: 'nzb-url',
@@ -161,6 +324,63 @@ describe('BlackholeClient', () => {
       };
 
       await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientError);
+    });
+
+    // #1246 — unmapped errors can embed the raw download URL (passkey/apikey); redact before surfacing.
+    it('redacts a credentialed URL from an unmapped nzb-url error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('connect ECONNREFUSED https://indexer.example.com/api?apikey=SECRET123'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://indexer.example.com/dl/secret',
+      };
+
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      const message = (error as DownloadClientError).message;
+      expect(message).not.toContain('https://');
+      expect(message).not.toContain('SECRET123');
+      expect(message).toContain('[redacted-url]');
+    });
+
+    it('redacts a bare URL from an unmapped nzb-url error message', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Failed to fetch https://example.com/file.nzb'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).not.toContain('https://');
+    });
+
+    it('passes a no-URL nzb-url error message through unchanged', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('socket hang up'));
+
+      const artifact: DownloadArtifact = {
+        type: 'nzb-url',
+        url: 'https://example.com/file.nzb',
+      };
+
+      const error = await client.addDownload(artifact).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('socket hang up');
+    });
+
+    it('closes the dispatcher on a successful nzb-url download', async () => {
+      mockFetch.mockResolvedValueOnce(nzbResponse(new Uint8Array([0x3c]), { status: 200 }));
+
+      await client.addDownload({ type: 'nzb-url', url: 'https://example.com/file.nzb' });
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the dispatcher when the fetch rejects', async () => {
+      mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+      await client.addDownload({ type: 'nzb-url', url: 'https://example.com/file.nzb' }).catch(() => { /* expected */ });
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
 
     it('throws when writeFile fails', async () => {
@@ -276,6 +496,7 @@ describe('BlackholeClient', () => {
         expect.stringMatching(/download-\d+\.nzb$/),
         nzbData,
       );
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('file contents match the original buffer exactly', async () => {
@@ -297,11 +518,7 @@ describe('BlackholeClient', () => {
     });
 
     it('existing nzb-url path unchanged (still fetches URL and writes)', async () => {
-      server.use(
-        http.get('https://indexer.test/nzb', () => {
-          return new HttpResponse(Buffer.from('<nzb/>'), { status: 200 });
-        }),
-      );
+      mockFetch.mockResolvedValueOnce(nzbResponse(Buffer.from('<nzb/>'), { status: 200 }));
 
       await usenetClient.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' });
 
@@ -315,11 +532,7 @@ describe('BlackholeClient', () => {
   describe('timeout constant', () => {
     it('uses HTTP_DOWNLOAD_TIMEOUT_MS (30s) for nzb-url fetch timeout', async () => {
       const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-      server.use(
-        http.get('https://example.com/file.nzb', () => {
-          return new HttpResponse(new Uint8Array([0x3c]));
-        }),
-      );
+      mockFetch.mockResolvedValueOnce(nzbResponse(new Uint8Array([0x3c]), { status: 200 }));
 
       const artifact: DownloadArtifact = {
         type: 'nzb-url',

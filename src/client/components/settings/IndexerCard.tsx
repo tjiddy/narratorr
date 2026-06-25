@@ -169,7 +169,7 @@ export function IndexerCard(props: IndexerCardProps) {
         <FormField id="indexerName" label="Name" registration={register('name')} error={errors.name} placeholder={INDEXER_REGISTRY[selectedType]?.label} readOnly={isProwlarrManaged} />
 
         <div>
-          <SelectWithChevron id="indexerType" label="Type" {...register('type')} error={!!errors.type}>
+          <SelectWithChevron id="indexerType" label="Type" {...(isEdit ? { value: selectedType, disabled: true } : register('type'))} error={!!errors.type}>
             {indexerTypeSchema.options.map((t) => (
               <option key={t} value={t}>
                 {INDEXER_REGISTRY[t]?.label || t}

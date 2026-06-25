@@ -1,7 +1,9 @@
 import { resolve, dirname, join } from 'node:path';
 import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { getCurrentRun } from './fixtures/temp-dirs.js';
+import { getCurrentRun, getRun } from './fixtures/temp-dirs.js';
+import { SUBPATH_RUN } from './fixtures/subpath.js';
+import { FORMS_RUN } from './fixtures/auth.js';
 import { registerFake } from './fixtures/run-state.js';
 import { createMAMFake } from './fakes/mam.js';
 import { createQBitFake } from './fakes/qbit.js';
@@ -120,6 +122,39 @@ export default async function globalSetup(): Promise<void> {
     qbitPort: qbitPort,
     libraryPath: run.libraryPath,
   });
+
+  // Seed the subpath server's isolated DB the same way when its run exists
+  // (allocated by playwright.config.ts for the `URL_BASE=/narratorr` topology).
+  // It owns a distinct DB/library temp set so it never shares mutable state with
+  // the root server. The subpath smoke is read-only, so it can share the fake
+  // MAM/qBit servers; it just needs the seeded book row to render its library.
+  const subpathRun = getRun(SUBPATH_RUN);
+  if (subpathRun) {
+    await seedE2ERun({
+      dbPath: subpathRun.dbPath,
+      mamUrl: mam.url,
+      qbitHost: 'localhost',
+      qbitPort: qbitPort,
+      libraryPath: subpathRun.libraryPath,
+    });
+  }
+
+  // Seed the forms-auth server's isolated DB the same way (#1555). The forms
+  // spec lands on /library after login and asserts the seeded book renders, so
+  // it needs content. The DB starts with NO auth config row, so the server boots
+  // in the default `none` mode — the auth-setup project creates the user and
+  // flips the mode to `forms` once the server is up. Read-only after that flip,
+  // so it can share the fake MAM/qBit servers.
+  const formsRun = getRun(FORMS_RUN);
+  if (formsRun) {
+    await seedE2ERun({
+      dbPath: formsRun.dbPath,
+      mamUrl: mam.url,
+      qbitHost: 'localhost',
+      qbitPort: qbitPort,
+      libraryPath: formsRun.libraryPath,
+    });
+  }
 
   // Stash paths into the setup-process env so same-process tooling (this
   // function's callers, globalTeardown, helper functions invoked from the

@@ -3,14 +3,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { indexers, downloadClients, notifiers, settings } from '../../db/schema.js';
 import { isEncrypted, encryptFields, getSecretFieldNames, type SecretEntity } from './secret-codec.js';
-
-/** Settings categories that contain secret fields. */
-const SECRET_SETTINGS_CATEGORIES: { key: string; entity: SecretEntity }[] = [
-  { key: 'prowlarr', entity: 'prowlarr' },
-  { key: 'auth', entity: 'auth' },
-  { key: 'network', entity: 'network' },
-  { key: 'metadata', entity: 'metadata' },
-];
+import { SECRET_SETTINGS_CATEGORIES } from './secret-category-map.js';
 
 /** Check if a settings object has any plaintext (non-encrypted) secret fields. */
 function hasPlaintextSecrets(entity: SecretEntity, obj: Record<string, unknown>): boolean {
@@ -64,7 +57,7 @@ export async function migrateSecretsToEncrypted(
     migratedCount++;
   }
 
-  // 4. Settings rows (prowlarr, auth, network)
+  // 4. Settings rows (auth, network, metadata)
   const allSettings = await db.select().from(settings);
   for (const category of SECRET_SETTINGS_CATEGORIES) {
     const row = allSettings.find((r) => r.key === category.key);

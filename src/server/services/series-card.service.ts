@@ -1,13 +1,15 @@
-import { and, asc, eq, isNotNull, lt } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, lt } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import { bookAuthors, authors as authorsTable, books, series, seriesMembers } from '../../db/schema.js';
 import type { SeriesRow } from './types.js';
 import type { SettingsService } from './settings.service.js';
-import { HardcoverClient, type HardcoverSeriesData } from '../../core/metadata/hardcover.js';
+import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '../../core/metadata/hardcover.js';
 import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
 import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
+import { relinkBookToBoundSeries } from './book-series-link.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { generatePublicId } from '../utils/public-id.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 /** Scheduled sweep threshold — rows older than this are re-fetched. */
@@ -38,6 +40,9 @@ export interface BookForSeriesCard {
   seriesName: string | null;
   seriesPosition: number | null;
 }
+
+/** A library book paired to its matched Hardcover member's position. */
+interface MatchedLibraryBook { bookId: number; position: number | null }
 
 export class SeriesCardService {
   constructor(
@@ -312,38 +317,138 @@ export class SeriesCardService {
   }
 
   private async persistAndBuildCard(resolved: HardcoverSeriesData, seriesName: string): Promise<BookSeriesCardData> {
-    const normalized = normalizeSeriesName(seriesName);
-    const libraryBooks = await this.loadLibraryBooksForSeries(seriesName);
-    const persistedRow = await this.db.transaction(async (tx) => {
-      const upserted = await upsertHardcoverSeries(tx, resolved, normalized);
-      await tx.delete(seriesMembers).where(eq(seriesMembers.seriesId, upserted.id));
-      const matchedLibraryIds = new Set<number>();
-      for (const member of resolved.members) {
-        const match = findInLibraryMatch({ title: member.title, position: member.position }, libraryBooks, matchedLibraryIds);
-        if (match) matchedLibraryIds.add(match.id);
-        await tx.insert(seriesMembers).values({
-          seriesId: upserted.id,
-          bookId: match?.id ?? null,
-          hardcoverBookId: member.hardcoverBookId,
-          slug: member.slug,
-          imageUrl: member.imageUrl,
-          title: member.title,
-          normalizedTitle: normalizeMemberTitleForMatch(member.title),
-          authorName: resolved.authorName,
-          position: member.position,
-          source: 'hardcover',
-        });
-      }
-      return upserted;
-    });
-    return this.buildCardFromCache(persistedRow, seriesName);
+    const { row } = await this.db.transaction((tx) => this.persistMembers(tx, resolved, seriesName));
+    return this.buildCardFromCache(row, seriesName);
   }
 
-  private async loadLibraryBooksForSeries(seriesName: string): Promise<LibraryBookSummary[]> {
-    const rows = await this.db
+  /**
+   * Id-first upsert of the canonical `series` row + full rebuild of its
+   * Hardcover member set, matching each member to a library book via
+   * `findInLibraryMatch`. Runs inside the caller's transaction; errors
+   * propagate. Shared by the lazy/refresh paths and the manual bind path
+   * (#1228). The candidate library pool is scoped to `seriesName` plus any
+   * `extraSeriesNames` — the bind path passes the pre-bind (Audnexus) name so
+   * sibling books still carrying the old name are matched here too, letting
+   * the bind caller sync EVERY matched member, not just the initiating book.
+   * Returns the upserted row alongside the (bookId, position) pairs it matched.
+   */
+  private async persistMembers(tx: DbOrTx, resolved: HardcoverSeriesData, seriesName: string, extraSeriesNames: string[] = []): Promise<{ row: SeriesRow; matches: MatchedLibraryBook[] }> {
+    const normalized = normalizeSeriesName(seriesName);
+    const libraryBooks = await this.loadLibraryBooksForSeriesNames([seriesName, ...extraSeriesNames], tx);
+    const upserted = await upsertHardcoverSeries(tx, resolved, normalized);
+    await tx.delete(seriesMembers).where(eq(seriesMembers.seriesId, upserted.id));
+    const matchedLibraryIds = new Set<number>();
+    const matches: MatchedLibraryBook[] = [];
+    for (const member of resolved.members) {
+      const match = findInLibraryMatch({ title: member.title, position: member.position }, libraryBooks, matchedLibraryIds);
+      if (match) {
+        matchedLibraryIds.add(match.id);
+        matches.push({ bookId: match.id, position: member.position });
+      }
+      await tx.insert(seriesMembers).values({
+        seriesId: upserted.id,
+        bookId: match?.id ?? null,
+        hardcoverBookId: member.hardcoverBookId,
+        slug: member.slug,
+        imageUrl: member.imageUrl,
+        title: member.title,
+        normalizedTitle: normalizeMemberTitleForMatch(member.title),
+        authorName: resolved.authorName,
+        position: member.position,
+        source: 'hardcover',
+      });
+    }
+    return { row: upserted, matches };
+  }
+
+  /**
+   * Manual override (#1228): bind a chosen Hardcover series id onto the book's
+   * series so the card and book detail never diverge. A bind is *series-level*,
+   * so in a SINGLE transaction it: (1) id-first upserts the canonical `series`
+   * row (no unique-index collision) and rebuilds its member set, matching
+   * library books across both the pre-bind and canonical names; (2) syncs
+   * `books.series_name`/`series_position` for EVERY matched member — not just
+   * the initiating book, else siblings keep the stale name and the series
+   * splits in the Library view — to the canonical name + its own matched
+   * position (0 is valid). The initiating book always adopts the canonical name
+   * even when unmatched, keeping its position; (3) re-links every synced book
+   * off old series rows and deletes any left empty. Any failure rolls all of it
+   * back. Returns the rebuilt (id-sourced) card, or null when the book is
+   * missing, no key is configured, or the fetch fails.
+   */
+  async bindHardcoverSeries(bookId: number, hardcoverSeriesId: number): Promise<BookSeriesCardData | null> {
+    const book = await this.loadBook(bookId);
+    if (!book) return null;
+
+    const apiKey = await this.getApiKey();
+    if (!apiKey) return null;
+
+    const resolved = await this.fetchById(apiKey, hardcoverSeriesId);
+    if (!resolved) return null;
+
+    const priorSeriesName = book.seriesName;
+
+    const persistedRow = await this.db.transaction(async (tx) => {
+      // Match the whole series at once, including books still on the pre-bind
+      // name, so siblings are matched and synced alongside the initiating book.
+      const extraNames = priorSeriesName ? [priorSeriesName] : [];
+      const { row, matches } = await this.persistMembers(tx, resolved, resolved.name, extraNames);
+
+      const syncedIds = new Set<number>();
+      for (const match of matches) {
+        syncedIds.add(match.bookId);
+        await tx
+          .update(books)
+          .set({ seriesName: resolved.name, seriesPosition: match.position, updatedAt: new Date() })
+          .where(eq(books.id, match.bookId));
+      }
+
+      // The user explicitly bound THIS book: it always adopts the canonical
+      // name even when it is not a member, preserving its existing position.
+      if (!syncedIds.has(bookId)) {
+        syncedIds.add(bookId);
+        await tx
+          .update(books)
+          .set({ seriesName: resolved.name, seriesPosition: book.seriesPosition, updatedAt: new Date() })
+          .where(eq(books.id, bookId));
+      }
+
+      for (const id of syncedIds) {
+        await relinkBookToBoundSeries(tx, id, row.id);
+      }
+      return row;
+    });
+
+    this.log.info({ bookId, hardcoverSeriesId, seriesName: resolved.name }, 'Bound Hardcover series to book');
+    return this.buildCardFromCache(persistedRow, resolved.name);
+  }
+
+  /**
+   * Surface Hardcover series search candidates for the manual picker (#1228).
+   * Degrades to an empty list when no key is configured (mirrors the keyless
+   * card behaviour) so the route never throws on an unconfigured instance.
+   */
+  async searchSeriesCandidates(query: string): Promise<HardcoverSearchCandidate[]> {
+    const apiKey = await this.getApiKey();
+    if (!apiKey) return [];
+    const client = new HardcoverClient(apiKey);
+    // Display cap for the picker: the adapter returns the full popularity-ranked
+    // pool (consumed unsliced by the automatic resolver, #1239); the ≤10 limit
+    // is a picker-display concern enforced here, not in the adapter.
+    return (await client.searchSeries(query)).slice(0, 10);
+  }
+
+  private async loadLibraryBooksForSeries(seriesName: string, executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {
+    return this.loadLibraryBooksForSeriesNames([seriesName], executor);
+  }
+
+  private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryBookSummary[]> {
+    const unique = [...new Set(seriesNames)];
+    if (unique.length === 0) return [];
+    const rows = await executor
       .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition })
       .from(books)
-      .where(eq(books.seriesName, seriesName));
+      .where(inArray(books.seriesName, unique));
     return rows;
   }
 }
@@ -396,6 +501,7 @@ async function upsertHardcoverSeries(
   const inserted = await tx
     .insert(series)
     .values({
+      publicId: generatePublicId('sr'),
       hardcoverSeriesId: resolved.id,
       name: resolved.name,
       normalizedName: normalized,

@@ -3,6 +3,7 @@ import type { Download } from '../lib/api/activity.js';
 import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
+import type { Connector } from '../lib/api/connectors.js';
 import type { Settings } from '../lib/api/settings.js';
 import { createMockSettings as _createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { RemotePathMapping } from '../lib/api/remote-path-mappings.js';
@@ -36,7 +37,9 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
     title: 'The Way of Kings',
     authors: [createMockAuthor({ id: 1 })],
     narrators: [createMockNarrator({ id: 1 })],
+    subtitle: null,
     description: '<p>An epic fantasy novel.</p>',
+    publisher: null,
     coverUrl: 'https://example.com/cover.jpg',
     asin: 'B003P2WO5E',
     isbn: null,
@@ -151,6 +154,21 @@ export function createMockNotifier(overrides?: Partial<Notifier>): Notifier {
   };
 }
 
+export function createMockConnector(overrides?: Partial<Connector>): Connector {
+  const id = overrides?.id ?? nextId++;
+  return {
+    id,
+    name: 'My ABS',
+    type: 'audiobookshelf',
+    enabled: true,
+    // baseUrl and apiKey are registered connector secrets — the API masks both in responses (#1491).
+    settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
 export function createMockDownload(overrides?: Partial<Download>): Download {
   const id = overrides?.id ?? nextId++;
   return {
@@ -158,6 +176,8 @@ export function createMockDownload(overrides?: Partial<Download>): Download {
     title: 'Test Audiobook',
     protocol: 'torrent',
     status: 'queued',
+    clientStatus: 'queued',
+    pipelineStage: 'idle',
     progress: 0,
     addedAt: '2024-06-01T00:00:00Z',
     completedAt: null,

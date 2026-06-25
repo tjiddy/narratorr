@@ -8,13 +8,15 @@ import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
-import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
+import { DownloadError, DuplicateDownloadError } from '../services/download-errors.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
 import { RefreshScanError } from '../services/refresh-scan.service.js';
+import { PathOutsideLibraryError } from '../utils/paths.js';
 import { CoverUploadError } from '../services/cover-upload.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../core/download-clients/errors.js';
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
+import { BackupRecoveryError, MarkerPathConflictError } from '../utils/import-staging.js';
 
 // ---------------------------------------------------------------------------
 // Error → HTTP status registry
@@ -42,11 +44,18 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [TaskRegistryError, { type: 'coded', codes: { NOT_FOUND: 404, ALREADY_RUNNING: 409 } }],
   [BookRejectionError, { type: 'coded', codes: { NOT_FOUND: 404, NOT_IMPORTED: 400, NO_IDENTIFIERS: 400 } }],
   [RefreshScanError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, PATH_MISSING: 400, NO_AUDIO_FILES: 400 } }],
+  [PathOutsideLibraryError, { type: 'coded', codes: { PATH_OUTSIDE_LIBRARY: 400 } }],
   [CoverUploadError, { type: 'coded', codes: { NOT_FOUND: 404, INVALID_MIME: 400, NO_PATH: 400 } }],
   [DownloadClientAuthError, { type: 'flat', status: 401 }],
   [DownloadClientTimeoutError, { type: 'flat', status: 504 }],
   [DownloadClientError, { type: 'flat', status: 502 }],
   [SentinelOnNonSecretFieldError, { type: 'flat', status: 400 }],
+  // Marker-recovery failures surfaced by the synchronous rename route (#1418). 503 is
+  // transient (recovery re-attempts on retry / next boot sweep); 409 is structural (operator
+  // must remove the stray folder occupying the marker path). The async merge route surfaces
+  // these via merge_failed (already 202'd), not the global handler.
+  [BackupRecoveryError, { type: 'coded', codes: { BACKUP_RECOVERY_FAILED: 503 } }],
+  [MarkerPathConflictError, { type: 'coded', codes: { MARKER_PATH_CONFLICT: 409 } }],
 ]);
 
 /** Maps typed error codes to HTTP status codes. */

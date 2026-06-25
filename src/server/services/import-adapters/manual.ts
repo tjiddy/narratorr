@@ -8,12 +8,15 @@ import { copyToLibrary } from '../import-orchestration.helpers.js';
 import type { ImportConfirmItem } from '../library-scan.service.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
+import { reconstructDiscGroup } from '../../utils/import-helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
 import type { RenameableBook } from '../../utils/paths.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
+import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
+import { fireAndForget } from '../../utils/fire-and-forget.js';
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
   let parsedJson: unknown;
@@ -85,6 +88,12 @@ export class ManualImportAdapter implements ImportAdapter {
       const item = toImportConfirmItem(payload);
       const extracted = extractImportMetadata(item);
 
+      // Pointer (in-place) mode cannot represent a multi-disc set as one book directory — the
+      // discs live as separate sibling folders. Reject rather than silently registering Disc 1.
+      if (!mode && (await reconstructDiscGroup(item.path)).length >= 2) {
+        throw new Error('Cannot import a multi-disc set in pointer (in-place) mode — re-import with copy or move so the discs flatten into one book folder');
+      }
+
       let finalPath = payload.path;
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
@@ -103,24 +112,42 @@ export class ManualImportAdapter implements ImportAdapter {
 
       await ctx.setPhase('fetching_metadata');
 
-      const [currentBook] = await db.select({ genres: books.genres }).from(books).where(eq(books.id, bookId)).limit(1);
+      const [currentBook] = await db.select({ genres: books.genres, subtitle: books.subtitle, publisher: books.publisher }).from(books).where(eq(books.id, bookId)).limit(1);
 
       await orchestrateBookEnrichment(
         bookId, finalPath,
         buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
         enrichmentDeps,
-        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null),
+        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
       );
 
-      await db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, bookId));
+      await transitionBookStatus(db, bookId, { status: 'imported' });
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
 
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
+
+      // Fire-and-forget: connector refresh. Pointer-mode (in-place adopt, !mode)
+      // notifies too, with reason 'adopt'; copy/move mode uses 'import'.
+      this.enqueueConnectorRefresh(bookId, payload, finalPath, mode, log);
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;
     }
+  }
+
+  private enqueueConnectorRefresh(
+    bookId: number, payload: ManualImportJobPayload, finalPath: string,
+    mode: ManualImportJobPayload['mode'], log: ImportAdapterContext['log'],
+  ): void {
+    if (!this.deps.connectorService) return;
+    fireAndForget(
+      this.deps.connectorService.notifyRefresh(mode ? 'import' : 'adopt', [
+        { bookId, title: payload.title, authorName: payload.authorName ?? null, libraryPath: finalPath },
+      ]),
+      log,
+      'Failed to enqueue connector refresh on manual import',
+    );
   }
 
   private dispatchFailureSideEffects(

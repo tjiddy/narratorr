@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { createBookBodySchema, updateBookBodySchema, enrichmentStatusSchema } from './book.js';
+import {
+  createBookBodySchema,
+  updateBookBodySchema,
+  enrichmentStatusSchema,
+  BOOK_STATUSES,
+  LIBRARY_FILTER_BUCKETS,
+  LIBRARY_FILTER_BUCKET_KEYS,
+  LIBRARY_FILTER_VALUES,
+  libraryStatusFilterSchema,
+} from './book.js';
 
 describe('enrichmentStatusSchema', () => {
   it.each(['pending', 'enriched', 'failed', 'skipped', 'file-enriched'] as const)(
@@ -18,6 +27,65 @@ const validBook = {
   title: 'My Book',
   authors: [{ name: 'Author Name' }],
 };
+
+describe('LIBRARY_FILTER_BUCKETS — canonical lifecycle partition (#1444)', () => {
+  const bucketStates = Object.values(LIBRARY_FILTER_BUCKETS).flat();
+
+  it('only references canonical BookLifecycle states', () => {
+    const canonical = new Set<string>(BOOK_STATUSES);
+    for (const state of bucketStates) {
+      expect(canonical.has(state)).toBe(true);
+    }
+  });
+
+  it('covers every canonical state (union equals the full state set)', () => {
+    expect([...bucketStates].sort()).toEqual([...BOOK_STATUSES].sort());
+  });
+
+  it('partitions the state set — buckets are pairwise disjoint (no state in two buckets)', () => {
+    // A correct partition has exactly one bucket per state, so the flattened
+    // membership list has no duplicates and its length equals the state count.
+    expect(new Set(bucketStates).size).toBe(bucketStates.length);
+    expect(bucketStates.length).toBe(BOOK_STATUSES.length);
+  });
+
+  it('groups the transient states as designed (Downloading / Imported)', () => {
+    expect([...LIBRARY_FILTER_BUCKETS.downloading]).toEqual(['searching', 'downloading']);
+    expect([...LIBRARY_FILTER_BUCKETS.imported]).toEqual(['importing', 'imported']);
+  });
+
+  it('exposes `all` plus one value per bucket as the dropdown values', () => {
+    expect([...LIBRARY_FILTER_VALUES]).toEqual(['all', ...Object.keys(LIBRARY_FILTER_BUCKETS)]);
+  });
+});
+
+describe('libraryStatusFilterSchema — bucket-only wire contract (#1447)', () => {
+  it('accepts each of the five concrete bucket keys', () => {
+    for (const key of LIBRARY_FILTER_BUCKET_KEYS) {
+      expect(libraryStatusFilterSchema.parse(key)).toBe(key);
+    }
+  });
+
+  it('rejects the client-only `all` sentinel (never sent over the wire)', () => {
+    expect(libraryStatusFilterSchema.safeParse('all').success).toBe(false);
+  });
+
+  it('rejects non-bucket canonical statuses (searching / importing)', () => {
+    expect(libraryStatusFilterSchema.safeParse('searching').success).toBe(false);
+    expect(libraryStatusFilterSchema.safeParse('importing').success).toBe(false);
+  });
+
+  it('bucket keys are a subset of the canonical BookStatus set', () => {
+    const canonical = new Set<string>(BOOK_STATUSES);
+    for (const key of LIBRARY_FILTER_BUCKET_KEYS) {
+      expect(canonical.has(key)).toBe(true);
+    }
+  });
+
+  it('bucket keys == LIBRARY_FILTER_VALUES minus `all`', () => {
+    expect([...LIBRARY_FILTER_BUCKET_KEYS]).toEqual(LIBRARY_FILTER_VALUES.filter((v) => v !== 'all'));
+  });
+});
 
 describe('createBookBodySchema — series ASIN (#1071)', () => {
   it('accepts seriesAsin alongside scalar seriesName/seriesPosition', () => {
@@ -96,6 +164,120 @@ describe('createBookBodySchema / updateBookBodySchema — removed monitorForUpgr
 
   it('updateBookBodySchema rejects requests containing monitorForUpgrades', () => {
     const result = updateBookBodySchema.safeParse({ monitorForUpgrades: false });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('updateBookBodySchema — nullable metadata fields (#1609)', () => {
+  it('accepts null for description, coverUrl, publishedDate, and genres (clear)', () => {
+    const result = updateBookBodySchema.safeParse({
+      description: null,
+      coverUrl: null,
+      publishedDate: null,
+      genres: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a genres string array and a publishedDate string (set)', () => {
+    const result = updateBookBodySchema.safeParse({
+      genres: ['Fantasy', 'Epic'],
+      publishedDate: '2010-08-31',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.genres).toEqual(['Fantasy', 'Epic']);
+      expect(result.data.publishedDate).toBe('2010-08-31');
+    }
+  });
+
+  it('accepts a string description and coverUrl (set)', () => {
+    const result = updateBookBodySchema.safeParse({
+      description: 'A great book.',
+      coverUrl: 'https://example.com/cover.jpg',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string publishedDate', () => {
+    const result = updateBookBodySchema.safeParse({ publishedDate: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-array genres value', () => {
+    const result = updateBookBodySchema.safeParse({ genres: 'Fantasy' });
+    expect(result.success).toBe(false);
+  });
+
+  it('omitting the fields entirely still validates (unchanged)', () => {
+    const result = updateBookBodySchema.safeParse({ title: 'Just a title' });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('updateBookBodySchema — subtitle/publisher (#1614)', () => {
+  it('accepts a string subtitle and publisher (set)', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: 'A Subtitle', publisher: 'Tor Books' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.subtitle).toBe('A Subtitle');
+      expect(result.data.publisher).toBe('Tor Books');
+    }
+  });
+
+  it('accepts null for subtitle and publisher (clear)', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: null, publisher: null });
+    expect(result.success).toBe(true);
+  });
+
+  it('omitting subtitle/publisher still validates (unchanged)', () => {
+    const result = updateBookBodySchema.safeParse({ title: 'Just a title' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string subtitle', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-string publisher', () => {
+    const result = updateBookBodySchema.safeParse({ publisher: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects an unknown key via .strict()', () => {
+    const result = updateBookBodySchema.safeParse({ subtitle: 'A Subtitle', bogus: true });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('createBookBodySchema — subtitle/publisher (#1614)', () => {
+  it('accepts optional subtitle and publisher strings', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 'A Subtitle', publisher: 'Tor Books' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.subtitle).toBe('A Subtitle');
+      expect(result.data.publisher).toBe('Tor Books');
+    }
+  });
+
+  it('omitting subtitle/publisher is valid', () => {
+    const result = createBookBodySchema.safeParse(validBook);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-string subtitle', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-string publisher', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, publisher: 123 });
+    expect(result.success).toBe(false);
+  });
+
+  it('still rejects an unknown key via .strict()', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 'A Subtitle', bogus: true });
     expect(result.success).toBe(false);
   });
 });

@@ -282,4 +282,86 @@ describe('compareAudioNames', () => {
   it('compares on basename, ignoring directory components', () => {
     expect(compareAudioNames('/a/b/Track2.mp3', '/z/Track10.mp3')).toBeLessThan(0);
   });
+
+  it('sorts the bare file first, before its (N) duplicate copies', () => {
+    const sorted = ['X (2).mp3', 'X.mp3', 'X (10).mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['X.mp3', 'X (2).mp3', 'X (10).mp3']);
+  });
+
+  it('orders (N) duplicate copies numerically ((2) < (10) < (32))', () => {
+    const sorted = ['X (32).mp3', 'X (10).mp3', 'X (2).mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['X (2).mp3', 'X (10).mp3', 'X (32).mp3']);
+  });
+
+  it('sorts the real 32-file "The Heroes" set bare → (2) → … → (32)', () => {
+    const names = [
+      'The Heroes (32).mp3',
+      'The Heroes.mp3',
+      ...Array.from({ length: 30 }, (_, i) => `The Heroes (${i + 2}).mp3`),
+    ];
+    const sorted = [...names].sort(compareAudioNames);
+    const expected = [
+      'The Heroes.mp3',
+      ...Array.from({ length: 31 }, (_, i) => `The Heroes (${i + 2}).mp3`),
+    ];
+    expect(sorted).toEqual(expected);
+  });
+
+  it('orders mixed extensions by stem then index (Title.m4b before Title (2).mp3)', () => {
+    const sorted = ['Title (2).mp3', 'Title.m4b'].sort(compareAudioNames);
+    expect(sorted).toEqual(['Title.m4b', 'Title (2).mp3']);
+  });
+
+  it('tertiary tie-break: same stem + index, different extension orders deterministically', () => {
+    expect(compareAudioNames('Title.mp3', 'Title.m4b')).not.toBe(0);
+    expect(['Title.mp3', 'Title.m4b'].sort(compareAudioNames)).toEqual(['Title.m4b', 'Title.mp3']);
+    expect(compareAudioNames('Title (2).mp3', 'Title (2).m4b')).not.toBe(0);
+    expect(['Title (2).mp3', 'Title (2).m4b'].sort(compareAudioNames)).toEqual([
+      'Title (2).m4b',
+      'Title (2).mp3',
+    ]);
+  });
+
+  it('final tie-break: case-only distinct basenames never collapse to 0', () => {
+    expect(compareAudioNames('Title.mp3', 'title.mp3')).not.toBe(0);
+    expect(['title.mp3', 'Title.mp3'].sort(compareAudioNames)).toEqual(
+      ['Title.mp3', 'title.mp3'].sort(compareAudioNames),
+    );
+    expect(compareAudioNames('Tïtle.mp3', 'Title.mp3')).not.toBe(0);
+  });
+
+  it('treats a year-style suffix as a numeric index (no special-case, no regression)', () => {
+    const sorted = ['Foo (1980).mp3', 'Foo (1975).mp3', 'Foo (1976).mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['Foo (1975).mp3', 'Foo (1976).mp3', 'Foo (1980).mp3']);
+  });
+
+  it('range-style suffix does not match the marker and falls through to locale-numeric', () => {
+    const sorted = ['Part (10 of 5).mp3', 'Part (2 of 5).mp3'].sort(compareAudioNames);
+    expect(sorted).toEqual(['Part (2 of 5).mp3', 'Part (10 of 5).mp3']);
+  });
+
+  it('is a deterministic, idempotent, antisymmetric total order', () => {
+    const shuffled = [
+      'X (10).mp3',
+      'X.mp3',
+      'Title.m4b',
+      'X (2).mp3',
+      'title.mp3',
+      'Title.mp3',
+      'X (2).m4b',
+    ];
+    const sorted = [...shuffled].sort(compareAudioNames);
+    expect([...sorted].sort(compareAudioNames)).toEqual(sorted);
+    // antisymmetry spot-checks: cmp(a,b) === -cmp(b,a)
+    const sign = (n: number) => Math.sign(n);
+    const pairs: [string, string][] = [
+      ['X.mp3', 'X (2).mp3'],
+      ['X (2).mp3', 'X (10).mp3'],
+      ['Title.mp3', 'Title.m4b'],
+      ['Title.mp3', 'title.mp3'],
+    ];
+    for (const [a, b] of pairs) {
+      expect(sign(compareAudioNames(a, b))).toBe(-sign(compareAudioNames(b, a)));
+    }
+  });
 });

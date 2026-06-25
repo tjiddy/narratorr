@@ -53,6 +53,10 @@ const mockStreamActions = {
   cancelIndexer: vi.fn(),
   showResults: vi.fn(),
   reset: vi.fn(),
+  // The real hook owns identity matching (independent OR-match on either
+  // identifier) — exercised against the real filter in useSearchStream.test.tsx.
+  // Here we only assert the modal forwards the pair-shaped blacklist identifiers.
+  removeResult: vi.fn(),
 };
 
 let mockStreamState: {
@@ -226,6 +230,8 @@ describe('SearchReleasesModal', () => {
       title: 'The Way of Kings [Unabridged]',
       protocol: 'torrent',
       status: 'queued' as const,
+      clientStatus: 'queued' as const,
+      pipelineStage: 'idle' as const,
       progress: 0,
       addedAt: '2024-01-01T00:00:00Z',
       indexerName: null,
@@ -356,6 +362,8 @@ describe('SearchReleasesModal', () => {
         title: 'Project Hail Mary',
         protocol: 'torrent',
         status: 'queued' as const,
+        clientStatus: 'queued' as const,
+        pipelineStage: 'idle' as const,
         progress: 0,
         addedAt: '2024-01-01T00:00:00Z',
         indexerName: null,
@@ -384,6 +392,8 @@ describe('SearchReleasesModal', () => {
         title: 'The Way of Kings [Unabridged]',
         protocol: 'torrent',
         status: 'queued' as const,
+        clientStatus: 'queued' as const,
+        pipelineStage: 'idle' as const,
         progress: 0,
         addedAt: '2024-01-01T00:00:00Z',
         indexerName: null,
@@ -426,6 +436,8 @@ describe('SearchReleasesModal', () => {
         title: 'Free Book',
         protocol: 'torrent',
         status: 'queued' as const,
+        clientStatus: 'queued' as const,
+        pipelineStage: 'idle' as const,
         progress: 0,
         addedAt: '2024-01-01T00:00:00Z',
         indexerName: null,
@@ -454,6 +466,8 @@ describe('SearchReleasesModal', () => {
         title: 'The Way of Kings [Unabridged]',
         protocol: 'torrent',
         status: 'queued' as const,
+        clientStatus: 'queued' as const,
+        pipelineStage: 'idle' as const,
         progress: 0,
         addedAt: '2024-01-01T00:00:00Z',
         indexerName: null,
@@ -830,7 +844,7 @@ describe('SearchReleasesModal', () => {
     });
   });
 
-  it('shows error toast when blacklist fails', async () => {
+  it('shows error toast, keeps the row, and does not call removeResult when blacklist fails', async () => {
     setStreamResults(mockResults);
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));
     const user = userEvent.setup();
@@ -847,6 +861,175 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
+    // Removal only fires on success — a future optimistic-removal refactor that
+    // dropped the row before the API resolved would fail these pins.
+    expect(mockStreamActions.removeResult).not.toHaveBeenCalled();
+    expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
+  });
+
+  it('forwards the infoHash identifier to removeResult after blacklisting a torrent result', async () => {
+    setStreamResults(mockResults);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 1,
+      infoHash: 'abc123',
+      title: 'The Way of Kings [Unabridged]',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    await user.click(screen.getAllByText('Blacklist')[0]!);
+
+    // The hook owns identity matching; the modal just forwards the pair-shaped
+    // identifiers. infoHash is present, guid absent (never coalesced into a string).
+    await waitFor(() => {
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123' }),
+      );
+    });
+    expect(mockStreamActions.removeResult.mock.calls[0]![0]).not.toHaveProperty('guid');
+    expect(toast.success).toHaveBeenCalledWith('Release blacklisted');
+  });
+
+  it('forwards the guid identifier to removeResult for a usenet (guid-only) result', async () => {
+    const guidResult: SearchResult[] = [
+      {
+        title: 'GUID Only Removal',
+        author: 'Author',
+        protocol: 'usenet',
+        infoHash: '',
+        guid: 'https://indexer.example/details/guid789',
+        downloadUrl: 'https://indexer.example/nzb/456',
+        size: 1024,
+        seeders: 0,
+        indexer: 'TestIndexer',
+      },
+    ];
+    setStreamResults(guidResult);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 2,
+      guid: 'https://indexer.example/details/guid789',
+      title: 'GUID Only Removal',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('GUID Only Removal');
+
+    await user.click(screen.getByText('Blacklist'));
+
+    // guid is forwarded; the empty-string infoHash is dropped at the payload
+    // boundary, so removeResult sees only the guid identifier.
+    await waitFor(() => {
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
+        expect.objectContaining({ guid: 'https://indexer.example/details/guid789' }),
+      );
+    });
+    expect(mockStreamActions.removeResult.mock.calls[0]![0]).not.toHaveProperty('infoHash');
+  });
+
+  it('forwards both identifiers to the blacklist payload and to removeResult', async () => {
+    const dualIdentifierResult: SearchResult[] = [
+      {
+        title: 'Dual Identifier Release',
+        author: 'Author',
+        protocol: 'torrent',
+        infoHash: 'hash999',
+        guid: 'https://indexer.example/details/guid999',
+        downloadUrl: 'magnet:?xt=urn:btih:hash999',
+        size: 1024,
+        seeders: 5,
+        indexer: 'TestIndexer',
+      },
+    ];
+    setStreamResults(dualIdentifierResult);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 3,
+      infoHash: 'hash999',
+      guid: 'https://indexer.example/details/guid999',
+      title: 'Dual Identifier Release',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('Dual Identifier Release');
+
+    await user.click(screen.getByText('Blacklist'));
+
+    await waitFor(() => {
+      // Payload is unchanged: both identifiers forwarded when both exist.
+      expect(api.addToBlacklist).toHaveBeenCalledWith(
+        {
+          infoHash: 'hash999',
+          guid: 'https://indexer.example/details/guid999',
+          title: 'Dual Identifier Release',
+          bookId: mockBook.id,
+          reason: 'other',
+        },
+        expect.anything(),
+      );
+    });
+    // Both identifiers are forwarded to removeResult unchanged — the hook
+    // OR-matches them independently (no coalescing to a single primary).
+    await waitFor(() => {
+      expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          infoHash: 'hash999',
+          guid: 'https://indexer.example/details/guid999',
+        }),
+      );
+    });
+  });
+
+  it('invalidates the blacklist query and does not invalidate a dead search-releases key on success', async () => {
+    setStreamResults(mockResults);
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 1,
+      infoHash: 'abc123',
+      title: 'The Way of Kings [Unabridged]',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    await user.click(screen.getAllByText('Blacklist')[0]!);
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.blacklist() });
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['search-releases'] });
   });
 
   it('Grab, Blacklist, and unsupported-toggle buttons have explicit type="button"', async () => {
@@ -986,6 +1169,8 @@ describe('SearchReleasesModal', () => {
       title: 'The Way of Kings [Unabridged]',
       protocol: 'torrent',
       status: 'queued' as const,
+      clientStatus: 'queued' as const,
+      pipelineStage: 'idle' as const,
       progress: 0,
       addedAt: '2024-01-01T00:00:00Z',
       indexerName: null,

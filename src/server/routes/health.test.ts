@@ -5,7 +5,6 @@ import type { Db } from '../../db/index.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('fs/promises')>();
   return { ...actual, default: { ...actual, statfs: vi.fn() } };
 });
@@ -64,22 +63,39 @@ describe('Health routes', () => {
   });
 
   describe('POST /api/system/health/run', () => {
-    it('triggers immediate health check and returns results', async () => {
+    // The manual route delegates to runManualChecks (which fires a live version
+    // check before reading the report, #1411) — NOT runAllChecks directly, which
+    // is the scheduled-cron path that stays cache-only.
+    it('triggers immediate health check via runManualChecks and returns results', async () => {
       const mockResults = [{ checkName: 'disk-space', state: 'healthy' }];
-      (services.healthCheck.runAllChecks as Mock).mockResolvedValue(mockResults);
+      (services.healthCheck.runManualChecks as Mock).mockResolvedValue(mockResults);
 
       const res = await app.inject({ method: 'POST', url: '/api/system/health/run' });
       expect(res.statusCode).toBe(200);
 
       const payload = JSON.parse(res.payload);
       expect(payload).toEqual(mockResults);
-      expect(services.healthCheck.runAllChecks).toHaveBeenCalledOnce();
+      expect(services.healthCheck.runManualChecks).toHaveBeenCalledOnce();
+      // Delegates to the manual entry point, not the scheduled cache-only path.
+      expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
+    });
+
+    it('passes the request logger to runManualChecks (drives the version-check log scope, #1411)', async () => {
+      (services.healthCheck.runManualChecks as Mock).mockResolvedValue([]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/health/run' });
+      expect(res.statusCode).toBe(200);
+
+      const loggerArg = (services.healthCheck.runManualChecks as Mock).mock.calls[0]![0];
+      expect(typeof loggerArg?.error).toBe('function');
+      expect(typeof loggerArg?.info).toBe('function');
     });
 
     it('returns latest cached results with 200 when check already in progress', async () => {
-      // runAllChecks returns cached results when already running (mutex in service)
+      // runManualChecks resolves to runAllChecks' cached results when a pass is
+      // already running (mutex in service).
       const cachedResults = [{ checkName: 'ffmpeg', state: 'error', message: 'not found' }];
-      (services.healthCheck.runAllChecks as Mock).mockResolvedValue(cachedResults);
+      (services.healthCheck.runManualChecks as Mock).mockResolvedValue(cachedResults);
 
       const res = await app.inject({ method: 'POST', url: '/api/system/health/run' });
       expect(res.statusCode).toBe(200);

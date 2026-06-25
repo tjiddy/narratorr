@@ -3,11 +3,12 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useSearchStream } from './useSearchStream';
+import type { DownloadProtocol } from '../../core/indexers/types.js';
 
-// Mock api
+// Mock api — streams authenticate via a minted stream token (#1453), not the API key.
 vi.mock('@/lib/api', () => ({
   api: {
-    getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
+    mintStreamToken: vi.fn().mockResolvedValue({ token: 'test-stream-token', expiresInMs: 300_000 }),
     cancelSearchIndexer: vi.fn().mockResolvedValue({ cancelled: true }),
   },
 }));
@@ -68,7 +69,7 @@ describe('useSearchStream', () => {
     MockEventSource.instances = [];
     vi.stubGlobal('EventSource', MockEventSource);
     // Reset mock to default resolved value
-    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ apiKey: 'test-key' });
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockResolvedValue({ token: 'test-stream-token', expiresInMs: 300_000 });
   });
 
   afterEach(() => {
@@ -198,6 +199,135 @@ describe('useSearchStream', () => {
     expect(es!.closed).toBe(true);
   });
 
+  describe('removeResult', () => {
+    type Fixture = {
+      title: string;
+      indexer: string;
+      protocol: DownloadProtocol;
+      infoHash?: string;
+      guid?: string;
+    };
+
+    async function startWithResults(results: Fixture[]) {
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+      await waitForAuth(result);
+      act(() => { result.current.actions.start(); });
+      act(() => {
+        MockEventSource.instances[0]!.emit('search-complete', {
+          results,
+          durationUnknown: false,
+          unsupportedResults: { count: 0, titles: [] },
+        });
+      });
+      return result;
+    }
+
+    // Server-parity OR-match: a dual-identifier row is removed by EITHER identifier
+    // on its own. Dropping the infoHash clause from the matcher fails this case.
+    it('removes a dual-identifier row matched by its infoHash alone', async () => {
+      const result = await startWithResults([
+        { title: 'Dual D', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashD', guid: 'guidD' },
+        { title: 'Control', indexer: 'NZB', protocol: 'usenet', guid: 'guidZ' },
+      ]);
+
+      act(() => { result.current.actions.removeResult({ infoHash: 'hashD' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
+    });
+
+    // Dropping the guid clause from the matcher fails this case.
+    it('removes a dual-identifier row matched by its guid alone', async () => {
+      const result = await startWithResults([
+        { title: 'Dual D', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashD', guid: 'guidD' },
+        { title: 'Control', indexer: 'NZB', protocol: 'usenet', guid: 'guidZ' },
+      ]);
+
+      act(() => { result.current.actions.removeResult({ guid: 'guidD' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
+    });
+
+    // Guid-sibling seam (the named user-visible behavior change): blacklisting a
+    // dual-identifier row also removes a distinct sibling sharing only its guid.
+    // The old coalesced-primary filter left the sibling visible.
+    it('removes a guid-only sibling sharing the blacklisted row guid', async () => {
+      const result = await startWithResults([
+        { title: 'Dual A', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashA', guid: 'guidA' },
+        { title: 'Guid Sibling', indexer: 'NZB', protocol: 'usenet', guid: 'guidA' },
+        { title: 'Control', indexer: 'MAM', protocol: 'torrent', infoHash: 'hashZ' },
+      ]);
+
+      // The modal passes the dual row's identifiers; the sibling matches on guid.
+      act(() => { result.current.actions.removeResult({ infoHash: 'hashA', guid: 'guidA' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
+    });
+
+    // Empty-string identifiers must contribute nothing (truthiness guard, not
+    // `!= null`). A `!= null` infoHash guard would match both empty-infoHash rows
+    // and wrongly remove the guidY row.
+    it('treats an empty-string identifier as a non-match', async () => {
+      const result = await startWithResults([
+        { title: 'Empty X', indexer: 'NZB', protocol: 'usenet', infoHash: '', guid: 'guidX' },
+        { title: 'Empty Y', indexer: 'NZB', protocol: 'usenet', infoHash: '', guid: 'guidY' },
+      ]);
+
+      act(() => { result.current.actions.removeResult({ infoHash: '', guid: 'guidX' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Empty Y']);
+    });
+
+    // Intentional Array.filter semantics: one call removes every row sharing the
+    // identity, mirroring server-side content-identity blacklisting. A future
+    // findIndex+splice "fix" would regress this visibly.
+    it('removes every row sharing one infoHash', async () => {
+      const result = await startWithResults([
+        { title: 'Shared 1', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashS' },
+        { title: 'Shared 2', indexer: 'MAM', protocol: 'torrent', infoHash: 'hashS' },
+        { title: 'Control', indexer: 'NZB', protocol: 'usenet', guid: 'guidZ' },
+      ]);
+
+      act(() => { result.current.actions.removeResult({ infoHash: 'hashS' }); });
+
+      expect(result.current.state.results?.results.map(r => r.title)).toEqual(['Control']);
+    });
+
+    it('is a no-op for an empty/absent ref, returning the same prev reference', async () => {
+      const result = await startWithResults([
+        { title: 'Row', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashR' },
+      ]);
+      const before = result.current.state.results;
+
+      act(() => { result.current.actions.removeResult({}); });
+      expect(result.current.state.results).toBe(before);
+
+      act(() => { result.current.actions.removeResult({ infoHash: '', guid: '' }); });
+      // Same reference — unchanged set, no spurious re-render churn.
+      expect(result.current.state.results).toBe(before);
+      expect(result.current.state.results?.results).toHaveLength(1);
+    });
+
+    it('is a no-op when the ref matches no held result, returning the same prev reference', async () => {
+      const result = await startWithResults([
+        { title: 'Row', indexer: 'ABB', protocol: 'torrent', infoHash: 'hashR' },
+      ]);
+      const before = result.current.state.results;
+
+      act(() => { result.current.actions.removeResult({ infoHash: 'not-present' }); });
+
+      expect(result.current.state.results).toBe(before);
+      expect(result.current.state.results?.results).toHaveLength(1);
+    });
+
+    it('is a no-op when there are no results yet', () => {
+      const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+      act(() => { result.current.actions.removeResult({ infoHash: 'anything' }); });
+
+      expect(result.current.state.results).toBeNull();
+    });
+  });
+
   it('sends POST to cancel endpoint with correct sessionId and indexerId', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
@@ -293,7 +423,18 @@ describe('useSearchStream', () => {
     expect(result.current.state.hasResults).toBe(false);
   });
 
-  it('sets error state on EventSource connection failure', async () => {
+  // #1453 / F3 — a stream error during an active search is most likely an expired
+  // stream token; the hook must re-mint a fresh token and reconnect transparently
+  // rather than surfacing a terminal failure.
+  it('re-mints and reconnects on a stream error (token expiry) instead of failing permanently', async () => {
+    // mockClear (not the queue-draining resets) zeroes the call history accumulated
+    // by earlier tests' query mounts while preserving the Once queue below, so the
+    // absolute toHaveBeenCalledTimes assertion counts only this test's mints.
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+    (api.mintStreamToken as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 }) // query mount
+      .mockResolvedValueOnce({ token: 'token-2', expiresInMs: 300_000 }); // remint on error
+
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 
     await waitForAuth(result);
@@ -301,13 +442,55 @@ describe('useSearchStream', () => {
       result.current.actions.start();
     });
 
-    const es = MockEventSource.instances[0];
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0]!.url).toContain('token=token-1');
+
+    // Active-search stream error → transparent re-mint + reconnect.
+    await act(async () => {
+      MockEventSource.instances[0]!.onerror?.(new Event('error'));
+    });
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // mintStreamToken called again, new EventSource opened with the fresh ?token=.
+    expect(api.mintStreamToken).toHaveBeenCalledTimes(2);
+    expect(MockEventSource.instances.at(-1)!.url).toContain('token=token-2');
+    // Connection recovered — not surfaced as a user-visible failure.
+    expect(result.current.state.error).toBeNull();
+    expect(result.current.state.phase).toBe('searching');
+  });
+
+  it('treats a second stream error after re-mint as a terminal failure (no infinite reconnect)', async () => {
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockClear();
+    (api.mintStreamToken as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ token: 'token-1', expiresInMs: 300_000 })
+      .mockResolvedValueOnce({ token: 'token-2', expiresInMs: 300_000 });
+
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
     act(() => {
-      es!.onerror?.(new Event('error'));
+      result.current.actions.start();
+    });
+
+    // First error → re-mint + reconnect.
+    await act(async () => {
+      MockEventSource.instances[0]!.onerror?.(new Event('error'));
+    });
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // Second error on the reconnected stream → terminal failure, no further remint.
+    await act(async () => {
+      MockEventSource.instances.at(-1)!.onerror?.(new Event('error'));
     });
 
     expect(result.current.state.error).toBe('Search connection failed');
     expect(result.current.state.phase).toBe('idle');
+    expect(api.mintStreamToken).toHaveBeenCalledTimes(2);
   });
 
   it('cleans up EventSource on unmount', async () => {
@@ -379,9 +562,9 @@ describe('useSearchStream', () => {
     expect(result.current.state.indexers[2]!.status).toBe('pending');
   });
 
-  it('does not open EventSource when auth config is not yet loaded', () => {
+  it('does not open EventSource when the stream token is not yet minted', () => {
     // Override mock to return pending promise (never resolves during this test)
-    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    (api.mintStreamToken as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 

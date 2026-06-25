@@ -9,6 +9,10 @@ type EditProps = ComponentProps<typeof MetadataEditFields>;
 const defaultProps: EditProps = {
   title: 'The Way of Kings',
   onTitleChange: vi.fn(),
+  subtitle: 'Book One of the Stormlight Archive',
+  onSubtitleChange: vi.fn(),
+  author: 'Brandon Sanderson',
+  onAuthorChange: vi.fn(),
   seriesName: 'The Stormlight Archive',
   onSeriesNameChange: vi.fn(),
   seriesPosition: '1',
@@ -16,10 +20,17 @@ const defaultProps: EditProps = {
   positionError: null,
   narrator: 'Michael Kramer',
   onNarratorChange: vi.fn(),
+  description: 'An epic fantasy novel.',
+  onDescriptionChange: vi.fn(),
+  publishedDate: '2010-08-31',
+  onPublishedDateChange: vi.fn(),
+  genres: 'Fantasy, Epic',
+  onGenresChange: vi.fn(),
+  publisher: 'Macmillan Audio',
+  onPublisherChange: vi.fn(),
   renameFiles: false,
   onRenameFilesChange: vi.fn(),
   hasPath: true,
-  onOpenSearch: vi.fn(),
 };
 
 function renderFields(overrides: Partial<EditProps> = {}) {
@@ -34,7 +45,7 @@ describe('MetadataEditFields', () => {
   describe('form fields', () => {
     it('renders title input with current value', () => {
       renderFields();
-      expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
+      expect(screen.getByLabelText(/^title/i)).toHaveValue('The Way of Kings');
     });
 
     it('renders series name input with current value', () => {
@@ -52,12 +63,68 @@ describe('MetadataEditFields', () => {
       expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer');
     });
 
+    it('renders author input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/^author$/i)).toHaveValue('Brandon Sanderson');
+    });
+
+    it('renders published date input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/published date/i)).toHaveValue('2010-08-31');
+    });
+
+    it('renders genres input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/genres/i)).toHaveValue('Fantasy, Epic');
+    });
+
+    it('does not render a Cover URL input (#1614)', () => {
+      renderFields();
+      expect(screen.queryByLabelText(/cover url/i)).not.toBeInTheDocument();
+    });
+
+    it('renders subtitle input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/subtitle/i)).toHaveValue('Book One of the Stormlight Archive');
+    });
+
+    it('renders publisher input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/publisher/i)).toHaveValue('Macmillan Audio');
+    });
+
+    it('calls onSubtitleChange when subtitle input changes', async () => {
+      const onSubtitleChange = vi.fn();
+      renderFields({ onSubtitleChange });
+      await userEvent.type(screen.getByLabelText(/subtitle/i), '!');
+      expect(onSubtitleChange).toHaveBeenCalled();
+    });
+
+    it('calls onPublisherChange when publisher input changes', async () => {
+      const onPublisherChange = vi.fn();
+      renderFields({ onPublisherChange });
+      await userEvent.type(screen.getByLabelText(/publisher/i), '!');
+      expect(onPublisherChange).toHaveBeenCalled();
+    });
+
+    it('renders description input with current value', () => {
+      renderFields();
+      expect(screen.getByLabelText(/description/i)).toHaveValue('An epic fantasy novel.');
+    });
+
     it('calls onTitleChange when title input changes', async () => {
       const onTitleChange = vi.fn();
       renderFields({ onTitleChange });
-      await userEvent.clear(screen.getByLabelText(/title/i));
-      await userEvent.type(screen.getByLabelText(/title/i), 'New');
+      await userEvent.clear(screen.getByLabelText(/^title/i));
+      await userEvent.type(screen.getByLabelText(/^title/i), 'New');
       expect(onTitleChange).toHaveBeenCalled();
+    });
+
+    it('calls onAuthorChange when author input changes', async () => {
+      const onAuthorChange = vi.fn();
+      renderFields({ onAuthorChange });
+      await userEvent.type(screen.getByLabelText(/^author$/i), '!');
+      expect(onAuthorChange).toHaveBeenCalled();
     });
   });
 
@@ -92,12 +159,20 @@ describe('MetadataEditFields', () => {
     });
   });
 
-  describe('search metadata button', () => {
-    it('calls onOpenSearch when search metadata button clicked', async () => {
-      const onOpenSearch = vi.fn();
-      renderFields({ onOpenSearch });
-      await userEvent.click(screen.getByText('Search for metadata'));
-      expect(onOpenSearch).toHaveBeenCalledOnce();
+  describe('embedded search removed (#1609)', () => {
+    it('does not render a "Search for metadata" button', () => {
+      renderFields();
+      expect(screen.queryByText('Search for metadata')).not.toBeInTheDocument();
+    });
+
+    it('no longer claims subtitle/publisher are non-editable (#1614)', () => {
+      renderFields();
+      expect(screen.queryByText(/Subtitle and publisher come from the matched metadata/i)).not.toBeInTheDocument();
+    });
+
+    it('documents that duration is read from the audio files', () => {
+      renderFields();
+      expect(screen.getByText(/Duration is read from the audio files/i)).toBeInTheDocument();
     });
   });
 });

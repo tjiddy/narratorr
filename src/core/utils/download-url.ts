@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import type { DownloadProtocol } from '../indexers/types.js';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
+import { getUserAgent } from '../../shared/user-agent.js';
 import {
   createSsrfSafeDispatcher,
   fetchWithSsrfRedirect,
   mapNetworkError,
+  redactUrlsFromMessage,
   UnsupportedRedirectSchemeError,
 } from './network-service.js';
 
@@ -13,7 +15,7 @@ import {
 export type DownloadArtifact =
   | { type: 'torrent-bytes'; data: Buffer; infoHash: string }
   | { type: 'magnet-uri'; uri: string; infoHash: string }
-  | { type: 'nzb-url'; url: string }
+  | { type: 'nzb-url'; url: string; lanAllowlist?: LanAllowlist }
   | { type: 'nzb-bytes'; data: Buffer };
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -67,9 +69,11 @@ export class DownloadUrl {
       return this.resolveDataUri();
     }
 
-    // Usenet HTTP URLs — passthrough as nzb-url (adapters handle URL submission)
+    // Usenet HTTP URLs — passthrough as nzb-url (adapters handle URL submission).
+    // Carry the LAN allowlist so the Blackhole self-download can reach private/
+    // LAN configured-indexer NZB URLs through the SSRF-safe helper (#1243).
     if (this.protocol === 'usenet' && this.isHttp) {
-      return { type: 'nzb-url', url: this.raw };
+      return { type: 'nzb-url', url: this.raw, ...(lanAllowlist && { lanAllowlist }) };
     }
 
     if (this.isHttp) {
@@ -110,6 +114,7 @@ export class DownloadUrl {
     try {
       const response = await fetchWithSsrfRedirect(url, {
         dispatcher,
+        headers: { 'User-Agent': getUserAgent() },
         ...(lanAllowlist && { lanAllowlist: lanAllowlist.hostPort }),
       });
 
@@ -224,6 +229,5 @@ function isHtmlResponse(response: Response, buffer: Buffer): boolean {
 /** Sanitize network errors to never include the raw URL (passkey/token safety). */
 function sanitizeNetworkError(error: unknown): Error {
   const mapped = mapNetworkError(error);
-  const sanitized = mapped.message.replace(/https?:\/\/\S+/gi, '[redacted-url]');
-  return new Error(`Download failed: ${sanitized}`);
+  return new Error(`Download failed: ${redactUrlsFromMessage(mapped.message)}`);
 }

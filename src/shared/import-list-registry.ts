@@ -1,22 +1,12 @@
 import type { CreateImportListFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
 
-export const IMPORT_LIST_TYPES = ['abs', 'nyt', 'hardcover'] as const;
+export const IMPORT_LIST_TYPES = ['nyt', 'hardcover'] as const;
 export type ImportListType = typeof IMPORT_LIST_TYPES[number];
 
 export type ImportListTypeMetadata = RegistryEntry<CreateImportListFormData['settings']>;
 
 export const IMPORT_LIST_REGISTRY = {
-  abs: {
-    label: 'Audiobookshelf',
-    defaultSettings: { serverUrl: '', apiKey: '', libraryId: '' },
-    requiredFields: [
-      { path: 'serverUrl', message: 'Server URL is required' },
-      { path: 'apiKey', message: 'API key is required' },
-      { path: 'libraryId', message: 'Library is required' },
-    ],
-    viewSubtitle: (s) => (s.serverUrl as string) || 'abs',
-  },
   nyt: {
     label: 'NYT Bestsellers',
     defaultSettings: { apiKey: '', list: 'audio-fiction' },

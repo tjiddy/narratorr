@@ -48,11 +48,15 @@ const baseResult: SearchResult = {
   seeders: 42,
 };
 
+// #1453 — this suite exercises reject-word filtering, not auth. Run in `none`
+// mode so the SSE stream is open and no credential travels in the URL (the API
+// key no longer authenticates streams). Auth acceptance via stream token / cookie
+// is covered in search-stream.test.ts and auth.plugin.test.ts.
 function createMockAuthService() {
   return {
-    validateApiKey: vi.fn().mockResolvedValue(true),
-    getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
-    hasUser: vi.fn().mockResolvedValue(true),
+    validateApiKey: vi.fn().mockResolvedValue(false),
+    getStatus: vi.fn().mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false }),
+    hasUser: vi.fn().mockResolvedValue(false),
   } as unknown as AuthService;
 }
 
@@ -132,7 +136,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: 'graphicaudio' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
@@ -147,7 +151,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: 'GRAPHICAUDIO' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
@@ -162,7 +166,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: 'graphicaudio' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
@@ -178,7 +182,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: 'german, graphicaudio' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
@@ -193,7 +197,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: 'german' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
@@ -208,7 +212,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: '' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(2);
@@ -222,7 +226,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: 'german' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(0);
@@ -238,7 +242,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
       const { app } = await createApp(results, { rejectWords: '  , , german' });
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toHaveLength(1);
@@ -270,7 +274,7 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
 
       appInstance = app;
 
-      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test&apikey=valid-key');
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
       const data = getSearchComplete(events);
 
       expect(data.results).toEqual([]);

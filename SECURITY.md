@@ -16,7 +16,7 @@ Narratorr supports three authentication modes:
 
 All `/api/*` routes require authentication when an auth mode is enabled. Public endpoints are limited to:
 - `/api/health` — Kubernetes/Docker health probe; returns exactly `{ status: 'ok' }` (HTTP 200) on success and `{ status: 'error' }` (HTTP 503) on DB failure. No version, commit, timestamp, or error message is included in the response — failures are logged server-side via `request.log.warn` instead.
-- `/api/system/status` — Returns exactly `{ version, status }`. Update info (whether a newer release is available) lives behind authentication at `/api/system/update-status`.
+- `/api/system/status` — Returns exactly `{ version, status }`.
 - `/api/auth/status` — Returns exactly `{ mode, authenticated }`. Admin/deployment fields (`hasUser`, `username`, `localBypass`, `bypassActive`, `envBypass`) live behind authentication at `/api/auth/admin-status`.
 - `/api/auth/login` — Login endpoint
 - `/api/auth/logout` — Logout endpoint
@@ -70,7 +70,7 @@ All sensitive configuration values (API keys, passwords, proxy URLs) are encrypt
 - **Key management:** 32-byte encryption key loaded from (in priority order):
   1. `NARRATORR_SECRET_KEY` environment variable
   2. `secret.key` file in the config directory (auto-generated on first run with `0600` permissions)
-- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts`): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; Prowlarr API keys; import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
+- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts`): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
 - **Sentinel pattern:** API responses mask secrets with `********`. Updates that include the sentinel value preserve the existing encrypted value (no re-encryption of unchanged secrets)
 - **Storage format:** `$ENC$<base64(iv + authTag + ciphertext)>` — encrypted values are distinguishable from plaintext
 
@@ -85,6 +85,19 @@ All sensitive configuration values (API keys, passwords, proxy URLs) are encrypt
 An API key is generated on first run (`crypto.randomUUID`). It can be regenerated at any time from Settings. Accepted via:
 - `X-Api-Key` header (recommended)
 - `?apikey=` query parameter (convenience for webhook URLs — note that query parameters may appear in server logs and referrer headers)
+
+**Scope — the API key authenticates `/api/v*` only (#1453).** The key is no longer god-mode over the whole `/api/*` surface: a valid key authenticates the versioned public API (`/api/v1/...`) and is **rejected with 401 `{ error: 'Invalid API key' }`** on every other `/api/*` path (`/api/books`, `/api/settings`, the SSE endpoints, etc.). The scope check narrows only the API-key branch in `src/server/plugins/auth.ts` and is URL_BASE-aware (it composes with `config.urlBase` the same way the `/api/` interception does, and is pinned to `v` + digit so paths like `/api/version-history` are not swept in). All non-key credentials (forms session cookie, Basic-auth header, `none` mode, LAN/private-IP bypass, `AUTH_BYPASS`) are unchanged and still authorize the full `/api/*` surface with their existing CSRF rules. The Prowlarr/Readarr compatibility shim (`/api/v1/indexer*`, `/api/v1/system/status`) lives under `/api/v1/` and therefore stays key-reachable (see the documented contract exception under [API Versioning Policy](#api-versioning-policy)).
+
+### SSE / stream auth — short-lived stream token (#1453)
+
+The SSE/stream endpoints (`GET /api/events`, `GET /api/search/stream`) are **not API-key-reachable** — a bare key is rejected there, which is what makes "internal SSE stays numeric" honest (a public key-holder cannot pull numeric rowids off the event stream). The browser authenticates them with a **short-lived, session-scoped stream token**:
+
+- The frontend mints one via `POST /api/auth/stream-token` (itself authenticated by the normal non-key chain — forms cookie / Basic+CSRF / `none` / LAN — and **not** key-reachable, since it sits outside `/api/v*`). The token travels as a `?token=` query param because `EventSource` cannot set request headers; it is re-minted transparently before/at expiry so live updates never drop.
+- The token is HMAC-SHA256 signed (reusing the session-cookie machinery) with a **short TTL (minutes)**, independent of the 7-day session TTL and not sliding-renewed — a session renewal neither extends nor invalidates a live stream token.
+- **Token-type domain separation.** Session cookies carry `kind: 'session'` + a `username`; stream tokens carry `kind: 'stream'` + no `username`, and are signed with a **domain-separated key** derived from the session secret (`HMAC(sessionSecret, 'stream-token')`). `verifyStreamToken` requires `kind === 'stream'`; `verifySessionCookie` requires a `username` and rejects a foreign `kind`. Net effect: a stream token never authenticates a session-cookie check and vice versa, even under secret reuse. (Legacy cookies issued before #1453 carry a `username` but no `kind` and stay valid until they expire or the session secret rotates.)
+- The search-stream cancel route (`POST /api/search/stream/:sessionId/cancel/:indexerId`) is also key-unreachable; it authenticates via the ambient non-key credential the UI already sends (`fetchApi` → cookie/Basic+CSRF), not the stream token.
+
+In `basic`/`none` modes the browser already authenticates same-origin `EventSource`/fetch via the Basic header or the open `none` chain; the stream token is the mechanism that lets **forms** mode authenticate SSE without putting a long-lived secret in the URL.
 
 ## Security Headers
 
@@ -180,7 +193,15 @@ Three outbound code paths follow attacker-influenced URLs and route through the 
 - Redirect limit caps redirect chains and prevents external→internal pivots
 - AbortSignal timeout enforced
 
-**Coverage scope:** SSRF address-blocking is intentionally scoped to attacker-influenced URLs. Operator-configured fetch destinations — indexer apiUrl, download-client host, notifier webhook URL, import-list source, metadata provider — are NOT address-blocked, by design. Self-hosted *arr deployments legitimately point at private-IP services (Prowlarr in Docker compose, qBittorrent on LAN, self-hosted Apprise instance). The trust boundary for those paths is "the operator configured this URL"; extending the block policy would break legitimate setups. See `CLAUDE.md` security section and closed issues #769 / #877 / #885 for the design rationale.
+**Coverage scope:** SSRF address-blocking is intentionally scoped to attacker-influenced URLs. Operator-configured fetch destinations — indexer apiUrl, download-client host, notifier webhook URL, import-list source, metadata provider — are NOT address-blocked, by design. Self-hosted *arr deployments legitimately point at private-IP services (Prowlarr in Docker compose, qBittorrent on LAN, self-hosted Apprise instance). The trust boundary for those paths is "the operator configured this URL"; extending the block policy would break legitimate setups. See closed issues #769 / #877 / #885 for the design rationale.
+
+## Connector refresh (best-effort)
+
+After an import/rename/scan changes the library, `ConnectorService` notifies the configured media-server connectors (Audiobookshelf, Plex) to refresh. This queue is **best-effort and in-memory by design** — pending work is held only as debounced `setTimeout` timers, with no durable/persistent backing.
+
+- On graceful shutdown, `ConnectorService.stop()` (wired into the server's `shutdown()` handler before `app.close()`) clears pending timers, warn-logs any dropped batches with the connector id and item count, and awaits any in-flight flush (including one mid-retry-backoff) so it isn't cut off.
+- All queue timers are `unref()`'d so a pending refresh can never delay graceful shutdown past SIGTERM.
+- A hard crash (SIGKILL/OOM) or a refresh still inside its debounce window **is dropped** — accepted because the downstream media server reconciles on its own next library change or periodic scan. A durable/DB-backed queue is intentionally out of scope for this single-process self-hosted app (consistent with the no-over-engineering posture in #769/#877/#885).
 
 ## Input Validation
 
@@ -208,6 +229,30 @@ A handful of endpoints have no in-tree caller but are preserved as a stable cont
 | Endpoint | Rationale |
 |----------|-----------|
 | `POST /api/system/tasks/search` | Manual trigger for the scheduled search cycle. The generic `POST /api/system/tasks/:name/run` is the preferred surface for new integrations, but legacy automations may target this dedicated path. Removed in code review only. |
+
+## API Versioning Policy
+
+Narratorr exposes two HTTP API surfaces with deliberately different stability guarantees:
+
+- **`/api/*` — internal & unstable.** This is the surface the bundled web UI consumes. It carries **no backwards-compatibility promise**: routes, request/response shapes, and error envelopes may change between releases without notice. Do not build external integrations against it.
+- **`/api/v1/*` — public & supported.** The versioned, native public API. Its contract is locked by the canonical v1 building blocks in `src/shared/schemas/v1/common.ts` and the conventions below. Breaking changes require a new version prefix (`/api/v2/*`), never a silent change under `/api/v1/`.
+
+**Documented contract exception — Prowlarr/Readarr compatibility shim.** The endpoints `/api/v1/indexer*` and `/api/v1/system/status` (`src/server/routes/prowlarr-compat.ts`) live under the `/api/v1/` prefix but are **not** native v1. They impersonate Prowlarr/Readarr so those tools can manage narratorr as an indexer target, and their shapes are dictated by the external product, not by narratorr's v1 conventions. Treat them as a named exception; do not mistake them for, or align them with, the native v1 contract.
+
+### v1 conventions (ADR)
+
+These decisions are locked by S0 (#1442, part of the Public API v1 epic #1441) and codified in `src/shared/schemas/v1/common.ts`. Downstream stories import those types rather than re-deriving them.
+
+| Concern | Decision |
+|---------|----------|
+| **Pagination** | Offset/limit (`limit`, `offset`), reusing `paginationParamsSchema` from `src/shared/schemas/common.ts`. A single-user library is not a feed — cursor pagination is explicitly rejected. The v1 schema does **not** fork a second pagination shape. |
+| **Filter/sort param naming** | camelCase, short, optional (`sortField`, `sortDirection`, `author`, `series`, `narrator`) — never `sort_by` / `filter_author`. Matches `bookListQuerySchema`. |
+| **Error envelope** | `{ error: { code, message } }` — an object with a stable machine-readable `code` and human-readable `message`, never a bare string. **v1-only:** the internal `/api/*` error handler (`src/server/plugins/error-handler.ts`) keeps its existing ad-hoc shape and is **not** retrofitted. |
+| **List response** | `{ data, total }` (never a bare array), aligning with the existing `PaginatedResponse<T>`. |
+| **Date format** | ISO 8601 strings. Fastify + `fastify-type-provider-zod` already serialize `Date → ISO` automatically; no new serialization code is needed. |
+| **Request-validator strictness** | Native v1 request validators are schemas narratorr owns → Zod `.strict()`. This is the **opposite** of the prowlarr-compat surface, which must stay `.strip()` (the impersonated product controls that payload). v1 schemas must not drift toward `.strip()`/`.passthrough()`. |
+| **CORS** | Target shape is a configurable comma-separated allowlist of origins, for future browser-based sidecars. **Documented now, implementation deferred** to the first browser consumer — today CORS is a single configurable `CORS_ORIGIN` (`src/server/cors-config.ts`) and that runtime behavior is unchanged by this policy. |
+| **Rate-limiting** | Native public API v1 rate limiting is **deliberately out of scope** (single-user self-hosted threat model, not public abuse). This is a documented decision, not an oversight. The existing auth and filesystem-browse rate limits (see [Rate Limiting](#rate-limiting)) remain unchanged. |
 
 ## Reporting Security Issues
 

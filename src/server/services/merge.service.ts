@@ -6,6 +6,7 @@ import type { Db } from '../../db/index.js';
 import { books } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { AppSettings } from '../../shared/schemas/settings/registry.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
@@ -19,8 +20,20 @@ import type { MergePhase, MergeFailedReason } from '../../shared/schemas/sse-eve
 import { safeEmit } from '../utils/safe-emit.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { serializeError } from '../utils/serialize-error.js';
 
+
+/**
+ * Clamp a runtime concurrency value to a safe semaphore size (>= 1, integer).
+ * setMax() performs no validation, so a NaN/0/negative/fractional value read
+ * from settings must be coerced here — `Math.max(1, NaN)` is `NaN`, which would
+ * poison the semaphore. Unreachable via the Zod-validated path today, but the
+ * clamp's whole job is defense against an unvalidated read.
+ */
+export function clampConcurrency(value: number | undefined): number {
+  return Number.isInteger(value) && (value as number) >= 1 ? (value as number) : 1;
+}
 
 export interface MergeResult {
   bookId: number;
@@ -101,8 +114,12 @@ export class MergeService {
     }
   }
 
-  /** Pre-enqueue validation: throws MergeError for invalid requests. Duplicate checks are in enqueueMerge (synchronous). */
-  private async validateBookForMerge(bookId: number): Promise<void> {
+  /**
+   * Pre-enqueue validation: throws MergeError for invalid requests. Duplicate checks are
+   * in enqueueMerge (synchronous). Returns the processing settings it already fetched so
+   * the caller can size the semaphore without a second (rejection-prone) read.
+   */
+  private async validateBookForMerge(bookId: number): Promise<AppSettings['processing']> {
     const book = await this.bookService.getById(bookId);
     if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
     if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
@@ -112,6 +129,7 @@ export class MergeService {
     const allEntries = await readdir(book.path);
     const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+    return processingSettings;
   }
 
   /** Public API: validate and enqueue a merge. Returns acknowledgement immediately. */
@@ -120,17 +138,28 @@ export class MergeService {
     if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
     if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
 
-    // Mark in-progress immediately to block concurrent same-book requests during async validation
+    // Mark in-progress immediately to block concurrent same-book requests during async validation.
+    // The settings read + setMax live INSIDE this try so a rejecting read cleans up inProgress
+    // rather than stranding the book in inProgress (every later attempt would 409 until restart).
     this.inProgress.add(bookId);
     try {
-      await this.validateBookForMerge(bookId);
+      // validateBookForMerge already reads get('processing') for the ffmpeg check — reuse its
+      // return value to size the semaphore, avoiding a duplicate (rejection-prone) read.
+      const processing = await this.validateBookForMerge(bookId);
+      // Refresh the concurrency limit before the start-vs-queue decision. setMax() does not wake
+      // already-queued waiters; FIFO ordering is preserved by the enqueue-time drain below (promote
+      // front-of-queue first) and the release-path drain in processNext(). Clamp defensively — a
+      // NaN/0 read would poison setMax (Math.max(1, NaN) is NaN).
+      this.semaphore.setMax(clampConcurrency(processing?.maxConcurrentProcessing));
     } catch (error: unknown) {
-      this.inProgress.delete(bookId); // Clean up on validation failure
+      this.inProgress.delete(bookId); // Clean up on validation / settings-read failure
       throw error;
     }
 
-    if (this.semaphore.tryAcquire()) {
-      // Slot available — start immediately, fire-and-forget
+    // Start the new request immediately ONLY when nothing is queued ahead of it and a
+    // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
+    // the new request never grabs a freed slot ahead of older queued work.
+    if (this.queue.length === 0 && this.semaphore.tryAcquire()) {
       this.executeMerge(bookId)
         .catch((error: unknown) => {
           this.log.error({ error: serializeError(error) }, 'Merge failed for book %d', bookId);
@@ -142,7 +171,7 @@ export class MergeService {
       return { status: 'started', bookId };
     }
 
-    // No slot — move from inProgress to queue
+    // No immediate slot — append the new book to the tail of the queue.
     this.inProgress.delete(bookId);
     this.queue.push(bookId);
     const position = this.queue.length;
@@ -150,30 +179,56 @@ export class MergeService {
     if (book) {
       this.emitQueueEvent('merge_queued', bookId, book.title, position);
     }
-    return { status: 'queued', bookId, position };
+
+    // Drain from the FRONT of the queue while slots are free (e.g. after a capacity raise).
+    // Promoting front-first guarantees older queued jobs win freed slots before the newer
+    // request just appended to the tail.
+    this.drainQueue();
+
+    // Re-check reality before acknowledging: drainQueue (or the getById await above) may have
+    // promoted this very book if the read raised capacity by ≥2. The pre-drain `position` would
+    // then be a stale lie. Report the live state — started if promoted, else the current index.
+    if (!this.queue.includes(bookId)) {
+      return { status: 'started', bookId };
+    }
+    return { status: 'queued', bookId, position: this.queue.indexOf(bookId) + 1 };
   }
 
-  /** Drain the queue: pass the semaphore slot to the next queued merge, or release if empty. */
-  private processNext(): void {
-    if (this.queue.length === 0) {
-      this.semaphore.release(); // No more work — release the slot
-      return;
+  /** Promote queued jobs from the front while free slots can be acquired. */
+  private drainQueue(): void {
+    while (this.queue.length > 0 && this.semaphore.tryAcquire()) {
+      const nextBookId = this.queue.shift()!;
+      this.startQueuedMerge(nextBookId);
     }
+  }
 
-    // Keep the semaphore slot — pass it directly to the next job (no release + re-acquire gap)
-    const nextBookId = this.queue.shift()!;
-    this.inProgress.add(nextBookId);
+  /**
+   * Drain step after a merge finishes: release the held slot, then re-drain through the
+   * capacity-checked promotion path. Both calls are synchronous (single-threaded), so there
+   * is no release/re-acquire interleave window — the old slot-pass pattern existed only to
+   * guard a gap that cannot occur here, and it bypassed capacity entirely (a SHRINK never
+   * took effect while a backlog existed because the slot was handed forward without
+   * consulting max). Releasing first lets drainQueue's tryAcquire honor the current max.
+   */
+  private processNext(): void {
+    this.semaphore.release();
+    this.drainQueue();
+  }
+
+  /** Run a queued merge that already holds a semaphore slot (acquired by drainQueue's tryAcquire). */
+  private startQueuedMerge(bookId: number): void {
+    this.inProgress.add(bookId);
 
     this.emitQueuePositionUpdates().catch((error: unknown) => {
       this.log.debug({ error: serializeError(error) }, 'Failed to emit queue position updates');
     });
 
-    this.executeWithRevalidation(nextBookId)
+    this.executeWithRevalidation(bookId)
       .catch((error: unknown) => {
-        this.log.error({ error: serializeError(error) }, 'Queued merge failed for book %d', nextBookId);
+        this.log.error({ error: serializeError(error) }, 'Queued merge failed for book %d', bookId);
       })
       .finally(() => {
-        this.inProgress.delete(nextBookId);
+        this.inProgress.delete(bookId);
         this.processNext(); // Pass the slot or release if empty
       });
   }
@@ -215,8 +270,7 @@ export class MergeService {
     const processingSettings = await this.settingsService.get('processing');
     if (!processingSettings?.ffmpegPath?.trim()) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not configured' };
 
-    const allEntries = await readdir(bookPath);
-    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const librarySettings = await this.settingsService.get('library');
 
     const controller = new AbortController();
     this.abortControllers.set(bookId, controller);
@@ -225,6 +279,30 @@ export class MergeService {
     const stagingDir = bookPath + '.merge-tmp';
 
     try {
+      // Converge any interrupted commit-pending marker at bookPath BEFORE any staging
+      // work (#1418). A killed import can leave bookPath with an armed marker + populated
+      // `.import-bak`; without recovery, the merge output lands inside an armed path and a
+      // later import/boot recovery silently reverts the merge by restoring `.import-bak`.
+      // Recovery runs inside the try so a failure (BackupRecoveryError / MarkerPathConflictError
+      // / raw stat error) routes to the catch → merge_failed + `.merge-tmp` cleanup, before
+      // any ffmpeg work. It costs no staging work on failure.
+      await recoverInterruptedCommit(bookPath, librarySettings.path, this.log);
+
+      // Read the top-level audio set AFTER recovery — recovery can restore a different
+      // original set into bookPath, and this list feeds both runStaging (what gets merged)
+      // and commitMerge's originals-deletion. Reading it before recovery would stage/delete
+      // a stale file list.
+      const allEntries = await readdir(bookPath);
+      const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+
+      // Re-validate the merge minimum on the CONVERGED folder (F9): recovery can shrink a
+      // previously-valid queued merge below two top-level audio files, and processAudioFiles
+      // won't merge a single-file candidate even with mergeBehavior 'always'. Abort before
+      // runStaging/commitMerge — the throw routes to the catch → merge_failed + cleanup.
+      if (topLevelAudioFiles.length < 2) {
+        throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
+      }
+
       this.emitMergeProgress(bookId, book.title, 'staging');
       const stagedOutput = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
 

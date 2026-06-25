@@ -13,6 +13,7 @@ import {
   DownloadService,
   MetadataService,
   NotifierService,
+  ConnectorService,
   BlacklistService,
   RemotePathMappingService,
   RenameService,
@@ -22,6 +23,7 @@ import {
   RetryBudget,
   DiscoveryService,
   SeriesCardService,
+  ReferenceReadService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { ImportOrchestrator } from '../services/import-orchestrator.js';
@@ -51,6 +53,7 @@ import { systemRoutes } from './system.js';
 import { metadataRoutes } from './metadata.js';
 import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
+import { connectorsRoutes } from './connectors.js';
 import { blacklistRoutes } from './blacklist.js';
 import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
@@ -61,101 +64,32 @@ import { eventsRoutes } from './events.js';
 import { searchStreamRoutes } from './search-stream.js';
 import { SearchSessionManager } from '../services/search-session.js';
 import { importListsRoutes } from './import-lists.js';
-import { updateRoutes } from './update.js';
 import { discoverRoutes } from './discover.js';
 import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { BookRejectionService } from '../services/book-rejection.service.js';
-import { createRetrySearchDeps, type RetrySearchDeps } from '../services/retry-search.js';
+import { BookDeletionService } from '../services/book-deletion.service.js';
+import { createRetrySearchDeps } from '../services/retry-search.js';
 import { ImportQueueWorker } from '../services/import-queue-worker.js';
 import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
 import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
 import { importPreviewRoute } from './import-preview.js';
+import { v1BooksRoutes } from './v1/books.js';
+import { v1AuthorsRoutes } from './v1/authors.js';
+import { v1NarratorsRoutes } from './v1/narrators.js';
+import { v1SeriesRoutes } from './v1/series.js';
+import { v1DownloadsRoutes } from './v1/downloads.js';
+import { v1ActionsRoutes } from './v1/actions.js';
+import { v1MetadataRoutes } from './v1/metadata.js';
 
-export interface Services {
-  settings: SettingsService;
-  auth: AuthService;
-  indexer: IndexerService;
-  indexerSearch: IndexerSearchService;
-  downloadClient: DownloadClientService;
-  book: BookService;
-  bookImport: BookImportService;
-  bookList: BookListService;
-  download: DownloadService;
-  downloadOrchestrator: DownloadOrchestrator;
-  metadata: MetadataService;
-  import: ImportService;
-  importOrchestrator: ImportOrchestrator;
-  libraryScan: LibraryScanService;
-  matchJob: MatchJobService;
-  notifier: NotifierService;
-  blacklist: BlacklistService;
-  remotePathMapping: RemotePathMappingService;
-  rename: RenameService;
-  merge: MergeService;
-  eventHistory: EventHistoryService;
-  tagging: TaggingService;
-  qualityGate: QualityGateService;
-  qualityGateOrchestrator: QualityGateOrchestrator;
-  retryBudget: RetryBudget;
-  eventBroadcaster: EventBroadcasterService;
-  backup: BackupService;
-  healthCheck: HealthCheckService;
-  taskRegistry: TaskRegistry;
-  importList: ImportListService;
-  discovery: DiscoveryService;
-  bulkOperation: BulkOperationService;
-  bookRejection: BookRejectionService;
-  importQueueWorker: ImportQueueWorker;
-  retrySearchDeps: RetrySearchDeps;
-  seriesCard: SeriesCardService;
-}
-
-/**
- * Runtime list of all service keys, kept in sync with the Services interface.
- * The `satisfies` clause ensures TS errors if a key is added to Services but
- * not listed here — `Record<keyof Services, true>` requires every key present.
- */
-export const SERVICE_KEYS = Object.keys({
-  settings: true,
-  auth: true,
-  indexer: true,
-  indexerSearch: true,
-  downloadClient: true,
-  book: true,
-  bookImport: true,
-  bookList: true,
-  download: true,
-  downloadOrchestrator: true,
-  metadata: true,
-  import: true,
-  importOrchestrator: true,
-  libraryScan: true,
-  matchJob: true,
-  notifier: true,
-  blacklist: true,
-  remotePathMapping: true,
-  rename: true,
-  merge: true,
-  eventHistory: true,
-  tagging: true,
-  qualityGate: true,
-  qualityGateOrchestrator: true,
-  retryBudget: true,
-  eventBroadcaster: true,
-  backup: true,
-  healthCheck: true,
-  taskRegistry: true,
-  importList: true,
-  discovery: true,
-  bulkOperation: true,
-  bookRejection: true,
-  importQueueWorker: true,
-  retrySearchDeps: true,
-  seriesCard: true,
-} satisfies Record<keyof Services, true>) as (keyof Services)[];
+// The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
+// (the correct layer — routes depend on services, not the reverse). Imported for
+// local use here and re-exported so existing route consumers (health-routes.ts,
+// system.ts) keep importing `Services` from the routes barrel.
+import type { Services } from '../services/di.js';
+export { type Services, SERVICE_KEYS } from '../services/di.js';
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
   const settings = new SettingsService(db, log);
@@ -171,6 +105,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   }, settings);
 
   const notifier = new NotifierService(db, log);
+  const connector = new ConnectorService(db, log);
   const blacklistService = new BlacklistService(db, log, settings);
 
   // EventBroadcaster and EventHistoryService created early so they can be injected into lifecycle services
@@ -178,6 +113,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const book = new BookService(db, log, metadata);
   const bookImport = new BookImportService(db, log);
   const bookList = new BookListService(db);
+  const referenceRead = new ReferenceReadService(db);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
   const download = new DownloadService(db, downloadClient, log);
@@ -185,13 +121,13 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
-  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
+  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster, connector);
   const seriesCard = new SeriesCardService(db, log, settings);
-  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster);
+  const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster, connector);
   const matchJob = new MatchJobService(metadata, log, settings);
 
   const qualityGateService = new QualityGateService(db, log);
-  const renameService = new RenameService(db, book, settings, log, eventHistory);
+  const renameService = new RenameService(db, book, settings, log, eventHistory, connector);
   const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
@@ -221,6 +157,11 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // Append `Abridged` to legacy packaged rejectWords default (one-time, idempotent)
   await settings.migrateRejectWordsAbridgedDefault();
 
+  // Reset legacy stored maxConcurrentProcessing=2 to 1, clamp >8 (one-time, idempotent).
+  // Must run before any read of settings.get('processing') so a >8 value is rescued
+  // before parseCategory's parse-failure fallback wipes the whole category.
+  await settings.migrateMaxConcurrentProcessingDefaults();
+
   // Health check service with system deps
   const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
   const healthCheck = new HealthCheckService(
@@ -235,7 +176,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   );
 
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
-  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster);
+  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, {
     eventHistory,
@@ -246,6 +187,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     settingsService: settings,
   });
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps);
+  const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory);
 
   // Phase 2: wire required cyclic deps now that every instance exists.
   // Each service throws ServiceWireError if methods using these deps are
@@ -260,7 +202,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, importQueueWorker, retrySearchDeps, seriesCard };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, retrySearchDeps, seriesCard, referenceRead };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -277,6 +219,7 @@ const routeRegistry: RouteFactory[] = [
     mergeService: s.merge,
     taggingService: s.tagging,
     eventHistory: s.eventHistory,
+    bookDeletionService: s.bookDeletion,
     indexerSearchService: s.indexerSearch,
     indexerService: s.indexer,
     bookRejectionService: s.bookRejection,
@@ -296,8 +239,8 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => metadataRoutes(app, s.metadata),
   (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob, s.book, s.metadata),
   (app, s, db) => systemRoutes(app, s, db),
-  (app, s) => updateRoutes(app, s.settings),
   (app, s) => notifiersRoutes(app, s.notifier),
+  (app, s) => connectorsRoutes(app, s.connector),
   (app, s) => blacklistRoutes(app, s.blacklist),
   (app, s) => authRoutes(app, s.auth),
   (app, s) => remotePathMappingRoutes(app, s.remotePathMapping),
@@ -315,6 +258,29 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
   (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
   (app) => importPreviewRoute(app),
+  (app, s, db) => v1BooksRoutes(app, {
+    bookService: s.book,
+    bookListService: s.bookList,
+    metadataService: s.metadata,
+    downloadOrchestrator: s.downloadOrchestrator,
+    indexerSearchService: s.indexerSearch,
+    indexerService: s.indexer,
+    blacklistService: s.blacklist,
+    settingsService: s.settings,
+    eventHistory: s.eventHistory,
+    eventBroadcaster: s.eventBroadcaster,
+  }, db),
+  (app, s, db) => v1AuthorsRoutes(app, { referenceReadService: s.referenceRead }, db),
+  (app, s, db) => v1NarratorsRoutes(app, { referenceReadService: s.referenceRead }, db),
+  (app, s, db) => v1SeriesRoutes(app, { referenceReadService: s.referenceRead }, db),
+  (app, s, db) => v1DownloadsRoutes(app, { downloadService: s.download }, db),
+  (app, s, db) => v1ActionsRoutes(app, {
+    bookService: s.book,
+    indexerSearchService: s.indexerSearch,
+    downloadOrchestrator: s.downloadOrchestrator,
+    downloadService: s.download,
+  }, db),
+  (app, s) => v1MetadataRoutes(app, { metadataService: s.metadata, bookService: s.book }),
 ];
 
 export { routeRegistry };

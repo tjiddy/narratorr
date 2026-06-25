@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -51,8 +52,10 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
   async function seedBookA(svc: BookService): Promise<number> {
     const created = await svc.create({
       title: 'Old Title',
+      subtitle: 'Old Subtitle',
       authors: [{ name: 'Old Author', asin: 'OLDAUTH' }],
       narrators: ['Old Narrator'],
+      publisher: 'Old Publisher',
       asin: 'B_OLD',
       seriesName: 'Old Series',
       seriesPosition: 1,
@@ -70,7 +73,9 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       audioFileCount: 1,
       lastGrabGuid: 'guid:old',
       lastGrabInfoHash: 'hash:old',
-      enrichmentStatus: 'enriched',
+      // Maxed-out failed identity: the terminal state Fix Match exists to rescue (#1646).
+      enrichmentStatus: 'failed',
+      enrichmentAttempts: 5,
     }).where(eq(books.id, created.id));
     return created.id;
   }
@@ -82,9 +87,11 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const updated = await svc.fixMatch(bookId, {
       asin: 'B_NEW',
       title: 'New Title',
+      subtitle: 'New Subtitle',
       authors: [{ name: 'New Author', asin: 'NEWAUTH' }],
       narrators: ['New Narrator'],
       description: 'New description',
+      publisher: 'New Publisher',
       coverUrl: 'https://example.com/new.jpg',
       duration: 1200,
       publishedDate: '2024-05-01',
@@ -100,6 +107,10 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.asin).toBe('B_NEW');
     expect(row!.title).toBe('New Title');
+    // Regression guard (#1614): subtitle was declared on FixMatchReplacement but
+    // never written by buildFixMatchScalarUpdates; publisher wasn't projected at all.
+    expect(row!.subtitle).toBe('New Subtitle');
+    expect(row!.publisher).toBe('New Publisher');
     expect(row!.description).toBe('New description');
     expect(row!.coverUrl).toBe('https://example.com/new.jpg');
     expect(row!.duration).toBe(1200);
@@ -109,6 +120,8 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.isbn).toBe('9781234567890');
     expect(row!.genres).toEqual(['Fantasy']);
     expect(row!.enrichmentStatus).toBe('pending');
+    // Fix Match grants a fresh attempt budget, not the stale count from the wrong identity (#1646).
+    expect(row!.enrichmentAttempts).toBe(0);
     // Preserved local state
     expect(row!.path).toBe('/library/old-path');
     expect(row!.size).toBe(12345);
@@ -166,6 +179,10 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.seriesName).toBeNull();
     expect(row!.seriesPosition).toBeNull();
     expect(row!.asin).toBe('B_STANDALONE');
+    // Full-overwrite semantics (#1614): a replacement without subtitle/publisher
+    // nulls the previously-stored values (intentional, unlike enrichment).
+    expect(row!.subtitle).toBeNull();
+    expect(row!.publisher).toBeNull();
 
     // No membership rows remain for the book
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
@@ -204,13 +221,13 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
   });
 
   async function insertBookRow(asin: string, title: string): Promise<number> {
-    const [row] = await db.insert(books).values({ title, asin }).returning();
+    const [row] = await db.insert(books).values({ publicId: generatePublicId('bk'), title, asin }).returning();
     return row!.id;
   }
 
   it('args=null: deletes all prior series_members rows for the book and inserts nothing', async () => {
     const bookId = await insertBookRow('B_NS', 'Standalone');
-    const [seriesRow] = await db.insert(series).values({
+    const [seriesRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       name: 'Old Series',
       normalizedName: 'old series',
     }).returning();
@@ -233,7 +250,7 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
 
   it('args=payload: deletes prior row(s) AND inserts exactly one new local member', async () => {
     const bookId = await insertBookRow('B_RM', 'Rematched');
-    const [oldSeries] = await db.insert(series).values({
+    const [oldSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       name: 'Old Series',
       normalizedName: 'old series',
     }).returning();
@@ -269,7 +286,7 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
 
   it('reuses an existing series row when normalizedName matches', async () => {
     const bookId = await insertBookRow('B_REUSE', 'Reuse');
-    const [seeded] = await db.insert(series).values({
+    const [seeded] = await db.insert(series).values({ publicId: generatePublicId('sr'),
       name: 'Seed Series',
       normalizedName: 'seed series',
     }).returning();

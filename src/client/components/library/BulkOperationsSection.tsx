@@ -2,40 +2,16 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type RenameCount } from '@/lib/api';
+import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useBookStats } from '@/hooks/useLibrary';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { FolderIcon } from '@/components/icons';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { BulkRenameModal } from './BulkRenameModal.js';
 
 type PendingOp = 'rename' | 'retag' | 'removeMissing' | null;
-type ModalCount = RenameCount | number;
-
-async function fetchCountForOp(op: 'rename' | 'retag'): Promise<ModalCount> {
-  if (op === 'rename') {
-    return api.getBulkRenameCount();
-  }
-  const r = await api.getBulkRetagCount();
-  return r.total;
-}
-
-const MODAL_LABELS: Record<'rename' | 'retag', { title: string; message: (data: ModalCount) => string; confirmLabel: string }> = {
-  rename: {
-    title: 'Rename All Books?',
-    message: (data) => {
-      const { mismatched: n, alreadyMatching: m } = data as RenameCount;
-      return `Rename ${n} ${n !== 1 ? 'books' : 'book'} to match the current folder format? ${m} ${m !== 1 ? 'books' : 'book'} already match and will be skipped.`;
-    },
-    confirmLabel: 'Rename All',
-  },
-  retag: {
-    title: 'Re-tag All Books?',
-    message: (n) => `This will re-write audio tags for ${n as number} ${(n as number) !== 1 ? 'books' : 'book'}.`,
-    confirmLabel: 'Re-tag All',
-  },
-};
 
 function Spinner() {
   return (
@@ -168,10 +144,54 @@ function useRemoveMissingMutation() {
   });
 }
 
+interface BulkOperationModalsProps {
+  pendingOp: PendingOp;
+  retagCount: number | null;
+  missingCount: number;
+  onStartRename: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/** The three confirmation modals, kept out of the main section to bound its complexity. */
+function BulkOperationModals({ pendingOp, retagCount, missingCount, onStartRename, onConfirm, onCancel }: BulkOperationModalsProps) {
+  if (pendingOp === 'rename') {
+    return <BulkRenameModal isOpen onClose={onCancel} onConfirm={onStartRename} />;
+  }
+  if (pendingOp === 'retag') {
+    const n = retagCount ?? 0;
+    return (
+      <ConfirmModal
+        isOpen
+        title="Re-tag All Books?"
+        message={`This will re-write audio tags for ${n} ${n !== 1 ? 'books' : 'book'}.`}
+        confirmLabel="Re-tag All"
+        cancelLabel="Cancel"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    );
+  }
+  if (pendingOp === 'removeMissing') {
+    return (
+      <ConfirmModal
+        isOpen
+        title="Remove Missing Books?"
+        message={`Remove ${missingCount} missing book${missingCount !== 1 ? 's' : ''} from Narratorr? Files will not be deleted.`}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    );
+  }
+  return null;
+}
+
 export function BulkOperationsSection() {
   const { isRunning, jobType, progress, startJob } = useBulkOperation();
   const [pendingOp, setPendingOp] = useState<PendingOp>(null);
-  const [modalCount, setModalCount] = useState<ModalCount | null>(null);
+  const [retagCount, setRetagCount] = useState<number | null>(null);
   const [isLoadingCount, setIsLoadingCount] = useState(false);
 
   const { data: stats } = useBookStats();
@@ -182,12 +202,18 @@ export function BulkOperationsSection() {
 
   const anyBulkBusy = isRunning || isLoadingCount;
 
-  async function handleOperationClick(op: 'rename' | 'retag') {
+  // Rename opens the preview modal directly — it fetches its own from→to diff.
+  function handleRenameClick() {
+    setPendingOp('rename');
+  }
+
+  // Retag still pre-fetches a count for its count-only confirm.
+  async function handleRetagClick() {
     setIsLoadingCount(true);
     try {
-      const count = await fetchCountForOp(op);
-      setModalCount(count);
-      setPendingOp(op);
+      const { total } = await api.getBulkRetagCount();
+      setRetagCount(total);
+      setPendingOp('retag');
     } catch (error: unknown) {
       toast.error(getErrorMessage(error));
     } finally {
@@ -195,25 +221,23 @@ export function BulkOperationsSection() {
     }
   }
 
-  async function handleConfirm() {
+  function handleConfirm() {
     if (pendingOp === 'removeMissing') {
       setPendingOp(null);
       removeMissingMutation.mutate();
       return;
     }
-    if (!pendingOp) return;
-    const op = pendingOp;
-    setPendingOp(null);
-    setModalCount(null);
-    await startJob(op);
+    if (pendingOp === 'retag') {
+      setPendingOp(null);
+      setRetagCount(null);
+      void startJob('retag');
+    }
   }
 
   function handleCancel() {
     setPendingOp(null);
-    setModalCount(null);
+    setRetagCount(null);
   }
-
-  const bulkModal = pendingOp === 'rename' || pendingOp === 'retag' ? MODAL_LABELS[pendingOp] : null;
 
   return (
     <div className="mt-4 pt-4 border-t border-border/30 space-y-3">
@@ -227,7 +251,7 @@ export function BulkOperationsSection() {
           isThisRunning={isRunning && jobType === 'rename'}
           isAnyRunning={anyBulkBusy}
           progress={progress}
-          onClick={() => handleOperationClick('rename')}
+          onClick={handleRenameClick}
         />
         <BulkButton
           label="Re-tag All Books"
@@ -235,7 +259,7 @@ export function BulkOperationsSection() {
           isThisRunning={isRunning && jobType === 'retag'}
           isAnyRunning={anyBulkBusy}
           progress={progress}
-          onClick={() => handleOperationClick('retag')}
+          onClick={handleRetagClick}
         />
         {missingCount > 0 && (
           <RemoveMissingBooksButton
@@ -247,28 +271,17 @@ export function BulkOperationsSection() {
       {progress.failures > 0 && (
         <p className="text-xs text-destructive">{progress.failures} failure{progress.failures !== 1 ? 's' : ''}</p>
       )}
-      {bulkModal && (
-        <ConfirmModal
-          isOpen
-          title={bulkModal.title}
-          message={bulkModal.message(modalCount ?? 0)}
-          confirmLabel={bulkModal.confirmLabel}
-          cancelLabel="Cancel"
-          onConfirm={handleConfirm}
-          onCancel={handleCancel}
-        />
-      )}
-      {pendingOp === 'removeMissing' && (
-        <ConfirmModal
-          isOpen
-          title="Remove Missing Books?"
-          message={`Remove ${missingCount} missing book${missingCount !== 1 ? 's' : ''} from Narratorr? Files will not be deleted.`}
-          confirmLabel="Remove"
-          cancelLabel="Cancel"
-          onConfirm={handleConfirm}
-          onCancel={handleCancel}
-        />
-      )}
+      <BulkOperationModals
+        pendingOp={pendingOp}
+        retagCount={retagCount}
+        missingCount={missingCount}
+        onStartRename={() => {
+          setPendingOp(null);
+          void startJob('rename');
+        }}
+        onConfirm={handleConfirm}
+        onCancel={handleCancel}
+      />
     </div>
   );
 }

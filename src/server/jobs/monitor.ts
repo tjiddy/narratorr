@@ -1,8 +1,15 @@
-import { eq, inArray, and, ne } from 'drizzle-orm';
+import { eq, and, or, ne } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
-import { getInProgressStatuses, getClientPolledStatuses } from '../../shared/download-status-registry.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import {
+  transitionDownloadState,
+  clientPolledDownloadCondition,
+  inProgressDownloadCondition,
+  completedDisplayDownloadCondition,
+} from '../utils/download-state.js';
+import type { ClientStatus } from '../../shared/schemas/activity.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
@@ -39,7 +46,7 @@ export async function monitorDownloads(
   const activeDownloads = await db
     .select()
     .from(downloads)
-    .where(inArray(downloads.status, getClientPolledStatuses()));
+    .where(clientPolledDownloadCondition());
 
   if (activeDownloads.length === 0) {
     log.trace('No active downloads to monitor');
@@ -63,7 +70,7 @@ export async function monitorDownloads(
 
       const item = await adapter.getDownload(download.externalId);
       if (!item) {
-        await handleMissingItem(db, download, notifierService, log, retryDeps, eventHistory);
+        await handleMissingItem(db, download, notifierService, log, retryDeps, eventHistory, broadcaster);
         continue;
       }
 
@@ -87,23 +94,22 @@ async function handleMissingItem(
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
   eventHistory?: EventHistoryService,
+  broadcaster?: EventBroadcasterService,
 ): Promise<void> {
   log.warn({ id: download.id }, 'Download not found in client');
   const errorMessage = 'Download not found in download client';
-  await db
-    .update(downloads)
-    .set({ status: 'failed', errorMessage })
-    .where(eq(downloads.id, download.id));
+  // Client-side failure: poller writes only the `clientStatus` axis.
+  await transitionDownloadState(db, download.id, { clientStatus: 'failed', errorMessage });
 
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage, log });
 
   if (download.bookId && retryDeps) {
-    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary');
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary', broadcaster);
     if (outcome === 'retried') {
       await db.delete(downloads).where(eq(downloads.id, download.id));
     }
   } else if (download.bookId) {
-    await recoverBookStatus(db, download.bookId, download.id, log);
+    await recoverBookStatus(db, download.bookId, download.id, log, broadcaster);
   }
 
   fireAndForget(
@@ -132,32 +138,33 @@ async function processDownloadUpdate(
 ): Promise<void> {
   const progress = item.progress / 100;
   const newStatus = mapDownloadStatus(item.status);
-  const isCompleted = newStatus === 'completed';
+  // Poller-owned rows are pipeline-idle, so the display status equals the client
+  // status — but derive it explicitly so the comparison stays correct.
+  const oldDisplay = deriveDisplayStatus(download.clientStatus, download.pipelineStage);
 
-  if (download.status !== newStatus) {
+  if (download.clientStatus !== newStatus) {
     log.info({ id: download.id, status: newStatus }, 'Download state changed');
   } else {
     log.debug({ id: download.id, progress }, 'Download progress');
   }
 
-  const isCompletionTransition = isCompleted && download.status !== 'completed';
+  const isCompleted = newStatus === 'completed';
+  const isCompletionTransition = isCompleted && download.clientStatus !== 'completed';
   const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log, isCompletionTransition);
 
   const progressChanged = progress !== download.progress;
-  await db
-    .update(downloads)
-    .set({
-      progress,
-      status: newStatus,
-      completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
-      ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
-      ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
-      ...(resolvedOutputPath ? { outputPath: resolvedOutputPath } : {}),
-    })
-    .where(eq(downloads.id, download.id));
+  // Client poller writes ONLY the `clientStatus` axis (never `pipelineStage`).
+  await transitionDownloadState(db, download.id, {
+    clientStatus: newStatus,
+    progress,
+    completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
+    ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
+    ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
+    ...(resolvedOutputPath ? { outputPath: resolvedOutputPath } : {}),
+  });
 
-  emitProgressEvents(download, progress, newStatus, item.downloadSpeed, broadcaster, log);
-  await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory);
+  emitProgressEvents(download, oldDisplay, progress, newStatus, item.downloadSpeed, broadcaster, log);
+  await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory, broadcaster);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
 
   // Fire-and-forget quality gate + import for completed downloads (replaces handleBookStatusOnCompletion)
@@ -203,16 +210,19 @@ async function resolveOutputPath(
 /** Emit SSE progress and status change events. Each emit is independent so a failure in one doesn't skip the rest. */
 function emitProgressEvents(
   download: DownloadRow,
+  oldDisplay: DownloadStatus,
   progress: number,
-  newStatus: DownloadStatus,
+  newStatus: ClientStatus,
   downloadSpeed: number | undefined,
   broadcaster: EventBroadcasterService | undefined,
   log: FastifyBaseLogger,
 ): void {
   if (!download.bookId) return;
   safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: downloadSpeed ?? null, eta: null }, log);
-  if (download.status !== newStatus) {
-    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status, new_status: newStatus }, log);
+  // Both endpoints are derived display statuses. For a poller-owned (pipeline-idle)
+  // row the new display equals `newStatus`; suppress the emit when unchanged.
+  if (oldDisplay !== newStatus) {
+    safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: oldDisplay, new_status: newStatus }, log);
   }
 }
 
@@ -225,18 +235,19 @@ async function handleFailureTransition(
   retryDeps: MonitorRetryDeps | undefined,
   log: FastifyBaseLogger,
   eventHistory?: EventHistoryService,
+  broadcaster?: EventBroadcasterService,
 ): Promise<void> {
-  if (newStatus !== 'failed' || download.status === 'failed') return;
+  if (newStatus !== 'failed' || download.clientStatus === 'failed') return;
 
   recordDownloadFailedEvent({ eventHistory, downloadId: download.id, bookId: download.bookId ?? undefined, bookTitle: download.title, errorMessage: errorMessage ?? 'Download failed', log });
 
   if (download.bookId && retryDeps) {
-    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary');
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.guid, download.title, retryDeps, log, 'download_failed', 'temporary', broadcaster);
     if (outcome === 'retried') {
       await db.delete(downloads).where(eq(downloads.id, download.id));
     }
   } else if (download.bookId) {
-    await recoverBookStatus(db, download.bookId, download.id, log);
+    await recoverBookStatus(db, download.bookId, download.id, log, broadcaster);
   }
 }
 
@@ -248,7 +259,7 @@ function handleCompletionNotification(
   notifierService: NotifierService,
   log: FastifyBaseLogger,
 ): void {
-  if (!isCompleted || download.status === 'completed') return;
+  if (!isCompleted || download.clientStatus === 'completed') return;
 
   log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
 
@@ -326,6 +337,7 @@ async function handleDownloadFailure(
   log: FastifyBaseLogger,
   reason: 'bad_quality' | 'download_failed' | 'infrastructure_error' = 'bad_quality',
   blacklistType: 'temporary' | 'permanent' = 'permanent',
+  broadcaster?: EventBroadcasterService,
 ): Promise<string> {
   // Check redownloadFailed setting — if disabled, skip blacklist and retry
   let redownloadFailed = true;
@@ -338,7 +350,7 @@ async function handleDownloadFailure(
 
   if (!redownloadFailed) {
     await db.update(downloads).set({ errorMessage: 'Redownload disabled' }).where(eq(downloads.id, downloadId));
-    await recoverBookStatus(db, bookId, downloadId, log);
+    await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
     return 'redownload_disabled';
   }
 
@@ -358,11 +370,11 @@ async function handleDownloadFailure(
       }
       case 'exhausted':
         await db.update(downloads).set({ errorMessage: 'Retries exhausted' }).where(eq(downloads.id, downloadId));
-        await recoverBookStatus(db, bookId, downloadId, log);
+        await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'exhausted';
       case 'no_candidates':
         await db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, downloadId));
-        await recoverBookStatus(db, bookId, downloadId, log);
+        await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'no_candidates';
       case 'retry_error':
         await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
@@ -379,19 +391,24 @@ async function handleDownloadFailure(
 /**
  * Recover book status after a download fails.
  * If other active downloads exist for the same book, don't revert.
- * Otherwise: book has path → imported, no path → wanted.
+ * Otherwise restore the book's explicit pre-grab lifecycle (the failed download's
+ * `bookStatusAtGrab` snapshot), never a path-inferred guess — a book that was
+ * `failed`/`missing`/`searching` before the grab is restored to that exact state.
  */
-async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: number, log: FastifyBaseLogger): Promise<void> {
+async function recoverBookStatus(
+  db: Db,
+  bookId: number,
+  failedDownloadId: number,
+  log: FastifyBaseLogger,
+  broadcaster?: EventBroadcasterService,
+): Promise<void> {
   // Recovery guard: in-progress statuses plus 'completed' (pre-import pipeline awareness)
-  const activeStatuses = [...getInProgressStatuses(), 'completed' as const];
-
-  // Check for other active downloads for the same book
   const otherActive = await db
     .select()
     .from(downloads)
     .where(and(
       eq(downloads.bookId, bookId),
-      inArray(downloads.status, [...activeStatuses]),
+      or(inProgressDownloadCondition(), completedDisplayDownloadCondition()),
       ne(downloads.id, failedDownloadId),
     ));
 
@@ -400,17 +417,27 @@ async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: numbe
     return;
   }
 
-  // Get the book to check if it has a path (was previously imported)
   const [book] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
   if (!book) return;
 
-  const newStatus = await revertBookStatus(db, book);
-  log.info({ bookId, status: newStatus, hadPath: !!book.path }, 'Book status recovered after download failure');
+  // Explicit prior-state from the failed download's pre-grab snapshot.
+  const [failedDownload] = await db
+    .select({ bookStatusAtGrab: downloads.bookStatusAtGrab })
+    .from(downloads)
+    .where(eq(downloads.id, failedDownloadId))
+    .limit(1);
+
+  const oldStatus = book.status;
+  const newStatus = await revertBookStatus(db, book, failedDownload?.bookStatusAtGrab ?? null);
+  if (oldStatus !== newStatus) {
+    safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: oldStatus, new_status: newStatus }, log);
+  }
+  log.info({ bookId, status: newStatus }, 'Book status recovered after download failure');
 }
 
 function mapDownloadStatus(
   status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'
-): 'queued' | 'downloading' | 'paused' | 'completed' | 'importing' | 'imported' | 'failed' {
+): ClientStatus {
   switch (status) {
     case 'downloading':
       return 'downloading';

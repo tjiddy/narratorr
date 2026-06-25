@@ -12,7 +12,13 @@ export const queryKeys = {
   bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
+  // Singular `book` namespace (distinct from the plural `books` list namespace above).
+  bookSeries: (id: number) => ['book', id, 'series'] as const,
+  // Prefix-extension of bookSeries(id) so invalidating the base key cascades to the
+  // in-flight series search (TanStack prefix matching).
+  bookSeriesSearch: (id: number, query: string) => ['book', id, 'series', 'search', query] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
+  bulkRenamePreview: () => ['books', 'bulk', 'rename-preview'] as const,
   bookRetagPreview: (id: number, overrides?: RetagOverrides) =>
     overrides && (overrides.mode !== undefined || overrides.embedCover !== undefined)
       ? ['books', id, 'retag-preview', overrides] as const
@@ -29,6 +35,7 @@ export const queryKeys = {
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,
+  connectors: () => ['connectors'] as const,
   importLists: () => ['importLists'] as const,
   blacklist: (params?: BlacklistListParams) => params ? ['blacklist', params] as const : ['blacklist'] as const,
   remotePathMappings: (clientId?: number) =>
@@ -39,6 +46,7 @@ export const queryKeys = {
     status: () => ['auth', 'status'] as const,
     adminStatus: () => ['auth', 'admin-status'] as const,
     config: () => ['auth', 'config'] as const,
+    streamToken: () => ['auth', 'stream-token'] as const,
   },
   eventHistory: {
     root: () => ['eventHistory'] as const,
@@ -48,7 +56,6 @@ export const queryKeys = {
   filesystem: {
     browse: (path: string) => ['filesystem', 'browse', path] as const,
   },
-  searchReleases: (bookId: number, query: string) => ['search-releases', bookId, query] as const,
   backups: () => ['backups'] as const,
   health: {
     status: () => ['health', 'status'] as const,
@@ -58,7 +65,6 @@ export const queryKeys = {
   systemInfo: () => ['system', 'info'] as const,
   importJobs: (params?: { status?: string }) => params ? ['importJobs', params] as const : ['importJobs'] as const,
   systemStatus: () => ['systemStatus'] as const,
-  updateStatus: () => ['system', 'update-status'] as const,
   discover: {
     suggestions: () => ['discover', 'suggestions'] as const,
     stats: () => ['discover', 'stats'] as const,

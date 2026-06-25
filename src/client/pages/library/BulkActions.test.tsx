@@ -197,6 +197,95 @@ describe('bulk delete', () => {
     });
   });
 
+  it('all-success deleteFiles aggregates the kept-files count across fulfilled deletions (#1589)', async () => {
+    const queryClient = createQueryClient();
+    vi.mocked(api.deleteBook)
+      .mockResolvedValueOnce({ success: true, fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] } })
+      .mockResolvedValueOnce({ success: true, fileSummary: { deletedManaged: 1, preservedForeign: ['liner.pdf'] } });
+
+    const books = [
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
+    ];
+
+    const { result } = renderHook(
+      () => useLibraryBulkActions(books),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    act(() => {
+      result.current.setSelectedIds(new Set([1, 2]));
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate({ deleteFiles: true });
+    });
+
+    await waitFor(() => {
+      // 2 + 1 preserved foreign files aggregated across the two fulfilled deletions.
+      expect(toast.success).toHaveBeenCalledWith('Deleted 2 books — kept 3 non-audio files');
+    });
+  });
+
+  it('partial-success deleteFiles aggregates kept-files only from fulfilled deletions (#1589)', async () => {
+    const queryClient = createQueryClient();
+    vi.mocked(api.deleteBook)
+      .mockResolvedValueOnce({ success: true, fileSummary: { deletedManaged: 1, preservedForeign: ['book.epub'] } })
+      .mockRejectedValueOnce(new Error('Not found'))
+      .mockResolvedValueOnce({ success: true, fileSummary: { deletedManaged: 1, preservedForeign: [] } });
+
+    const books = [
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
+      createMockLibraryBook({ id: 3 }),
+    ];
+
+    const { result } = renderHook(
+      () => useLibraryBulkActions(books),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    act(() => {
+      result.current.setSelectedIds(new Set([1, 2, 3]));
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate({ deleteFiles: true });
+    });
+
+    await waitFor(() => {
+      // 1 preserved file from the single fulfilled deletion that had foreign files.
+      expect(toast.success).toHaveBeenCalledWith('Deleted 2 of 3 books — 1 failed — kept 1 non-audio file');
+    });
+  });
+
+  it('deleteFiles with no preserved foreign files shows the plain deleted toast (#1589)', async () => {
+    const queryClient = createQueryClient();
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true, fileSummary: { deletedManaged: 3, preservedForeign: [] } });
+
+    const books = [
+      createMockLibraryBook({ id: 1 }),
+      createMockLibraryBook({ id: 2 }),
+    ];
+
+    const { result } = renderHook(
+      () => useLibraryBulkActions(books),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    act(() => {
+      result.current.setSelectedIds(new Set([1, 2]));
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate({ deleteFiles: true });
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Deleted 2 books');
+    });
+  });
+
   it('complete failure shows error toast with first error message', async () => {
     const queryClient = createQueryClient();
     vi.mocked(api.deleteBook)

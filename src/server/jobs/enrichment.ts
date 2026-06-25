@@ -1,21 +1,31 @@
-import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
+import { eq, and, isNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, bookNarrators } from '../../db/schema.js';
+import { books, bookNarrators, bookAuthors, authors } from '../../db/schema.js';
 import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
+import { serializeError } from '../utils/serialize-error.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
 
 const BATCH_LIMIT = 5;
 const RETRY_AFTER_MS = 60 * 60 * 1000; // 1 hour
+// Cap on background-enrichment failure attempts. Once a `failed` row has been
+// re-searched this many times it drops out of the candidate set and rests as a
+// terminal `failed` row (recoverable via manual Fix Match, which resets it to
+// `pending`). Bounds the silent recurring external load of the search rescue so
+// unresolvable null-ASIN rows aren't re-searched forever.
+const MAX_ENRICHMENT_ATTEMPTS = 5;
 
 interface ExistingBookFields {
   duration: number | null;
   genres: string[] | null;
   title: string;
+  subtitle: string | null;
   description: string | null;
+  publisher: string | null;
   coverUrl: string | null;
   publishedDate: string | null;
   seriesName: string | null;
@@ -31,8 +41,12 @@ function isAllCaps(title: string): boolean {
  * start. Drops writebacks whose target book has been re-identified mid-flight
  * (the Fix Match path swaps `books.asin` so the original enrichment payload no
  * longer applies to the row).
+ *
+ * `capturedAsin` is `string | null`: the candidate set now includes null-ASIN
+ * rows (rescued via the search fallback), so the captured value can be null.
+ * The JS `===` comparison handles `null === null` correctly.
  */
-async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string): Promise<boolean> {
+async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string | null): Promise<boolean> {
   const rows = await db
     .select({ asin: books.asin })
     .from(books)
@@ -42,13 +56,116 @@ async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string): Pr
   return current === capturedAsin;
 }
 
+/**
+ * Null-safe SQL predicate matching `books.asin` against the captured value.
+ * `eq(books.asin, null)` compiles to `books.asin = NULL`, which never matches —
+ * so a row whose captured ASIN was null would silently drop the writeback. Use
+ * `isNull` when the captured value is null, `eq` otherwise.
+ */
+function asinMatches(capturedAsin: string | null) {
+  return capturedAsin === null ? isNull(books.asin) : eq(books.asin, capturedAsin);
+}
+
+// `books.asin` carries a partial unique index (`idx_books_asin_unique` on the
+// non-null column). A concurrent writer (Fix Match / import-list create) can
+// take the resolved ASIN between `findAsinCollision` and the writeback, so the
+// scalar UPDATE can still throw a UNIQUE violation. Detect it the way
+// book-import.service.ts does — both the index-name and column-message forms,
+// checking `error.cause?.message` first since Drizzle/libSQL nests the SQLite
+// message under `.cause`.
+const ASIN_UNIQUE_VIOLATION = /UNIQUE constraint failed.*(?:idx_books_asin_unique|books\.asin)/;
+
+/**
+ * Mark a candidate `failed`, scoped `WHERE id = ? AND asin <matches captured>`
+ * so a Fix Match that re-identified the row mid-flight drops the stale write
+ * atomically (rather than clobbering the new identity's `enrichmentStatus`).
+ * Returns true when a row was updated; on zero rows logs a stale-drop with the
+ * caller's `pathTag` and returns false — the row was swapped, leave it alone.
+ */
+async function markFailedGuarded(
+  db: Db,
+  log: FastifyBaseLogger,
+  bookId: number,
+  capturedAsin: string | null,
+  pathTag: string,
+): Promise<boolean> {
+  const rows = await db
+    .update(books)
+    .set({
+      enrichmentStatus: 'failed',
+      // Increment the persisted attempt counter so the candidate query can cap
+      // unresolvable rows. Covers the no-match, collision, and unique-recovery
+      // paths uniformly (every guarded failure transition routes through here).
+      enrichmentAttempts: sql`${books.enrichmentAttempts} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
+    .returning({ id: books.id });
+  if (rows.length === 0) {
+    log.debug({ bookId, asin: capturedAsin }, `stale enrichment dropped (${pathTag})`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Apply the success scalar UPDATE, scoped `WHERE id = ? AND asin <matches
+ * captured>` so a Fix Match that swapped the row's identity between fetch and
+ * writeback drops the stale write atomically (null-safe via `asinMatches`).
+ *
+ * On a UNIQUE violation — a concurrent writer (Fix Match / import-list create)
+ * took the resolved ASIN between `findAsinCollision` and this write — run the
+ * guarded recovery write to mark the candidate `failed` instead of letting the
+ * throw abort the rest of the batch, and return true so the caller `continue`s.
+ * Non-unique errors are genuine faults and rethrow, preserving existing
+ * crash/log behavior. Returns false on the normal path (including a scalar
+ * stale-drop) so the caller falls through to the success log.
+ */
+async function applyScalarWrite(
+  db: Db,
+  log: FastifyBaseLogger,
+  bookId: number,
+  capturedAsin: string | null,
+  updates: Record<string, unknown>,
+  resolvedAsin: string | null,
+): Promise<boolean> {
+  let scalarResult;
+  try {
+    scalarResult = await db
+      .update(books)
+      .set(updates)
+      .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
+      .returning({ id: books.id });
+  } catch (error: unknown) {
+    if (!isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) throw error;
+    log.warn(
+      { bookId, resolvedAsin, error: serializeError(error) },
+      'Resolved ASIN hit a unique-constraint race — marking failed',
+    );
+    await markFailedGuarded(db, log, bookId, capturedAsin, 'unique recovery');
+    return true;
+  }
+  if (scalarResult.length === 0) {
+    log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
+  }
+  return false;
+}
+
 /** Fill empty scalar fields from enrichment result. Returns only non-empty entries. */
 function fillEmptyFields(book: ExistingBookFields, result: Record<string, unknown>): Record<string, unknown> {
-  const fields: Array<keyof ExistingBookFields> = ['description', 'coverUrl', 'publishedDate'];
+  const fields: Array<keyof ExistingBookFields> = ['subtitle', 'description', 'publisher', 'publishedDate'];
   const updates: Record<string, unknown> = {};
   for (const field of fields) {
     if (!book[field] && result[field]) updates[field] = result[field];
   }
+  // coverUrl carve-out from fill-empty (#1634): the Audnexus square audiobook
+  // cover is authoritative for an audiobook app, so it overwrites an existing
+  // provider (print) cover rather than only filling when empty. Guard on the
+  // result value's presence — Audnexus maps a missing cover to `undefined`
+  // (`coverUrl: d.image || undefined`), so a no-image result leaves the cover
+  // untouched and never blanks it. The pending/failed candidate gate keeps this
+  // from re-clobbering a manual edit on an already-`enriched` book.
+  if (result.coverUrl) updates.coverUrl = result.coverUrl;
   return updates;
 }
 
@@ -77,7 +194,7 @@ function fillSeriesFields(
 /** Build the scalar updates and return fill counts for batch logging. */
 function buildMetadataUpdates(
   book: ExistingBookFields,
-  result: { title?: string | null | undefined; description?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
+  result: { title?: string | null | undefined; subtitle?: string | null | undefined; description?: string | null | undefined; publisher?: string | null | undefined; coverUrl?: string | null | undefined; publishedDate?: string | null | undefined; duration?: number | null | undefined; seriesPrimary?: { name?: string | undefined; position?: number | undefined } | undefined; series?: Array<{ name?: string | undefined; position?: number | undefined }> | undefined },
 ) {
   const updates: Record<string, unknown> = {};
   let filledDuration = 0;
@@ -112,41 +229,37 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   let filledGenres = 0;
   let filledTitle = 0;
   let filledDescription = 0;
-  // Skip books without ASIN → set to 'skipped'
-  const noAsinBooks = await db
-    .select({ id: books.id })
-    .from(books)
-    .where(and(
-      eq(books.enrichmentStatus, 'pending'),
-      sql`${books.asin} IS NULL`,
-    ));
 
-  if (noAsinBooks.length > 0) {
-    const ids = noAsinBooks.map((b) => b.id);
-    for (const id of ids) {
-      await db
-        .update(books)
-        .set({ enrichmentStatus: 'skipped', updatedAt: new Date() })
-        .where(eq(books.id, id));
-    }
-    log.info({ count: ids.length }, 'Books without ASIN marked as skipped');
-  }
-
-  // Get books to enrich: pending with ASIN, or failed older than 1 hour
+  // Candidates: pending (with OR without an ASIN), pre-existing 'skipped' rows
+  // (re-queued once through the search rescue — they motivated #1622 but were
+  // orphaned by the pending/failed-only query), or failed older than 1 hour that
+  // haven't hit the attempt cap. Null-ASIN rows are no longer short-circuited to
+  // 'skipped' — they're exactly the books the search fallback in resolveBook is
+  // meant to rescue. A 'skipped' row transitions to 'enriched'/'failed' on its
+  // first pass and never returns to 'skipped', so it won't loop. The attempt cap
+  // keeps unresolvable 'failed' rows from being re-searched forever; once maxed
+  // out they rest as terminal 'failed' (recoverable via manual Fix Match). The
+  // primary (position-0) author is sourced from the book_authors/authors join
+  // (left-join so authorless books are still selected; the resolver is then
+  // called title-only). Only the title (plus the author when present) feeds the
+  // resolver's search — it searches title+author only, so no ISBN is passed.
   const retryThreshold = new Date(Date.now() - RETRY_AFTER_MS);
   const candidates = await db
-    .select({ id: books.id, asin: books.asin })
+    .select({ id: books.id, asin: books.asin, title: books.title, author: authors.name })
     .from(books)
-    .where(and(
-      isNotNull(books.asin),
+    .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+    .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
+    .where(
       or(
         eq(books.enrichmentStatus, 'pending'),
+        eq(books.enrichmentStatus, 'skipped'),
         and(
           eq(books.enrichmentStatus, 'failed'),
           sql`${books.updatedAt} < ${Math.floor(retryThreshold.getTime() / 1000)}`,
+          sql`${books.enrichmentAttempts} < ${MAX_ENRICHMENT_ATTEMPTS}`,
         ),
       ),
-    ))
+    )
     .limit(BATCH_LIMIT);
 
   if (candidates.length === 0) {
@@ -157,25 +270,57 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
   log.info({ count: candidates.length }, 'Enriching books');
 
   for (const candidate of candidates) {
-    const asin = candidate.asin!;
-    log.debug({ bookId: candidate.id, asin }, 'Enriching book');
+    const capturedAsin = candidate.asin; // string | null — null-ASIN rows are now eligible
+    log.debug({ bookId: candidate.id, asin: capturedAsin }, 'Enriching book');
 
     let result;
     try {
-      result = await metadataService.enrichBook(asin);
+      result = await metadataService.resolveBook({
+        asin: capturedAsin ?? undefined,
+        title: candidate.title,
+        author: candidate.author ?? undefined,
+      });
     } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         log.warn({ provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Rate limited during enrichment — remaining candidates stay pending');
-        break; // Remaining candidates stay pending for next cycle
+        break; // Remaining candidates stay pending for next cycle (includes fallback-search rate limits)
       }
-      throw error;
+      // Any other thrown error from resolveBook is a transient provider failure
+      // (timeout / 5xx / malformed JSON), NOT a no-match — a real no-match returns
+      // `null` (handled in the `else` below) and never throws. Leave this candidate
+      // unchanged (still retryable next cycle) and continue the batch rather than
+      // crashing it; do NOT mark the row `failed`.
+      log.warn({ bookId: candidate.id, asin: capturedAsin, error: serializeError(error) }, 'Transient provider error during enrichment — leaving candidate for next cycle');
+      continue;
     }
 
     if (result) {
+      // The resolver may have recovered the real audiobook ASIN via search. If it
+      // differs from the captured value, write it back so the next cycle stops
+      // retrying the dead ASIN — but only after a collision check, since
+      // `books.asin` is uniquely indexed. On collision we skip the ASIN write,
+      // mark the row failed, and continue (never crash the batch).
+      const resolvedAsin = result.asin ?? null;
+      const asinChanged = resolvedAsin !== null && resolvedAsin !== capturedAsin;
+
+      if (asinChanged) {
+        const collision = await bookService.findAsinCollision(candidate.id, resolvedAsin);
+        if (collision) {
+          if (await markFailedGuarded(db, log, candidate.id, capturedAsin, 'collision')) {
+            log.warn(
+              { bookId: candidate.id, resolvedAsin, conflictBookId: collision.conflictBookId },
+              'Resolved ASIN collides with an existing book — marking failed',
+            );
+          }
+          continue;
+        }
+      }
+
       const updates: Record<string, unknown> = {
         enrichmentStatus: 'enriched',
         updatedAt: new Date(),
       };
+      if (asinChanged) updates.asin = resolvedAsin;
 
       // Only fill in fields that are currently empty
       const existing = await db
@@ -183,7 +328,9 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           duration: books.duration,
           genres: books.genres,
           title: books.title,
+          subtitle: books.subtitle,
           description: books.description,
+          publisher: books.publisher,
           coverUrl: books.coverUrl,
           publishedDate: books.publishedDate,
           seriesName: books.seriesName,
@@ -206,11 +353,11 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         // identity was swapped under us (Fix Match). The genres path commits
         // through bookService.update(), which has no capturedAsin scope.
         if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
-          if (await isStillSameAsin(db, candidate.id, asin)) {
+          if (await isStillSameAsin(db, candidate.id, capturedAsin)) {
             await bookService.update(candidate.id, { genres: result.genres });
             filledGenres++;
           } else {
-            log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (genres)');
+            log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (genres)');
           }
         }
       }
@@ -225,8 +372,8 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
           .where(eq(bookNarrators.bookId, candidate.id))
           .limit(1);
         if (existingNarrators.length === 0) {
-          if (!(await isStillSameAsin(db, candidate.id, asin))) {
-            log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (narrators)');
+          if (!(await isStillSameAsin(db, candidate.id, capturedAsin))) {
+            log.debug({ bookId: candidate.id, asin: capturedAsin }, 'stale enrichment dropped (narrators)');
           } else {
             filledNarrators++;
             for (let i = 0; i < result.narrators.length; i++) {
@@ -246,27 +393,21 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
         }
       }
 
-      // Scalar UPDATE: scope `WHERE id = ? AND asin = capturedAsin` so a Fix
+      // Scalar UPDATE: scope `WHERE id = ? AND asin <matches captured>` so a Fix
       // Match that swapped the row's identity between fetch and writeback drops
-      // the stale write atomically.
-      const scalarResult = await db
-        .update(books)
-        .set(updates)
-        .where(and(eq(books.id, candidate.id), eq(books.asin, asin)))
-        .returning({ id: books.id });
-      if (scalarResult.length === 0) {
-        log.debug({ bookId: candidate.id, asin }, 'stale enrichment dropped (scalar update)');
+      // the stale write atomically. Null-safe: a captured-null row matches via
+      // `asin IS NULL` (a plain `asin = NULL` predicate never matches, which
+      // would silently drop the writeback for a search-rescued null-ASIN book).
+      if (await applyScalarWrite(db, log, candidate.id, capturedAsin, updates, resolvedAsin)) {
+        continue; // unique-constraint race recovered → candidate marked failed
       }
 
       enrichedCount++;
-      log.info({ bookId: candidate.id, asin }, 'Book enriched successfully');
+      log.info({ bookId: candidate.id, asin: resolvedAsin ?? capturedAsin }, 'Book enriched successfully');
     } else {
-      await db
-        .update(books)
-        .set({ enrichmentStatus: 'failed', updatedAt: new Date() })
-        .where(eq(books.id, candidate.id));
-
-      log.warn({ bookId: candidate.id, asin }, 'Book enrichment failed');
+      if (await markFailedGuarded(db, log, candidate.id, capturedAsin, 'no-match')) {
+        log.warn({ bookId: candidate.id, asin: capturedAsin }, 'Book enrichment failed');
+      }
     }
   }
 

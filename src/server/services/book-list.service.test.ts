@@ -1,8 +1,19 @@
 import { describe, it, expect, beforeEach, type Mock } from 'vitest';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { createMockDb, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookListService } from './book-list.service.js';
 import type { Db } from '../../db/index.js';
+import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket, type BookStatus } from '../../shared/schemas/book.js';
+
+// Serialize a Drizzle SQL expression to a raw SQL string + bound params so the
+// bucket-expansion predicate can be asserted against real SQL, not mock calls
+// (mirrors blacklist.service.test.ts).
+const dialect = new SQLiteSyncDialect();
+function compileWhere(expr: unknown): { sql: string; params: unknown[] } {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL());
+}
 
 const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
@@ -373,6 +384,90 @@ describe('BookListService', () => {
     });
   });
 
+  // #1447 (S2d / F1) — pin the actual SQL `buildListWhere` generates for each
+  // library bucket. The earlier getAll('downloading') tests only assert mocked
+  // totals, so they'd still pass if the bucket branch regressed to
+  // `eq(books.status, status)`. Compiling the captured predicate and asserting it
+  // is an `IN (...)` over the bucket's exact member statuses catches that
+  // regression directly (an `eq` would drop the second member and emit `= ?`).
+  describe('buildListWhere bucket expansion — generated SQL (#1447 / F1)', () => {
+    /** Capture the WHERE clause `getAllForLibrary` passes to the count query. */
+    async function captureLibraryWhere(bucket: LibraryFilterBucket) {
+      const countChain = mockDbChain([{ value: 0 }]);
+      const rowsChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(rowsChain);
+
+      await service.getAllForLibrary(bucket);
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(whereArg).toBeDefined();
+      return compileWhere(whereArg);
+    }
+
+    for (const bucket of Object.keys(LIBRARY_FILTER_BUCKETS) as LibraryFilterBucket[]) {
+      const members = [...LIBRARY_FILTER_BUCKETS[bucket]];
+
+      it(`expands bucket "${bucket}" to an IN over exactly [${members.join(', ')}]`, async () => {
+        const { sql, params } = await captureLibraryWhere(bucket);
+
+        // IN-expansion, not an `eq` — a regression to `eq(books.status, status)`
+        // would emit `"status" = ?` and fail this assertion.
+        expect(sql.toLowerCase()).toContain('"status" in (');
+        expect(sql.toLowerCase()).not.toContain('"status" = ');
+        // Bound params are exactly the canonical member statuses of the bucket.
+        expect(params).toEqual(members);
+      });
+    }
+
+    it('multi-member buckets bind every member (not just the first)', async () => {
+      const { params } = await captureLibraryWhere('downloading');
+      expect(params).toEqual(['searching', 'downloading']);
+      expect(params).toHaveLength(2);
+    });
+  });
+
+  // #1449 (S3 / F1) — the native `/api/v1` boundary needs EXACT canonical-status
+  // semantics, not the library bucket expansion. The additive `exactStatus` option
+  // on getAll() forces `eq(books.status, status)` and skips BUCKET_EXPANSION, so a
+  // canonical `downloading`/`imported` filters to that exact state instead of
+  // silently widening to the bucket. Default (omitted/false) keeps legacy behavior.
+  describe('getAll exactStatus option — exact canonical match (#1449)', () => {
+    /** Capture the WHERE clause `getAll` passes to its count query. */
+    async function captureGetAllWhere(status: BookStatus, exactStatus: boolean) {
+      const countChain = mockDbChain([{ value: 0 }]);
+      const rowsChain = mockDbChain([]);
+      db.select.mockReturnValueOnce(countChain).mockReturnValueOnce(rowsChain);
+
+      await service.getAll(status, undefined, { exactStatus });
+
+      const whereArg = (countChain.where as Mock).mock.calls[0]?.[0];
+      expect(whereArg).toBeDefined();
+      return compileWhere(whereArg);
+    }
+
+    it('forces an exact eq match for the overlapping bucket key "downloading"', async () => {
+      const { sql, params } = await captureGetAllWhere('downloading', true);
+      expect(sql.toLowerCase()).toContain('"status" = ');
+      expect(sql.toLowerCase()).not.toContain('"status" in (');
+      expect(params).toEqual(['downloading']);
+    });
+
+    it('forces an exact eq match for "imported" (no importing+imported expansion)', async () => {
+      const { sql, params } = await captureGetAllWhere('imported', true);
+      expect(sql.toLowerCase()).toContain('"status" = ');
+      expect(sql.toLowerCase()).not.toContain('"status" in (');
+      expect(params).toEqual(['imported']);
+    });
+
+    it('default (exactStatus false) still bucket-expands "downloading" → searching+downloading', async () => {
+      const { sql, params } = await captureGetAllWhere('downloading', false);
+      expect(sql.toLowerCase()).toContain('"status" in (');
+      expect(params).toEqual(['searching', 'downloading']);
+    });
+  });
+
   describe('series sort position tiebreaker (#266)', () => {
     /** Extract the trailing direction string from a Drizzle SQL clause's queryChunks. */
     function getClauseDirection(clause: { queryChunks?: unknown[] }): string | null {
@@ -461,7 +556,7 @@ describe('BookListService', () => {
       ]);
       for (const k of expectedKeys) expect(row).toHaveProperty(k);
       // Trimmed keys absent
-      const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'goodreadsId', 'audibleId', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
+      const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
       for (const k of trimmedKeys) expect(row).not.toHaveProperty(k);
       // Author/narrator entries are name-only
       expect(row.authors).toEqual([{ name: 'Brandon Sanderson' }]);
@@ -616,7 +711,7 @@ describe('BookListService', () => {
         expect(keys).toContain(k);
       }
       // Trimmed columns
-      for (const k of ['description', 'genres', 'audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'goodreadsId', 'audibleId', 'isbn', 'asin', 'enrichmentStatus', 'importListId', 'publishedDate']) {
+      for (const k of ['description', 'genres', 'audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'enrichmentStatus', 'importListId', 'publishedDate']) {
         expect(keys).not.toContain(k);
       }
     });
@@ -958,6 +1053,39 @@ describe('BookListService', () => {
       expect(typeof stats.authors[0]).toBe('string');
       expect(typeof stats.series[0]).toBe('string');
       expect(typeof stats.narrators[0]).toBe('string');
+    });
+
+    // #1447 (S2d) — counts are derived from LIBRARY_FILTER_BUCKETS, so every
+    // canonical status contributes to exactly one bucket and the per-bucket sums
+    // are driven by the map rather than hardcoded pairs.
+    it('returns one entry per LIBRARY_FILTER_BUCKETS key, each summing its canonical states', async () => {
+      // Distinct per-status counts so a mis-summed bucket is detectable.
+      const perStatus: Record<string, number> = {
+        wanted: 5, searching: 1, downloading: 2, importing: 3, imported: 10, failed: 4, missing: 2,
+      };
+      db.select.mockReturnValueOnce(mockDbChain(
+        BOOK_STATUSES.map((status) => ({ status, count: perStatus[status] })),
+      ));
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const stats = await service.getStats();
+
+      // Exactly the bucket keys, nothing else.
+      expect(Object.keys(stats.counts).sort()).toEqual(Object.keys(LIBRARY_FILTER_BUCKETS).sort());
+
+      // Each bucket equals the sum of its canonical member states.
+      for (const bucket of Object.keys(LIBRARY_FILTER_BUCKETS) as LibraryFilterBucket[]) {
+        const expected = LIBRARY_FILTER_BUCKETS[bucket].reduce((sum, s) => sum + perStatus[s]!, 0);
+        expect(stats.counts[bucket]).toBe(expected);
+      }
+
+      // No status is silently uncounted: the bucket totals sum to the grand total.
+      const grandTotal = Object.values(perStatus).reduce((a, b) => a + b, 0);
+      const bucketTotal = Object.values(stats.counts).reduce((a, b) => a + b, 0);
+      expect(bucketTotal).toBe(grandTotal);
     });
   });
 });

@@ -88,7 +88,7 @@ function createService(opts?: {
   const bookService = opts?.bookService ?? makeBookService();
   const settingsService = createMockSettingsService({
     library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
-    processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     ...opts?.settingsOverrides,
   });
   const service = new BulkOperationService(
@@ -143,40 +143,305 @@ describe('BulkOperationService — countRetagEligible', () => {
   });
 });
 
-describe('BulkOperationService — countRenameEligible', () => {
+describe('BulkOperationService — previewRenameEligible', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
-  it('counts books with path not matching the template as mismatched', async () => {
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/OldName', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('returns library-relative from→to rows (from !== to) plus totals for inside-root books', async () => {
     const { service, db } = createService();
-    // Book1 path matches template, Book2 does not
     db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
-      { id: 2, path: '/library/Author Name/OldName', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // mismatched
     ]));
-    const result = await service.countRenameEligible();
-    expect(result.mismatched).toBe(1);
-    expect(result.alreadyMatching).toBe(1);
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(1);
+    expect(result.folderMatching).toBe(1);
+    expect(result.importedTotal).toBe(2);
+    // fileFormat is empty in the default settings, so the job only visits mismatches.
+    expect(result.jobTotal).toBe(1);
+    expect(result.items).toEqual([
+      { bookId: 2, title: 'Book2', from: 'Author Name/OldName', to: 'Author Name/Book2' },
+    ]);
+    expect(result.items.every(i => i.from !== i.to)).toBe(true);
+    expect(result).toMatchObject({ libraryRoot: '/library', folderFormat: '{author}/{title}' });
   });
 
-  it('returns 0 mismatched when all books already match template', async () => {
+  it('uses the toLibraryRelative outside-root fallback: from is the original absolute path', async () => {
     const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      bookRow({ id: 5, path: '/elsewhere/Author Name/Book5', title: 'Book5' }),
     ]));
-    const result = await service.countRenameEligible();
-    expect(result.mismatched).toBe(0);
-    expect(result.alreadyMatching).toBe(1);
+    const result = await service.previewRenameEligible();
+    expect(result.items[0]).toEqual({
+      bookId: 5, title: 'Book5', from: '/elsewhere/Author Name/Book5', to: 'Author Name/Book5',
+    });
   });
 
-  it('normalizes backslash separators in book.path before comparing', async () => {
+  it('caps items at the row cap while mismatchedTotal reflects the true total', async () => {
     const { service, db } = createService();
-    // Same path but with backslashes — should still match
+    const rows = Array.from({ length: 150 }, (_, i) =>
+      bookRow({ id: i + 1, path: `/library/Author Name/Old${i}`, title: `Book${i}` }));
+    db.select.mockReturnValueOnce(mockDbChain(rows));
+    const result = await service.previewRenameEligible();
+    expect(result.items).toHaveLength(100);
+    expect(result.mismatchedTotal).toBe(150);
+  });
+
+  it('skips rows with no path (mirrors count/job NO_PATH skip) rather than emitting a broken row', async () => {
+    const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1'.split('/').join('\\'), title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      bookRow({ id: 1, path: null, title: 'NoPath' }),
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
     ]));
-    const result = await service.countRenameEligible();
-    expect(result.alreadyMatching).toBe(1);
-    expect(result.mismatched).toBe(0);
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(1);
+    expect(result.items.map(i => i.bookId)).toEqual([2]);
+  });
+
+  it('counts a backslash-stored path that resolves to the same target as folderMatching', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1'.split('/').join('\\'), title: 'Book1' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.folderMatching).toBe(1);
+    expect(result.mismatchedTotal).toBe(0);
+  });
+
+  it('deduplicates a multi-author book into exactly one preview row', async () => {
+    const { service, db } = createService();
+    // Same bookId joined to two authors yields two rows; preview must collapse to one.
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 7, path: '/library/Author Name/OldName', title: 'Book7', authorName: 'Author Name' }),
+      bookRow({ id: 7, path: '/library/Author Name/OldName', title: 'Book7', authorName: 'Second Author' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.bookId).toBe(7);
+  });
+
+  it('does not touch the filesystem (no readdir) for the bulk preview', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
+    ]));
+    await service.previewRenameEligible();
+    expect(readdir).not.toHaveBeenCalled();
+  });
+
+  // Narrator-token parity (AC #3/#7): preview, job, and the shared helper all render
+  // {narrator} from the ordered narrators supplied by the extended projection.
+  it('renders {narrator} folder formats from the ordered narrator projection', async () => {
+    const { service, db } = createService({
+      settingsOverrides: { library: { path: '/library', folderFormat: '{narrator}/{title}', fileFormat: '' } },
+    });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Michael Kramer/The Way of Kings', title: 'The Way of Kings' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([
+        { bookId: 1, name: 'Michael Kramer', position: 0 },
+        { bookId: 1, name: 'Kate Reading', position: 1 },
+      ]));
+    const result = await service.previewRenameEligible();
+    // Path already matches the narrator-based target → no rename needed. Without the
+    // narrator projection the target would render with an empty {narrator} and mismatch.
+    expect(result.folderMatching).toBe(1);
+    expect(result.mismatchedTotal).toBe(0);
+  });
+
+  it('preview mismatch decision agrees with the bulk job (shared-helper parity)', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ renameService });
+    const rows = [
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // mismatched
+    ];
+    // previewRenameEligible (2 selects: books, narrators) then the job (2 more).
+    db.select
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]))
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]));
+    const preview = await service.previewRenameEligible();
+    expect(preview.items.map(i => i.bookId)).toEqual([2]);
+
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    expect(renameService.renameBook).toHaveBeenCalledTimes(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(2);
+  });
+});
+
+// ===== File-format eligibility (#1493) =====
+// When a `fileFormat` rule exists the bulk op must visit ALL imported books, not just
+// folder mismatches — a folder-matching book can still have file-level renames.
+
+describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  const FILE_FORMAT_SETTINGS = {
+    settingsOverrides: {
+      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    },
+  };
+
+  function bookRow(overrides: Record<string, unknown>) {
+    return {
+      id: 1, path: '/library/Author Name/Book1', title: 'Book1',
+      seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name',
+      ...overrides,
+    };
+  }
+
+  it('preview: a folder-matching book is still part of the job set when fileFormat is set', async () => {
+    const { service, db } = createService(FILE_FORMAT_SETTINGS);
+    // Folder already matches the target → zero folder mismatches.
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(0);
+    expect(result.folderMatching).toBe(1);
+    expect(result.importedTotal).toBe(1);
+    // jobTotal tracks importedTotal because file-level work is possible on every book.
+    expect(result.jobTotal).toBe(1);
+  });
+
+  it('preview: fileFormat-only change is NOT "nothing to rename" (jobTotal === importedTotal)', async () => {
+    const { service, db } = createService(FILE_FORMAT_SETTINGS);
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+      bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(0);
+    expect(result.importedTotal).toBe(2);
+    expect(result.jobTotal).toBe(2);
+  });
+
+  it('preview: fileFormat empty keeps the folder-mismatch-only filter (jobTotal === mismatchedTotal)', async () => {
+    const { service, db } = createService(); // default fileFormat is ''
+    db.select.mockReturnValueOnce(mockDbChain([
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+    ]));
+    const result = await service.previewRenameEligible();
+    expect(result.mismatchedTotal).toBe(0);
+    expect(result.importedTotal).toBe(1);
+    expect(result.jobTotal).toBe(0);
+  });
+
+  it('job: visits every imported book and sets total to importedTotal when fileFormat is set', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    const rows = [
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // folder mismatch
+    ];
+    db.select
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    // Both books visited — the folder-matching one is no longer pre-filtered out.
+    expect(renameService.renameBook).toHaveBeenCalledTimes(2);
+    expect(renameService.renameBook).toHaveBeenCalledWith(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(2);
+    expect(service.getJob(id)?.total).toBe(2);
+  });
+
+  it('job: an "Already organized" book ticks as a silent skip, not a failure', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder + file match
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    // renameBook returns the idempotent "Already organized" result for a fully-organized book.
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '/library/Author Name/Book1', newPath: '/library/Author Name/Book1', message: 'Already organized', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    const status = service.getJob(id);
+    expect(status?.total).toBe(1);
+    expect(status?.completed).toBe(1);
+    expect(status?.failures).toBe(0);
+  });
+
+  it('job: a renameBook failure plus an idempotent skip tick correctly (completed=2, failures=1)', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+        bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    // Visit order is targetIds order [1, 2]: book 1 fails (tick(true)), book 2 is the
+    // idempotent "Already organized" skip (tick(false)). Both still increment completed.
+    (renameService.renameBook as Mock)
+      .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
+      .mockResolvedValueOnce({ oldPath: '/library/Author Name/Book2', newPath: '/library/Author Name/Book2', message: 'Already organized', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    const status = service.getJob(id);
+    expect(status?.total).toBe(2);
+    expect(status?.completed).toBe(2);
+    expect(status?.failures).toBe(1);
+  });
+
+  it('job: duplicate author-join rows for one book call renameBook exactly once (dedup holds on visit-all)', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    // Same bookId joined to two authors yields two rows; the loadRenameRows `seen`
+    // Set must collapse them so the file-rule visit-all branch still acts once per book.
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 7, path: '/library/Author Name/Book7', title: 'Book7', authorName: 'Author Name' }),
+        bookRow({ id: 7, path: '/library/Author Name/Book7', title: 'Book7', authorName: 'Second Author' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    expect(renameService.renameBook).toHaveBeenCalledTimes(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(7);
+    expect(service.getJob(id)?.total).toBe(1);
+  });
+
+  it('file-rule lockstep: preview.jobTotal === job total === renameBook call count', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
+    const rows = [
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder matches
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // folder mismatch
+    ];
+    // previewRenameEligible (2 selects: books, narrators) then the job (2 more).
+    db.select
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]))
+      .mockReturnValueOnce(mockDbChain(rows))
+      .mockReturnValueOnce(mockDbChain([]));
+    const preview = await service.previewRenameEligible();
+    // With a file rule, the denominator is every imported book regardless of folder match.
+    expect(preview.jobTotal).toBe(preview.importedTotal);
+    expect(preview.jobTotal).toBe(2);
+
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    // Lockstep invariant: preview denominator === job setTotal === actual renameBook calls.
+    expect(service.getJob(id)?.total).toBe(preview.jobTotal);
+    expect((renameService.renameBook as Mock).mock.calls).toHaveLength(preview.jobTotal);
   });
 });
 
@@ -332,7 +597,7 @@ describe('BulkOperationService — pre-flight validation', () => {
   it('startConvertJob throws FFMPEG_NOT_CONFIGURED when ffmpegPath is empty', async () => {
     const { service } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'FFMPEG_NOT_CONFIGURED' }));
@@ -399,7 +664,7 @@ describe('BulkOperationService — rename naming options wiring', () => {
 
   it('non-default namingSeparator/namingCase affect rename path comparison', async () => {
     // With separator=period, case=upper: buildTargetPath produces /library/AUTHOR.NAME/BOOK1
-    // A book whose current path already matches this should be "alreadyMatching"
+    // A book whose current path already matches this should be "folderMatching"
     const { service, db } = createService({
       settingsOverrides: {
         library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period' as const, namingCase: 'upper' as const },
@@ -409,11 +674,11 @@ describe('BulkOperationService — rename naming options wiring', () => {
       { id: 1, path: '/library/AUTHOR.NAME/BOOK1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
       { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
     ]));
-    const result = await service.countRenameEligible();
-    // Book1 path matches the transformed target — already matching
-    expect(result.alreadyMatching).toBe(1);
+    const result = await service.previewRenameEligible();
+    // Book1 path matches the transformed target — folder matching
+    expect(result.folderMatching).toBe(1);
     // Book2 path uses default spacing/casing — mismatched under new settings
-    expect(result.mismatched).toBe(1);
+    expect(result.mismatchedTotal).toBe(1);
   });
 
   it('startRenameJob only renames books whose path does not match the transformed target', async () => {
@@ -486,6 +751,72 @@ describe('BulkOperationService — re-tag batch', () => {
   });
 });
 
+// ===== Retag eligibility: single shared predicate (count ↔ job lockstep) =====
+
+describe('BulkOperationService — retag eligibility (single source)', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('lockstep: countRetagEligible total === job setTotal === retagBook call count for the same fixture', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db } = createService({ taggingService });
+    // One fixture set of imported books with non-null paths drives both reads:
+    // the count select reports count(*), the job select returns the row ids.
+    const eligible = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ count: eligible.length }])) // countRetagEligible
+      .mockReturnValueOnce(mockDbChain(eligible)); // startRetagJob row select
+    (taggingService.retagBook as Mock).mockResolvedValue({ bookId: 1, filesTagged: 1, message: 'ok' });
+
+    const { total } = await service.countRetagEligible();
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    // The preview denominator the modal shows must equal the job's real total.
+    expect(total).toBe(eligible.length);
+    expect(service.getJob(id)?.total).toBe(total);
+    expect((taggingService.retagBook as Mock).mock.calls).toHaveLength(total);
+  });
+
+  it('no eligible books: count total === 0 and job setTotal === 0 (job touches nothing)', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db } = createService({ taggingService });
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ count: 0 }])) // countRetagEligible
+      .mockReturnValueOnce(mockDbChain([])); // startRetagJob row select
+
+    const { total } = await service.countRetagEligible();
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    expect(total).toBe(0);
+    expect(service.getJob(id)?.total).toBe(0);
+    expect(taggingService.retagBook).not.toHaveBeenCalled();
+  });
+
+  it('both retag call sites filter on the same predicate (imported AND path present)', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db } = createService({ taggingService });
+    const countChain = mockDbChain([{ count: 0 }]);
+    const jobChain = mockDbChain([]);
+    db.select
+      .mockReturnValueOnce(countChain) // countRetagEligible
+      .mockReturnValueOnce(jobChain); // startRetagJob row select
+
+    await service.countRetagEligible();
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    const countWhere = (countChain.where as Mock).mock.calls[0]![0];
+    const jobWhere = (jobChain.where as Mock).mock.calls[0]![0];
+    // Structurally identical where-args prove both sites consume one shared source,
+    // not two inlined copies that merely happen to agree.
+    expect(toSQL(countWhere)).toEqual(toSQL(jobWhere));
+    const { sql } = toSQL(countWhere);
+    expect(sql).toMatch(/"books"\."status" = \?/i);
+    expect(sql).toMatch(/"books"\."path" is not null/i);
+  });
+});
+
 // ===== Convert batch =====
 
 describe('BulkOperationService — convert batch', () => {
@@ -525,7 +856,7 @@ describe('BulkOperationService — convert batch', () => {
     setupConvertMocks();
     const { service, db } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     db.select.mockReturnValueOnce(mockDbChain([
@@ -559,7 +890,7 @@ describe('BulkOperationService — convert batch', () => {
     setupConvertMocks();
     const { service, db } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     const chain = mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]);

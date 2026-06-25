@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ImportListProvider, ImportListItem } from './types.js';
 import { ImportListError } from './errors.js';
+import { formatZodError } from './format-zod-error.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { IMPORT_LIST_TIMEOUT_MS } from '../utils/constants.js';
@@ -134,7 +135,7 @@ export class NytProvider implements ImportListProvider {
     if (!parsed.success) {
       throw new ImportListError(
         this.name,
-        `NYT returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        `NYT returned unexpected response: ${formatZodError(parsed.error)}`,
         { cause: parsed.error },
       );
     }
@@ -170,7 +171,7 @@ export class NytProvider implements ImportListProvider {
       const raw: unknown = await res.json();
       const parsed = nytResponseSchema.safeParse(raw);
       if (!parsed.success) {
-        return { success: false, message: `Validation failed: ${parsed.error.issues[0]?.message ?? 'unknown'}` };
+        return { success: false, message: `Validation failed: ${formatZodError(parsed.error)}` };
       }
 
       return { success: true };

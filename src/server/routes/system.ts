@@ -1,13 +1,11 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import { runSearchJob, searchAllWanted } from '../jobs/search.js';
-import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
 import { getVersion } from '../utils/version.js';
-import { getUpdateStatus } from '../jobs/version-check.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import fs from 'fs';
@@ -17,20 +15,11 @@ import { serializeError } from '../utils/serialize-error.js';
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status — public, minimal payload (#742): { version, status }.
-  // Update info moved to authenticated GET /api/system/update-status.
   app.get('/api/system/status', async () => {
     return {
       version: getVersion(),
       status: 'ok',
     };
-  });
-
-  // GET /api/system/update-status — protected, returns dashboard update info.
-  app.get('/api/system/update-status', async () => {
-    const systemSettings = await services.settings.get('system');
-    const dismissedVersion = systemSettings?.dismissedUpdateVersion ?? '';
-    const update = getUpdateStatus(dismissedVersion);
-    return { update: update ?? null };
   });
 
   // GET /api/health — DB-aware health probe for Docker/k8s/load balancers.
@@ -85,21 +74,6 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
     );
   });
 
-  // POST /api/system/tasks/rss — manually trigger an RSS sync cycle
-  app.post('/api/system/tasks/rss', async (request) => {
-    return services.taskRegistry.runExclusive('rss', () =>
-      runRssJob(
-        services.settings,
-        services.bookList,
-        services.indexerSearch,
-        services.downloadOrchestrator,
-        services.blacklist,
-        services.indexer,
-        request.log,
-      ),
-    );
-  });
-
   // GET /api/system/backups — list all backups
   app.get('/api/system/backups', async () => {
     return services.backup.list();
@@ -114,15 +88,9 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
   // GET /api/system/backups/:filename/download — download a backup file
   app.get<{ Params: { filename: string } }>('/api/system/backups/:filename/download', async (request, reply) => {
-    const filePath = services.backup.getBackupPath(request.params.filename);
+    const filePath = await resolveExistingBackup(services, request.params.filename, reply);
     if (!filePath) {
-      return reply.status(400).send({ error: 'Invalid backup filename' });
-    }
-
-    try {
-      await fsp.access(filePath);
-    } catch {
-      return reply.status(404).send({ error: 'Backup not found' });
+      return reply;
     }
 
     const stream = fs.createReadStream(filePath);
@@ -135,15 +103,9 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
   // POST /api/system/backups/:filename/restore — validate and stage a server-side backup for restore
   app.post<{ Params: { filename: string } }>('/api/system/backups/:filename/restore', async (request, reply) => {
-    const filePath = services.backup.getBackupPath(request.params.filename);
+    const filePath = await resolveExistingBackup(services, request.params.filename, reply);
     if (!filePath) {
-      return reply.status(400).send({ error: 'Invalid backup filename' });
-    }
-
-    try {
-      await fsp.access(filePath);
-    } catch {
-      return reply.status(404).send({ error: 'Backup not found' });
+      return reply;
     }
 
     try {
@@ -156,6 +118,11 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return reply.status(500).send({ error: 'Failed to restore from backup' });
     }
   });
+
+  // DELETE /api/system/backups/:filename — delete a server-side backup file
+  app.delete<{ Params: { filename: string } }>('/api/system/backups/:filename', (request, reply) =>
+    handleDeleteBackup(services, request, reply),
+  );
 
   // POST /api/system/restore — upload and validate a restore file
   app.post('/api/system/restore', async (request, reply) => {
@@ -198,4 +165,62 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return reply.status(400).send({ error: message });
     }
   });
+}
+
+/**
+ * Validates a raw backup filename and confirms the file exists on disk. Returns the validated
+ * absolute path, or sends the error response itself and returns `null`:
+ * - falsy `getBackupPath` (traversal/invalid name) → `400 { error: 'Invalid backup filename' }`
+ * - `fsp.access` rejection (missing file) → `404 { error: 'Backup not found' }`
+ *
+ * Call sites short-circuit with `return reply` on `null` to avoid double-sending. Callers that
+ * forward the filename to a service (restore/delete) keep passing the raw `filename`, not the
+ * returned path — this helper changes validation only, not the value handed downstream.
+ */
+async function resolveExistingBackup(
+  services: Services,
+  filename: string,
+  reply: FastifyReply,
+): Promise<string | null> {
+  const filePath = services.backup.getBackupPath(filename);
+  if (!filePath) {
+    await reply.status(400).send({ error: 'Invalid backup filename' });
+    return null;
+  }
+
+  try {
+    await fsp.access(filePath);
+  } catch {
+    await reply.status(404).send({ error: 'Backup not found' });
+    return null;
+  }
+
+  return filePath;
+}
+
+/**
+ * DELETE /api/system/backups/:filename handler. Validates the raw filename via getBackupPath
+ * (400 on traversal/invalid names) and fsp.access (404 on a missing file), then deletes it.
+ * Passes the raw filename to deleteBackup, matching the restore route's filename-passing
+ * contract. Returns 200 + JSON `{ success: true }` (not 204): the client fetchApi wrapper
+ * always parses response.json() and rejects on an empty body. A staged restore is unaffected —
+ * it lives in a separate temp path (PendingRestore.tempPath), not the backups dir.
+ */
+async function handleDeleteBackup(
+  services: Services,
+  request: FastifyRequest<{ Params: { filename: string } }>,
+  reply: FastifyReply,
+) {
+  const filePath = await resolveExistingBackup(services, request.params.filename, reply);
+  if (!filePath) {
+    return reply;
+  }
+
+  try {
+    await services.backup.deleteBackup(request.params.filename);
+    return await reply.send({ success: true });
+  } catch (error: unknown) {
+    request.log.error({ error: serializeError(error) }, 'Delete backup failed');
+    return reply.status(500).send({ error: 'Failed to delete backup' });
+  }
 }

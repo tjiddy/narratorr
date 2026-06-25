@@ -92,6 +92,23 @@ describe('useLibraryMutations', () => {
       });
     });
 
+    it('appends the kept-files disclosure when foreign files were preserved (#1589)', async () => {
+      vi.mocked(api.deleteBook).mockResolvedValue({
+        success: true,
+        fileSummary: { deletedManaged: 5, preservedForeign: ['book.epub'] },
+      });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.deleteMutation.mutate({ id: 1, deleteFiles: true }); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          'Removed book and deleted files from disk — kept 1 non-audio file (book.epub)',
+        );
+      });
+    });
+
     it('shows error toast when delete fails', async () => {
       vi.mocked(api.deleteBook).mockRejectedValue(new Error('Permission denied'));
 

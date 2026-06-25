@@ -173,6 +173,23 @@ export function NtfyFields({ register, errors }: NotifierFieldProps) {
         <input id="notifierNtfyServer" type="text" {...register('settings.ntfyServer')} className={inputClass} placeholder="https://ntfy.sh (default)" />
         <p className="text-sm text-muted-foreground mt-1">Leave empty for ntfy.sh</p>
       </div>
+      <div>
+        <label htmlFor="notifierNtfyAccessToken" className="block text-sm font-medium mb-2">Access Token</label>
+        <input id="notifierNtfyAccessToken" type="password" {...register('settings.ntfyAccessToken')} className={inputClass} />
+        <p className="text-sm text-muted-foreground mt-1">Only needed for protected topics</p>
+      </div>
+      <div>
+        <label htmlFor="notifierNtfyPriority" className="block text-sm font-medium mb-2">Priority</label>
+        <SelectWithChevron id="notifierNtfyPriority" {...register('settings.ntfyPriority')}>
+          <option value="">Unset</option>
+          <option value="min">Min</option>
+          <option value="low">Low</option>
+          <option value="default">Default</option>
+          <option value="high">High</option>
+          <option value="max">Max</option>
+        </SelectWithChevron>
+        <p className="text-sm text-muted-foreground mt-1">Optional: min, low, default, high, or max</p>
+      </div>
     </>
   );
 }
