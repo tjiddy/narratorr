@@ -77,8 +77,18 @@ describe('preview-token', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
     const token = mintPreviewToken('/p', '/r');
 
-    vi.setSystemTime(new Date('2026-01-01T01:00:00Z')); // 1 hour later, well past 30-min TTL
+    vi.setSystemTime(new Date('2026-01-01T05:00:00Z')); // 5 hours later, past the 4-hour TTL
     expect(verifyPreviewToken(token)).toBeNull();
+  });
+
+  it('stays valid within the 4-hour TTL window (past the old 30-min window)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const token = mintPreviewToken('/p', '/r');
+
+    // 2 hours later: expired under the old 30-min TTL, still valid under the new 4-hour one.
+    vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+    expect(verifyPreviewToken(token)).not.toBeNull();
   });
 
   it('returns null for wrong purpose', () => {
