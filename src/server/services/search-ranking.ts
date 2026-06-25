@@ -1,34 +1,29 @@
 import { calculateQuality } from '../../core/utils/index.js';
-import { diceCoefficient, tokenizeNarrators, normalizeNarrator } from '../../core/utils/similarity.js';
+import { narratorsFuzzyMatch } from '../../core/utils/similarity.js';
 import type { SearchResult } from '../../core/index.js';
 
 /** Optional narrator-priority config for auto-grab scoring. */
 export interface NarratorPriority {
   bookNarrators: string[];
+  /**
+   * Test-only seam (#1650/#1652): overrides the `0.8` dice threshold passed
+   * through to `narratorsFuzzyMatch`. `buildNarratorPriority` never assigns it
+   * in production, so the default always applies at runtime — it exists purely
+   * so `similarity.test.ts` can exercise the exact-boundary and relaxed-bar
+   * cases. Do NOT drop it as dead code.
+   */
   threshold?: number;
 }
 
-const NARRATOR_MATCH_THRESHOLD = 0.8;
 const NARRATOR_QUALITY_FLOOR_MBHR = 30;
 
 /**
  * Check whether a search result's narrator fuzzy-matches any of the book's narrators.
- * Returns true if the best pairwise diceCoefficient >= threshold.
+ * Delegates to the shared `narratorsFuzzyMatch` primitive (#1650) so the fuzzy
+ * cross-product and the `0.8` default threshold live in exactly one place.
  */
 function isNarratorMatch(result: SearchResult, priority: NarratorPriority): boolean {
-  if (!result.narrator) return false;
-  const threshold = priority.threshold ?? NARRATOR_MATCH_THRESHOLD;
-  const resultTokens = tokenizeNarrators(result.narrator).map(normalizeNarrator).filter(Boolean);
-  if (resultTokens.length === 0) return false;
-  const bookNormalized = priority.bookNarrators.map(normalizeNarrator).filter(Boolean);
-  if (bookNormalized.length === 0) return false;
-  let best = 0;
-  for (const rt of resultTokens) {
-    for (const bn of bookNormalized) {
-      best = Math.max(best, diceCoefficient(rt, bn));
-    }
-  }
-  return best >= threshold;
+  return narratorsFuzzyMatch(result.narrator, priority.bookNarrators, priority.threshold);
 }
 
 /**

@@ -14,10 +14,12 @@ pnpm dev           # API on :3000, Vite on :5173
 ## Development Workflow
 
 1. Find or open an issue describing what you want to change.
-2. Branch off `main`: `git checkout -b feature/<short-slug>`.
+2. Branch off `develop`: `git checkout -b feature/<short-slug>`.
 3. Make your changes with tests for anything new or modified.
 4. Run the quality gates (see below).
-5. Open a PR against `main`.
+5. Open a PR against `develop`.
+
+PRs target `develop` (the integration branch); `main` is release-only.
 
 ## Quality Gates
 
@@ -104,6 +106,8 @@ See [e2e/README.md](e2e/README.md) for the Playwright harness, fakes, and fixtur
 - Logger type: `FastifyBaseLogger` from `fastify` (not `BaseLogger` from `pino`)
 - Non-submit `<button>` inside a `<form>` must have `type="button"` — the browser default is `type="submit"`, so an unmarked button submits the form on click
 - API client methods in `src/client/lib/api/` use domain-prefixed names (`getSystemStatus`, not `getStatus`) — the barrel export spreads them, so an unprefixed name silently overwrites another module's method
+
+ESLint also fails the build on: hollow/tautological test assertions (`narratorr/no-tautological-expect`, on `*.test.ts(x)`), files over 400 lines (`max-lines`), and functions over 150 lines (`max-lines-per-function`).
 
 ### Logging guidelines
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import type { MatchCandidate } from './match-job.service.js';
+import type { MatchCandidate, MatchResult } from './match-job.service.js';
 import type * as FolderParsing from '../utils/folder-parsing.js';
 
 // Spy on cleanTagTitle so a single test can force the empty-cleaned-title path
@@ -16,14 +17,17 @@ vi.mock('../utils/folder-parsing.js', async (importActual) => {
 
 import { cleanTagTitle } from '../utils/folder-parsing.js';
 import {
+  applyNarratorCap,
   cleanTagAuthor,
   deriveTagQuery,
   isDurationVerified,
+  narratorMismatchReason,
   rankResultsCleaned,
   rankResults,
   resolveConfidenceFromDuration,
   parsePublishedYear,
   tagTitleScore,
+  type NarratorCapContext,
 } from './match-job.helpers.js';
 
 // -------- Factories --------
@@ -110,9 +114,10 @@ describe('deriveTagQuery', () => {
   });
 
   it('returns null when cleanTagTitle reduces title to empty', () => {
-    // Pins the cleanedTitle guard at match-job.helpers.ts:57 — if the guard is
-    // removed, deriveTagQuery would return { title: '', author: 'X' } and this
-    // test would fail. The mock forces the otherwise-unreachable branch.
+    // Pins the cleaned-title guard: resolveTagSearchTitle returns `cleanedTitle
+    // || null`, so deriveTagQuery's `if (!searchTitle) return null` fires. If the
+    // guard is removed, deriveTagQuery would return { title: '', author: 'X' }
+    // and this test would fail. The mock forces the otherwise-unreachable branch.
     vi.mocked(cleanTagTitle).mockReturnValueOnce('');
     const scan = makeAudioScan({ tagTitle: 'looks-non-empty', tagAuthor: 'X' });
     expect(deriveTagQuery(scan)).toBeNull();
@@ -126,6 +131,65 @@ describe('deriveTagQuery', () => {
   it('returns null when tagAuthor is paren-only (cleans to empty) (#1030)', () => {
     const scan = makeAudioScan({ tagTitle: 'X', tagAuthor: '(Various)' });
     expect(deriveTagQuery(scan)).toBeNull();
+  });
+
+  // ── #1650 generic title-tag fallback ──────────────────────────────
+  describe('#1650 generic title-tag → album fallback', () => {
+    it('substitutes the album when a ", Book N" prefix differs from a usable album (headline)', () => {
+      // `Shattered Sea, Book 1` cleans to series-name prefix `Shattered Sea`;
+      // album `Half a King` is the real title → search on the album.
+      const scan = makeAudioScan({
+        tagTitle: 'Shattered Sea, Book 1',
+        tagAlbum: 'Half a King',
+        tagAuthor: 'Joe Abercrombie',
+        tagYear: '2014',
+      });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie', year: '2014' });
+    });
+
+    it('uses the album for a bare placeholder title when a usable album exists', () => {
+      const scan = makeAudioScan({ tagTitle: 'Book 1', tagAlbum: 'Half a King', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
+
+    it('returns null for a bare placeholder title with no usable album (falls through to Pass 2)', () => {
+      const scan = makeAudioScan({ tagTitle: 'Book 1', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toBeNull();
+    });
+
+    it('treats "<series-kw>, Book N" as a bare placeholder', () => {
+      const scan = makeAudioScan({ tagTitle: 'Series, Book 1', tagAlbum: 'Half a King', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
+
+    it('preserves a legitimate ", Book N" title when the cleaned album equals it', () => {
+      const scan = makeAudioScan({ tagTitle: 'The Hobbit, Book 1', tagAlbum: 'The Hobbit', tagAuthor: 'J.R.R. Tolkien' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'The Hobbit', author: 'J.R.R. Tolkien' });
+    });
+
+    it('preserves a legitimate ", Book N" title when there is no usable album', () => {
+      const scan = makeAudioScan({ tagTitle: 'The Hobbit, Book 1', tagAuthor: 'J.R.R. Tolkien' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'The Hobbit', author: 'J.R.R. Tolkien' });
+    });
+
+    it('does NOT substitute the album for a normal title (no series marker) even when album differs', () => {
+      // No `, Book N` marker → the album-difference rule never fires; the title stands.
+      const scan = makeAudioScan({ tagTitle: 'Half a King', tagAlbum: 'Shattered Sea', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
+
+    it('does NOT substitute a bare-volume-marker album for a legitimate ", Book N" title (#1652 item 6)', () => {
+      // `The Hobbit, Book 1` has a series marker and the album `Book 5` differs,
+      // so the pre-guard rule would have picked the junk album. The new
+      // `!isPureVolumeMarker(rawAlbum)` guard rejects it → the title stands.
+      const scan = makeAudioScan({ tagTitle: 'The Hobbit, Book 1', tagAlbum: 'Book 5', tagAuthor: 'J.R.R. Tolkien' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'The Hobbit', author: 'J.R.R. Tolkien' });
+    });
+
+    it('still prefers a usable album over a pure-volume-marker title (#1652 item 6 — existing behavior preserved)', () => {
+      const scan = makeAudioScan({ tagTitle: 'Series, Book 1', tagAlbum: 'Half a King', tagAuthor: 'Joe Abercrombie' });
+      expect(deriveTagQuery(scan)).toEqual({ title: 'Half a King', author: 'Joe Abercrombie' });
+    });
   });
 });
 
@@ -575,5 +639,119 @@ describe('parsePublishedYear', () => {
 
   it('returns undefined when no 4-digit run is present', () => {
     expect(parsePublishedYear('no year here')).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// narratorMismatchReason (#1650/#1652) — direct units
+// ============================================================================
+
+describe('narratorMismatchReason', () => {
+  it('returns null when the file narrator has no signal (absent / empty / whitespace)', () => {
+    expect(narratorMismatchReason(undefined, ['Jane Doe'])).toBeNull();
+    expect(narratorMismatchReason('', ['Jane Doe'])).toBeNull();
+    expect(narratorMismatchReason('   ', ['Jane Doe'])).toBeNull();
+  });
+
+  it('returns null when the edition has no usable narrators (undefined / empty / blank)', () => {
+    expect(narratorMismatchReason('Jane Doe', undefined)).toBeNull();
+    expect(narratorMismatchReason('Jane Doe', [])).toBeNull();
+    expect(narratorMismatchReason('Jane Doe', ['   '])).toBeNull();
+  });
+
+  it('returns null for punctuation-only narrators — the #1652 headline (no spurious cap)', () => {
+    // Lone hyphen file tag vs lone period edition: both normalize to empty, so
+    // this is "no signal", NOT a mismatch — the old looser guard capped it.
+    expect(narratorMismatchReason('-', ['.'])).toBeNull();
+  });
+
+  it('returns null for a spelling variant at or above the 0.8 threshold (no cap)', () => {
+    expect(narratorMismatchReason('Juliet Stevenson', ['Juliette Stevenson'])).toBeNull();
+  });
+
+  it('returns a reason string naming both sides on a genuine mismatch', () => {
+    const reason = narratorMismatchReason('Jane Doe', ['John Smith']);
+    expect(reason).toContain('Narrator mismatch');
+    expect(reason).toContain('Jane Doe');
+    expect(reason).toContain('John Smith');
+  });
+});
+
+// ============================================================================
+// applyNarratorCap (#1650/#1652) — direct units (with cap-log context)
+// ============================================================================
+
+describe('applyNarratorCap', () => {
+  function makeCtx(overrides: Partial<NarratorCapContext> = {}): { ctx: NarratorCapContext; log: { info: ReturnType<typeof vi.fn> } } {
+    const log = { info: vi.fn() };
+    const ctx: NarratorCapContext = {
+      log: log as unknown as FastifyBaseLogger,
+      matchSource: 'filename-single',
+      durationVerified: false,
+      ...overrides,
+    };
+    return { ctx, log };
+  }
+
+  function makeResult(overrides: Partial<MatchResult> = {}): MatchResult {
+    return {
+      path: '/audiobooks/Book',
+      confidence: 'high',
+      bestMatch: makeBook({ narrators: ['Michael York'] }),
+      alternatives: [],
+      ...overrides,
+    };
+  }
+
+  it('returns a null-bestMatch result untouched (no cap, no log)', () => {
+    const { ctx, log } = makeCtx();
+    const result = makeResult({ confidence: 'high', bestMatch: null });
+    expect(applyNarratorCap(result, makeAudioScan({ tagNarrator: 'Adriel Brandt' }), ctx)).toBe(result);
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it('returns a non-high result untouched — no-op, never promotes (no log)', () => {
+    const { ctx, log } = makeCtx();
+    const result = makeResult({ confidence: 'medium', reason: 'Duration mismatch — ...' });
+    const out = applyNarratorCap(result, makeAudioScan({ tagNarrator: 'Adriel Brandt' }), ctx);
+    expect(out).toBe(result);
+    expect(out.confidence).toBe('medium');
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it('caps high → medium with a reason on a genuine mismatch, and logs once with context', () => {
+    const { ctx, log } = makeCtx({ matchSource: 'exact', durationVerified: true });
+    const result = makeResult({ confidence: 'high', bestMatch: makeBook({ title: 'Brave New World', narrators: ['Michael York'], asin: 'B002V1BVK4' }) });
+    const out = applyNarratorCap(result, makeAudioScan({ tagNarrator: 'Adriel Brandt' }), ctx);
+
+    expect(out.confidence).toBe('medium');
+    expect(out.reason).toContain('Narrator mismatch');
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        matchSource: 'exact',
+        durationVerified: true,
+        fileNarrator: 'Adriel Brandt',
+        editionNarrators: ['Michael York'],
+      }),
+      expect.stringContaining('Narrator wrong-edition cap fired'),
+    );
+  });
+
+  it('leaves a high match with a matching narrator untouched (no cap, no log)', () => {
+    const { ctx, log } = makeCtx();
+    const result = makeResult({ confidence: 'high', bestMatch: makeBook({ narrators: ['Michael York'] }) });
+    const out = applyNarratorCap(result, makeAudioScan({ tagNarrator: 'Michael York' }), ctx);
+    expect(out).toBe(result);
+    expect(out.confidence).toBe('high');
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it('leaves a high result untouched when there is no narrator signal (no cap, no log)', () => {
+    const { ctx, log } = makeCtx();
+    const result = makeResult({ confidence: 'high', bestMatch: makeBook({ narrators: ['Michael York'] }) });
+    const out = applyNarratorCap(result, makeAudioScan(), ctx); // no tagNarrator
+    expect(out).toBe(result);
+    expect(log.info).not.toHaveBeenCalled();
   });
 });

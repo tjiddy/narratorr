@@ -69,7 +69,7 @@ Metadata from providers is noisy (see: genre normalization). The principle is: c
 
 ### Extensibility through adapters
 
-Indexers, download clients, metadata providers, notifiers, and import lists all follow the adapter pattern. Each type has an interface; implementations are pluggable. Adding a new indexer (Torznab), download client (Transmission), notifier (Discord), or import list (Audiobookshelf) means writing one adapter class that implements the interface. The rest of the system doesn't change.
+Indexers, download clients, metadata providers, notifiers, and import lists all follow the adapter pattern. Each type has an interface; implementations are pluggable. Adding a new indexer (Torznab), download client (Transmission), notifier (Discord), or import list (NYT / Hardcover) means writing one adapter class that implements the interface. The rest of the system doesn't change.
 
 This keeps the core thin and the integration surface wide.
 

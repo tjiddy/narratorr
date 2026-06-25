@@ -31,7 +31,7 @@ pnpm typecheck     # TypeScript checking
 
 ## Conventions & architecture
 
-Code style, the service/adapter/route layering, logging conventions, and the test layout live in **CONTRIBUTING.md**. The complete security model is in **SECURITY.md**. ESLint enforces the mechanical rules — `complexity ≤ 15`, `return await` in try/catch, `no-explicit-any`, `consistent-type-imports`, `narratorr/no-raw-error-logging`, and the client/server/core/shared/services/jobs layer-import boundaries — see `eslint.config.js`.
+Code style, the service/adapter/route layering, logging conventions, and the test layout live in **CONTRIBUTING.md**. The complete security model is in **SECURITY.md**. ESLint enforces the mechanical rules — `complexity ≤ 15`, `max-lines` (400/file), `max-lines-per-function` (150), `return await` in try/catch, `no-explicit-any`, `consistent-type-imports`, `narratorr/no-raw-error-logging`, `narratorr/no-tautological-expect` (on `*.test.ts(x)`), and the client/server/core/shared/services/jobs layer-import boundaries — see `eslint.config.js`.
 
 ## Debugging tools
 

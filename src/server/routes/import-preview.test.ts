@@ -115,7 +115,7 @@ describe('GET /api/import/preview/:token', () => {
     await writeFile(file, Buffer.alloc(64));
     const token = mintPreviewToken(file, workDir);
 
-    vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+    vi.setSystemTime(new Date('2026-01-01T05:00:00Z')); // 5h later, past the 4-hour TTL
     const res = await app.inject({ method: 'GET', url: `/api/import/preview/${token}` });
     vi.useRealTimers();
 

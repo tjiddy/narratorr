@@ -52,7 +52,13 @@ export function buildQualityAssessment(
   // Downloaded duration (null when 0 — no valid duration)
   const downloadedDuration = newDurationSeconds > 0 ? newDurationSeconds : null;
 
-  // Check narrator match (skip for first imports — no existing file to protect)
+  // Check narrator match (skip for first imports — no existing file to protect).
+  // NOTE (#1650/#1652): this is the EXACT normalized-set-membership narrator
+  // compare — `downloadTokens.some(n => existingSet.has(n))` below — and is
+  // intentionally NOT the fuzzy `narratorsFuzzyMatch` (`similarity.ts`, 0.8 dice)
+  // path the match-job edition cap uses. Different contract: an upgrade decision
+  // against the operator's OWN existing files wants exact identity, not fuzzy
+  // tolerance. Do not unify the two without revisiting the upgrade contract.
   let narratorMatch: boolean | null = null;
   let existingNarrator: string | null = null;
   let downloadNarrator: string | null = null;

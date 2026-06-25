@@ -11,7 +11,12 @@ const previewTokenPayloadSchema = z.object({
 
 export type PreviewTokenPayload = z.infer<typeof previewTokenPayloadSchema>;
 
-const TOKEN_TTL_MS = 30 * 60 * 1000;
+// 4 hours: long enough to outlast a large library-import review session. Sorting
+// hundreds of discoveries routinely ran past the old 30-minute window, after
+// which previewing a row 403s and the only recovery was a rescan that discards
+// in-progress review/selection state. The route is auth-gated and the token is a
+// per-file path *scope* (not the auth boundary), so a longer window is low-risk.
+const TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
 
 /** Derive a purpose-specific signing key so preview tokens don't reuse the raw encryption key. */
 function getSigningKey(): Buffer {
