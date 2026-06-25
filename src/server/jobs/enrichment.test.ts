@@ -688,8 +688,8 @@ describe('enrichment job', () => {
     });
   });
 
-  // ── #398 Cover URL fill ───────────────────────────────────────────────
-  describe('cover URL fill (#398)', () => {
+  // ── #1634 Cover URL — Audnexus cover always wins (carve-out from fill-empty) ──
+  describe('cover URL fill — Audnexus override (#1634)', () => {
     const allFields = { duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null };
 
     function setupEnrichment(existingFields: Record<string, unknown>, enrichedData: Record<string, unknown>) {
@@ -707,11 +707,38 @@ describe('enrichment job', () => {
       expect(setCall).toHaveProperty('coverUrl', 'https://example.com/cover.jpg');
     });
 
-    it('does NOT overwrite existing coverUrl', async () => {
-      setupEnrichment({ coverUrl: 'https://existing.com/cover.jpg' }, { coverUrl: 'https://new.com/cover.jpg' });
+    it('OVERWRITES an existing provider cover with the Audnexus cover', async () => {
+      // The audiobook cover is authoritative for an audiobook app — the at-add
+      // Hardcover print cover is a placeholder that the Audnexus square cover wins over.
+      setupEnrichment(
+        { coverUrl: 'https://assets.hardcover.app/edition/30615590/print.jpg' },
+        { coverUrl: 'https://m.media-amazon.com/images/I/81bRC7xFElL.jpg' },
+      );
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('coverUrl', 'https://m.media-amazon.com/images/I/81bRC7xFElL.jpg');
+    });
+
+    it('preserves the existing cover when Audnexus returns no image', async () => {
+      // Audnexus maps a missing cover to `undefined` (not null/empty) — the override
+      // guards on the result value's presence so a no-image result never blanks a cover.
+      setupEnrichment({ coverUrl: 'https://existing.com/cover.jpg' }, { coverUrl: undefined });
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
       const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
       expect(setCall).not.toHaveProperty('coverUrl');
+    });
+
+    it('keeps fill-empty semantics for sibling fields while overriding the cover', async () => {
+      // The carve-out is scoped to coverUrl only: a sibling fill-empty field
+      // (description) with an existing value is NOT overwritten in the same pass.
+      setupEnrichment(
+        { coverUrl: 'https://existing.com/cover.jpg', description: 'Existing description' },
+        { coverUrl: 'https://m.media-amazon.com/images/I/new.jpg', description: 'New description' },
+      );
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+      const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+      expect(setCall).toHaveProperty('coverUrl', 'https://m.media-amazon.com/images/I/new.jpg');
+      expect(setCall).not.toHaveProperty('description');
     });
   });
 
@@ -967,7 +994,7 @@ describe('enrichment job', () => {
       expect(projectionArg).toHaveProperty('seriesPosition');
     });
 
-    it('does not overwrite any fields when all already populated', async () => {
+    it('overwrites only coverUrl (Audnexus carve-out) when all fields already populated', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_FULL2' }]))
         .mockReturnValueOnce(mockDbChain([{
@@ -990,12 +1017,13 @@ describe('enrichment job', () => {
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
       const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
-      // Only enrichmentStatus and updatedAt should be in the update
+      // enrichmentStatus, updatedAt, and the Audnexus cover override (#1634); all
+      // other fill-empty fields keep fill-empty semantics and are untouched.
       expect(setCall).toHaveProperty('enrichmentStatus', 'enriched');
       expect(setCall).toHaveProperty('updatedAt');
+      expect(setCall).toHaveProperty('coverUrl', 'https://new.com/cover.jpg');
       expect(setCall).not.toHaveProperty('title');
       expect(setCall).not.toHaveProperty('description');
-      expect(setCall).not.toHaveProperty('coverUrl');
       expect(setCall).not.toHaveProperty('publishedDate');
       expect(setCall).not.toHaveProperty('seriesName');
       expect(setCall).not.toHaveProperty('seriesPosition');

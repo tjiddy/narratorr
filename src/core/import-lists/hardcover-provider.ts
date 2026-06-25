@@ -33,7 +33,7 @@ const BOOK_FRAGMENT = `
     description
     image { url }
     contributions { author { name } }
-    default_audio_edition { asin isbn_13 isbn_10 }
+    default_audio_edition { asin isbn_13 isbn_10 image { url } }
     editions { asin isbn_13 isbn_10 }
   }
 `;
@@ -72,6 +72,9 @@ const editionSchema = z.object({
   asin: z.string().nullish(),
   isbn_13: z.string().nullish(),
   isbn_10: z.string().nullish(),
+  // External-API field — must accept null, not just undefined (zod-nullish-external-api).
+  // Only `default_audio_edition` requests this in the query; print `editions` omit it.
+  image: z.object({ url: z.string().nullish() }).passthrough().nullish(),
 }).passthrough();
 
 const hardcoverBookSchema = z.object({
@@ -128,7 +131,11 @@ function mapBook(book: HardcoverBook): ImportListItem | null {
     author: book.contributions?.[0]?.author?.name || undefined,
     asin: pickAsin(book),
     isbn: pickIsbn(book),
-    coverUrl: book.image?.url || undefined,
+    // Prefer the audiobook edition's cover over the book's default (print) image
+    // so the at-add cover is the audiobook one when Hardcover exposes it (#1634
+    // Layer 1). Falls back to the print image when the audio edition or its image
+    // is absent/empty. Layer 2 (Audnexus override at enrichment) is the guarantor.
+    coverUrl: book.default_audio_edition?.image?.url || book.image?.url || undefined,
     description: book.description || undefined,
   };
 }

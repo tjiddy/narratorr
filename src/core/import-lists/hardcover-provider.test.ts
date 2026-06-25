@@ -325,6 +325,90 @@ describe('HardcoverProvider', () => {
     });
   });
 
+  // ── #1634 Layer 1 — prefer the audio-edition cover over the print cover ──
+  describe('mapBook — cover resolution (#1634)', () => {
+    it('prefers the default_audio_edition cover over the book (print) image', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'Audio Cover',
+          contributions: [],
+          image: { url: 'https://hc.app/print.jpg' },
+          default_audio_edition: { asin: 'B0AUDIO', image: { url: 'https://hc.app/audio.jpg' } },
+        }],
+      }));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBe('https://hc.app/audio.jpg');
+    });
+
+    it('requests the audio-edition image in the GraphQL query', async () => {
+      let booksBody: GqlBody | undefined;
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{ id: 1, title: 'X', contributions: [] }],
+        onBooks: (body) => { booksBody = body; },
+      }));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      await provider.fetchItems();
+      expect(booksBody!.query).toContain('default_audio_edition { asin isbn_13 isbn_10 image { url } }');
+    });
+
+    it('falls back to the print image when the audio edition has no image', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'No Audio Cover',
+          contributions: [],
+          image: { url: 'https://hc.app/print.jpg' },
+          default_audio_edition: { asin: 'B0AUDIO' }, // no image field
+        }],
+      }));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBe('https://hc.app/print.jpg');
+    });
+
+    it('falls back to the print image when the audio-edition image url is null', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'Null Audio Cover Url',
+          contributions: [],
+          image: { url: 'https://hc.app/print.jpg' },
+          default_audio_edition: { asin: 'B0AUDIO', image: { url: null } },
+        }],
+      }));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBe('https://hc.app/print.jpg');
+    });
+
+    it('falls back to the print image when there is no audio edition at all', async () => {
+      server.use(trendingTwoStep({
+        ids: [1],
+        books: [{
+          id: 1,
+          title: 'Print Only Cover',
+          contributions: [],
+          image: { url: 'https://hc.app/print.jpg' },
+          default_audio_edition: null,
+        }],
+      }));
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items[0]!.coverUrl).toBe('https://hc.app/print.jpg');
+    });
+  });
+
   describe('schema resilience (nullish + passthrough)', () => {
     it('accepts null/missing subtitle, description, image, contributions, editions', async () => {
       server.use(trendingTwoStep({
