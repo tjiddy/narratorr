@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diceCoefficient, scoreResult, tokenizeNarrators, normalizeNarrator, narratorsFuzzyMatch, NARRATOR_MATCH_THRESHOLD } from './similarity.js';
+import { diceCoefficient, scoreResult, tokenizeNarrators, normalizeNarrator, narratorsFuzzyMatch, compareNarratorSignals, NARRATOR_MATCH_THRESHOLD } from './similarity.js';
 
 describe('diceCoefficient', () => {
   it('returns 1.0 for identical strings', () => {
@@ -224,5 +224,52 @@ describe('narratorsFuzzyMatch (#1650)', () => {
   it('honors a caller-supplied threshold override', () => {
     // Stevenson/Stephenson scores ≈ 0.706 — clears a relaxed 0.7 bar.
     expect(narratorsFuzzyMatch('Stevenson', ['Stephenson'], 0.7)).toBe(true);
+  });
+
+  it('treats the 0.8 threshold as INCLUSIVE — a score of exactly 0.8 matches (#1652)', () => {
+    // `abcdef` vs `abcdeg` share 4 of 5 bigrams → dice = 2*4/(5+5) = exactly 0.8.
+    // Locks the `>=` boundary: a `>=`→`>` regression would flip this to false.
+    expect(diceCoefficient('abcdef', 'abcdeg')).toBe(0.8);
+    expect(narratorsFuzzyMatch('abcdef', ['abcdeg'], 0.8)).toBe(true);
+  });
+
+  it('is order-insensitive — a Last, First flip still matches (#1652)', () => {
+    // `Stevenson, Juliet` vs `Juliet Stevenson`: the as-is dice ≈ 0.696 (below
+    // 0.8), but the token-sorted compare lines the words up → match.
+    expect(narratorsFuzzyMatch('Stevenson, Juliet', ['Juliet Stevenson'])).toBe(true);
+  });
+
+  it('does NOT force abbreviation/initial expansion (Mike/Michael stays a mismatch — #1652)', () => {
+    // Word-order is in scope; phonetic/abbreviation expansion is explicitly out.
+    expect(narratorsFuzzyMatch('Mike', ['Michael'])).toBe(false);
+  });
+});
+
+describe('compareNarratorSignals (3-state, #1650/#1652)', () => {
+  it('returns "no-signal" for punctuation-only narrators on both sides (lone hyphen vs period)', () => {
+    // The #1652 headline: `'-'` and `'.'` both normalize to empty, so there is no
+    // usable signal — NOT a mismatch. The file-side guard and the primitive agree.
+    expect(compareNarratorSignals('-', ['.'])).toBe('no-signal');
+  });
+
+  it('returns "no-signal" when the file narrator is absent or whitespace-only', () => {
+    expect(compareNarratorSignals(undefined, ['Michael York'])).toBe('no-signal');
+    expect(compareNarratorSignals('', ['Michael York'])).toBe('no-signal');
+    expect(compareNarratorSignals('   ', ['Michael York'])).toBe('no-signal');
+  });
+
+  it('returns "no-signal" when the edition has no usable narrators', () => {
+    expect(compareNarratorSignals('Adriel Brandt', undefined)).toBe('no-signal');
+    expect(compareNarratorSignals('Adriel Brandt', [])).toBe('no-signal');
+    expect(compareNarratorSignals('Adriel Brandt', ['   ', '.'])).toBe('no-signal');
+  });
+
+  it('returns "match" when a file token clears the threshold against any edition narrator', () => {
+    expect(compareNarratorSignals('Michael York', ['Michael York'])).toBe('match');
+    expect(compareNarratorSignals('Ethan Hawke', ['James Franco', 'Ethan Hawke'])).toBe('match');
+  });
+
+  it('returns "mismatch" when both sides carry signal but nothing clears the threshold', () => {
+    expect(compareNarratorSignals('Adriel Brandt', ['Michael York'])).toBe('mismatch');
   });
 });

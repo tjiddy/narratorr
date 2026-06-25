@@ -10,7 +10,7 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type TagQuery } from './match-job.helpers.js';
+import { applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
@@ -204,99 +204,109 @@ class MatchJob {
         this.log.debug({ error: serializeError(error), path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
+      // Every high-producing branch sets these and funnels through the single
+      // `applyNarratorCap` call at the resolved-match exit below (#1650/#1652);
+      // the non-high early returns ('none'/title-floor/catch) bypass the cap.
+      let resolved: MatchResult, capCtx: NarratorCapContext;
+
       // Pass 1 — tag-derived search (#984). Fires when both tagTitle and tagAuthor
       // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
       // tag.title and tag.albumartist are structurally distinct fields.
-      const tagResult = await this.tryTagDerivedMatch(book, audioResult, duration);
-      if (tagResult) return applyNarratorCap(tagResult, audioResult);
+      const tagMatch = await this.tryTagDerivedMatch(book, audioResult, duration);
+      if (tagMatch) {
+        ({ result: resolved, ctx: capCtx } = tagMatch);
+      } else {
+        // Pass 2 — filename-derived search via swap-retry wrapper (existing path).
+        this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
+        const trace = await searchWithSwapRetryTrace({
+          searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
+          title: book.title,
+          author: book.author,
+          log: this.log,
+          options: { title: book.title, ...(book.author !== undefined && { author: book.author }) },
+        });
 
-      // Pass 2 — filename-derived search via swap-retry wrapper (existing path).
-      this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
-      const trace = await searchWithSwapRetryTrace({
-        searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
-        title: book.title,
-        author: book.author,
-        log: this.log,
-        options: { title: book.title, ...(book.author !== undefined && { author: book.author }) },
-      });
+        if (trace.results.length === 0) {
+          this.log.debug({ path: book.path }, 'No search results returned');
+          return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
+        }
 
-      if (trace.results.length === 0) {
-        this.log.debug({ path: book.path }, 'No search results returned');
-        return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
+        this.log.debug({ path: book.path, resultCount: trace.results.length, swapRetry: trace.swapRetry }, 'Search returned results');
+
+        // When swap retry fired and author is present, use swapped context for ranking and similarity
+        const context: MatchCandidate = trace.swapRetry && book.author
+          ? { ...book, title: book.author, author: book.title }
+          : book;
+
+        // Fetch full detail for all results to get ASIN/duration
+        const detailed = await this.fetchDetails(trace.results);
+
+        // Score, re-rank, and apply year tiebreaker
+        const scored = rankResults(detailed, context);
+        const topScored = scored[0];
+        if (!topScored) {
+          // §6.1 — fetchDetails breaks on this.cancelled, so detailed (and thus
+          // scored) can be empty even when trace.results was non-empty. Return
+          // a clean 'none' result instead of crashing on topScored.meta.title.
+          this.log.debug(
+            { path: book.path, cancelled: this.cancelled, resultCount: trace.results.length },
+            'No scored results after ranking — cancelled mid-flight or all filtered',
+          );
+          return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
+        }
+
+        // Title similarity floor: below 50% → confidence 'none'
+        const titleSimilarity = context.title && topScored.meta.title
+          ? diceCoefficient(topScored.meta.title, context.title)
+          : 0;
+        if (titleSimilarity < TITLE_SIMILARITY_FLOOR) {
+          this.log.debug(
+            { path: book.path, titleSimilarity: titleSimilarity.toFixed(2), bestTitle: topScored.meta.title },
+            'Top result below title similarity floor — none confidence',
+          );
+          return {
+            path: book.path,
+            confidence: 'none',
+            bestMatch: topScored.meta,
+            alternatives: scored.slice(1).map(s => s.meta),
+          };
+        }
+
+        if (scored.length === 1) {
+          this.log.debug({ path: book.path, title: topScored.meta.title, score: topScored.score.toFixed(2) }, 'Single result — high confidence');
+          resolved = { path: book.path, confidence: 'high', bestMatch: topScored.meta, alternatives: [] };
+          // No duration check fires on the single-result filename branch.
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: false };
+        } else {
+          // Multiple results — use duration to determine confidence (not to override winner)
+          const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+          this.log.debug(
+            {
+              path: book.path,
+              confidence,
+              resultCount: scored.length,
+              topScore: topScored.score.toFixed(2),
+              bestTitle: topScored.meta.title,
+              hasDuration: !!duration,
+              matchDuration: topScored.meta.duration,
+            },
+            confidence === 'high' ? 'Duration-verified high confidence' : reason ?? 'Multiple results — medium confidence',
+          );
+          resolved = {
+            path: book.path,
+            confidence,
+            bestMatch: topScored.meta,
+            alternatives: scored.slice(1).map(s => s.meta),
+            ...(reason !== undefined && { reason }),
+          };
+          // `resolveConfidenceFromDuration` returning 'high' IS the duration corroboration.
+          capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: confidence === 'high' };
+        }
       }
 
-      this.log.debug({ path: book.path, resultCount: trace.results.length, swapRetry: trace.swapRetry }, 'Search returned results');
-
-      // When swap retry fired and author is present, use swapped context for ranking and similarity
-      const context: MatchCandidate = trace.swapRetry && book.author
-        ? { ...book, title: book.author, author: book.title }
-        : book;
-
-      // Fetch full detail for all results to get ASIN/duration
-      const detailed = await this.fetchDetails(trace.results);
-
-      // Score, re-rank, and apply year tiebreaker
-      const scored = rankResults(detailed, context);
-      const topScored = scored[0];
-      if (!topScored) {
-        // §6.1 — fetchDetails breaks on this.cancelled, so detailed (and thus
-        // scored) can be empty even when trace.results was non-empty. Return
-        // a clean 'none' result instead of crashing on topScored.meta.title.
-        this.log.debug(
-          { path: book.path, cancelled: this.cancelled, resultCount: trace.results.length },
-          'No scored results after ranking — cancelled mid-flight or all filtered',
-        );
-        return { path: book.path, confidence: 'none', bestMatch: null, alternatives: [] };
-      }
-
-      // Title similarity floor: below 50% → confidence 'none'
-      const titleSimilarity = context.title && topScored.meta.title
-        ? diceCoefficient(topScored.meta.title, context.title)
-        : 0;
-      if (titleSimilarity < TITLE_SIMILARITY_FLOOR) {
-        this.log.debug(
-          { path: book.path, titleSimilarity: titleSimilarity.toFixed(2), bestTitle: topScored.meta.title },
-          'Top result below title similarity floor — none confidence',
-        );
-        return {
-          path: book.path,
-          confidence: 'none',
-          bestMatch: topScored.meta,
-          alternatives: scored.slice(1).map(s => s.meta),
-        };
-      }
-
-      if (scored.length === 1) {
-        this.log.debug({ path: book.path, title: topScored.meta.title, score: topScored.score.toFixed(2) }, 'Single result — high confidence');
-        return applyNarratorCap({
-          path: book.path,
-          confidence: 'high',
-          bestMatch: topScored.meta,
-          alternatives: [],
-        }, audioResult);
-      }
-
-      // Multiple results — use duration to determine confidence (not to override winner)
-      const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
-      this.log.debug(
-        {
-          path: book.path,
-          confidence,
-          resultCount: scored.length,
-          topScore: topScored.score.toFixed(2),
-          bestTitle: topScored.meta.title,
-          hasDuration: !!duration,
-          matchDuration: topScored.meta.duration,
-        },
-        confidence === 'high' ? 'Duration-verified high confidence' : reason ?? 'Multiple results — medium confidence',
-      );
-      return applyNarratorCap({
-        path: book.path,
-        confidence,
-        bestMatch: topScored.meta,
-        alternatives: scored.slice(1).map(s => s.meta),
-        ...(reason !== undefined && { reason }),
-      }, audioResult);
+      // Single cap chokepoint (#1650/#1652) — every high-producing branch above
+      // funnels here; non-high outcomes returned early and never reach it.
+      return applyNarratorCap(resolved, audioResult, capCtx);
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
       return {
@@ -313,34 +323,38 @@ class MatchJob {
   // (no tags, zero results across all attempts, floor fail, predicate fail,
   // unexpected throw); caller falls through to filename-derived. Bypasses
   // searchWithSwapRetryTrace — tag.title and tag.albumartist are structurally
-  // distinct, no swap-on-zero needed.
+  // distinct, no swap-on-zero needed. On success returns the resolved result
+  // plus the winning attempt's `source` and the genuine duration-corroboration
+  // flag, both threaded out to the single narrator-cap call (#1652).
   private async tryTagDerivedMatch(
     book: MatchCandidate,
     audioResult: AudioScanResult | null,
     duration: number | undefined,
-  ): Promise<MatchResult | null> {
+  ): Promise<{ result: MatchResult; ctx: NarratorCapContext } | null> {
     const tagQuery = deriveTagQuery(audioResult);
     if (!tagQuery || !audioResult) return null;
-
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
-
     const outcome = await this.runTagSearch(book, audioResult, tagQuery);
     if (!outcome) return null;
 
     const { scored, attempt } = outcome;
     const top = scored[0]!;
 
-    // #1266 — the strip `medium` cap flags matches we couldn't corroborate; when the scanned
-    // runtime independently verifies the top candidate, bypass the cap and keep `high` (no reason).
-    const capBypassedByDuration = attempt.maxConfidence === 'medium' && isDurationVerified(top.meta, duration, top.score);
+    // #1652 (F6) — genuine runtime corroboration of the chosen edition for EVERY
+    // tag source (the `/import-uat` signal logged by the cap). Distinct from
+    // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
+    // only governs the strip-attempt cap bypass — an exact/ASIN attempt
+    // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
+    const durationVerified = isDurationVerified(top.meta, duration, top.score);
+    // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
+    const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
     const cap = (raw: Confidence, reason: string | undefined): { confidence: Confidence; reason?: string } =>
       capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason);
 
-    if (scored.length === 1) {
-      return { path: book.path, ...cap('high', undefined), bestMatch: top.meta, alternatives: [] };
-    }
-    const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
-    return { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: scored.slice(1).map(s => s.meta) };
+    const single = scored.length === 1;
+    const { confidence, reason } = single ? { confidence: 'high' as Confidence } : resolveConfidenceFromDuration(scored, duration);
+    const result: MatchResult = { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
+    return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
 
   /**

@@ -13,6 +13,13 @@ export type AttemptSource =
   | 'strip-leading-series'
   | 'strip-colon-suffix';
 
+/**
+ * Where a resolved match came from, for the narrator-cap observability log
+ * (#1652): a tag-pass `AttemptSource` (incl. the ASIN kill-shot's `'asin-tag'`)
+ * plus the two filename-pass outcomes. Colocated with `AttemptSource`.
+ */
+export type MatchSource = AttemptSource | 'filename-single' | 'filename-duration-resolved';
+
 export interface TagSearchAttempt {
   title: string;
   author: string;
