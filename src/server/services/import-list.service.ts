@@ -256,15 +256,18 @@ export class ImportListService {
   }
 
   /**
-   * Emit a warn audit log when ASIN-resolved metadata disagrees with the raw
-   * provider title/author. The metadata is still adopted (ASIN is identity);
-   * the log lets operators trace mixed-identity book rows back to their
-   * source. Skipped when the raw fields are absent or already agree.
+   * Emit a warn audit log when an adopted match's metadata disagrees with the
+   * raw provider title/author. The match may be ASIN- or search-resolved; in
+   * either case the resolved metadata is adopted, and the log lets operators
+   * trace mixed-identity book rows back to their source. The title/author
+   * comparison is case-insensitive, so case-only differences (e.g. raw
+   * `GAME ON` vs resolved `Game On`) do not warn. Skipped when the raw fields
+   * are absent or already agree.
    */
   private logIdentityMismatch(item: ImportListItem, match: BookMetadata): void {
     const metadataAuthor = match.authors[0]?.name;
-    const titleDiffers = !!item.title && item.title !== match.title;
-    const authorDiffers = !!item.author && !!metadataAuthor && item.author !== metadataAuthor;
+    const titleDiffers = !!item.title && item.title.toLowerCase() !== match.title.toLowerCase();
+    const authorDiffers = !!item.author && !!metadataAuthor && item.author.toLowerCase() !== metadataAuthor.toLowerCase();
     if (!titleDiffers && !authorDiffers) return;
     this.log.warn(
       {
@@ -274,7 +277,7 @@ export class ImportListService {
         listAuthor: item.author,
         metadataAuthor,
       },
-      'Import-list ASIN identity disagrees with raw item fields; adopting metadata',
+      'Import-list metadata disagrees with raw provider fields; adopting resolved metadata',
     );
   }
 

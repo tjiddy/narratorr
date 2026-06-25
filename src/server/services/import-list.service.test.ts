@@ -1069,7 +1069,7 @@ describe('ImportListService', () => {
             listAuthor: 'Navessa Allen',
             metadataAuthor: 'Pierce Brown',
           }),
-          expect.stringContaining('Import-list ASIN identity disagrees'),
+          expect.stringContaining('Import-list metadata disagrees with raw provider fields'),
         );
       });
 
@@ -1100,7 +1100,103 @@ describe('ImportListService', () => {
         const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
         const mismatchWarn = warnCalls.find((call) => {
           const msg = call[1] as string;
-          return typeof msg === 'string' && msg.includes('Import-list ASIN identity disagrees');
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1626 — case-only title divergence does NOT warn (author agrees)
+      it('case-only title divergence does not emit mismatch warn when author agrees', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Game On',
+            authors: [{ name: 'Navessa Allen' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'GAME ON', author: 'Navessa Allen', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1626 — case-only title divergence does NOT warn (author absent)
+      it('case-only title divergence does not emit mismatch warn when author is absent', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Game On',
+            authors: [{ name: 'Navessa Allen' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'GAME ON', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
+        });
+        expect(mismatchWarn).toBeUndefined();
+      });
+
+      // #1626 — case-only author divergence does NOT warn (title agrees)
+      it('case-only author divergence does not emit mismatch warn when title agrees', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B00R6S1RCY', title: 'Golden Son',
+            authors: [{ name: 'Pierce Brown' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Golden Son', author: 'pierce brown', asin: 'B00R6S1RCY' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService(), mockMetadata);
+        await service.syncDueLists();
+
+        const warnCalls = (mockLog.warn as ReturnType<typeof vi.fn>).mock.calls as unknown[][];
+        const mismatchWarn = warnCalls.find((call) => {
+          const msg = call[1] as string;
+          return typeof msg === 'string' && msg.includes('Import-list metadata disagrees with raw provider fields');
         });
         expect(mismatchWarn).toBeUndefined();
       });
