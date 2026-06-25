@@ -1,9 +1,9 @@
 import { basename } from 'node:path';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
-import { diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
-import { cleanTagTitle, extractYear } from '../utils/folder-parsing.js';
-import type { Confidence, MatchCandidate } from './match-job.service.js';
+import { diceCoefficient, normalizeNarrator, narratorsFuzzyMatch, scoreResult, tokenizeNarrators } from '../../core/utils/similarity.js';
+import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
+import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
 
 const DURATION_THRESHOLD_STRICT = 0.05;
 const DURATION_THRESHOLD_RELAXED = 0.15;
@@ -99,12 +99,53 @@ export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | 
   const rawTitle = audioResult.tagTitle?.trim();
   const rawAuthor = audioResult.tagAuthor?.trim();
   if (!rawTitle || !rawAuthor) return null;
-  const cleanedTitle = cleanTagTitle(rawTitle).trim();
-  if (!cleanedTitle) return null;
   const cleanedAuthor = cleanTagAuthor(rawAuthor);
   if (!cleanedAuthor) return null;
+  const searchTitle = resolveTagSearchTitle(rawTitle, audioResult.tagAlbum);
+  if (!searchTitle) return null;
   const tagYear = audioResult.tagYear?.trim();
-  return { title: cleanedTitle, author: cleanedAuthor, ...(tagYear ? { year: tagYear } : {}) };
+  return { title: searchTitle, author: cleanedAuthor, ...(tagYear ? { year: tagYear } : {}) };
+}
+
+/** Normalize a title for the album-vs-prefix difference check: lowercase, trim, collapse internal whitespace. */
+function normalizeForTitleCompare(s: string): string {
+  return s.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Resolve the tag-pass search title, redirecting generic/series-name title tags
+ * to the album when the real title lives there (#1650). Operates on the RAW
+ * `tagTitle` before `cleanTagTitle` strips the `, Book N` marker — the
+ * bare-vs-prefix distinction needs the original suffix. Uses only `tagTitle` +
+ * `tagAlbum` (no folder data, no signature change):
+ *
+ * - **Bare placeholder** (`Book 1`, `Series, Book 1`): no usable title in the
+ *   tag → use the cleaned album when present, else `null` (caller falls through
+ *   to Pass 2's filename-derived search).
+ * - **Series-prefix + differing album** (`Shattered Sea, Book 1` / album
+ *   `Half a King`): the `, Book N` marker means the cleaned prefix is a series
+ *   name, so prefer the cleaned album when it differs (normalized) from the
+ *   prefix.
+ * - **Legitimate `, Book N` title** (`The Hobbit, Book 1` with album
+ *   `The Hobbit` or no album): keep the cleaned title. The rule keys on the
+ *   album difference, not the title shape, because `The Hobbit, Book 1` and
+ *   `Shattered Sea, Book 1` are indistinguishable by grammar alone.
+ */
+function resolveTagSearchTitle(rawTitle: string, rawAlbum: string | undefined): string | null {
+  const cleanedTitle = cleanTagTitle(rawTitle).trim();
+  const cleanedAlbum = rawAlbum?.trim() ? cleanTagTitle(rawAlbum).trim() : '';
+  const usableAlbum = cleanedAlbum.length > 0;
+
+  if (isPureVolumeMarker(rawTitle)) {
+    return usableAlbum ? cleanedAlbum : null;
+  }
+
+  const albumDiffers = usableAlbum && normalizeForTitleCompare(cleanedAlbum) !== normalizeForTitleCompare(cleanedTitle);
+  if (hasTagSeriesMarker(rawTitle) && albumDiffers) {
+    return cleanedAlbum;
+  }
+
+  return cleanedTitle || null;
 }
 
 const TAG_TITLE_WEIGHT = 0.6;
@@ -247,4 +288,44 @@ export function parsePublishedYear(date: string | undefined): number | undefined
   if (!date) return undefined;
   const match = date.match(/\b(\d{4})\b/);
   return match ? parseInt(match[1]!, 10) : undefined;
+}
+
+/**
+ * Wrong-edition guard (#1650). Two *unabridged* readings of the same book are
+ * inherently almost the same length, so duration cannot distinguish editions —
+ * the narrator can. When the file's embedded narrator tag names a different
+ * person than the matched edition's narrators, the match is the right book but
+ * the wrong edition; return a user-facing reason so the central cap can
+ * downgrade `high → medium` (Review).
+ *
+ * Fuzzy, via the shared `narratorsFuzzyMatch` primitive — spelling/punctuation
+ * variants at or above the `0.8` dice threshold are NOT a mismatch. Returns
+ * `null` (no cap) whenever either side lacks a narrator signal: an absent file
+ * tag or an edition with no `narrators` is "no signal", not a mismatch.
+ */
+function narratorMismatchReason(
+  fileNarratorRaw: string | undefined,
+  editionNarrators: string[] | undefined,
+): string | null {
+  if (!fileNarratorRaw || tokenizeNarrators(fileNarratorRaw).length === 0) return null;
+  const editions = (editionNarrators ?? []).filter(n => n.trim().length > 0);
+  if (editions.length === 0) return null;
+  if (narratorsFuzzyMatch(fileNarratorRaw, editionNarrators)) return null;
+  return `Narrator mismatch — file: ${fileNarratorRaw.trim()} · matched edition: ${editions.join(', ')}`;
+}
+
+/**
+ * Central post-outcome narrator clamp (#1650). Applied to the *resolved*
+ * `{ confidence, reason }` of every high-confidence match outcome — both passes,
+ * including the tag ASIN kill-shot — so no high-confidence branch can slip past
+ * it. Only ever downgrades `high → medium`; never promotes, and never overrides
+ * an existing duration/attempt cap (a result already at `medium`/`none` is left
+ * untouched). Fires even when duration verified the match — narrator is the
+ * discriminator duration lacks, so it must not be bypassed by `isDurationVerified`.
+ */
+export function applyNarratorCap(result: MatchResult, audioResult: AudioScanResult | null): MatchResult {
+  if (result.confidence !== 'high' || !result.bestMatch) return result;
+  const reason = narratorMismatchReason(audioResult?.tagNarrator, result.bestMatch.narrators);
+  if (reason === null) return result;
+  return { ...result, confidence: 'medium', reason };
 }

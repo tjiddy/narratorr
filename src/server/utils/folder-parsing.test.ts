@@ -9,6 +9,8 @@ import {
   extractYear,
   extractASIN,
   normalizeFolderName,
+  isPureVolumeMarker,
+  hasTagSeriesMarker,
   CODEC_TEST_REGEX,
 } from './folder-parsing.js';
 import { isReleaseTagInner, isPureReleaseTagBracket } from './folder-parsing-patterns.js';
@@ -2469,6 +2471,36 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(cleanTagTitle('The Sandman: Act I')).toBe('The Sandman: Act I');
       expect(cleanTagTitle('The Sandman: Act II')).toBe('The Sandman: Act II');
       expect(cleanTagTitle('The Sandman: Act III')).toBe('The Sandman: Act III');
+    });
+  });
+
+  describe('isPureVolumeMarker (#1650)', () => {
+    it('matches bare book/volume markers with no real title words', () => {
+      expect(isPureVolumeMarker('Book 1')).toBe(true);
+      expect(isPureVolumeMarker('Volume 2')).toBe(true);
+      expect(isPureVolumeMarker('Vol 3')).toBe(true);
+      expect(isPureVolumeMarker('Series, Book 1')).toBe(true);
+      expect(isPureVolumeMarker('  Book 1  ')).toBe(true);
+    });
+
+    it('does not match a real title carrying a marker', () => {
+      expect(isPureVolumeMarker('Shattered Sea, Book 1')).toBe(false);
+      expect(isPureVolumeMarker('The Hobbit, Book 1')).toBe(false);
+      expect(isPureVolumeMarker('Half a King')).toBe(false);
+    });
+  });
+
+  describe('hasTagSeriesMarker (#1650)', () => {
+    it('detects a trailing series/volume marker behind a real prefix', () => {
+      expect(hasTagSeriesMarker('Shattered Sea, Book 1')).toBe(true);
+      expect(hasTagSeriesMarker('The Final Empire Mistborn trilogy book 1')).toBe(true);
+      expect(hasTagSeriesMarker('Eric: Discworld, Book 9')).toBe(true);
+    });
+
+    it('returns false for titles with no trailing marker', () => {
+      expect(hasTagSeriesMarker('Half a King')).toBe(false);
+      expect(hasTagSeriesMarker('Book 1')).toBe(false); // no leading [\\s,]+ separator
+      expect(hasTagSeriesMarker('World War 3')).toBe(false);
     });
   });
 
