@@ -10,6 +10,7 @@ import type {
 } from '../../shared/schemas/import-job.js';
 import { parsePhaseHistory } from '../utils/parse-phase-history.js';
 import { transitionBookStatus } from '../utils/book-status.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
 
 export interface ImportJobListing {
   id: number;
@@ -51,13 +52,6 @@ export type EnqueueImportResult =
 const ACTIVE_JOB_UNIQUE_VIOLATION =
   /UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id)/;
 
-function isActiveJobUniqueViolation(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const causeMsg = (error as Error & { cause?: { message?: string } }).cause?.message ?? '';
-  if (ACTIVE_JOB_UNIQUE_VIOLATION.test(causeMsg)) return true;
-  return ACTIVE_JOB_UNIQUE_VIOLATION.test(error.message ?? '');
-}
-
 export class BookImportService {
   constructor(
     private db: Db,
@@ -83,7 +77,7 @@ export class BookImportService {
     try {
       return await this.db.transaction(async (innerTx) => this.runEnqueue(innerTx, input));
     } catch (error: unknown) {
-      if (isActiveJobUniqueViolation(error)) {
+      if (isUniqueViolation(error, ACTIVE_JOB_UNIQUE_VIOLATION)) {
         this.log.info(
           { bookId: input.bookId, type: input.type },
           'Active import job unique-index conflict (defensive backstop)',
@@ -163,7 +157,7 @@ export class BookImportService {
         return { jobId: enqueued.jobId };
       });
     } catch (error: unknown) {
-      if (isActiveJobUniqueViolation(error)) {
+      if (isUniqueViolation(error, ACTIVE_JOB_UNIQUE_VIOLATION)) {
         this.log.info(
           { bookId, type: failedJob.type },
           'Active import job unique-index conflict during retry (defensive backstop)',

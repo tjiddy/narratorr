@@ -5,6 +5,7 @@ import { books, bookNarrators, bookAuthors, authors } from '../../db/schema.js';
 import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
@@ -74,13 +75,6 @@ function asinMatches(capturedAsin: string | null) {
 // message under `.cause`.
 const ASIN_UNIQUE_VIOLATION = /UNIQUE constraint failed.*(?:idx_books_asin_unique|books\.asin)/;
 
-function isAsinUniqueViolation(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const causeMsg = (error as Error & { cause?: { message?: string } }).cause?.message ?? '';
-  if (ASIN_UNIQUE_VIOLATION.test(causeMsg)) return true;
-  return ASIN_UNIQUE_VIOLATION.test(error.message ?? '');
-}
-
 /**
  * Mark a candidate `failed`, scoped `WHERE id = ? AND asin <matches captured>`
  * so a Fix Match that re-identified the row mid-flight drops the stale write
@@ -143,7 +137,7 @@ async function applyScalarWrite(
       .where(and(eq(books.id, bookId), asinMatches(capturedAsin)))
       .returning({ id: books.id });
   } catch (error: unknown) {
-    if (!isAsinUniqueViolation(error)) throw error;
+    if (!isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) throw error;
     log.warn(
       { bookId, resolvedAsin, error: serializeError(error) },
       'Resolved ASIN hit a unique-constraint race — marking failed',
