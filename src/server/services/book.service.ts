@@ -14,6 +14,7 @@ import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
+import { normalizeTitleForDedup } from '../../shared/dedup.js';
 
 
 export { CoverUploadError } from './cover-upload.js';
@@ -126,12 +127,18 @@ export class BookService {
     authorList?: { name: string; asin?: string | undefined }[] | undefined,
     asin?: string | undefined,
   ): Promise<BookWithAuthor | null> {
-    // Check by ASIN first if available (opportunistic)
+    // Mirrors the shared `matchesLibraryIdentity` ordered contract against the DB (#1662):
+    // (1) ASIN case-insensitive, (2) normalized-title + position-0 author slug,
+    // (3) author-less exact title-only with the #253 guard.
+
+    // (1) Check by ASIN first if available (opportunistic). Case-insensitive —
+    // ASINs are not globally normalized, so an exact `eq` would miss case drift
+    // (aligns with findLibraryStatusByAsins).
     if (asin) {
       const byAsin = await this.db
         .select({ id: books.id })
         .from(books)
-        .where(eq(books.asin, asin))
+        .where(eq(sql`lower(${books.asin})`, asin.toLowerCase()))
         .limit(1);
 
       if (byAsin.length > 0) {
@@ -139,19 +146,24 @@ export class BookService {
       }
     }
 
-    // Check by title + position-0 author slug
+    // (2) Check by normalized title + position-0 author slug. Fetch the
+    // candidate rows by author slug (subtitle/paren/series stripping is not
+    // SQLite-expressible) and compare titles with `normalizeTitleForDedup` in
+    // application code so case / colon-subtitle / parenthetical / `, Book N`
+    // drift no longer creates a duplicate.
     if (authorList && authorList.length > 0) {
       const primarySlug = slugify(authorList[0]!.name);
-      const byTitleAuthor = await this.db
-        .select({ id: books.id })
+      const byAuthor = await this.db
+        .select({ id: books.id, title: books.title })
         .from(books)
         .innerJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
         .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-        .where(and(eq(books.title, title), eq(authors.slug, primarySlug)))
-        .limit(1);
+        .where(eq(authors.slug, primarySlug));
 
-      if (byTitleAuthor.length > 0) {
-        return this.getById(byTitleAuthor[0]!.id);
+      const wanted = normalizeTitleForDedup(title);
+      const hit = byAuthor.find((row) => normalizeTitleForDedup(row.title) === wanted);
+      if (hit) {
+        return this.getById(hit.id);
       }
     }
 

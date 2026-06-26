@@ -9,6 +9,8 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { SuggestionReason } from '../../shared/schemas/discovery.js';
 import type { SuggestionRow, SuggestionRowWithLibraryBookId } from './types.js';
+import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { slugify } from '../../shared/utils.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
 import {
@@ -254,11 +256,14 @@ export class DiscoveryService {
 
   /**
    * Annotate each suggestion with `libraryBookId` — the id of a library `books`
-   * row that matches the suggestion. Mirrors `isBookInLibrary` semantics:
-   * ASIN match first (uniquely indexed), then case-insensitive
-   * title + primary-author fallback. When multiple library books match the
-   * fallback, the LOWEST `books.id` wins (deterministic — there is no unique
-   * index on title+author).
+   * row that matches the suggestion. Keyed off the shared library-identity
+   * normalizer (#1662) so this surface agrees with `isBookInLibrary` / the import
+   * dedup contract (`matchesLibraryIdentity`): ASIN match first (case-insensitive,
+   * uniquely indexed), then `normalizeTitleForDedup` title + position-0 author
+   * slug — so a colon-subtitle / parenthetical / case-drift variant of an owned
+   * title is recognized. When multiple library books match the fallback, the
+   * LOWEST `books.id` wins (deterministic — there is no unique index on
+   * title+author).
    */
   private async enrichWithLibraryBookId(rows: SuggestionRow[]): Promise<SuggestionRowWithLibraryBookId[]> {
     if (rows.length === 0) return [];
@@ -274,18 +279,21 @@ export class DiscoveryService {
     const titleAuthorToId = new Map<string, number>();
     for (const row of libraryRows) {
       // Lowest-id-wins tie-breaker — orderBy books.id ASC + first-write-wins.
-      if (row.asin && !asinToId.has(row.asin)) asinToId.set(row.asin, row.id);
+      if (row.asin) {
+        const asinKey = row.asin.toLowerCase();
+        if (!asinToId.has(asinKey)) asinToId.set(asinKey, row.id);
+      }
       if (row.title && row.authorName) {
-        const key = `${row.title.toLowerCase()}|${row.authorName.toLowerCase()}`;
+        const key = `${normalizeTitleForDedup(row.title)}|${slugify(row.authorName)}`;
         if (!titleAuthorToId.has(key)) titleAuthorToId.set(key, row.id);
       }
     }
 
     return rows.map((suggestion) => {
       let libraryBookId: number | null = null;
-      if (suggestion.asin) libraryBookId = asinToId.get(suggestion.asin) ?? null;
+      if (suggestion.asin) libraryBookId = asinToId.get(suggestion.asin.toLowerCase()) ?? null;
       if (libraryBookId === null && suggestion.title && suggestion.authorName) {
-        const key = `${suggestion.title.toLowerCase()}|${suggestion.authorName.toLowerCase()}`;
+        const key = `${normalizeTitleForDedup(suggestion.title)}|${slugify(suggestion.authorName)}`;
         libraryBookId = titleAuthorToId.get(key) ?? null;
       }
       return { ...suggestion, libraryBookId };

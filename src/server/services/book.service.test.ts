@@ -121,7 +121,7 @@ describe('BookService', () => {
 
     it('finds duplicate by title + primary-author slug (position=0) when no ASIN', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // title+author match
+        .mockReturnValueOnce(mockDbChain([{ id: 1, title: 'The Way of Kings' }]))  // by-author candidates
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))  // getById book
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -131,10 +131,42 @@ describe('BookService', () => {
       expect(result!.title).toBe('The Way of Kings');
     });
 
+    it('matches a title+author candidate across colon-subtitle / case drift via normalizeTitleForDedup (#1662)', async () => {
+      // Stored title carries a colon subtitle and different casing; the matched
+      // metadata is the bare title — they normalize equal under the same author.
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Tehanu: The Last Book of Earthsea' }]))  // by-author candidates
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.findDuplicate('TEHANU', [{ name: 'Ursula K. Le Guin' }]);
+      expect(result).not.toBeNull();
+    });
+
+    it('different-edition ASIN miss falls back to normalized title+author (#1662)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // ASIN lookup — miss (different edition)
+        .mockReturnValueOnce(mockDbChain([{ id: 9, title: 'Tehanu' }]))  // by-author candidates — hit
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.findDuplicate('Tehanu', [{ name: 'Ursula K. Le Guin' }], 'B0DIFFEDIT');
+      expect(result).not.toBeNull();
+    });
+
+    it('does NOT match a by-author candidate whose normalized title differs (#1662)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 1, title: 'A Wizard of Earthsea' }]));  // by-author candidates — wrong book
+
+      const result = await service.findDuplicate('Tehanu', [{ name: 'Ursula K. Le Guin' }]);
+      expect(result).toBeNull();
+    });
+
     it('[A, B] vs [A, C] same title is duplicate (co-author difference ignored)', async () => {
       // Position-0 author slug matches → duplicate
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // title+position0 author match
+        .mockReturnValueOnce(mockDbChain([{ id: 1, title: 'The Way of Kings' }]))  // by-author candidates
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));

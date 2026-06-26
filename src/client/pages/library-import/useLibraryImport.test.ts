@@ -139,6 +139,45 @@ describe('useLibraryImport hook (#133)', () => {
     expect(pathDupRow?.selected).toBe(false);
   });
 
+  it('post-match duplicate (F8): high-confidence result flagged isDuplicate deselects the row and excludes it from the confirm payload (#1662)', async () => {
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1',
+      status: 'completed',
+      total: 1,
+      matched: 1,
+      results: [
+        {
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'high',
+          bestMatch: { title: 'Book One', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+          isDuplicate: true,
+          existingBookId: 421,
+          duplicateReason: 'slug',
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+    expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
+
+    // After the post-match flag arrives, the row is flagged AND deselected.
+    await waitFor(() => {
+      const row = result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1');
+      expect(row?.book.isDuplicate).toBe(true);
+      expect(row?.book.existingBookId).toBe(421);
+      expect(row?.selected).toBe(false);
+    }, { timeout: 5000 });
+
+    // It is therefore absent from the confirm payload.
+    act(() => result.current.handleRegister());
+    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
+    const items = mockConfirmImport.mock.calls[0]![0] as Array<{ path: string }>;
+    expect(items.some(i => i.path === '/audiobooks/AuthorA/Book1')).toBe(false);
+  });
+
   it('match results merge: confidence=medium (Review) deselects non-duplicate row; reviewCount increments, selectedCount excludes it', async () => {
     // Medium-confidence ("Review" badge) rows must NOT default to checked — a human
     // should eyeball the match before importing it (#1318).
@@ -214,9 +253,11 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
-  it('slug-duplicate row: case-only title change unlocks row (exact title equality contract)', async () => {
-    // Existing book has title 'Book Three' (mixed case). Editing to 'book three' (all lowercase)
-    // must NOT collide because exact equality 'book three' !== 'Book Three'.
+  it('slug-duplicate row: case-only / colon-subtitle title change KEEPS row flagged (normalized contract #1662)', async () => {
+    // Existing book has title 'Book Three' / 'Author C'. Under the shared
+    // normalized-title + author-slug predicate, a case-only ('book three') or
+    // colon-subtitle ('Book Three: A Subtitle') change still collides — the row
+    // stays flagged (the recheck no longer uses exact title equality).
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
     ]);
@@ -228,13 +269,34 @@ describe('useLibraryImport hook (#133)', () => {
     const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'book three', author: 'Author C', series: '' });
+      result.current.handleEdit(slugDupIdx, { title: 'Book Three: A Subtitle', author: 'author c', series: '' });
     });
 
-    await waitFor(() => {
-      const row = result.current.rows[slugDupIdx];
-      expect(row!.book.isDuplicate).toBe(false);
+    // Give the recheck a tick; the row must remain flagged.
+    await waitFor(() => expect(result.current.rows[slugDupIdx]!.userEdited).toBe(true));
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
+  });
+
+  it('slug-duplicate row flagged by ASIN stays flagged after non-colliding title/author edits (#1662 F5)', async () => {
+    // The library entry shares only the ASIN. Editing the title + author to a
+    // genuinely different identity must NOT clear the flag, because the ASIN
+    // (carried on the edited state) still matches branch 1 of the predicate.
+    mockGetBookIdentifiers.mockResolvedValue([
+      { asin: 'B0OWNEDASIN', title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
+    ]);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+
+    act(() => {
+      result.current.handleEdit(slugDupIdx, { title: 'Totally Different', author: 'Someone Else', series: '', asin: 'B0OWNEDASIN' });
     });
+
+    await waitFor(() => expect(result.current.rows[slugDupIdx]!.userEdited).toBe(true));
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('match-job failure: matchJobError is set after startMatchJob rejects', async () => {

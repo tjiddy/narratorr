@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
-import { slugify } from '../../../shared/utils.js';
+import { matchesLibraryIdentity } from '../../../shared/dedup.js';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -162,13 +162,20 @@ export function useLibraryImport() {
 
       let updatedBook: DiscoveredBook = r.book;
 
-      // Slug-duplicate recheck: if this was a slug-duplicate, see if edited title+author no longer collides.
-      // Exact title equality matches the backend's findDuplicate() contract.
+      // Slug-duplicate recheck: if this was flagged a DB duplicate, see if the
+      // edited identity still collides. Runs the FULL shared predicate (#1662 F5)
+      // — ASIN-first, then normalized title+author — over each library identifier
+      // (which carries asin/title/authorSlug). Because every library-identity hit
+      // now reports `duplicateReason: 'slug'` (including ASIN hits), an ASIN-flagged
+      // row stays flagged after title/author edits that no longer textually collide
+      // but whose ASIN still matches.
       if (r.book.isDuplicate && r.book.duplicateReason === 'slug' && bookIdentifiers) {
-        const editedAuthorSlug = slugify(state.author ?? '');
-        const stillCollides = bookIdentifiers.some(
-          lb => lb.title === state.title && lb.authorSlug === editedAuthorSlug,
-        );
+        const candidate = {
+          title: state.title,
+          ...(state.author !== undefined && { authorName: state.author }),
+          ...(state.asin !== undefined && { asin: state.asin }),
+        };
+        const stillCollides = bookIdentifiers.some(lb => matchesLibraryIdentity(candidate, lb));
         if (!stillCollides) {
           updatedBook = { ...r.book, isDuplicate: false };
         }

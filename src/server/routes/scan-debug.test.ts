@@ -601,8 +601,8 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // findDuplicate called with title only, no authorList
-      expect(services.book.findDuplicate).toHaveBeenCalledWith('JustATitle', undefined);
+      // findDuplicate called with title only, no authorList, no parsed ASIN (#1662)
+      expect(services.book.findDuplicate).toHaveBeenCalledWith('JustATitle', undefined, undefined);
     });
   });
 

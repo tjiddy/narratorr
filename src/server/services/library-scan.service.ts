@@ -21,6 +21,7 @@ import type { ConnectorService } from './connector.service.js';
 import type { ConnectorImportItem } from '../../core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
+import { normalizeTitleForDedup } from '../../shared/dedup.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 import { WireOnce } from './wire-helpers.js';
 
@@ -218,10 +219,12 @@ export class LibraryScanService {
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
+    // Key the cheap pre-match map by the SAME normalizer the post-match pass and
+    // confirm use (#1662), so the two surfaces cannot disagree on title drift.
     const existingTitleAuthorMap = new Map<string, number>(
       titleAuthorRows
         .filter((r) => r.title && r.slug)
-        .map((r) => [`${r.title!.toLowerCase()}|${r.slug}`, r.id] as [string, number]),
+        .map((r) => [`${normalizeTitleForDedup(r.title!)}|${r.slug}`, r.id] as [string, number]),
     );
 
     const discoveries: DiscoveredBook[] = [];
@@ -244,7 +247,7 @@ export class LibraryScanService {
       // Check for duplicates by title + author slug (in-memory Map lookup)
       if (parsed.title && parsed.author) {
         const authorSlug = slugify(parsed.author);
-        const key = `${parsed.title.toLowerCase()}|${authorSlug}`;
+        const key = `${normalizeTitleForDedup(parsed.title)}|${authorSlug}`;
         if (existingTitleAuthorMap.has(key)) {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
           discoveries.push(buildDiscoveredBook(

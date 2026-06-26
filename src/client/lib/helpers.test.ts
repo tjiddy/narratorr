@@ -208,6 +208,39 @@ describe('isBookInLibrary — authorless matching (#246)', () => {
   });
 });
 
+describe('isBookInLibrary — shared library-identity predicate (#1662 F7)', () => {
+  it('flags a colon-subtitle / edition variant of an owned title as in-library', () => {
+    const book: BookMetadata = {
+      title: 'Tehanu: The Last Book of Earthsea',
+      authors: [{ name: 'Ursula K. Le Guin' }],
+    };
+    const libBook: BookWithAuthor = {
+      ...createMockBook(),
+      asin: null,
+      title: 'Tehanu',
+      authors: [{ id: 1, name: 'Ursula K. Le Guin', slug: 'ursula-k-le-guin' }],
+    };
+    expect(isBookInLibrary(book, [libBook])).toBe(true);
+  });
+
+  it('still matches case-insensitive ASIN first, even when title/author differ', () => {
+    const book: BookMetadata = { title: 'Whatever', asin: 'b01g9epere', authors: [{ name: 'Nobody' }] };
+    const libBook: BookWithAuthor = { ...createMockBook(), asin: 'B01G9EPERE' };
+    expect(isBookInLibrary(book, [libBook])).toBe(true);
+  });
+
+  it('does not flag a genuinely different book', () => {
+    const book: BookMetadata = { title: 'A Wizard of Earthsea', authors: [{ name: 'Ursula K. Le Guin' }] };
+    const libBook: BookWithAuthor = {
+      ...createMockBook(),
+      asin: null,
+      title: 'The Tombs of Atuan',
+      authors: [{ id: 1, name: 'Ursula K. Le Guin', slug: 'ursula-k-le-guin' }],
+    };
+    expect(isBookInLibrary(book, [libBook])).toBe(false);
+  });
+});
+
 describe('mapBookMetadataToPayload — array shape (#71)', () => {
   it('BookMetadata with one author → authors: [{ name, asin }] in payload', () => {
     const book: BookMetadata = {
