@@ -415,3 +415,64 @@ describe('compareNarratorSignals (3-state, #1650/#1652)', () => {
     });
   });
 });
+
+describe('over-reach guard — pins current behavior, NOT hardening (#1657)', () => {
+  // The 5A/5B blocks prove noise → clean. These pin that the same transforms did
+  // NOT start matching different people OR drop real names. Every assertion below
+  // is the CURRENT, verified output — a future tightening must change these on
+  // purpose, test-visibly. Behavior-changing hardening is deferred (see #1657
+  // Out of Scope).
+
+  describe('different-middle-initial — accepted collapseInitials over-match', () => {
+    // Same first-initial + same surname + 1-char-different middle initial. The
+    // word-sorted leg of nameDice clears 0.8 once collapseInitials joins the run,
+    // so these read as 'match'. This is the accepted trade-off documented on
+    // collapseInitials — pin it as a match (NOT a mismatch), so removing it later
+    // is a conscious decision.
+    it('R. C. Bray vs R. K. Bray is a match (over-match accepted)', () => {
+      expect(compareNarratorSignals('R. C. Bray', ['R. K. Bray'])).toBe('match');
+    });
+
+    it('P. J. Ochlan vs P. T. Ochlan is a match (over-match accepted)', () => {
+      expect(compareNarratorSignals('P. J. Ochlan', ['P. T. Ochlan'])).toBe('match');
+    });
+  });
+
+  describe('real name containing a denied placeholder token is KEPT', () => {
+    // The 5B denylist is exact-set membership, not substring — `Authorson`
+    // contains `author` but is real signal, never dropped.
+    it('normalizeNarrator keeps "Authorson"', () => {
+      expect(normalizeNarrator('Authorson')).toBe('authorson');
+    });
+
+    it('"Authorson" is treated as real signal and matches itself', () => {
+      expect(compareNarratorSignals('Authorson', ['Authorson'])).toBe('match');
+    });
+  });
+
+  describe('role-word-first-name — current 5A behavior (vanishingly rare)', () => {
+    // A real first name that happens to be a bare role word is consumed by the
+    // role-prefix strip. Pinned as current behavior; requiring a `by`/`:` suffix
+    // is deferred (#1657 Out of Scope).
+    it('normalizeNarrator("Voice Carter") → "carter"', () => {
+      expect(normalizeNarrator('Voice Carter')).toBe('carter');
+    });
+
+    it('normalizeNarrator("Narrator Jones") → "jones"', () => {
+      expect(normalizeNarrator('Narrator Jones')).toBe('jones');
+    });
+  });
+
+  describe('parenthetical disambiguator — current global-strip behavior', () => {
+    // normalizeNarrator strips ALL parentheticals (global /\([^)]*\)/g), trailing
+    // OR embedded. Switching to a trailing-only strip is deferred (#1657 Out of
+    // Scope) — pin the current global behavior.
+    it('strips a trailing disambiguator', () => {
+      expect(normalizeNarrator('James Marsters (Spike from Buffy)')).toBe('james marsters');
+    });
+
+    it('strips an embedded parenthetical alias too', () => {
+      expect(normalizeNarrator('Robert (Bob) Smith')).toBe('robert smith');
+    });
+  });
+});
