@@ -2551,6 +2551,29 @@ describe('DiscoveryService — getSuggestions enrichment with libraryBookId (rea
     expect(result[0]!.libraryBookId).toBe(libBook.id);
   });
 
+  it('recognizes a colon-subtitle / edition variant of an owned title via the shared identity normalizer (#1662 F1)', async () => {
+    // The owned book is the bare title; the suggestion carries a colon subtitle.
+    // The shared `normalizeTitleForDedup` strips it, so discovery enrichment agrees
+    // with isBookInLibrary / the import dedup contract instead of showing it as new.
+    const author = await seedAuthor('Ursula K. Le Guin', 'ursula-k-le-guin');
+    const libBook = await seedLibraryBook({ title: 'Tehanu', asin: null, authorId: author.id });
+    await seedSuggestion({ asin: 'NOMATCH', title: 'Tehanu: The Last Book of Earthsea', authorName: 'Ursula K. Le Guin' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(libBook.id);
+  });
+
+  it('matches ASIN case-insensitively, consistent with the shared identity contract (#1662 F1)', async () => {
+    const author = await seedAuthor('Ursula K. Le Guin', 'ursula-k-le-guin');
+    const libBook = await seedLibraryBook({ title: 'Owned Title', asin: 'B01G9EPERE', authorId: author.id });
+    await seedSuggestion({ asin: 'b01g9epere', title: 'Suggestion Title', authorName: 'Ursula K. Le Guin' });
+
+    const result = await service.getSuggestions();
+    expect(result).toHaveLength(1);
+    expect(result[0]!.libraryBookId).toBe(libBook.id);
+  });
+
   it('returns libraryBookId = null when neither ASIN nor title+author match', async () => {
     const author = await seedAuthor('Brandon Sanderson', 'brandon-sanderson');
     await seedLibraryBook({ title: 'Different Book', asin: 'OTHER', authorId: author.id });
