@@ -66,7 +66,12 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
   const displayTitle = row.edited.title;
   const displayAuthor = row.edited.author || row.book.parsedAuthor || '';
-  const displayNarrator = row.edited.metadata?.narrators?.join(', ');
+  // Prefer the top-level edited narrator (where the Edit Book modal saves the user's
+  // edit, and where matched rows are seeded) over metadata.narrators — mirroring the
+  // import-confirm + server narrator precedence so the row shows what will be imported (#1660).
+  const displayNarrator = row.edited.narrators?.length
+    ? row.edited.narrators.join(', ')
+    : row.edited.metadata?.narrators?.join(', ');
   // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
