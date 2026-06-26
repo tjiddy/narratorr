@@ -107,6 +107,35 @@ describe('buildQualityAssessment — existing audio metadata fields', () => {
   });
 });
 
+describe('buildQualityAssessment — narrator_mismatch (#1655 5A/5B surface checks)', () => {
+  // Quality-gate uses EXACT normalized set membership (not the fuzzy cap path),
+  // and is a DIRECT normalizeNarrator caller. 5A's string-cleaning reaches it
+  // (intended: fewer spurious holds); 5B's placeholder denylist does NOT.
+
+  it('5A: same person modulo role-prefix noise no longer holds (Read by: P. J. Ochlan ↔ P. J. Ochlan)', () => {
+    const book = { ...baseBook, narrators: [{ name: 'P. J. Ochlan' }] };
+    const scan = { ...baseScan, tagNarrator: 'Read by: P. J. Ochlan' };
+    const result = buildQualityAssessment(scan, book);
+    expect(result.holdReasons).not.toContain('narrator_mismatch');
+  });
+
+  it('control: a genuinely different existing narrator still holds', () => {
+    // baseBook narrator is John Smith.
+    const scan = { ...baseScan, tagNarrator: 'Jane Doe' };
+    const result = buildQualityAssessment(scan, baseBook);
+    expect(result.holdReasons).toContain('narrator_mismatch');
+  });
+
+  it('5B placeholder is NOT applied here: "Author" tag vs a real existing narrator still holds (unchanged)', () => {
+    // The 5B denylist lives at the comparison layer only. At quality-gate,
+    // `Author` normalizes to the non-empty token `author` and is compared
+    // exactly — exactly as before 5B existed.
+    const scan = { ...baseScan, tagNarrator: 'Author' };
+    const result = buildQualityAssessment(scan, baseBook);
+    expect(result.holdReasons).toContain('narrator_mismatch');
+  });
+});
+
 describe('buildQualityAssessment — resolveBookQualityInputs caching', () => {
   it('calls resolveBookQualityInputs exactly once when book has path (upgrade scenario)', () => {
     const spy = vi.spyOn(qualityModule, 'resolveBookQualityInputs');

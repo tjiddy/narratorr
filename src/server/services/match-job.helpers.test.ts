@@ -286,6 +286,23 @@ describe('rankResultsCleaned', () => {
     const ranked = rankResultsCleaned([actI, actIII, actII], { title: 'The Sandman: Act II', author: 'Neil Gaiman' });
     expect(ranked[0]!.meta.title).toBe('The Sandman: Act II');
   });
+
+  // #1655 F1 — the 5B placeholder denylist lives at the comparison layer, NOT in
+  // normalizeNarrator. So tag-author scoring (a DIRECT normalizeNarrator caller)
+  // is unaffected: a placeholder-looking author value is NOT zeroed.
+  it('does NOT zero a placeholder-looking author value ("Author") — 5B is comparison-only', () => {
+    const book = makeBook({ title: 'Some Memoir', authors: [{ name: 'Author' }] });
+    const ranked = rankResultsCleaned([book], { title: 'Some Memoir', author: 'Author' });
+    // If the denylist had leaked into normalizeNarrator, the author dice would be
+    // 0 (empty vs empty) and the score would drop to the title-only weight.
+    expect(ranked[0]!.score).toBeCloseTo(1.0, 5);
+  });
+
+  it('#1655 5A: a "Read by …" / diacritic author normalizes without regression in tag-author scoring', () => {
+    const book = makeBook({ title: 'Memoir', authors: [{ name: 'Thérèse Plummer' }] });
+    const ranked = rankResultsCleaned([book], { title: 'Memoir', author: 'Therese Plummer' });
+    expect(ranked[0]!.score).toBeCloseTo(1.0, 5);
+  });
 });
 
 // ============================================================================
@@ -674,6 +691,32 @@ describe('narratorMismatchReason', () => {
     expect(reason).toContain('Narrator mismatch');
     expect(reason).toContain('Jane Doe');
     expect(reason).toContain('John Smith');
+  });
+
+  // The complete #1655 UAT false-positive fixture: each was a high-confidence
+  // library-import match wrongly capped to Review by tag noise. After hardening,
+  // every one must return null (no reason emitted → no cap → stays high).
+  describe('#1655 UAT false-positive fixture — all 8 resolve null (no cap)', () => {
+    const fixture: Array<[book: string, tag: string, edition: string[]]> = [
+      ['Zero Hour', 'R. C. Bray', ['R.C. Bray']],
+      ["Death's End", 'Read by: P. J. Ochlan', ['P. J. Ochlan']],
+      ['To Kill a Mockingbird', 'Read By Sissy Spacek', ['Sissy Spacek']],
+      ["The Farseer: Assassin's Apprentice", 'Narrated by Paul Boehmer', ['Paul Boehmer']],
+      ['Storm Front', 'James Marsters (Spike from Buffy The Vampire Slayer)', ['James Marsters']],
+      ['Shelter Mountain', 'Therese Plummer', ['Thérèse Plummer']],
+      ['Hyperion', 'Multiple Readers', ['Marc Vietor', 'Allyson Johnson', 'Kevin Pariseau', 'Jay Snyder', 'Victor Bevine']],
+      ['1776', 'Author', ['David McCullough']],
+    ];
+    it.each(fixture)('%s — tag "%s" no longer caps', (_book, tag, edition) => {
+      expect(narratorMismatchReason(tag, edition)).toBeNull();
+    });
+  });
+
+  it('control: a genuinely different real narrator still returns a reason (real catch preserved)', () => {
+    const reason = narratorMismatchReason('Scott Brick', ['R.C. Bray']);
+    expect(reason).toContain('Narrator mismatch');
+    expect(reason).toContain('Scott Brick');
+    expect(reason).toContain('R.C. Bray');
   });
 });
 
