@@ -2428,6 +2428,20 @@ describe('filterAndRankResults — narrator priority', () => {
       expect(results[0]!.title).toBe('B');
     });
 
+    it('#1655 5B: a placeholder book narrator ("Full Cast") creates NO narrator-priority boost', () => {
+      // Search ranking shares the comparison path with the import cap, so the 5B
+      // placeholder denylist applies here too — `Full Cast` carries no signal,
+      // so the placeholder "match" loses to a higher-quality non-match.
+      const placeholderMatch = makeResult({ narrator: 'Full Cast', size: sizeForMbhr(79), matchScore: 0.9, title: 'Placeholder' });
+      const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'NoMatch' });
+      const { results } = filterAndRankResults(
+        [placeholderMatch, goodNoMatch],
+        BOOK_DURATION,
+        { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Full Cast'] } },
+      );
+      expect(results[0]!.title).toBe('NoMatch');
+    });
+
     it('unknown quality narrator-match beats known Good quality non-match', () => {
       // No size = unknown quality, should still be eligible for narrator boost
       const unknownMatch = makeResult({ narrator: 'Kevin R. Free', size: undefined, matchScore: 0.9, title: 'Match' });
