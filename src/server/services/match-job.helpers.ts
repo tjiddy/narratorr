@@ -6,10 +6,66 @@ import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
 import type { MatchSource } from './tag-search-planner.js';
+import type { BookService } from './book.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+
+/**
+ * Post-match library-duplicate check (#1662). On a resolved match, ask
+ * `findDuplicate` (the shared ordered identity contract) whether the matched
+ * book is already owned; on a hit, decorate the result with the duplicate fields
+ * the client merge propagates onto the row. Every library-identity hit reports
+ * `duplicateReason: 'slug'` — the badge renders all non-`within-scan` DB
+ * duplicates identically, and no new enum value is introduced. A failed lookup
+ * is non-fatal: the match still returns, just without the flag.
+ */
+export async function applyLibraryDuplicate(
+  result: MatchResult,
+  bookService: Pick<BookService, 'findDuplicate'>,
+  log: FastifyBaseLogger,
+): Promise<MatchResult> {
+  if (!result.bestMatch) return result;
+  try {
+    const existing = await bookService.findDuplicate(
+      result.bestMatch.title,
+      result.bestMatch.authors,
+      result.bestMatch.asin,
+    );
+    if (existing) {
+      log.debug(
+        { path: result.path, existingBookId: existing.id, title: result.bestMatch.title },
+        'Post-match library duplicate detected',
+      );
+      return { ...result, isDuplicate: true, existingBookId: existing.id, duplicateReason: 'slug' };
+    }
+  } catch (error: unknown) {
+    log.warn({ error: serializeError(error), path: result.path }, 'Post-match duplicate check failed — proceeding without flag');
+  }
+  return result;
+}
 
 const DURATION_THRESHOLD_STRICT = 0.05;
 const DURATION_THRESHOLD_RELAXED = 0.15;
 const COMBINED_SCORE_GATE = 0.95;
+const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
+
+/**
+ * Cap a computed Confidence at the planner-attempt's `maxConfidence`. Stripped
+ * attempts (album/strip-leading-series/etc.) emit `'medium'` as their cap so
+ * downstream Review/Verified UI can flag them for human attention even when
+ * the duration check would otherwise bless them as `'high'`.
+ */
+export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence {
+  if (cap === 'medium' && c === 'high') return 'medium';
+  return c;
+}
+
+// Cap-driven downgrades from a planner attempt need a user-facing tooltip
+// reason; without one the amber Review pill renders with no explanation (#1052).
+export function applyAttemptCap(raw: Confidence, cap: 'high' | 'medium', durationReason: string | undefined): { confidence: Confidence; reason?: string } {
+  const confidence = capConfidence(raw, cap);
+  const reason = durationReason ?? (confidence === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
+  return reason !== undefined ? { confidence, reason } : { confidence };
+}
 
 export interface DurationConfidenceResult {
   confidence: Confidence;

@@ -78,6 +78,32 @@ describe('mergeMatchIntoRow', () => {
     expect(merged.selected).toBe(true);
   });
 
+  it('post-match duplicate deselects a selected high-confidence row and flags row.book (#1662 F8)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', isDuplicate: true, existingBookId: 421, duplicateReason: 'slug' }),
+    );
+    expect(result.selected).toBe(false);
+    expect(result.book.isDuplicate).toBe(true);
+    expect(result.book.existingBookId).toBe(421);
+    expect(result.book.duplicateReason).toBe('slug');
+  });
+
+  it('post-match duplicate override beats the userEdited selection branch (#1662 F8)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ userEdited: true, selected: true }),
+      makeMatch({ confidence: 'high', isDuplicate: true, existingBookId: 7, duplicateReason: 'slug' }),
+    );
+    expect(result.selected).toBe(false);
+    expect(result.book.isDuplicate).toBe(true);
+  });
+
+  it('a non-duplicate high match still preserves selection and leaves row.book untouched (no regression)', () => {
+    const result = mergeMatchIntoRow(makeRow({ selected: true }), makeMatch({ confidence: 'high' }));
+    expect(result.selected).toBe(true);
+    expect(result.book.isDuplicate).toBe(false);
+  });
+
   it('produces identical output for the same (row, match) inputs — no per-caller drift', () => {
     const row = makeRow({ userEdited: true, selected: true });
     const match = makeMatch({ confidence: 'medium' });

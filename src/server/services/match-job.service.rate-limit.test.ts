@@ -90,7 +90,8 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     mockLog = createMockLogger();
     metadataService = new MetadataService(inject<FastifyBaseLogger>(mockLog));
     settingsService = inject<SettingsService>({ get: vi.fn().mockResolvedValue({ ffmpegPath: '' }) });
-    matchService = new MatchJobService(metadataService, inject<FastifyBaseLogger>(mockLog), settingsService);
+    const bookService = inject<import('./book.service.js').BookService>({ findDuplicate: vi.fn().mockResolvedValue(null) });
+    matchService = new MatchJobService(metadataService, inject<FastifyBaseLogger>(mockLog), settingsService, bookService);
   });
 
   it('AC26 — RateLimitError on first attempt: provider.searchBooks called exactly once across multi-attempt planner', async () => {

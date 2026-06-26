@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
+import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import type { DuplicateReason } from '../../shared/schemas.js';
 import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { SettingsService } from './settings.service.js';
@@ -10,7 +12,7 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
@@ -29,6 +31,12 @@ export interface MatchResult {
   alternatives: BookMetadata[];
   error?: string;
   reason?: string;
+  /** Post-match library-duplicate flags (#1662), set from the resolved `bestMatch`
+   * (which carries the author/asin a no-author filename lacks). The client merge
+   * propagates these onto `row.book` so the badge lights up and the row fails closed. */
+  isDuplicate?: boolean;
+  existingBookId?: number;
+  duplicateReason?: DuplicateReason;
 }
 
 export interface MatchJobStatus {
@@ -43,26 +51,10 @@ const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
 const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
 const TAG_AUTHOR_PREDICATE_FLOOR = 0.7; // Tag-pass author-name dice threshold (#984)
-const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
 
-/**
- * Cap a computed Confidence at the planner-attempt's `maxConfidence`. Stripped
- * attempts (album/strip-leading-series/etc.) emit `'medium'` as their cap so
- * downstream Review/Verified UI can flag them for human attention even when
- * the duration check would otherwise bless them as `'high'`.
- */
-export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence {
-  if (cap === 'medium' && c === 'high') return 'medium';
-  return c;
-}
-
-// Cap-driven downgrades from a planner attempt need a user-facing tooltip
-// reason; without one the amber Review pill renders with no explanation (#1052).
-function applyAttemptCap(raw: Confidence, cap: 'high' | 'medium', durationReason: string | undefined): { confidence: Confidence; reason?: string } {
-  const confidence = capConfidence(raw, cap);
-  const reason = durationReason ?? (confidence === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
-  return reason !== undefined ? { confidence, reason } : { confidence };
-}
+// `capConfidence`/`applyAttemptCap` moved to match-job.helpers.ts (#1662, file-size cap);
+// re-exported so the public surface (capConfidence is asserted in tests) is unchanged.
+export { capConfidence } from './match-job.helpers.js';
 
 export class MatchJobService {
   private jobs = new Map<string, MatchJob>();
@@ -71,11 +63,12 @@ export class MatchJobService {
     private metadataService: MetadataService,
     private log: FastifyBaseLogger,
     private settingsService: SettingsService,
+    private bookService: BookService,
   ) {}
 
   createJob(books: MatchCandidate[]): string {
     const id = randomUUID();
-    const job = new MatchJob(id, books, this.metadataService, this.log, this.settingsService, () => {
+    const job = new MatchJob(id, books, this.metadataService, this.log, this.settingsService, this.bookService, () => {
       this.scheduleCleanup(id);
     });
     this.jobs.set(id, job);
@@ -122,6 +115,7 @@ class MatchJob {
     private metadataService: MetadataService,
     private log: FastifyBaseLogger,
     private settingsService: SettingsService,
+    private bookService: BookService,
     private onComplete: () => void,
   ) {}
 
@@ -306,7 +300,11 @@ class MatchJob {
 
       // Single cap chokepoint (#1650/#1652) — every high-producing branch above
       // funnels here; non-high outcomes returned early and never reach it.
-      return applyNarratorCap(resolved, audioResult, capCtx);
+      const capped = applyNarratorCap(resolved, audioResult, capCtx);
+
+      // Post-match library-duplicate pass (#1662) — keyed off the MATCHED metadata,
+      // so a no-author filename that resolves to an owned book is flagged at review.
+      return await applyLibraryDuplicate(capped, this.bookService, this.log);
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
       return {

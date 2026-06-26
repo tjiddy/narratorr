@@ -208,6 +208,38 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
   });
 
+  it('forwards the matched ASIN to findDuplicate, falling back to metadata.asin (#1662)', async () => {
+    mockBookService.findDuplicate.mockResolvedValue(null);
+
+    await confirmImport(
+      [
+        { path: '/a/b', title: 'With Asin', authorName: 'Author', asin: 'B0TOPLEVEL' },
+        { path: '/a/c', title: 'Meta Asin', authorName: 'Author', metadata: { title: 'Meta Asin', authors: [], asin: 'B0METADATA' } },
+      ],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(mockBookService.findDuplicate).toHaveBeenNthCalledWith(1, 'With Asin', [{ name: 'Author' }], 'B0TOPLEVEL');
+    expect(mockBookService.findDuplicate).toHaveBeenNthCalledWith(2, 'Meta Asin', [{ name: 'Author' }], 'B0METADATA');
+  });
+
+  it('forceImport item bypasses the dedup check entirely and still imports (#1662)', async () => {
+    mockBookService.findDuplicate.mockResolvedValue({ id: 5, title: 'Owned' });
+    mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Owned', status: 'importing' });
+
+    const result = await confirmImport(
+      [{ path: '/a/b', title: 'Owned', authorName: 'Author', asin: 'B0OWNED', forceImport: true }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
+    expect(result).toEqual({ accepted: 1 });
+  });
+
   it('logs serialized error shape when bookService.create throws (#621)', async () => {
     mockBookService.create.mockRejectedValueOnce(new TypeError('DB constraint violated'));
 

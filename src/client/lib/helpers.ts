@@ -1,4 +1,5 @@
 import type { BookMetadata, BookWithAuthor, BookIdentifier, CreateBookPayload } from '@/lib/api';
+import { matchesLibraryIdentity } from '../../shared/dedup.js';
 
 export function mapBookMetadataToPayload(
   book: BookMetadata,
@@ -34,19 +35,19 @@ function getAuthorName(entry: LibraryEntry): string | null | undefined {
   return (entry as BookWithAuthor).authors?.[0]?.name;
 }
 
+// Delegates to the single shared library-identity predicate (#1662 F7) so the
+// search-result / series "In Library" badge agrees with the import + backend
+// duplicate verdict: case-insensitive ASIN, then normalized title + author slug
+// (colon-subtitle / parenthetical / case drift), then author-less exact title.
 function matchesLibraryEntry(book: BookMetadata, lb: LibraryEntry): boolean {
-  if (book.asin && lb.asin && book.asin === lb.asin) return true;
-  const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
-  const authorName = getAuthorName(lb);
-  const bookAuthorName = book.authors[0]?.name;
-
-  // Both sides have no author — match by title only
-  if (!bookAuthorName && !authorName) return titleMatch;
-
-  // One side has author, the other doesn't — not a match
-  if (!bookAuthorName || !authorName) return false;
-
-  return titleMatch && authorName.toLowerCase() === bookAuthorName.toLowerCase();
+  return matchesLibraryIdentity(
+    {
+      title: book.title,
+      ...(book.asin !== undefined && { asin: book.asin }),
+      ...(book.authors[0]?.name !== undefined && { authorName: book.authors[0]?.name }),
+    },
+    { title: lb.title, asin: lb.asin, authorName: getAuthorName(lb) ?? null },
+  );
 }
 
 export function findLibraryMatch<T extends LibraryEntry>(

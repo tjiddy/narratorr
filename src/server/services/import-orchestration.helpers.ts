@@ -290,6 +290,11 @@ async function copyDiscGroupToLibrary(
   return targetPath;
 }
 
+/** The matched ASIN to dedupe on (#1662): the top-level field, else the metadata's. */
+function resolveDedupeAsin(item: ImportConfirmItem): string | undefined {
+  return item.asin ?? item.metadata?.asin;
+}
+
 export async function confirmImport(
   items: ImportConfirmItem[],
   deps: ImportPipelineDeps,
@@ -305,7 +310,14 @@ export async function confirmImport(
   for (const item of items) {
     try {
       if (!item.forceImport) {
-        const existing = await bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
+        // Forward the matched ASIN (#1662) so the confirm-time skip routes through
+        // the same ASIN-first identity contract as scan/review — title/edition
+        // drift on an owned book no longer slips a duplicate through.
+        const existing = await bookService.findDuplicate(
+          item.title,
+          item.authorName ? [{ name: item.authorName }] : undefined,
+          resolveDedupeAsin(item),
+        );
         if (existing) {
           log.debug({ title: item.title }, 'Skipping duplicate during import');
           continue;

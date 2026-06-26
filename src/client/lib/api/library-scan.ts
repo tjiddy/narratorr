@@ -2,7 +2,7 @@ import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
 export type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
-import type { DiscoveredBook, ImportMode } from '../../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
 
 export interface ImportConfirmItem {
   path: string;
@@ -48,6 +48,14 @@ export interface MatchResult {
   alternatives: BookMetadata[];
   error?: string;
   reason?: string;
+  /**
+   * Post-match library-duplicate flags (#1662). Mirrors the server `MatchResult`.
+   * `mergeMatchIntoRow` propagates these onto `row.book` so the existing
+   * "Already in library" badge lights up and the row fails closed (deselected).
+   */
+  isDuplicate?: boolean;
+  existingBookId?: number;
+  duplicateReason?: DuplicateReason;
 }
 
 export interface MatchJobStatus {

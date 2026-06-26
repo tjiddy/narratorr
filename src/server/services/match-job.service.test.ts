@@ -4,6 +4,7 @@ import { MatchJobService, capConfidence, type MatchCandidate, type MatchResult }
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 
 // Mock audio scanner
@@ -46,6 +47,13 @@ function createMockMetadataService(): MetadataService {
   });
 }
 
+/** Mock BookService for the post-match duplicate pass — defaults to no duplicate. */
+function createMockBookService(): BookService {
+  return inject<BookService>({
+    findDuplicate: vi.fn().mockResolvedValue(null),
+  });
+}
+
 /** Flush microtask queue so async job work completes */
 function flushPromises(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 50));
@@ -74,13 +82,15 @@ describe('MatchJobService', () => {
   let metadataService: ReturnType<typeof createMockMetadataService>;
   let log: ReturnType<typeof createMockLogger>;
   let settingsService: SettingsService;
+  let bookService: BookService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     log = createMockLogger();
     metadataService = createMockMetadataService();
     settingsService = inject<SettingsService>({ get: vi.fn().mockResolvedValue({ ffmpegPath: '' }) });
-    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log), settingsService);
+    bookService = createMockBookService();
+    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log), settingsService, bookService);
     (randomUUID as ReturnType<typeof vi.fn>).mockReturnValue('test-job-id');
   });
 
@@ -297,6 +307,38 @@ describe('MatchJobService', () => {
       expect(result!.confidence).toBe('high');
       expect(result!.bestMatch).toBeTruthy();
       expect(result!.alternatives).toEqual([]);
+    });
+
+    it('post-match: flags a resolved match that findDuplicate reports as owned (#1662)', async () => {
+      // The candidate has no author (bare no-author filename), but the resolved
+      // bestMatch carries the author/asin findDuplicate keys off.
+      const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+      (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 421, title: 'Tehanu' });
+
+      const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.isDuplicate).toBe(true);
+      expect(result.existingBookId).toBe(421);
+      expect(result.duplicateReason).toBe('slug');
+      // findDuplicate is keyed off the MATCHED metadata, not the (author-less) candidate.
+      expect(bookService.findDuplicate).toHaveBeenCalledWith('Tehanu', meta.authors, 'B01G9EPERE');
+    });
+
+    it('post-match: a resolved match with no library duplicate carries no duplicate fields (#1662)', async () => {
+      const meta = makeBookMetadata({ providerId: 'p1' });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.isDuplicate).toBeUndefined();
+      expect(result.existingBookId).toBeUndefined();
     });
 
     it('returns medium confidence for multiple results without duration data', async () => {

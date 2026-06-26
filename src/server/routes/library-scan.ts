@@ -196,7 +196,9 @@ async function handleScanDebug(
   let duplicate: ScanDebugTrace['duplicate'];
   try {
     const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
-    const existing = await bookService.findDuplicate(cleanedTitle, authorList);
+    // Pass the parsed ASIN (#1662) so the diagnostic's verdict mirrors the real
+    // confirm-time identity check (ASIN-first, normalized title+author).
+    const existing = await bookService.findDuplicate(cleanedTitle, authorList, asin);
     duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
   } catch (error: unknown) {
     request.log.error({ error: serializeError(error) }, 'Scan debug duplicate check failed');
