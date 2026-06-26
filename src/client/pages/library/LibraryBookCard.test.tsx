@@ -83,38 +83,61 @@ describe('LibraryBookCard', () => {
     });
   });
 
-  describe('missing indicator', () => {
+  // #1663 — the top-left chip no longer conflates `failed` with `missing`. `missing` keeps
+  // the broken-link "files missing from disk" chip; `failed` renders a distinct import-failed
+  // chip whose tooltip reflects retry availability (driven by useRetryImportAvailable).
+  describe('missing / import-failed indicator', () => {
     it('renders frosted chip with broken-link icon for missing status', () => {
       const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
 
-    it('renders frosted chip with broken-link icon for failed status', () => {
+    it('failed status does NOT render the files-missing chip', () => {
       const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
-      expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
     });
 
-    it('does not render chip for imported status', () => {
+    it('failed status renders a distinct import-failed chip (retry unavailable copy by default)', () => {
+      // Default api mock returns { available: false } → "Import failed".
+      const book = createMockLibraryBook({ status: 'failed' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTitle('Import failed')).toBeInTheDocument();
+    });
+
+    it('failed status with retry available shows the retry-available copy', async () => {
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+      const book = createMockLibraryBook({ status: 'failed' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      await waitFor(() => {
+        expect(screen.getByTitle('Import failed — retry available')).toBeInTheDocument();
+      });
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+    });
+
+    it('does not render any chip for imported status', () => {
       const book = createMockLibraryBook({ status: 'imported' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Import failed')).not.toBeInTheDocument();
     });
 
-    it('does not render chip for wanted status', () => {
+    it('does not render any chip for wanted status', () => {
       const book = createMockLibraryBook({ status: 'wanted' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Import failed')).not.toBeInTheDocument();
     });
 
-    it('does not render chip for downloading status', () => {
+    it('does not render any chip for downloading status', () => {
       const book = createMockLibraryBook({ status: 'downloading' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Import failed')).not.toBeInTheDocument();
     });
 
-    it('has tooltip text on the chip', () => {
+    it('has tooltip text on the missing chip', () => {
       const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       const chip = screen.getByTitle('Files missing from disk');

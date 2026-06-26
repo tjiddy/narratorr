@@ -87,8 +87,18 @@ export class ImportQueueWorker {
   }
 
   /**
-   * Boot recovery: mark any rows left in 'processing' as failed.
-   * These are orphans from a previous crash.
+   * Boot recovery: resolve any import jobs left in `processing` by a previous crash (#1663).
+   *
+   * The linked book's status — read within the recovery transaction — decides each orphan's
+   * outcome. Boot recovery writes ONLY the `import_jobs` row: it never writes the book and never
+   * infers completion from book status.
+   *   - book still `importing` → the genuine interrupted case (no success/failure transition has
+   *     run yet). Re-queue the job (`pending`/`queued`, clear `lastError`) so the next drain
+   *     retries it; the book stays `importing`.
+   *   - any other status (`imported`, a failure-path revert to `failed`/`missing`/`wanted`, …) or
+   *     a null `bookId` → terminal-fail the job (`ProcessRestart`), leaving the book untouched.
+   * A requeued job whose real work cannot proceed is terminal-failed later by the NORMAL drain-time
+   * failure path with its real error (#1663 AC4) — never pre-emptively here.
    */
   private async bootRecovery(): Promise<void> {
     const orphans = await this.db
@@ -98,36 +108,23 @@ export class ImportQueueWorker {
 
     if (orphans.length === 0) return;
 
-    this.log.info({ count: orphans.length }, 'Boot recovery: marking orphaned processing jobs as failed');
+    this.log.info({ count: orphans.length }, 'Boot recovery: resolving orphaned processing jobs');
 
     const now = new Date();
-    const errorJson = JSON.stringify({ message: 'Interrupted by server restart', type: 'ProcessRestart' });
-
-    let recovered = 0;
+    let requeued = 0;
+    let settled = 0;
     let failed = 0;
 
     for (const orphan of orphans) {
       try {
-        await this.db.transaction(async (tx) => {
-          await tx.update(importJobs).set({
-            status: 'failed',
-            phase: 'failed',
-            lastError: errorJson,
-            completedAt: now,
-            updatedAt: now,
-          }).where(eq(importJobs.id, orphan.id));
-
-          if (orphan.bookId != null) {
-            // Guarded book write in the SAME transaction as the job write (#1448):
-            // both rows commit together or neither does. The `importing` guard (#1470)
-            // settles the book to `failed` only when it's still mid-import (the normal
-            // interrupted-orphan case where no revert ran); a book already moved off
-            // `importing` by a revert is left untouched — the guard misses (no-op).
-            await transitionBookStatus(tx, orphan.bookId, { status: 'failed', expected: { status: 'importing' } });
-          }
-        });
-        recovered++;
-        this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job marked as failed');
+        const didRequeue = await this.recoverOrphanedJob(orphan, now);
+        if (didRequeue) {
+          requeued++;
+          this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job re-queued for retry');
+        } else {
+          settled++;
+          this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job marked as failed');
+        }
       } catch (error: unknown) {
         failed++;
         this.log.error(
@@ -137,7 +134,49 @@ export class ImportQueueWorker {
       }
     }
 
-    this.log.info({ count: orphans.length, recovered, failed }, 'Boot recovery complete');
+    this.log.info({ count: orphans.length, requeued, settled, failed }, 'Boot recovery complete');
+  }
+
+  /**
+   * Resolve a single orphaned `processing` job in one transaction. Reads the linked book's status
+   * (race-free: boot recovery is single-threaded and fully completes before `drainLoop()` starts,
+   * so no concurrent worker can move the book between the read and the job write), then writes ONLY
+   * the `import_jobs` row — never the book. Returns `true` when the job was re-queued (book still
+   * `importing`), `false` when it was terminal-failed.
+   */
+  private async recoverOrphanedJob(orphan: { id: number; bookId: number | null }, now: Date): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      let bookStatus: string | null = null;
+      if (orphan.bookId != null) {
+        const [bookRow] = await tx
+          .select({ status: books.status })
+          .from(books)
+          .where(eq(books.id, orphan.bookId))
+          .limit(1);
+        bookStatus = bookRow?.status ?? null;
+      }
+
+      if (bookStatus === 'importing') {
+        await tx.update(importJobs).set({
+          status: 'pending',
+          phase: 'queued',
+          lastError: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: now,
+        }).where(eq(importJobs.id, orphan.id));
+        return true;
+      }
+
+      await tx.update(importJobs).set({
+        status: 'failed',
+        phase: 'failed',
+        lastError: JSON.stringify({ message: 'Interrupted by server restart', type: 'ProcessRestart' }),
+        completedAt: now,
+        updatedAt: now,
+      }).where(eq(importJobs.id, orphan.id));
+      return false;
+    });
   }
 
   /**
