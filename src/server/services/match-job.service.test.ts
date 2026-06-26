@@ -3270,6 +3270,54 @@ describe('MatchJobService', () => {
       expect(result.reason).toBeUndefined();
     });
 
+    // #1655: the complete UAT false-positive fixture, end-to-end. Each was a
+    // high-confidence library-import match wrongly demoted to Review by tag
+    // noise the normalizer now folds (6 string-noise cases) or by placeholder
+    // junk the comparison layer now drops as no-signal (2 placeholder cases).
+    describe('#1655 UAT false-positive fixture resolves high (no cap)', () => {
+      const fixture = [
+        { title: 'Zero Hour', author: 'Joshua Dalzelle', tag: 'R. C. Bray', edition: ['R.C. Bray'] },
+        { title: "Death's End", author: 'Cixin Liu', tag: 'Read by: P. J. Ochlan', edition: ['P. J. Ochlan'] },
+        { title: 'To Kill a Mockingbird', author: 'Harper Lee', tag: 'Read By Sissy Spacek', edition: ['Sissy Spacek'] },
+        { title: "Assassin's Apprentice", author: 'Robin Hobb', tag: 'Narrated by Paul Boehmer', edition: ['Paul Boehmer'] },
+        { title: 'Storm Front', author: 'Jim Butcher', tag: 'James Marsters (Spike from Buffy The Vampire Slayer)', edition: ['James Marsters'] },
+        { title: 'Shelter Mountain', author: 'Robyn Carr', tag: 'Therese Plummer', edition: ['Thérèse Plummer'] },
+        { title: 'Hyperion', author: 'Dan Simmons', tag: 'Multiple Readers', edition: ['Marc Vietor', 'Allyson Johnson', 'Kevin Pariseau', 'Jay Snyder', 'Victor Bevine'] },
+        { title: '1776', author: 'David McCullough', tag: 'Author', edition: ['David McCullough'] },
+      ];
+
+      it.each(fixture)('$title — tag "$tag" stays high (no cap)', async ({ title, author, tag, edition }) => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeNarratorScan({ tagTitle: title, tagAuthor: author, tagNarrator: tag }),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title, authors: [{ name: author }], narrators: edition, asin: 'B0FIXTURE1' }),
+        ]);
+
+        const id = service.createJob([{ path: `/audiobooks/${title}`, title, author }]);
+        await waitForJob(service, id);
+        const result = service.getJob(id)!.results[0]!;
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+      });
+
+      it('control: a genuinely different real narrator still caps high → medium', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(
+          makeNarratorScan({ tagTitle: 'Zero Hour', tagAuthor: 'Joshua Dalzelle', tagNarrator: 'Scott Brick' }),
+        );
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Zero Hour', authors: [{ name: 'Joshua Dalzelle' }], narrators: ['R.C. Bray'], asin: 'B0FIXTURE2' }),
+        ]);
+
+        const id = service.createJob([{ path: '/audiobooks/Zero Hour', title: 'Zero Hour', author: 'Joshua Dalzelle' }]);
+        await waitForJob(service, id);
+        const result = service.getJob(id)!.results[0]!;
+        expect(result.confidence).toBe('medium');
+        expect(result.reason).toContain('Narrator mismatch');
+        expect(result.reason).toContain('Scott Brick');
+      });
+    });
+
     it('multi-narrator edition: no cap when any file narrator overlaps the cast', async () => {
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Slaughterhouse-Five', tagAuthor: 'Kurt Vonnegut', tagNarrator: 'Ethan Hawke' }),

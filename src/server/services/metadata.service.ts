@@ -47,7 +47,22 @@ export interface MetadataServiceConfig {
   audibleRegion?: string;
 }
 
-const PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
+/**
+ * Pseudo-narrator markers stripped from the reject-word search surface before
+ * `matchesWord` (#1032). Answers "should this fake narrator be removed from the
+ * reject-word surface?" — a DIFFERENT question from the fuzzy-match no-signal
+ * decision in `NARRATOR_PLACEHOLDERS` (`src/core/utils/similarity.ts`), the
+ * single home for the full narrator-placeholder vocabulary (#1657).
+ *
+ * This set is intentionally NARROWER (a strict subset): widening it to the full
+ * 8-value vocabulary would change `isRejectedByWords` at runtime — e.g.
+ * stripping `Author`/`Multiple Readers`/`uncredited`/`narrator` from the
+ * reject-word surface — which is out of scope. The subset relationship
+ * (`PSEUDO_NARRATORS ⊆ NARRATOR_PLACEHOLDERS`) is pinned by a named consistency
+ * test in `metadata.service.test.ts`, so adding a junk value to the shared
+ * vocabulary can never make the two paths silently disagree.
+ */
+export const PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
 
 function isPseudoNarrator(name: string): boolean {
   return PSEUDO_NARRATORS.has(name.trim().toLowerCase().replace(/\s+/g, ' '));
