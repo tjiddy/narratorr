@@ -39,6 +39,17 @@ function foldDiacritics(s: string): string {
  * and unspaced initials converge (`r c bray` → `rc bray`). Only single-letter
  * runs join — real two-word names (`jo anna`) are untouched. Runs after
  * punctuation strip, when `R.C.`/`R. C.` have already lost their periods.
+ *
+ * ACCEPTED TRADE-OFF (#1657, do NOT "fix"): collapsing the initial run is
+ * load-bearing — it's what lets `R. C. Bray` match `R.C. Bray` across the
+ * corpus. The cost is that two genuinely different same-surname narrators whose
+ * only difference is a middle initial (`R. C. Bray` vs `R. K. Bray`,
+ * `P. J. Ochlan` vs `P. T. Ochlan`) cross the 0.8 threshold via the word-sorted
+ * leg of `nameDice` and read as `'match'`. This collision is rare (same
+ * first-initial + same surname + 1-char-different middle, two narrators of the
+ * SAME edition) and is pinned by the over-reach guard tests in
+ * `similarity.test.ts`. Removing or weakening this re-breaks the corpus; any
+ * future tightening must be a conscious, test-visible decision.
  */
 function collapseInitials(s: string): string {
   return s.replace(/\b([a-z])\s+(?=[a-z]\b)/g, '$1');
@@ -120,8 +131,17 @@ export const NARRATOR_MATCH_THRESHOLD = 0.8;
  * which is in scope. The literal `narrator` token is the seam between the two
  * layers — 5A's role-prefix strip leaves a bare `Narrator` as the string
  * `'narrator'` (direct callers unchanged), and 5B drops that token here.
+ *
+ * SINGLE HOME for the narrator-placeholder vocabulary (#1657). The metadata
+ * reject-word strip (`PSEUDO_NARRATORS` in `src/server/services/metadata.service.ts`)
+ * is a deliberately NARROWER decision (a 3-value subset) that answers a
+ * different question — "strip this fake narrator from the reject-word search
+ * surface?" rather than "does this token carry usable fuzzy-match signal?". That
+ * subset relationship is pinned by a named consistency test so the two paths
+ * can never silently diverge. Exported so the test can reference this set; do
+ * not fork a second copy of the full vocabulary.
  */
-const NARRATOR_PLACEHOLDERS = new Set([
+export const NARRATOR_PLACEHOLDERS = new Set([
   'author',
   'multiple readers',
   'various',

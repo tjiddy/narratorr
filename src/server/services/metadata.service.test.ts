@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES } from '../../core/index.js';
+import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { MetadataService, isRejectedByWords } from './metadata.service.js';
+import { MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
 import type { BookMetadata } from '../../core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
@@ -2370,5 +2370,27 @@ describe('MetadataService.resolveBook', () => {
       service.resolveBook({ title: 'Words of Radiance', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
     expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+  });
+});
+
+describe('narrator-placeholder vocabulary subset consistency (#1657)', () => {
+  // PSEUDO_NARRATORS (the reject-word strip in this service) and
+  // NARRATOR_PLACEHOLDERS (the fuzzy-match no-signal vocabulary, the single home
+  // in src/core/utils/similarity.ts) are two DISTINCT decisions that overlap.
+  // The reject-word strip is intentionally NARROWER — a strict subset. Pinning
+  // that subset relationship here means adding a junk value to the shared core
+  // vocabulary can never make the two paths silently disagree; widening
+  // PSEUDO_NARRATORS to the full set (a runtime change, out of scope for #1657)
+  // would still satisfy the subset, but the explicit current-value assertion
+  // below guards that the reject-word set stays its current 3 values.
+
+  it('PSEUDO_NARRATORS ⊆ NARRATOR_PLACEHOLDERS (every reject-word marker is a known placeholder)', () => {
+    for (const marker of PSEUDO_NARRATORS) {
+      expect(NARRATOR_PLACEHOLDERS.has(marker)).toBe(true);
+    }
+  });
+
+  it('PSEUDO_NARRATORS stays its current narrow 3-value reject-word set (behavior unchanged)', () => {
+    expect([...PSEUDO_NARRATORS].sort()).toEqual(['full cast', 'unknown', 'various']);
   });
 });
