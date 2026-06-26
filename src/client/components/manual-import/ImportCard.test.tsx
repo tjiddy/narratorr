@@ -171,6 +171,58 @@ describe('ImportCard', () => {
       expect(screen.getByText(/12 files/)).toBeInTheDocument();
     });
 
+    // #1660 — the row must display the top-level edited.narrators (where the Edit
+    // Book modal saves the user's narrator), preferring it over metadata.narrators,
+    // mirroring the import-confirm + server narrator precedence.
+    it('shows top-level edited.narrators on a No-Match row (no metadata)', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          book: makeBook({ fileCount: 5 }),
+          matchResult: makeMatchResult({ confidence: 'none', bestMatch: null }),
+          edited: { title: 'The Catcher in the Rye', author: 'J. D. Salinger', series: '', narrators: ['Ray Hagen'] },
+        })}
+      />);
+      expect(screen.getByText(/Ray Hagen/)).toBeInTheDocument();
+      expect(screen.queryByText(/5 files/)).not.toBeInTheDocument();
+    });
+
+    it('prefers top-level edited.narrators over metadata.narrators when they differ', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', narrators: ['Ray Hagen'], metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: ['Jim Dale'] } },
+        })}
+      />);
+      expect(screen.getByText(/Ray Hagen/)).toBeInTheDocument();
+      expect(screen.queryByText(/Jim Dale/)).not.toBeInTheDocument();
+    });
+
+    it('shows the seeded top-level narrator on a matched, never-edited row', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', narrators: ['Jim Dale'], metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: ['Jim Dale'] } },
+        })}
+      />);
+      expect(screen.getByText(/Jim Dale/)).toBeInTheDocument();
+    });
+
+    it('falls back to metadata.narrators when the top-level narrator is cleared on a matched row', () => {
+      // Display mirrors import precedence: clearing is display-only, so the row shows
+      // metadata.narrators — exactly what the server will import via its fallback.
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: ['Jim Dale'] } },
+        })}
+      />);
+      expect(screen.getByText(/Jim Dale/)).toBeInTheDocument();
+    });
+
     it('shows singular "1 file" form when fileCount is 1', () => {
       render(<ImportCard {...defaultProps} row={makeRow({ book: makeBook({ fileCount: 1 }) })} />);
       expect(screen.getByText(/1 file[^s]/)).toBeInTheDocument();
