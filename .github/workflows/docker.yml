@@ -179,6 +179,22 @@ jobs:
           NODE_VERSION=$(docker exec smoke-test node --version)
           echo "Container Node version: $NODE_VERSION"
 
+          # Guard the ffmpeg-8 dependency (#1679): xHE-AAC / USAC decode needs ffmpeg >= 8.
+          # Parse the major NUMERICALLY (sed-captured integer, then `-lt` compare) so a bare
+          # substring '8' inside an unrelated build token can't satisfy the gate.
+          FFMPEG_LINE=$(docker exec smoke-test ffmpeg -version | head -n1)
+          echo "Container ffmpeg: $FFMPEG_LINE"
+          FFMPEG_MAJOR=$(printf '%s\n' "$FFMPEG_LINE" | sed -n 's/^ffmpeg version \([0-9][0-9]*\)\..*/\1/p')
+
+          # Verify ffprobe exists and is executable at its resolved path inside the image.
+          FFPROBE_PATH=$(docker exec smoke-test sh -c 'command -v ffprobe' || true)
+          echo "Container ffprobe path: $FFPROBE_PATH"
+          if [ -n "$FFPROBE_PATH" ] && docker exec smoke-test test -x "$FFPROBE_PATH"; then
+            FFPROBE_EXECUTABLE=yes
+          else
+            FFPROBE_EXECUTABLE=no
+          fi
+
           docker stop smoke-test > /dev/null 2>&1 || true
           docker rm smoke-test > /dev/null 2>&1 || true
 
@@ -192,7 +208,21 @@ jobs:
             exit 1
           fi
 
-          echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION)"
+          if [ -z "$FFMPEG_MAJOR" ]; then
+            echo "::error::Could not parse ffmpeg major version from: $FFMPEG_LINE"
+            exit 1
+          fi
+          if [ "$FFMPEG_MAJOR" -lt 8 ]; then
+            echo "::error::ffmpeg major version $FFMPEG_MAJOR < 8 — xHE-AAC/USAC decode regression (#1679)"
+            exit 1
+          fi
+
+          if [ "$FFPROBE_EXECUTABLE" != "yes" ]; then
+            echo "::error::ffprobe missing or not executable in image (path: '${FFPROBE_PATH:-not found}')"
+            exit 1
+          fi
+
+          echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION, ffmpeg major $FFMPEG_MAJOR, ffprobe $FFPROBE_PATH)"
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'

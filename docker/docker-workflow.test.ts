@@ -162,6 +162,28 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
     });
   });
 
+  describe('ffmpeg-8 dependency guard (#1679)', () => {
+    it('runs ffmpeg -version inside the built image', () => {
+      const wf = load();
+      expect(wf).toContain('ffmpeg -version');
+    });
+
+    it('parses the ffmpeg major numerically and fails the build when it is < 8', () => {
+      const wf = load();
+      // Numeric capture (not a substring grep) followed by an integer `-lt 8` compare.
+      expect(wf).toMatch(/FFMPEG_MAJOR=.*sed/);
+      expect(wf).toMatch(/\$FFMPEG_MAJOR"?\s+-lt\s+8/);
+      expect(wf).toContain('xHE-AAC/USAC decode regression (#1679)');
+    });
+
+    it('verifies ffprobe exists and is executable at its resolved path', () => {
+      const wf = load();
+      expect(wf).toContain('command -v ffprobe');
+      expect(wf).toMatch(/test -x "\$FFPROBE_PATH"/);
+      expect(wf).toContain('ffprobe missing or not executable');
+    });
+  });
+
   describe('image size reporting', () => {
     it('logs image size as informational output', () => {
       const wf = load();
