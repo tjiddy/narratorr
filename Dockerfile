@@ -1,5 +1,8 @@
 # Build stage
-FROM node:24-alpine AS builder
+# Pinned to alpine3.23 to match the runner base (baseimage-alpine:3.23): the runner
+# copies this stage's musl-linked node binary, so both must share an Alpine release
+# to avoid a musl/loader ABI mismatch (#1667).
+FROM node:24-alpine3.23 AS builder
 
 # Enable corepack for pnpm
 RUN corepack enable
@@ -26,7 +29,7 @@ ARG BUILD_TIME=unknown
 RUN GIT_COMMIT=$GIT_COMMIT GIT_TAG=$GIT_TAG BUILD_TIME=$BUILD_TIME pnpm build
 
 # Production dependencies stage
-FROM node:24-alpine AS deps
+FROM node:24-alpine3.23 AS deps
 
 RUN corepack enable
 
@@ -37,7 +40,10 @@ COPY pnpm-lock.yaml package.json ./
 RUN pnpm install --prod --frozen-lockfile
 
 # Production stage — linuxserver.io base image with s6-overlay
-FROM ghcr.io/linuxserver/baseimage-alpine:3.21 AS runner
+# Alpine 3.23 ships ffmpeg 8.0.1, which natively decodes xHE-AAC / USAC (audio object
+# type 42) — 3.21/3.22 ship 6.1.2, which cannot. Bumped for #1667. Keep the builder/deps
+# node:24-alpine3.23 pin above in lockstep (musl ABI).
+FROM ghcr.io/linuxserver/baseimage-alpine:3.23 AS runner
 
 WORKDIR /app
 
@@ -46,7 +52,7 @@ ENV NODE_ENV=production
 # Install ffmpeg (LSIO base does not include it)
 RUN apk add --no-cache ffmpeg
 
-# Copy Node.js binary from builder (Alpine 3.21 does not ship Node 24 packages)
+# Copy Node.js binary from builder (Alpine 3.23 does not ship Node 24 packages)
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
 # Copy production dependencies from deps stage

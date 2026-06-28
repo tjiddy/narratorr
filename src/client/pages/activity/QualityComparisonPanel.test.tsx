@@ -193,6 +193,20 @@ describe('QualityComparisonPanel — probe error display', () => {
     expect(screen.getByText(/Unexpected error/)).toBeInTheDocument();
     expect(screen.getByText(/unexpected error occurred/i)).toBeInTheDocument();
   });
+
+  it('renders the unreadable_codec hold distinctly from the truly-empty case (#1667)', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: 'Audio files present but no readable codec — unsupported or corrupt format', holdReasons: ['unreadable_codec'] }} />);
+    expect(screen.getByText(/no readable codec/i)).toBeInTheDocument();
+    expect(screen.getByText(/unsupported by this server's FFmpeg/i)).toBeInTheDocument();
+    // Distinct from the empty-dir copy
+    expect(screen.queryByText(/No audio files found/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unable to determine download quality/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to a codec-unreadable message when probeError is null but holdReasons has unreadable_codec', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: null, holdReasons: ['unreadable_codec'] }} />);
+    expect(screen.getByText(/codec could not be read/i)).toBeInTheDocument();
+  });
 });
 
 describe('QualityComparisonPanel — existing audio metadata display', () => {
