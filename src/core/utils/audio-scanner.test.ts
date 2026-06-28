@@ -881,7 +881,10 @@ describe('scanAudioDirectory', () => {
       });
 
       it('runs ffprobe with a sanitized env (no secret, PATH preserved) alongside the timeout', async () => {
-        process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
+        // Stub the whole env so the assertion is against a known surface, not the
+        // host runner's ambient PATH (which may be absent or differ between envs).
+        const originalEnv = process.env;
+        process.env = { ...originalEnv, NARRATORR_SECRET_KEY: 'sentinel-secret', PATH: '/sentinel/bin' };
         try {
           mockExecFileSuccess(JSON.stringify({ format: { duration: '100.0' } }));
           await getFFprobeDuration('/usr/bin/ffprobe', '/audio/book.m4b');
@@ -890,9 +893,9 @@ describe('scanAudioDirectory', () => {
           expect(opts.timeout).toBe(10_000);
           expect(opts.env).toBeDefined();
           expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
-          expect(opts.env).toHaveProperty('PATH');
+          expect(opts.env!.PATH).toBe('/sentinel/bin');
         } finally {
-          delete process.env.NARRATORR_SECRET_KEY;
+          process.env = originalEnv;
         }
       });
     });
@@ -1207,7 +1210,10 @@ describe('scanAudioDirectory codec fallback (xHE-AAC / USAC, #1667)', () => {
     setupSingleFile();
     mockParseFile.mockResolvedValue(noCodecMetadata() as never);
     routeExecFile({ stream: streamJson() });
-    process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
+    // Stub the whole env so the assertion is against a known surface, not the host
+    // runner's ambient PATH (which may be absent or differ between environments).
+    const originalEnv = process.env;
+    process.env = { ...originalEnv, NARRATORR_SECRET_KEY: 'sentinel-secret', PATH: '/sentinel/bin' };
     try {
       await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
 
@@ -1215,9 +1221,9 @@ describe('scanAudioDirectory codec fallback (xHE-AAC / USAC, #1667)', () => {
       const opts = streamCall![2] as { timeout?: number; env?: Record<string, string> };
       expect(opts.timeout).toBe(10_000);
       expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
-      expect(opts.env).toHaveProperty('PATH');
+      expect(opts.env!.PATH).toBe('/sentinel/bin');
     } finally {
-      delete process.env.NARRATORR_SECRET_KEY;
+      process.env = originalEnv;
     }
   });
 
