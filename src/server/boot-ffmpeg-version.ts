@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from './utils/serialize-error.js';
 import { deriveFfprobePath } from '../core/utils/ffprobe-path.js';
+import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js';
 
 /** Injected probes — mirror the `audio-processor` exports, kept as deps for testability. */
 export interface FfmpegVersionProbeDeps {
@@ -40,4 +41,18 @@ export async function logFfmpegVersionAtBoot(
   } catch (error: unknown) {
     log.warn({ error: serializeError(error) }, 'Failed to probe ffmpeg version at startup');
   }
+}
+
+/**
+ * Boot orchestration for the ffmpeg/ffprobe version log (#1679).
+ *
+ * Binds the production `detectFfmpegPath` / `probeFfmpeg` probes (which spawn
+ * through `sanitizedEnv()`, #1549) and forwards them to `logFfmpegVersionAtBoot`.
+ * Extracted from `main()` — mirroring `checkReverseProxyBootConfig` in
+ * `boot-warnings.ts` — so the production wiring AND the best-effort
+ * never-rethrow contract are unit-testable without booting the server; the call
+ * site in `index.ts` stays a single TypeScript-checked line.
+ */
+export async function checkFfmpegVersionAtBoot(log: FastifyBaseLogger): Promise<void> {
+  await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
 }

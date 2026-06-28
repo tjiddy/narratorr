@@ -84,8 +84,7 @@ import { applyPendingRestore } from './services/backup.service.js';
 import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
 import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-warnings.js';
-import { logFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
-import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js';
+import { checkFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
 import { registerV1OpenApi } from './routes/v1/openapi.js';
@@ -164,7 +163,7 @@ async function main() {
 
   // Log the detected ffmpeg/ffprobe versions once (best-effort) so an ffmpeg<8
   // regression is visible in boot output, not just inferred from holds (#1679).
-  await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, app.log);
+  await checkFfmpegVersionAtBoot(app.log);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);

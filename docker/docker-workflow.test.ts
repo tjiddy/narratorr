@@ -176,11 +176,15 @@ describe('Docker CI workflow (.github/workflows/docker.yml)', () => {
       expect(wf).toContain('xHE-AAC/USAC decode regression (#1679)');
     });
 
-    it('verifies ffprobe exists and is executable at its resolved path', () => {
+    it('verifies ffprobe is executable at the app-derived path, not just anywhere on PATH', () => {
       const wf = load();
-      expect(wf).toContain('command -v ffprobe');
+      // Must derive ffprobe from the resolved ffmpeg path the same way deriveFfprobePath()
+      // does (trailing 'ffmpeg' -> 'ffprobe' swap), NOT a bare `command -v ffprobe`.
+      expect(wf).toContain("command -v ffmpeg");
+      expect(wf).toMatch(/FFPROBE_PATH=.*sed 's\/ffmpeg\$\/ffprobe\//);
       expect(wf).toMatch(/test -x "\$FFPROBE_PATH"/);
-      expect(wf).toContain('ffprobe missing or not executable');
+      expect(wf).not.toMatch(/command -v ffprobe/);
+      expect(wf).toContain('ffprobe not executable at the app-derived path');
     });
   });
 

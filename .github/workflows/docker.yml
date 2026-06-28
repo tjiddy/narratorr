@@ -186,10 +186,15 @@ jobs:
           echo "Container ffmpeg: $FFMPEG_LINE"
           FFMPEG_MAJOR=$(printf '%s\n' "$FFMPEG_LINE" | sed -n 's/^ffmpeg version \([0-9][0-9]*\)\..*/\1/p')
 
-          # Verify ffprobe exists and is executable at its resolved path inside the image.
-          FFPROBE_PATH=$(docker exec smoke-test sh -c 'command -v ffprobe' || true)
-          echo "Container ffprobe path: $FFPROBE_PATH"
-          if [ -n "$FFPROBE_PATH" ] && docker exec smoke-test test -x "$FFPROBE_PATH"; then
+          # Verify ffprobe is executable at the path the APP derives, not just anywhere on
+          # PATH. Runtime resolves ffprobe via deriveFfprobePath() (src/core/utils/ffprobe-path.ts)
+          # — the sibling of the detected ffmpeg binary with a trailing 'ffmpeg' -> 'ffprobe'
+          # swap. Mirror that derivation here so an image whose ffprobe sibling is missing
+          # fails CI even if some other ffprobe exists elsewhere on PATH (#1679 F1).
+          FFMPEG_PATH=$(docker exec smoke-test sh -c 'command -v ffmpeg' || true)
+          FFPROBE_PATH=$(printf '%s\n' "$FFMPEG_PATH" | sed 's/ffmpeg$/ffprobe/')
+          echo "Container ffmpeg path: $FFMPEG_PATH — derived ffprobe path: $FFPROBE_PATH"
+          if [ -n "$FFMPEG_PATH" ] && docker exec smoke-test test -x "$FFPROBE_PATH"; then
             FFPROBE_EXECUTABLE=yes
           else
             FFPROBE_EXECUTABLE=no
@@ -218,7 +223,7 @@ jobs:
           fi
 
           if [ "$FFPROBE_EXECUTABLE" != "yes" ]; then
-            echo "::error::ffprobe missing or not executable in image (path: '${FFPROBE_PATH:-not found}')"
+            echo "::error::ffprobe not executable at the app-derived path '${FFPROBE_PATH:-not found}' (derived from ffmpeg '${FFMPEG_PATH:-not found}') (#1679)"
             exit 1
           fi
 

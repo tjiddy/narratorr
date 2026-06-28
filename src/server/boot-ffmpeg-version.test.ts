@@ -1,5 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
-import { logFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
+
+// Mock the production probes so the boot orchestration (`checkFfmpegVersionAtBoot`)
+// can be exercised with the SAME real dependency module it wires in production —
+// proving the wiring, not just the deps-injected helper.
+vi.mock('../core/utils/audio-processor.js', () => ({
+  detectFfmpegPath: vi.fn(),
+  probeFfmpeg: vi.fn(),
+}));
+
+import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js';
+import { logFfmpegVersionAtBoot, checkFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
 import { createMockLogger, inject } from './__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 
@@ -54,5 +65,42 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
     expect(log.info).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(calls(log.warn)[0]![0] as string).toMatch(/ffmpeg/i);
+  });
+});
+
+describe('checkFfmpegVersionAtBoot — production wiring (#1679 F2)', () => {
+  beforeEach(() => {
+    (detectFfmpegPath as Mock).mockReset();
+    (probeFfmpeg as Mock).mockReset();
+  });
+
+  it('wires the production detectFfmpegPath/probeFfmpeg probes and logs once on success', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    (detectFfmpegPath as Mock).mockResolvedValue('/usr/bin/ffmpeg');
+    (probeFfmpeg as Mock).mockResolvedValue('8.0.1');
+
+    await checkFfmpegVersionAtBoot(log);
+
+    expect(detectFfmpegPath).toHaveBeenCalledTimes(1);
+    expect(probeFfmpeg).toHaveBeenCalledWith('/usr/bin/ffmpeg');
+    expect(log.info).toHaveBeenCalledTimes(1);
+    const [payload] = calls(log.info)[0]! as [Record<string, unknown>, string];
+    expect(payload).toMatchObject({
+      ffmpegPath: '/usr/bin/ffmpeg',
+      ffmpegVersion: '8.0.1',
+      ffprobePath: '/usr/bin/ffprobe',
+    });
+  });
+
+  it('stays best-effort: resolves (boot proceeds) and warns when the production probe rejects', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    (detectFfmpegPath as Mock).mockResolvedValue('/usr/bin/ffmpeg');
+    (probeFfmpeg as Mock).mockRejectedValue(new Error('spawn ENOENT'));
+
+    // Resolving without throwing is the contract that lets main() reach listen().
+    await expect(checkFfmpegVersionAtBoot(log)).resolves.toBeUndefined();
+
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.info).not.toHaveBeenCalled();
   });
 });
