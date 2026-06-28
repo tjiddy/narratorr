@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { scanAudioDirectory, getFFprobeDuration, getFFprobeStreamInfo, readAlbumTag } from './audio-scanner.js';
+import { scanAudioDirectory, getFFprobeDuration, getFFprobeStreamInfo, getFFprobeStreamDuration, readAlbumTag } from './audio-scanner.js';
 
 // Mock music-metadata
 vi.mock('music-metadata', () => ({
@@ -888,6 +888,90 @@ describe('scanAudioDirectory', () => {
         try {
           mockExecFileSuccess(JSON.stringify({ format: { duration: '100.0' } }));
           await getFFprobeDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+
+          const opts = mockExecFile.mock.calls[0]![2] as { timeout?: number; env?: Record<string, string> };
+          expect(opts.timeout).toBe(10_000);
+          expect(opts.env).toBeDefined();
+          expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+          expect(opts.env!.PATH).toBe('/sentinel/bin');
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
+    describe('getFFprobeStreamDuration helper (#1676)', () => {
+      it('returns parsed duration from the first stream when ffprobe returns valid JSON with a stream duration string', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '50177.273333' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeCloseTo(50177.273333);
+      });
+
+      it('returns null when ffprobe returns empty/malformed JSON', async () => {
+        mockExecFileSuccess('not json at all');
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the streams array is absent or empty', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the first stream carries no duration', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ codec_name: 'aac' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the stream duration is "0"', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '0' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the stream duration is a negative string', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '-123.456' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the stream duration is NaN or a non-numeric string', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: 'N/A' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null without throwing when ffprobe spawn fails (ENOENT)', async () => {
+        mockExecFileError(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+        const result = await getFFprobeStreamDuration('/nonexistent/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when ffprobe spawn exceeds 10 000 ms timeout', async () => {
+        mockExecFileError(Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('passes the stream=duration argv (with -select_streams a:0) to ffprobe', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '100.0' }] }));
+        await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(mockExecFile).toHaveBeenCalledWith(
+          '/usr/bin/ffprobe',
+          ['-v', 'quiet', '-select_streams', 'a:0', '-show_entries', 'stream=duration', '-of', 'json', '/audio/book.m4b'],
+          expect.objectContaining({ timeout: 10_000 }),
+          expect.any(Function),
+        );
+      });
+
+      it('runs ffprobe with a sanitized env (no secret, PATH preserved) alongside the timeout', async () => {
+        const originalEnv = process.env;
+        process.env = { ...originalEnv, NARRATORR_SECRET_KEY: 'sentinel-secret', PATH: '/sentinel/bin' };
+        try {
+          mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '100.0' }] }));
+          await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
 
           const opts = mockExecFile.mock.calls[0]![2] as { timeout?: number; env?: Record<string, string> };
           expect(opts.timeout).toBe(10_000);
