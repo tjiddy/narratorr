@@ -39,6 +39,40 @@ export async function getFFprobeDuration(ffprobePath: string, filePath: string):
 }
 
 /**
+ * Get the **stream-level** duration of a single audio file via ffprobe.
+ *
+ * This is a deliberately *different* ffprobe entry than `getFFprobeDuration`'s
+ * `format=duration`: it queries `stream=duration` on the first audio stream, so it
+ * can recover a duration for containers that expose a stream-level duration but no
+ * `format`-level one (fragmented / streamed / atypical MP4s — exactly the
+ * xHE-AAC-class releases the codec fallback exists to rescue). Mirrors
+ * `getFFprobeDuration`'s signature and graceful-null contract: returns the duration
+ * in seconds, or null if ffprobe fails, times out, returns malformed JSON, or
+ * yields an absent / `<= 0` value. Never throws.
+ */
+export async function getFFprobeStreamDuration(ffprobePath: string, filePath: string): Promise<number | null> {
+  try {
+    const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      execFile(
+        ffprobePath,
+        ['-v', 'quiet', '-select_streams', 'a:0', '-show_entries', 'stream=duration', '-of', 'json', filePath],
+        { timeout: 10_000, env: sanitizedEnv() },
+        (error, stdout, stderr) => {
+          if (error) reject(error);
+          else resolve({ stdout: stdout as string, stderr: stderr as string });
+        },
+      );
+    });
+    const parsed = JSON.parse(stdout);
+    const duration = parseFloat(parsed?.streams?.[0]?.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+    return duration;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read a single audio file's first audio stream technical info via ffprobe.
  * This is the codec fallback for files music-metadata cannot read — notably
  * xHE-AAC / USAC, whose pure-JS parser yields no codec (which ffmpeg ≥ 7.1 / the
