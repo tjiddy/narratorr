@@ -10,8 +10,22 @@ vi.mock('node:fs/promises', () => ({
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { generateOpf, writeOpfForImport } from './opf-writer.js';
+import { parseOpfMetadata } from './abs-opf-parser.fixture.js';
 import { NARRATORR_OPF_MARKER } from '../../core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
+
+/** Wrap raw `<metadata>` children in a minimal OPF 2.0 package — for hand-built drift/negative cases. */
+function rawOpf(metadataInner: string): string {
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">',
+    '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">',
+    metadataInner,
+    '  </metadata>',
+    '</package>',
+    '',
+  ].join('\n');
+}
 
 function makeLog(): FastifyBaseLogger {
   return {
@@ -45,77 +59,11 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
 const names = (people: { name: string }[]): { name: string }[] => people;
 
 describe('generateOpf', () => {
-  it('emits every supported field in the exact ABS parseOpfMetadata shape (fixture-parse)', () => {
-    const opf = generateOpf(makeBook({
-      title: 'A Title',
-      subtitle: 'A Subtitle',
-      description: 'A description.',
-      publisher: 'A Publisher',
-      publishedDate: '2021-05-01',
-      asin: 'B00ASIN123',
-      isbn: '9781234567890',
-      seriesName: 'My Series',
-      seriesPosition: 3,
-      genres: ['Fantasy', 'Adventure'],
-      authors: names([{ name: 'Jane Author' }]) as BookWithAuthor['authors'],
-      narrators: names([{ name: 'Nick Narrator' }]) as BookWithAuthor['narrators'],
-    }));
-
-    const $ = cheerio.load(opf, { xmlMode: true });
-
-    expect($('dc\\:title').text()).toBe('A Title');
-    expect($('dc\\:subtitle').text()).toBe('A Subtitle');
-    expect($('dc\\:description').text()).toBe('A description.');
-    expect($('dc\\:publisher').text()).toBe('A Publisher');
-    expect($('dc\\:date').text()).toBe('2021-05-01');
-
-    const creators = $('dc\\:creator').toArray();
-    const authors = creators.filter((el) => $(el).attr('opf:role') === 'aut').map((el) => $(el).text());
-    const narrators = creators.filter((el) => $(el).attr('opf:role') === 'nrt').map((el) => $(el).text());
-    expect(authors).toEqual(['Jane Author']);
-    expect(narrators).toEqual(['Nick Narrator']);
-
-    const ids = $('dc\\:identifier').toArray();
-    const byScheme = (scheme: string) => ids.filter((el) => $(el).attr('opf:scheme') === scheme).map((el) => $(el).text());
-    expect(byScheme('ASIN')).toEqual(['B00ASIN123']);
-    expect(byScheme('ISBN')).toEqual(['9781234567890']);
-
-    const metas = $('meta').toArray();
-    const metaContent = (name: string) => metas.filter((el) => $(el).attr('name') === name).map((el) => $(el).attr('content'));
-    expect(metaContent('calibre:series')).toEqual(['My Series']);
-    expect(metaContent('calibre:series_index')).toEqual(['3']);
-
-    const subjects = $('dc\\:subject').toArray().map((el) => $(el).text());
-    expect(subjects).toEqual(['Fantasy', 'Adventure']);
-
-    // No dc:language (no DB column this phase) and no cover reference.
-    expect(opf).not.toContain('dc:language');
-    expect(opf).not.toContain('cover');
-  });
-
   it('series meta pair is adjacent (calibre:series immediately followed by calibre:series_index)', () => {
     const opf = generateOpf(makeBook({ seriesName: 'Saga', seriesPosition: 2 }));
     expect(opf).toContain(
       '    <meta name="calibre:series" content="Saga"/>\n    <meta name="calibre:series_index" content="2"/>',
     );
-  });
-
-  it('emits one dc:creator per author in source order', () => {
-    const opf = generateOpf(makeBook({
-      authors: names([{ name: 'First Author' }, { name: 'Second Author' }]) as BookWithAuthor['authors'],
-    }));
-    const $ = cheerio.load(opf, { xmlMode: true });
-    const authors = $('dc\\:creator').toArray().filter((el) => $(el).attr('opf:role') === 'aut').map((el) => $(el).text());
-    expect(authors).toEqual(['First Author', 'Second Author']);
-  });
-
-  it('emits one dc:creator per narrator in source order', () => {
-    const opf = generateOpf(makeBook({
-      narrators: names([{ name: 'First Narrator' }, { name: 'Second Narrator' }]) as BookWithAuthor['narrators'],
-    }));
-    const $ = cheerio.load(opf, { xmlMode: true });
-    const narrators = $('dc\\:creator').toArray().filter((el) => $(el).attr('opf:role') === 'nrt').map((el) => $(el).text());
-    expect(narrators).toEqual(['First Narrator', 'Second Narrator']);
   });
 
   it('escapes XML special characters in text and attributes and round-trips back to the raw values', () => {
@@ -187,6 +135,170 @@ describe('generateOpf', () => {
     expect($('dc\\:identifier[opf\\:scheme="ASIN"]').text()).toBe('B00ASIN123');
     expect($('meta[name="calibre:series"]').attr('content')).toBe('S');
     expect($('package').attr('version')).toBe('2.0');
+  });
+});
+
+// The authoritative ABS-compatibility guarantee: assert generateOpf's output against the ACTUAL
+// Audiobookshelf field mapping (parseOpfMetadata.js, pinned in abs-opf-parser.fixture.ts), not the
+// Cheerio "a selector found the tag" check above. A tag-presence check passes while the real ABS
+// field mapping silently breaks (wrong opf:role, scheme casing, series-meta adjacency); these do not.
+describe('generateOpf — ABS parseOpfMetadata contract', () => {
+  it('round-trips a representative book to ABS\'s exact extracted shape', () => {
+    const opf = generateOpf(makeBook({
+      title: 'A Title',
+      subtitle: 'A Subtitle',
+      description: 'A description.',
+      publisher: 'A Publisher',
+      publishedDate: '2021-05-01',
+      asin: 'B00ASIN123',
+      isbn: '9781234567890',
+      seriesName: 'My Series',
+      seriesPosition: 3,
+      genres: ['Fantasy', 'Adventure'],
+      authors: names([{ name: 'A1' }, { name: 'A2' }]) as BookWithAuthor['authors'],
+      narrators: names([{ name: 'N1' }, { name: 'N2' }]) as BookWithAuthor['narrators'],
+    }));
+
+    const parsed = parseOpfMetadata(opf);
+
+    expect(parsed).toMatchObject({
+      title: 'A Title',
+      subtitle: 'A Subtitle',
+      description: 'A description.',
+      publisher: 'A Publisher',
+      publishedYear: '2021', // year only, not the full dc:date
+      authors: ['A1', 'A2'], // ordered, role-bucketed
+      narrators: ['N1', 'N2'],
+      asin: 'B00ASIN123',
+      isbn: '9781234567890',
+      series: [{ name: 'My Series', sequence: '3' }], // sequence is a string
+      genres: ['Fantasy', 'Adventure'],
+    });
+    // Fields narratorr never emits stay at ABS's empty defaults.
+    expect(parsed.language).toBeNull();
+    expect(parsed.tags).toEqual([]);
+  });
+
+  describe('creator role bucketing', () => {
+    it('separates aut/nrt creators into ordered arrays', () => {
+      const opf = generateOpf(makeBook({
+        authors: names([{ name: 'First Author' }, { name: 'Second Author' }]) as BookWithAuthor['authors'],
+        narrators: names([{ name: 'First Narrator' }, { name: 'Second Narrator' }]) as BookWithAuthor['narrators'],
+      }));
+      const parsed = parseOpfMetadata(opf);
+      expect(parsed.authors).toEqual(['First Author', 'Second Author']);
+      expect(parsed.narrators).toEqual(['First Narrator', 'Second Narrator']);
+    });
+
+    it('does NOT bucket a dc:creator with no opf:role (or a wrong role) — true ABS failure mode', () => {
+      const parsed = parseOpfMetadata(rawOpf([
+        '    <dc:title>X</dc:title>',
+        '    <dc:creator>No Role</dc:creator>',
+        '    <dc:creator opf:role="edt">Wrong Role</dc:creator>',
+      ].join('\n')));
+      expect(parsed.authors).toEqual([]);
+      expect(parsed.narrators).toEqual([]);
+    });
+  });
+
+  describe('identifier scheme keying', () => {
+    it.each([
+      { asin: 'B00ASIN123', isbn: null, expected: { asin: 'B00ASIN123', isbn: null } },
+      { asin: null, isbn: '9781234567890', expected: { asin: null, isbn: '9781234567890' } },
+      { asin: 'B00ASIN123', isbn: '9781234567890', expected: { asin: 'B00ASIN123', isbn: '9781234567890' } },
+    ])('reads flat asin/isbn by case-sensitive scheme (asin=$asin isbn=$isbn)', ({ asin, isbn, expected }) => {
+      const parsed = parseOpfMetadata(generateOpf(makeBook({ asin, isbn })));
+      expect(parsed.asin).toBe(expected.asin);
+      expect(parsed.isbn).toBe(expected.isbn);
+    });
+
+    it('yields null when dc:identifier is missing its opf:scheme — true ABS failure mode', () => {
+      const parsed = parseOpfMetadata(rawOpf([
+        '    <dc:title>X</dc:title>',
+        '    <dc:identifier>B00NOSCHEME</dc:identifier>',
+      ].join('\n')));
+      expect(parsed.asin).toBeNull();
+      expect(parsed.isbn).toBeNull();
+    });
+  });
+
+  describe('series adjacency, fallback, and boundaries', () => {
+    it('reads the adjacent series_index as a string sequence', () => {
+      const parsed = parseOpfMetadata(generateOpf(makeBook({ seriesName: 'My Series', seriesPosition: 3 })));
+      expect(parsed.series).toEqual([{ name: 'My Series', sequence: '3' }]);
+    });
+
+    it('round-trips seriesPosition 0 as sequence "0" (string, not dropped)', () => {
+      const parsed = parseOpfMetadata(generateOpf(makeBook({ seriesName: 'Zero Saga', seriesPosition: 0 })));
+      expect(parsed.series).toEqual([{ name: 'Zero Saga', sequence: '0' }]);
+    });
+
+    it('yields sequence null for a series with no index and no stray series_index', () => {
+      const parsed = parseOpfMetadata(generateOpf(makeBook({ seriesName: 'No Index Saga', seriesPosition: null })));
+      expect(parsed.series).toEqual([{ name: 'No Index Saga', sequence: null }]);
+    });
+
+    it('recovers a non-adjacent series_index via ABS\'s single-series fallback', () => {
+      const parsed = parseOpfMetadata(rawOpf([
+        '    <dc:title>X</dc:title>',
+        '    <meta name="calibre:series" content="Solo"/>',
+        '    <meta name="calibre:rating" content="5"/>',
+        '    <meta name="calibre:series_index" content="7"/>',
+      ].join('\n')));
+      expect(parsed.series).toEqual([{ name: 'Solo', sequence: '7' }]);
+    });
+  });
+
+  describe('subjects → genres and date → year', () => {
+    it('exposes ordered genres and an empty array when genres is null', () => {
+      expect(parseOpfMetadata(generateOpf(makeBook({ genres: ['Fantasy', 'Adventure'] }))).genres)
+        .toEqual(['Fantasy', 'Adventure']);
+      expect(parseOpfMetadata(generateOpf(makeBook({ genres: null }))).genres).toEqual([]);
+    });
+
+    it('reduces dc:date to the year, and yields null for a non-4-digit date', () => {
+      expect(parseOpfMetadata(generateOpf(makeBook({ publishedDate: '2021-05-01' }))).publishedYear).toBe('2021');
+      expect(parseOpfMetadata(generateOpf(makeBook({ publishedDate: 'garbage' }))).publishedYear).toBeNull();
+    });
+  });
+
+  it('collapses duplicate author, narrator, and genre values to one (ABS new Set), first-seen order', () => {
+    const opf = generateOpf(makeBook({
+      authors: names([{ name: 'Dup' }, { name: 'Dup' }, { name: 'Other' }]) as BookWithAuthor['authors'],
+      narrators: names([{ name: 'NDup' }, { name: 'NDup' }]) as BookWithAuthor['narrators'],
+      genres: ['Sci-Fi', 'Sci-Fi', 'Horror'],
+    }));
+    const parsed = parseOpfMetadata(opf);
+    expect(parsed.authors).toEqual(['Dup', 'Other']);
+    expect(parsed.narrators).toEqual(['NDup']);
+    expect(parsed.genres).toEqual(['Sci-Fi', 'Horror']);
+  });
+
+  it('un-escapes and strips HTML in dc:description (mirrors ABS fetchDescription)', () => {
+    // The writer escapes a literal '<b>' to '&lt;b&gt;'; ABS un-escapes then strips the tag.
+    const parsed = parseOpfMetadata(generateOpf(makeBook({ description: 'Bold <b>word</b> here' })));
+    expect(parsed.description).toBe('Bold word here');
+  });
+
+  it('treats the narratorr:managed marker as inert — it produces no field (#1674)', () => {
+    // The marker is a <meta> that lives in the same array fetchSeries scans; prove it pollutes nothing.
+    const parsed = parseOpfMetadata(generateOpf(makeBook({ title: 'Owned', asin: 'B00ASIN123' })));
+    expect(parsed.title).toBe('Owned');
+    expect(parsed.asin).toBe('B00ASIN123');
+    expect(parsed.series).toEqual([]); // the marker <meta> is not misread as a series entry
+    expect(JSON.stringify(parsed)).not.toContain('narratorr:managed');
+  });
+
+  it('drift sentinel: a corrupted opf:role / dropped opf:scheme no longer round-trips (regression the Cheerio check missed)', () => {
+    // A future shape regression that keeps the XML well-formed but breaks ABS's field mapping.
+    const drifted = rawOpf([
+      '    <dc:title>X</dc:title>',
+      '    <dc:creator opf:role="author">Jane</dc:creator>', // 'author' ≠ ABS's 'aut'
+      '    <dc:identifier opf:Scheme="ASIN">B00ASIN123</dc:identifier>', // wrong-case attr name
+    ].join('\n'));
+    const parsed = parseOpfMetadata(drifted);
+    expect(parsed.authors).toEqual([]); // creator unbucketed
+    expect(parsed.asin).toBeNull(); // identifier unread
   });
 });
 
