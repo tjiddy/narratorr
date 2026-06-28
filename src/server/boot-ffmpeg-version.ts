@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from './utils/serialize-error.js';
 import { deriveFfprobePath } from '../core/utils/ffprobe-path.js';
+import { extractFfmpegMajor } from '../core/utils/ffmpeg-version.js';
 import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js';
 
 /** Injected probes — mirror the `audio-processor` exports, kept as deps for testability. */
@@ -38,6 +39,16 @@ export async function logFfmpegVersionAtBoot(
     const ffmpegVersion = await deps.probeFfmpeg(ffmpegPath);
     const ffprobePath = deriveFfprobePath(ffmpegPath);
     log.info({ ffmpegPath, ffmpegVersion, ffprobePath }, 'Detected ffmpeg/ffprobe');
+    // Runtime complement to the build-time CI smoke gate (#1689): warn only when the
+    // major is parseably < 8. Use extractFfmpegMajor (not ffmpegMajorAtLeast) so an
+    // indeterminate/custom build (null major) stays info-only and never cries wolf.
+    const major = extractFfmpegMajor(ffmpegVersion);
+    if (major !== null && major < 8) {
+      log.warn(
+        { ffmpegVersion, ffmpegPath },
+        'ffmpeg < 8 — xHE-AAC/USAC releases cannot be decoded and will be held for review (#1667/#1679)',
+      );
+    }
   } catch (error: unknown) {
     log.warn({ error: serializeError(error) }, 'Failed to probe ffmpeg version at startup');
   }
