@@ -213,6 +213,26 @@ describe('ImportOrchestrator', () => {
       expect(writeOpfForImport).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 1 }));
     });
 
+    it('OPF write failure is nonfatal — import resolves, later side effects still run, and log.warn records the continuation (#1669, F1)', async () => {
+      settingsService = createMockSettingsService({ tagging: { writeOpf: true } });
+      orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+      vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
+
+      // Import still succeeds — the OPF rejection is swallowed by the best-effort catch.
+      await expect(orchestrator.importDownload(1)).resolves.toEqual(mockResult);
+
+      // Side effects after the OPF write still fire (the catch did not abort the success path).
+      expect(runImportPostProcessing).toHaveBeenCalled();
+      expect(emitImportStatusSuccess).toHaveBeenCalled();
+      expect(connector.notifyRefresh).toHaveBeenCalled();
+
+      // The continuation is logged at warn with the book id.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        'OPF write failed during import — continuing',
+      );
+    });
+
     it('emits SSE status transitions after successful import (no import_complete — owned by queue worker, #1108)', async () => {
       await orchestrator.importDownload(1);
 
