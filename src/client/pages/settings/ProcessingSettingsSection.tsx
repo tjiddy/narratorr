@@ -23,6 +23,7 @@ const processingFormSchema = sharedProcessingFormSchema.extend({
   taggingEnabled: z.boolean(),
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
+  writeOpf: z.boolean(),
 }).superRefine((data, ctx) => {
   if (data.postProcessingScript?.trim() && data.postProcessingScriptTimeout == null) {
     ctx.addIssue({
@@ -48,6 +49,7 @@ function toFormData(settings: AppSettings): ProcessingFormData {
     taggingEnabled: settings.tagging.enabled,
     tagMode: settings.tagging.mode,
     embedCover: settings.tagging.embedCover,
+    writeOpf: settings.tagging.writeOpf,
   };
 }
 
@@ -67,6 +69,7 @@ function toPayload(data: ProcessingFormData) {
       enabled: data.taggingEnabled,
       mode: data.tagMode,
       embedCover: data.embedCover,
+      writeOpf: data.writeOpf,
     },
   };
 }
@@ -314,6 +317,22 @@ export function ProcessingSettingsSection() {
               </label>
             </div>
           </div>}
+        </div>
+
+        {/* OPF sidecar — rendered OUTSIDE the taggingEnabled conditional: it never touches audio and
+            needs no ffmpeg, so it must be usable even when Tag Embedding is off. */}
+        <div className="pt-6 mt-6 border-t border-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <label htmlFor="writeOpf" className="block text-sm font-medium">OPF Metadata Sidecar</label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">metadata.opf</code> file into each book folder on import. Using Audiobookshelf? Enable this and set &ldquo;Prefer OPF metadata&rdquo; in ABS so it shows narratorr&rsquo;s metadata instead of the release&rsquo;s embedded tags.
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
+            </label>
+          </div>
         </div>
 
         <CustomScriptSection register={register} errors={errors} />

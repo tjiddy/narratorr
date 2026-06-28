@@ -263,6 +263,7 @@ describe('settingsRegistry', () => {
         enabled: false,
         mode: 'populate_missing',
         embedCover: false,
+        writeOpf: false,
       });
     });
 

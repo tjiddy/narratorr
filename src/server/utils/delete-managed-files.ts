@@ -3,6 +3,7 @@ import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
+import { OPF_FILE_REGEX } from '../../core/utils/opf-regex.js';
 import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { serializeError } from './serialize-error.js';
 
@@ -37,18 +38,19 @@ export interface DeleteManagedFilesOptions {
 
 /**
  * A managed file is one narratorr itself owns and may delete: an audio file (by the canonical
- * {@link AUDIO_EXTENSIONS} set — never re-listed here) or the narratorr-generated cover sidecar
- * ({@link COVER_FILE_REGEX}). Matching is case-insensitive. Everything else (e-books, PDFs, NFOs,
- * subtitles, user images under non-cover names) is FOREIGN and preserved.
+ * {@link AUDIO_EXTENSIONS} set — never re-listed here), the narratorr-generated cover sidecar
+ * ({@link COVER_FILE_REGEX}), or the narratorr-generated OPF sidecar ({@link OPF_FILE_REGEX}).
+ * Matching is case-insensitive. Everything else (e-books, PDFs, NFOs, subtitles, user images under
+ * non-cover names) is FOREIGN and preserved.
  *
- * Audio is managed at ANY depth (multi-disc audio lives in disc subfolders). The cover sidecar is
- * managed ONLY at the book-folder root (`atRoot`): narratorr writes its cover only at the top level
- * (`cover-upload.ts`/`cover-download.ts`), so a nested `Disc 1/cover.jpg` or `Extras/cover.png` is
- * user/per-disc artwork — FOREIGN — and must be preserved (#1591).
+ * Audio is managed at ANY depth (multi-disc audio lives in disc subfolders). The cover and OPF
+ * sidecars are managed ONLY at the book-folder root (`atRoot`): narratorr writes them only at the top
+ * level (`cover-upload.ts`/`cover-download.ts`, `opf-writer.ts`), so a nested `Disc 1/cover.jpg` or
+ * `Disc 1/metadata.opf` is user/per-disc/foreign — and must be preserved (#1591).
  */
 function isManagedFile(name: string, atRoot: boolean): boolean {
   if (AUDIO_EXTENSIONS.has(extname(name).toLowerCase())) return true;
-  return atRoot && COVER_FILE_REGEX.test(name);
+  return atRoot && (COVER_FILE_REGEX.test(name) || OPF_FILE_REGEX.test(name));
 }
 
 /** Attempt to delete one managed file, recording success/failure; never throws. */
