@@ -526,6 +526,54 @@ describe('QualityGateOrchestrator', () => {
       expect(reason.holdReasons).toEqual(['probe_failed']);
       expect(reason.probeError).toBe('No audio files found');
     });
+
+    it('derives probe_failed when the primary fires onFilesWithoutCodec but the outputPath fallback scans empty — latch must not leak across attempts (#1677)', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale', originalPath: '/downloads/stale' });
+      // *Once queues sequence the primary vs. fallback scan — reset first so no stale queued
+      // response leaks across tests (clearAllMocks does not drain *Once queues; see learnings).
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockReset();
+      (scanAudioDirectory as ReturnType<typeof vi.fn>)
+        // primary (savePath): files present but no codec → fires onFilesWithoutCodec, returns null
+        .mockImplementationOnce((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
+          opts?.onFilesWithoutCodec?.();
+          return Promise.resolve(null);
+        })
+        // fallback (outputPath): genuinely empty → returns null WITHOUT firing the callback
+        .mockResolvedValueOnce(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledTimes(2);
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      const reason = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0].reason as { holdReasons: string[]; probeError: string };
+      expect(reason.holdReasons).toEqual(['probe_failed']);
+      expect(reason.probeError).toBe('No audio files found');
+    });
+
+    it('derives unreadable_codec from the fallback attempt when the primary scans empty and the outputPath fallback finds files with no codec (#1677)', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale', originalPath: '/downloads/stale' });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockReset();
+      (scanAudioDirectory as ReturnType<typeof vi.fn>)
+        // primary (savePath): genuinely empty → returns null WITHOUT firing the callback
+        .mockResolvedValueOnce(null)
+        // fallback (outputPath): files present but no codec → fires onFilesWithoutCodec, returns null
+        .mockImplementationOnce((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
+          opts?.onFilesWithoutCodec?.();
+          return Promise.resolve(null);
+        });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledTimes(2);
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      const reason = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0].reason as { holdReasons: string[]; probeError: string };
+      expect(reason.holdReasons).toEqual(['unreadable_codec']);
+      expect(reason.probeError).toMatch(/codec/i);
+    });
   });
 
   describe('side effect dispatch — hold path', () => {

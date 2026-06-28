@@ -1194,6 +1194,52 @@ describe('scanAudioDirectory codec fallback (xHE-AAC / USAC, #1667)', () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
+  it('does NOT signal onFilesWithoutCodec when every collected file fails to parse (firstParsed === null), ffprobe unconfigured (#1677)', async () => {
+    setupSingleFile();
+    // Every processOneFile throws after collection (e.g. EACCES) → firstParsed stays null.
+    mockParseFile.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/locked', { onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    // No file parsed far enough to show a missing codec — this is a non-codec failure
+    // (orchestrator maps it to probe_failed), so the codec signal must stay silent.
+    expect(onFilesWithoutCodec).not.toHaveBeenCalled();
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('does not let configured ffprobe recover a codec when every file failed to parse (firstParsed === null) — returns null, no probe, no signal (#1677)', async () => {
+    setupSingleFile();
+    mockParseFile.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+    // ffprobe WOULD return a readable stream if the fallback ran — it must not run on an
+    // unparsed file, so an all-files-failed directory can never become a codec-only success.
+    routeExecFile({ stream: streamJson(), duration: JSON.stringify({ format: { duration: '50177.0' } }) });
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/locked', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).not.toHaveBeenCalled();
+    const streamCalls = mockExecFile.mock.calls.filter(c => (c[1] as string[]).some(a => typeof a === 'string' && a.includes('stream=codec_name')));
+    expect(streamCalls).toHaveLength(0);
+  });
+
+  it('fires onFilesWithoutCodec for a mixed directory where one file throws but another parses with no codec (firstParsed !== null) (#1677)', async () => {
+    // Sorted by name: bad.m4b (throws) before good.m4b (parses, no codec) → firstParsed !== null.
+    mockReaddir.mockResolvedValue([makeDirent('bad.m4b', true), makeDirent('good.m4b', true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1_000_000 } as never);
+    mockParseFile
+      .mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+      .mockResolvedValueOnce(noCodecMetadata() as never);
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/mixed', { onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+  });
+
   it('does not invoke the codec probe when music-metadata already read the codec', async () => {
     setupSingleFile('readable.mp3');
     mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);

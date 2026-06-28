@@ -135,12 +135,16 @@ export async function scanAudioDirectory(
     extractTagInfo(result, loop.firstTaggedCommon, loop.firstTaggedNative, isMultiFile, multiFileTagAlbum);
   }
 
-  await applyCodecFallback(result, loop.firstParsed, audioFiles, ffprobePath, onDebug);
+  await applyCodecFallback(result, loop.firstParsed, ffprobePath, onDebug);
 
   if (!result.codec) {
-    // Files were collected (length 0 returned earlier) but none yielded a codec —
-    // signal "present but unreadable" so the caller can pick an honest hold reason.
-    onFilesWithoutCodec?.();
+    // Files were collected (length 0 returned earlier) but none yielded a codec.
+    // Only signal "present but unreadable" when at least one file parsed far enough
+    // to show a missing codec (firstParsed !== null). If every collected file threw
+    // in processOneFile (e.g. EACCES / transient access error) the directory never
+    // parsed anything — leave it a plain null so the caller maps it to a generic
+    // probe failure rather than blaming a codec it never read (#1677).
+    if (loop.firstParsed !== null) onFilesWithoutCodec?.();
     return null;
   }
 
@@ -200,19 +204,20 @@ async function scanFiles(
 /**
  * Codec fallback (load-bearing for xHE-AAC / USAC): music-metadata's pure-JS
  * parser cannot read these even on ffmpeg 8, so probe the first parsed file with
- * ffprobe before giving up. No-op once a codec is known or when ffprobe is absent.
+ * ffprobe before giving up. No-op once a codec is known, when ffprobe is absent,
+ * or when no file parsed (firstParsed === null) — recovery must run only on a file
+ * that actually parsed, never on a raw audioFiles[0] every sibling failed to read,
+ * which would turn an all-files-failed directory into a tag-less codec-only success
+ * and mask the true non-codec failure (#1677).
  */
 async function applyCodecFallback(
   result: AudioScanResult,
   firstParsed: ScanLoopState['firstParsed'],
-  audioFiles: string[],
   ffprobePath: string | undefined,
   onDebug: AudioScanOptions['onDebug'],
 ): Promise<void> {
-  if (result.codec || !ffprobePath) return;
-  const probeFile = firstParsed?.filePath ?? audioFiles[0]!;
-  const mmFormat = firstParsed?.format ?? {};
-  await fillTechnicalViaFFprobe(result, mmFormat, probeFile, ffprobePath, onDebug);
+  if (result.codec || !ffprobePath || !firstParsed) return;
+  await fillTechnicalViaFFprobe(result, firstParsed.format, firstParsed.filePath, ffprobePath, onDebug);
 }
 
 /** Per-file scan: parses metadata, accumulates totals, extracts cover+chapters. Returns null on failure. */

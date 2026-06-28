@@ -236,6 +236,11 @@ export class QualityGateOrchestrator {
     let fallbackAttempted = false;
     if (!scanResult && outputPath && outputPath !== savePath) {
       fallbackAttempted = true;
+      // Reset the latch so the persisted hold reflects only the attempt that produced
+      // the terminal null. Without this, a stale codec signal from the primary scan
+      // leaks into the fallback's outcome — a fallback that scans genuinely empty
+      // (no onFilesWithoutCodec) would still be misreported as unreadable_codec (#1677).
+      filesPresentNoCodec = false;
       try {
         scanResult = await scanAudioDirectory(outputPath, scanOpts);
         if (scanResult) {
