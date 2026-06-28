@@ -54,6 +54,70 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
     expect(payload.error).toMatchObject({ message: 'spawn ENOENT', type: 'Error' });
   });
 
+  it('warns once about ffmpeg < 8 while still emitting the info log (#1689)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('7.1.2');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
+
+    // The existing info log is NOT suppressed by the new warn.
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const [payload, message] = calls(log.warn)[0]! as [Record<string, unknown>, string];
+    // Plain object payload, not an Error — the value never traced a catch binding.
+    expect(payload).not.toBeInstanceOf(Error);
+    expect(payload).toMatchObject({ ffmpegVersion: '7.1.2', ffmpegPath: '/usr/bin/ffmpeg' });
+    expect(message).toMatch(/xHE-AAC|< 8/);
+  });
+
+  it('warns about a sub-8 distro-suffixed version (#1689)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('6.1.1-3ubuntu5');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
+
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const [payload] = calls(log.warn)[0]! as [Record<string, unknown>, string];
+    expect(payload).toMatchObject({ ffmpegVersion: '6.1.1-3ubuntu5', ffmpegPath: '/usr/bin/ffmpeg' });
+  });
+
+  it('does not warn for ffmpeg major >= 8 (info only) (#1689)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
+
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not warn for an unparseable/custom version (no false < 8 signal) (#1689)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('ffmpeg version N-109060-gabcdef custom build');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
+
+    // extractFfmpegMajor returns null here — must stay info-only, never warn.
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not warn at the >= 8 boundary (#1689)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0');
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
+
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
   it('warns and does not probe when ffmpeg is not found on the system', async () => {
     const log = inject<FastifyBaseLogger>(createMockLogger());
     const detectFfmpegPath = vi.fn().mockResolvedValue(null);
