@@ -90,6 +90,41 @@ describe('generateOpf', () => {
     expect($('meta[name="calibre:series"]').attr('content')).toBe('A & B');
   });
 
+  it('strips XML-1.0-invalid control characters from every serialized field, leaving valid XML (#1675)', () => {
+    // One representative from each banned range, embedded mid-string in each escaped field.
+    const ctrl = '\x00\x08\x0B\x0C\x0E\x1F';
+    const opf = generateOpf(makeBook({
+      title: `Ti${ctrl}tle`,
+      description: `De${ctrl}scription`,
+      publisher: `Pu${ctrl}blisher`,
+      seriesName: `Se${ctrl}ries`,
+      authors: names([{ name: `Au${ctrl}thor` }]) as BookWithAuthor['authors'],
+      narrators: names([{ name: `Na${ctrl}rrator` }]) as BookWithAuthor['narrators'],
+    }));
+
+    // No raw control byte survives anywhere in the emitted document.
+    // eslint-disable-next-line no-control-regex
+    expect(opf).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F]/);
+
+    // ...and it still parses as well-formed XML with the control chars excised.
+    const $ = cheerio.load(opf, { xmlMode: true });
+    expect($('dc\\:title').text()).toBe('Title');
+    expect($('dc\\:description').text()).toBe('Description');
+    expect($('dc\\:publisher').text()).toBe('Publisher');
+    expect($('meta[name="calibre:series"]').attr('content')).toBe('Series');
+    const creators = $('dc\\:creator').map((_i, el) => $(el).text()).get();
+    expect(creators).toEqual(['Author', 'Narrator']);
+  });
+
+  it('preserves XML-1.0-valid whitespace (tab \\x09, newline \\x0A, CR \\x0D) and the entity escaping (#1675)', () => {
+    // Tab/newline/CR are legal XML 1.0 characters — NOT stripped; the ampersand is still escaped first.
+    const opf = generateOpf(makeBook({ title: 'A\tB\nC\rD & E' }));
+    expect(opf).toContain('&amp;'); // entity escaping is unchanged (additive strip only)
+    expect(opf).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
+    // Assert the legal whitespace survives serialization (raw string — a parser would normalize CR→LF).
+    expect(opf).toMatch(/A\tB\nC\rD/);
+  });
+
   it('omits missing optional fields entirely (no empty or stray elements)', () => {
     const opf = generateOpf(makeBook({ title: 'Bare' }));
     expect(opf).toContain('<dc:title>Bare</dc:title>');
@@ -332,6 +367,22 @@ describe('writeOpfForImport', () => {
     expect(String(path).split('\\').join('/')).toBe('/lib/Author/Fresh/metadata.opf');
     expect(content).toBe(generateOpf(book));
     expect(encoding).toBe('utf-8');
+  });
+
+  it('skips the write for a pointer single-file path (audio extension) — no write, warn logged (#1675)', async () => {
+    // Pointer single-file imports persist a *file* path. join(filePath, "metadata.opf") would target
+    // a path beneath a file (ENOTDIR), and the parent dir can't be assumed to be a one-book folder, so
+    // the writer must skip with a warning rather than write — and never call writeFile with the file path.
+    const { service, getById } = makeBookService(makeBook());
+    const log = makeLog();
+    await writeOpfForImport({ enabled: true, bookService: service, bookId: 1, bookFolder: '/audiobooks/Doctor Sleep.m4b', log });
+
+    expect(writeFileMock).not.toHaveBeenCalled();
+    expect(getById).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookFolder: expect.stringContaining('Doctor Sleep') }),
+      expect.stringContaining('single-file'),
+    );
   });
 
   it('reflects a narrator added after the snapshot (proves fresh reload, not a stale book)', async () => {
