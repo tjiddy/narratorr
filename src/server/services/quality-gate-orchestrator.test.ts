@@ -270,7 +270,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         '/downloads/test',
-        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
 
       // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
@@ -289,7 +289,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         '/downloads/test',
-        { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
+        { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
     });
 
@@ -409,6 +409,7 @@ describe('QualityGateOrchestrator', () => {
           originalPath: '/downloads/orig',
           outputPath: '/downloads/persisted-correct-path',
           fallbackAttempted: true,
+          filesPresentNoCodec: false,
         },
         'Quality gate: no audio files found',
       );
@@ -452,6 +453,7 @@ describe('QualityGateOrchestrator', () => {
         originalPath: '/downloads/original',
         outputPath: '/downloads/persisted-correct-path',
         fallbackAttempted: true,
+        filesPresentNoCodec: false,
       });
 
       // Persisted reason has no diagnostic keys — exact match against canonical shape
@@ -486,6 +488,43 @@ describe('QualityGateOrchestrator', () => {
         expect.objectContaining({ fallbackAttempted: true, outputPath: '/downloads/persisted-correct-path' }),
         'Quality gate: no audio files found',
       );
+    });
+
+    it('holds with the unreadable_codec reason (not "No audio files found") when files are present but the codec is unreadable (#1667)', async () => {
+      const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      // Scanner collected files but could not determine a codec → fires onFilesWithoutCodec, returns null
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockImplementation((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
+        opts?.onFilesWithoutCodec?.();
+        return Promise.resolve(null);
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      const reason = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0].reason as { probeFailure: boolean; probeError: string; holdReasons: string[] };
+      expect(reason.probeFailure).toBe(true);
+      expect(reason.holdReasons).toEqual(['unreadable_codec']);
+      expect(reason.probeError).not.toBe('No audio files found');
+      expect(reason.probeError).toMatch(/codec/i);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ filesPresentNoCodec: true }),
+        'Quality gate: audio files present but codec unreadable',
+      );
+    });
+
+    it('still holds with probe_failed when the directory is genuinely empty (onFilesWithoutCodec not fired)', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      // Empty dir: scanner returns null WITHOUT firing onFilesWithoutCodec
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      const reason = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0].reason as { probeError: string; holdReasons: string[] };
+      expect(reason.holdReasons).toEqual(['probe_failed']);
+      expect(reason.probeError).toBe('No audio files found');
     });
   });
 
@@ -2079,7 +2118,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         '/downloads/test',
-        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
+        { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
 
       // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)

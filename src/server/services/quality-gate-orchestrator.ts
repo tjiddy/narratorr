@@ -208,11 +208,16 @@ export class QualityGateOrchestrator {
       return null;
     }
 
+    // Set when the scanner collects audio files but cannot determine a codec
+    // (e.g. an unsupported/corrupt format) — distinguishes "present but unreadable"
+    // from a genuinely-empty directory so the hold reason can be honest (#1667).
+    let filesPresentNoCodec = false;
     const scanOpts = {
       skipCover: true,
       ...(ffprobePath !== undefined && { ffprobePath }),
       onWarn: (msg: string, payload?: Record<string, unknown>) => this.log.warn(payload, msg),
       onDebug: (msg: string, payload?: Record<string, unknown>) => this.log.debug(payload, msg),
+      onFilesWithoutCodec: () => { filesPresentNoCodec = true; },
     };
 
     let scanResult;
@@ -250,8 +255,13 @@ export class QualityGateOrchestrator {
         originalPath,
         outputPath,
         fallbackAttempted,
-      }, 'Quality gate: no audio files found');
-      await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
+        filesPresentNoCodec,
+      }, filesPresentNoCodec ? 'Quality gate: audio files present but codec unreadable' : 'Quality gate: no audio files found');
+      if (filesPresentNoCodec) {
+        await this.holdForProbeFailure(row.download, row.book, 'unreadable_codec', 'Audio files present but no readable codec — unsupported or corrupt format');
+      } else {
+        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
+      }
       return null;
     }
 
