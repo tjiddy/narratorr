@@ -9,6 +9,10 @@ vi.mock('node:fs/promises', () => ({
   // keeps these injection cases on the directory-sweep path.
   lstat: vi.fn().mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false }),
   readdir: vi.fn().mockResolvedValue([]),
+  // #1674: the helper now reads a root `metadata.opf` for the narratorr provenance marker. Default to
+  // UNMARKED (foreign) content so a swept OPF is preserved unless a test explicitly stages a marked
+  // body — a blanket "marked" default would silently flip preservation assertions.
+  readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
   // #1591: guarded mode now runs the symlink-aware realpath containment. Identity realpath (no

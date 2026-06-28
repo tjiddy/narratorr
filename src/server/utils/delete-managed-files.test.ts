@@ -6,6 +6,12 @@ import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { deleteManagedBookFiles } from './delete-managed-files.js';
 import { PathOutsideLibraryError } from './paths.js';
+import { NARRATORR_OPF_MARKER } from '../../core/utils/opf-regex.js';
+
+/** A `metadata.opf` body narratorr authored (carries the provenance marker → managed). */
+const MARKED_OPF = `<?xml version="1.0"?><package><metadata>${NARRATORR_OPF_MARKER}<dc:title>X</dc:title></metadata></package>`;
+/** A foreign ABS/Calibre `metadata.opf` body (no marker → preserved). */
+const FOREIGN_OPF = '<?xml version="1.0"?><package><metadata><dc:title>ABS</dc:title></metadata></package>';
 
 function makeLog(): FastifyBaseLogger {
   return {
@@ -141,11 +147,11 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(true);
   }));
 
-  it('deletes a root metadata.opf sidecar (managed), removing the folder when otherwise empty (#1669)', withTmp(async (root) => {
+  it('deletes a MARKED root metadata.opf sidecar (managed), removing the folder when otherwise empty (#1674)', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });
     await writeFile(join(book, 'a.mp3'), 'a');
-    await writeFile(join(book, 'metadata.opf'), '<opf/>'); // managed — narratorr's OPF sidecar
+    await writeFile(join(book, 'metadata.opf'), MARKED_OPF); // narratorr-owned → managed
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
@@ -155,10 +161,25 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(false);
   }));
 
-  it('is case-insensitive for the root metadata.opf sidecar (#1669)', withTmp(async (root) => {
+  it('preserves an UNMARKED (foreign) root metadata.opf, leaving it on disk and retaining the folder (#1674)', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });
-    await writeFile(join(book, 'Metadata.OPF'), '<opf/>');
+    await writeFile(join(book, 'a.mp3'), 'a');
+    await writeFile(join(book, 'metadata.opf'), FOREIGN_OPF); // ABS/Calibre file → preserved
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.deletedManaged)).toEqual(['a.mp3']);
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
+    // The foreign OPF survives and keeps the folder alive.
+    expect(await pathExists(join(book, 'metadata.opf'))).toBe(true);
+    expect(await pathExists(book)).toBe(true);
+  }));
+
+  it('is case-insensitive: a MARKED Metadata.OPF is deleted (#1674)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'Metadata.OPF'), MARKED_OPF);
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
@@ -166,13 +187,25 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(false);
   }));
 
-  it('preserves a nested metadata.opf (managed only at the book-folder root), parallels nested cover (#1669)', withTmp(async (root) => {
+  it('is case-insensitive: an UNMARKED METADATA.OPF is preserved (#1674)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'METADATA.OPF'), FOREIGN_OPF);
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(result.deletedManaged).toEqual([]);
+    expect(base(result.preservedForeign)).toEqual(['METADATA.OPF']);
+    expect(await pathExists(join(book, 'METADATA.OPF'))).toBe(true);
+  }));
+
+  it('preserves a nested metadata.opf regardless of marker — managed only at the root (#1674)', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(join(book, 'Disc 1'), { recursive: true });
-    await writeFile(join(book, 'metadata.opf'), 'root-opf');        // managed — root sidecar
-    await writeFile(join(book, 'a.mp3'), 'a');                      // managed
-    await writeFile(join(book, 'Disc 1', 'metadata.opf'), 'nested'); // FOREIGN — nested
-    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');          // managed (audio recurses)
+    await writeFile(join(book, 'metadata.opf'), MARKED_OPF);          // managed — marked root sidecar
+    await writeFile(join(book, 'a.mp3'), 'a');                        // managed
+    await writeFile(join(book, 'Disc 1', 'metadata.opf'), MARKED_OPF); // FOREIGN — nested, even when marked
+    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');            // managed (audio recurses)
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
@@ -182,6 +215,22 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(join(book, 'Disc 1', 'metadata.opf'))).toBe(true);
     // Folder retained because the nested foreign opf survives.
     expect(await pathExists(book)).toBe(true);
+  }));
+
+  it('fails safe when a root metadata.opf cannot be read (a directory named metadata.opf) — preserved + warned (#1674)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(join(book, 'metadata.opf'), { recursive: true }); // a DIRECTORY named metadata.opf → readFile EISDIR
+    await writeFile(join(book, 'a.mp3'), 'a');
+    const log = makeLog();
+
+    const result = await deleteManagedBookFiles(book, root, log);
+
+    // The unreadable root OPF entry is preserved as foreign (never deleted, never recursed) and warned.
+    expect(base(result.deletedManaged)).toEqual(['a.mp3']);
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
+    expect(await pathExists(join(book, 'metadata.opf'))).toBe(true);
+    expect(await pathExists(book)).toBe(true);
+    expect(log.warn).toHaveBeenCalled();
   }));
 
   it('refuses a guarded-mode bookPath that is an in-library symlink escaping the root — external files untouched (#1591)', withTmp(async (root) => {

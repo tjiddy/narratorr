@@ -10,6 +10,10 @@ vi.mock('node:fs/promises', () => ({
   // it per-describe to report a non-symlink directory (the symlink branch is covered in delete-managed-files.test.ts).
   lstat: vi.fn(),
   readdir: vi.fn(),
+  // #1674: deleteManagedBookFiles (reached via cleanupOldBookPath/handleImportFailure) now reads a
+  // root `metadata.opf` for the narratorr provenance marker. Default to UNMARKED (foreign) content so
+  // a swept OPF is preserved unless a test stages a marked body — matching import.service.test.ts.
+  readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
   // #1591: cleanupOldBookPath / handleImportFailure now run the symlink-aware realpath containment.

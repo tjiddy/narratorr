@@ -4,10 +4,13 @@ import type { FastifyBaseLogger } from 'fastify';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
+  // Default: no existing OPF on disk (ENOENT) → the writer is free to write.
+  readFile: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
 }));
 
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { generateOpf, writeOpfForImport } from './opf-writer.js';
+import { NARRATORR_OPF_MARKER } from '../../core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 
 function makeLog(): FastifyBaseLogger {
@@ -171,6 +174,20 @@ describe('generateOpf', () => {
     expect($('package').attr('version')).toBe('2.0');
     expect($('dc\\:title').text()).toBe('Parse Me');
   });
+
+  it('embeds the narratorr provenance marker inside <metadata>, inert to the parsed fields (#1674)', () => {
+    const opf = generateOpf(makeBook({ title: 'Owned', asin: 'B00ASIN123', seriesName: 'S', seriesPosition: 1 }));
+    // The raw marker element is present...
+    expect(opf).toContain(NARRATORR_OPF_MARKER);
+    const $ = cheerio.load(opf, { xmlMode: true });
+    // ...sits inside <metadata>...
+    expect($('metadata meta[name="narratorr:managed"]').attr('content')).toBe('true');
+    // ...and is inert: it perturbs none of the fields a reader extracts.
+    expect($('dc\\:title').text()).toBe('Owned');
+    expect($('dc\\:identifier[opf\\:scheme="ASIN"]').text()).toBe('B00ASIN123');
+    expect($('meta[name="calibre:series"]').attr('content')).toBe('S');
+    expect($('package').attr('version')).toBe('2.0');
+  });
 });
 
 describe('writeOpfForImport', () => {
@@ -232,6 +249,50 @@ describe('writeOpfForImport', () => {
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
       expect.stringContaining('continuing'),
+    );
+  });
+
+  const readFileMock = vi.mocked(readFile);
+
+  it('writes when the target OPF does not exist (ENOENT pre-check → write) (#1674)', async () => {
+    const { service } = makeBookService(makeBook());
+    readFileMock.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await writeOpfForImport({ enabled: true, bookService: service, bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('overwrites an existing OPF that carries the narratorr marker (#1674)', async () => {
+    const { service } = makeBookService(makeBook());
+    readFileMock.mockResolvedValueOnce(`<metadata>\n  ${NARRATORR_OPF_MARKER}\n</metadata>`);
+    await writeOpfForImport({ enabled: true, bookService: service, bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT overwrite an existing unmarked (foreign) OPF — skip + warn, no throw (#1674)', async () => {
+    const { service } = makeBookService(makeBook());
+    readFileMock.mockResolvedValueOnce('<?xml version="1.0"?><package><metadata><dc:title>ABS</dc:title></metadata></package>');
+    const log = makeLog();
+    await expect(
+      writeOpfForImport({ enabled: true, bookService: service, bookId: 1, bookFolder: '/lib/Book', log }),
+    ).resolves.toBeUndefined();
+    expect(writeFileMock).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ opfPath: expect.stringContaining('metadata.opf') }),
+      expect.stringContaining('foreign'),
+    );
+  });
+
+  it('fails safe on a read error during the pre-check — skip + warn, no write (#1674)', async () => {
+    const { service } = makeBookService(makeBook());
+    readFileMock.mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+    const log = makeLog();
+    await expect(
+      writeOpfForImport({ enabled: true, bookService: service, bookId: 1, bookFolder: '/lib/Book', log }),
+    ).resolves.toBeUndefined();
+    expect(writeFileMock).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ opfPath: expect.stringContaining('metadata.opf') }),
+      expect.stringContaining('skipping'),
     );
   });
 });
