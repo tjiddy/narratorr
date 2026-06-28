@@ -1,9 +1,20 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
+import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import { serializeError } from './serialize-error.js';
+
+/**
+ * XML-1.0-invalid control characters: everything in C0 except tab (`\x09`), LF (`\x0A`) and CR
+ * (`\x0D`), which XML 1.0 §2.2 permits. External provider text (Audnexus/Hardcover/Audible) and user
+ * edits can carry a stray control byte; left in, it produces a well-escaped-but-malformed OPF that
+ * ABS's `parseOpfMetadata` rejects wholesale. Mirrors the `\x00-\x1f` strip in
+ * `naming.ts`'s `sanitizePath` (filesystem safety) — here it is XML-well-formedness safety.
+ */
+// eslint-disable-next-line no-control-regex
+const XML_INVALID_CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
 
 /**
  * Escape a string for safe inclusion in XML text or attribute values.
@@ -15,6 +26,9 @@ import { serializeError } from './serialize-error.js';
  */
 function escapeXml(value: string): string {
   return value
+    // Strip XML-invalid control chars FIRST (additive — leaves the entity escaping below
+    // byte-for-byte unchanged); `&` stays the first entity replaced so it is never double-escaped.
+    .replace(XML_INVALID_CONTROL_CHARS, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -124,6 +138,15 @@ async function mayWriteOpf(opfPath: string, log: FastifyBaseLogger): Promise<boo
 export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<void> {
   const { enabled, bookService, bookId, bookFolder, log } = args;
   if (!enabled) return;
+
+  // Pointer single-file imports persist a *file* path (e.g. `/audiobooks/Doctor Sleep.m4b`), not a
+  // book directory. `join(<file>, OPF_FILENAME)` would target a path beneath a file (ENOTDIR), and
+  // the parent dir can't be assumed to be a one-book folder (a loose file commonly sits in a shared
+  // library root), so a sidecar there would be wrong/clobbering. Skip with a warning — never write.
+  if (AUDIO_EXTENSIONS.has(extname(bookFolder).toLowerCase())) {
+    log.warn({ bookId, bookFolder }, 'OPF write skipped — pointer single-file import has no dedicated book folder');
+    return;
+  }
 
   try {
     const book = await bookService.getById(bookId);
