@@ -1,9 +1,9 @@
-import { readdir, rm, rmdir, lstat } from 'node:fs/promises';
+import { readdir, readFile, rm, rmdir, lstat } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
-import { OPF_FILE_REGEX } from '../../core/utils/opf-regex.js';
+import { OPF_FILE_REGEX, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
 import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { serializeError } from './serialize-error.js';
 
@@ -38,19 +38,47 @@ export interface DeleteManagedFilesOptions {
 
 /**
  * A managed file is one narratorr itself owns and may delete: an audio file (by the canonical
- * {@link AUDIO_EXTENSIONS} set — never re-listed here), the narratorr-generated cover sidecar
- * ({@link COVER_FILE_REGEX}), or the narratorr-generated OPF sidecar ({@link OPF_FILE_REGEX}).
- * Matching is case-insensitive. Everything else (e-books, PDFs, NFOs, subtitles, user images under
- * non-cover names) is FOREIGN and preserved.
+ * {@link AUDIO_EXTENSIONS} set — never re-listed here) or the narratorr-generated cover sidecar
+ * ({@link COVER_FILE_REGEX}). Matching is case-insensitive. Everything else (e-books, PDFs, NFOs,
+ * subtitles, user images under non-cover names) is FOREIGN and preserved.
  *
- * Audio is managed at ANY depth (multi-disc audio lives in disc subfolders). The cover and OPF
- * sidecars are managed ONLY at the book-folder root (`atRoot`): narratorr writes them only at the top
- * level (`cover-upload.ts`/`cover-download.ts`, `opf-writer.ts`), so a nested `Disc 1/cover.jpg` or
- * `Disc 1/metadata.opf` is user/per-disc/foreign — and must be preserved (#1591).
+ * Audio is managed at ANY depth (multi-disc audio lives in disc subfolders). The cover sidecar is
+ * managed ONLY at the book-folder root (`atRoot`): narratorr writes it only at the top level
+ * (`cover-upload.ts`/`cover-download.ts`), so a nested `Disc 1/cover.jpg` is user/per-disc/foreign —
+ * and must be preserved (#1591).
+ *
+ * NOTE: the root `metadata.opf` sidecar is deliberately NOT classified here. Unlike `cover.*`,
+ * `metadata.opf` is the standard ABS/Calibre filename, so ownership can't be proven by name — it
+ * requires reading the file for the narratorr provenance marker. That content-aware (async) check
+ * lives in {@link classifyRootOpf}; this fast path stays content-free (#1674).
  */
 function isManagedFile(name: string, atRoot: boolean): boolean {
   if (AUDIO_EXTENSIONS.has(extname(name).toLowerCase())) return true;
-  return atRoot && (COVER_FILE_REGEX.test(name) || OPF_FILE_REGEX.test(name));
+  return atRoot && COVER_FILE_REGEX.test(name);
+}
+
+/**
+ * Content-aware classification for a root `metadata.opf` (#1674): delete it as managed ONLY when it
+ * carries the narratorr provenance marker; otherwise preserve it as a foreign ABS/Calibre sidecar.
+ * Fails safe — any read error (EACCES/EISDIR for a directory named `metadata.opf`/…) preserves the
+ * entry as foreign and warns: narratorr never deletes an OPF it could not confirm it owns. Because
+ * an EISDIR-failing directory is preserved (not recursed), this MUST run before directory recursion
+ * at the call site.
+ */
+async function classifyRootOpf(fullPath: string, result: DeleteManagedFilesResult, log: FastifyBaseLogger): Promise<void> {
+  let content: string;
+  try {
+    content = await readFile(fullPath, 'utf-8');
+  } catch (error: unknown) {
+    result.preservedForeign.push(fullPath);
+    log.warn({ file: fullPath, error: serializeError(error) }, 'Could not read root metadata.opf to confirm narratorr ownership — preserving as foreign');
+    return;
+  }
+  if (hasNarratorrMarker(content)) {
+    await deleteOneManaged(fullPath, result, log);
+  } else {
+    result.preservedForeign.push(fullPath);
+  }
 }
 
 /** Attempt to delete one managed file, recording success/failure; never throws. */
@@ -88,7 +116,12 @@ async function sweepDir(dir: string, rootDir: string, result: DeleteManagedFiles
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
+    if (atRoot && OPF_FILE_REGEX.test(entry.name)) {
+      // Content-aware: ownership of a root metadata.opf is decided by the marker, not the name.
+      // Runs BEFORE the directory branch so a directory named `metadata.opf` is preserved (EISDIR
+      // fail-safe), never recursed/removed (#1674).
+      await classifyRootOpf(fullPath, result, log);
+    } else if (entry.isDirectory()) {
       await sweepDir(fullPath, rootDir, result, log);
     } else if (isManagedFile(entry.name, atRoot)) {
       await deleteOneManaged(fullPath, result, log);
@@ -159,6 +192,9 @@ export async function deleteManagedBookFiles(
     result.preservedForeign.push(bookPath);
   } else if (stats.isDirectory()) {
     await sweepDir(bookPath, bookPath, result, log);
+  } else if (OPF_FILE_REGEX.test(basename(bookPath))) {
+    // A single-file bookPath that is itself a root metadata.opf — same content-aware ownership check.
+    await classifyRootOpf(bookPath, result, log);
   } else if (isManagedFile(basename(bookPath), true)) {
     await deleteOneManaged(bookPath, result, log);
   } else {

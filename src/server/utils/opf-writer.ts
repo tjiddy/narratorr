@@ -1,7 +1,7 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { OPF_FILENAME } from '../../core/utils/opf-regex.js';
+import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import { serializeError } from './serialize-error.js';
 
@@ -42,6 +42,9 @@ export function generateOpf(book: BookWithAuthor): string {
     '<?xml version="1.0" encoding="utf-8"?>',
     '<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid">',
     '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">',
+    // Inert provenance marker — proves narratorr authored this OPF so the cleanup sweep may delete it
+    // and the writer may overwrite it, without clobbering a foreign ABS/Calibre `metadata.opf`.
+    `    ${NARRATORR_OPF_MARKER}`,
     `    <dc:title>${escapeXml(book.title)}</dc:title>`,
   ];
 
@@ -88,11 +91,35 @@ export interface WriteOpfForImportArgs {
 }
 
 /**
+ * Decide whether `writeOpfForImport` may write to `opfPath`. narratorr only owns an OPF it wrote, so:
+ * absent (ENOENT) → write freely; present-and-marked → overwrite our own file; present-and-unmarked
+ * → a foreign ABS/Calibre file, do NOT clobber it. A read failure (EACCES/EISDIR/…) fails safe: we
+ * could not confirm ownership, so we skip rather than risk overwriting a user file.
+ */
+async function mayWriteOpf(opfPath: string, log: FastifyBaseLogger): Promise<boolean> {
+  let existing: string;
+  try {
+    existing = await readFile(opfPath, 'utf-8');
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true; // no file yet → write
+    log.warn({ opfPath, error: serializeError(error) }, 'Could not read existing metadata.opf — skipping OPF write to avoid clobbering a foreign file');
+    return false;
+  }
+  if (hasNarratorrMarker(existing)) return true; // our own previous OPF → overwrite
+  log.warn({ opfPath }, 'Existing metadata.opf is foreign (no narratorr marker) — skipping OPF write to preserve it');
+  return false;
+}
+
+/**
  * Shared OPF generate + write helper, invoked from BOTH import surfaces (auto orchestrator and
  * manual/adopt). Loads a FRESH `BookWithAuthor` by id at write time — never a pre-import snapshot —
  * so a narrator (or other field) filled by import enrichment is present in the written file. The
  * OPF is a canonical on-disk artifact, so this is an awaited inline write (NOT the droppable
  * connector queue). Failure is nonfatal: logged at warn, import continues.
+ *
+ * Never overwrites a foreign `metadata.opf` (an ABS/Calibre sidecar narratorr did not author): the
+ * target is pre-read and the write is skipped unless the file is absent or carries the narratorr
+ * provenance marker. See {@link mayWriteOpf}.
  */
 export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<void> {
   const { enabled, bookService, bookId, bookFolder, log } = args;
@@ -105,6 +132,7 @@ export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<vo
       return;
     }
     const opfPath = join(bookFolder, OPF_FILENAME);
+    if (!(await mayWriteOpf(opfPath, log))) return;
     await writeFile(opfPath, generateOpf(book), 'utf-8');
     log.info({ bookId, opfPath }, 'Wrote metadata.opf sidecar');
   } catch (error: unknown) {

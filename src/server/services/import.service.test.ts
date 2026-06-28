@@ -27,6 +27,11 @@ vi.mock('node:fs/promises', () => ({
       ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
       : { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
+  // #1674: deleteManagedBookFiles now reads a root `metadata.opf` for the narratorr provenance
+  // marker. Default the read to UNMARKED (foreign) content so the sweep preserves any OPF — a
+  // blanket "marked" default would silently flip preservation assertions on every cleanup path.
+  // Tests asserting deletion of a narratorr-owned OPF override this to resolve marked content.
+  readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
@@ -760,6 +765,26 @@ describe('ImportService', () => {
       // #1589: the old folder's MANAGED files are deleted per-file (not a blanket recursive rm).
       const rmMock = vi.mocked(rm);
       expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]chapter1\.mp3$/), { force: true });
+    });
+
+    it('preserves an unmarked (foreign) metadata.opf in the old folder during re-import cleanup (#1674)', async () => {
+      // The old folder holds a managed audio file AND a third-party (ABS/Calibre) metadata.opf.
+      // The default readFile mock resolves unmarked content, so the OPF must NOT be deleted.
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+        { name: 'metadata.opf', isFile: () => true, isDirectory: () => false },
+      ] as never);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      const rmMock = vi.mocked(rm);
+      // The managed audio is force-deleted...
+      expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]chapter1\.mp3$/), { force: true });
+      // ...but the foreign metadata.opf is never deleted.
+      expect(rmMock).not.toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]metadata\.opf$/), { force: true });
     });
 
     it('logs old path at info level during re-import', async () => {
