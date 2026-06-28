@@ -141,6 +141,49 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(true);
   }));
 
+  it('deletes a root metadata.opf sidecar (managed), removing the folder when otherwise empty (#1669)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'a.mp3'), 'a');
+    await writeFile(join(book, 'metadata.opf'), '<opf/>'); // managed — narratorr's OPF sidecar
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.deletedManaged)).toEqual(['a.mp3', 'metadata.opf']);
+    expect(result.preservedForeign).toEqual([]);
+    // Only managed files existed → folder removed.
+    expect(await pathExists(book)).toBe(false);
+  }));
+
+  it('is case-insensitive for the root metadata.opf sidecar (#1669)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'Metadata.OPF'), '<opf/>');
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.deletedManaged)).toEqual(['Metadata.OPF']);
+    expect(await pathExists(book)).toBe(false);
+  }));
+
+  it('preserves a nested metadata.opf (managed only at the book-folder root), parallels nested cover (#1669)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(join(book, 'Disc 1'), { recursive: true });
+    await writeFile(join(book, 'metadata.opf'), 'root-opf');        // managed — root sidecar
+    await writeFile(join(book, 'a.mp3'), 'a');                      // managed
+    await writeFile(join(book, 'Disc 1', 'metadata.opf'), 'nested'); // FOREIGN — nested
+    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');          // managed (audio recurses)
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.deletedManaged)).toEqual(['a.mp3', 'd1.mp3', 'metadata.opf']);
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf']); // nested opf preserved
+    expect(await pathExists(join(book, 'metadata.opf'))).toBe(false);
+    expect(await pathExists(join(book, 'Disc 1', 'metadata.opf'))).toBe(true);
+    // Folder retained because the nested foreign opf survives.
+    expect(await pathExists(book)).toBe(true);
+  }));
+
   it('refuses a guarded-mode bookPath that is an in-library symlink escaping the root — external files untouched (#1591)', withTmp(async (root) => {
     const external = mkdtempSync(join(tmpdir(), 'narratorr-1591-ext-'));
     try {

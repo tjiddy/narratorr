@@ -195,6 +195,53 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  describe('OPF sidecar toggle (#1669)', () => {
+    it('renders the OPF toggle with ABS help text even when tag embedding is disabled', async () => {
+      // Default mock settings → tagging.enabled false. The OPF toggle must still render
+      // (it is outside the taggingEnabled conditional — independent of ffmpeg tag embedding).
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('OPF Metadata Sidecar')).toBeInTheDocument();
+      });
+      // Tag-embedding controls remain hidden while tagging is off — proves the OPF toggle is not nested in that block.
+      expect(screen.queryByLabelText('Tag Mode')).not.toBeInTheDocument();
+      expect(screen.getByText(/Prefer OPF metadata/)).toBeInTheDocument();
+    });
+
+    it('is toggleable while tagging is disabled and round-trips writeOpf:true through save', async () => {
+      const user = userEvent.setup();
+      mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
+      mockApi.updateSettings.mockResolvedValue(configuredProcessingSettings);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('OPF Metadata Sidecar')).toBeInTheDocument();
+      });
+      // Tagging stays off — only flip the independent OPF toggle.
+      await user.click(screen.getByLabelText('OPF Metadata Sidecar'));
+
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tagging: expect.objectContaining({ enabled: false, writeOpf: true }),
+          }),
+        );
+      });
+    });
+
+    it('reflects a persisted writeOpf:true setting on load', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({ tagging: { enabled: false, mode: 'populate_missing', embedCover: false, writeOpf: true } }));
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('OPF Metadata Sidecar')).toBeChecked();
+      });
+    });
+  });
+
   it('renders max concurrent jobs field', async () => {
     mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
@@ -316,6 +363,7 @@ describe('ProcessingSettingsSection', () => {
           enabled: true,
           mode: 'populate_missing',
           embedCover: false,
+          writeOpf: false,
         },
       });
     });
