@@ -15,6 +15,8 @@ import {
   embedTagsForImport, runImportPostProcessing,
   isContentFailure,
 } from '../utils/import-steps.js';
+import { writeOpfForImport } from '../utils/opf-writer.js';
+import type { BookService } from './book.service.js';
 import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
@@ -43,6 +45,7 @@ export class ImportOrchestrator {
     private eventHistory?: EventHistoryService,
     private broadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
+    private bookService?: BookService,
   ) {}
 
   /** Wire cyclic / late-bound deps after construction. Call once during composition. */
@@ -128,6 +131,21 @@ export class ImportOrchestrator {
       });
     } catch (tagError: unknown) {
       this.log.warn({ error: serializeError(tagError), bookId: ctx.bookId }, 'Tagging failed during import — continuing');
+    }
+
+    // Best-effort: OPF metadata sidecar (media-server handoff). Independent of tag embedding — never
+    // touches audio, needs no ffmpeg. Pass ctx.bookId (NOT ctx.book, which predates enrichAfterImport);
+    // the shared helper reloads BookWithAuthor fresh so an enrichment-filled narrator is written.
+    try {
+      const taggingSettings = await this.settingsService.get('tagging');
+      if (this.bookService) {
+        await writeOpfForImport({
+          enabled: taggingSettings.writeOpf, bookService: this.bookService,
+          bookId: ctx.bookId, bookFolder: result.targetPath, log: this.log,
+        });
+      }
+    } catch (opfError: unknown) {
+      this.log.warn({ error: serializeError(opfError), bookId: ctx.bookId }, 'OPF write failed during import — continuing');
     }
 
     // Best-effort: post-processing

@@ -17,6 +17,7 @@ import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
 import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { fireAndForget } from '../../utils/fire-and-forget.js';
+import { writeOpfForImport } from '../../utils/opf-writer.js';
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
   let parsedJson: unknown;
@@ -127,12 +128,29 @@ export class ManualImportAdapter implements ImportAdapter {
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
 
+      // Best-effort: OPF metadata sidecar (media-server handoff). Awaited inline (canonical on-disk
+      // file, NOT the droppable connector queue); gated on tagging.writeOpf and independent of tag
+      // embedding. The shared helper reloads BookWithAuthor fresh by id, so post-enrichment data lands.
+      await this.writeOpfSidecar(bookId, finalPath, log);
+
       // Fire-and-forget: connector refresh. Pointer-mode (in-place adopt, !mode)
       // notifies too, with reason 'adopt'; copy/move mode uses 'import'.
       this.enqueueConnectorRefresh(bookId, payload, finalPath, mode, log);
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;
+    }
+  }
+
+  private async writeOpfSidecar(bookId: number, finalPath: string, log: ImportAdapterContext['log']): Promise<void> {
+    try {
+      const taggingSettings = await this.deps.settingsService.get('tagging');
+      await writeOpfForImport({
+        enabled: taggingSettings.writeOpf, bookService: this.deps.bookService,
+        bookId, bookFolder: finalPath, log,
+      });
+    } catch (opfError: unknown) {
+      log.warn({ error: serializeError(opfError), bookId }, 'OPF write failed during manual import — continuing');
     }
   }
 
