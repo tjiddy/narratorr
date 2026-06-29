@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { buildFfmpegArgs, tagFile, TaggingService, RetagError, type TagMetadata } from './tagging.service.js';
+import { buildCanonicalTags, readExistingTags, resolveTags } from './retag-plan.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
 // Mock child_process — the callback is the LAST arg, which may be the 3rd (cmd, args, cb)
@@ -146,6 +147,136 @@ describe('buildFfmpegArgs', () => {
     const tags: TagMetadata = { artist: 'Author', track: 1 };
     const args = buildFfmpegArgs('/input.mp3', '/out.mp3', tags);
     expect(args.join(' ')).not.toContain('track=');
+  });
+
+  it('always maps chapters from the source (#1671) — survives M4B re-tag', () => {
+    const args = buildFfmpegArgs('/books/input.m4b', '/books/out.m4b', { album: 'Book' });
+    const idx = args.indexOf('-map_chapters');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe('0');
+  });
+
+  describe('ABS-survivable set (#1671)', () => {
+    it('writes the full new field set with exact mapping', () => {
+      const tags: TagMetadata = {
+        album: 'Book', series: 'Stormlight', seriesPart: 2, subtitle: 'Words of Radiance',
+        asin: 'B00ABCDEFG', publisher: 'Tor', description: 'An epic', date: '2014', genre: 'Fantasy',
+      };
+      const args = buildFfmpegArgs('/in.mp3', '/out.mp3', tags);
+      expect(args).toContain('series=Stormlight');
+      expect(args).toContain('series-part=2');
+      expect(args).toContain('subtitle=Words of Radiance');
+      expect(args).toContain('asin=B00ABCDEFG');
+      expect(args).toContain('publisher=Tor');
+      expect(args).toContain('description=An epic');
+      expect(args).toContain('date=2014');
+      expect(args).toContain('genre=Fantasy');
+    });
+
+    it('writes series-part=0 (seriesPart uses != null, not truthy)', () => {
+      const args = buildFfmpegArgs('/in.mp3', '/out.mp3', { album: 'Book', seriesPart: 0 });
+      expect(args).toContain('series-part=0');
+    });
+
+    it('omits each new field when absent (no empty key= arg)', () => {
+      const args = buildFfmpegArgs('/in.mp3', '/out.mp3', { album: 'Book' });
+      const joined = args.join(' ');
+      for (const key of ['series=', 'series-part=', 'subtitle=', 'asin=', 'publisher=', 'description=', 'date=', 'genre=']) {
+        expect(joined).not.toContain(key);
+      }
+    });
+  });
+});
+
+describe('buildCanonicalTags field mapping (#1671)', () => {
+  it('date = extractYear(publishedDate); genre = genres[0]', () => {
+    const tags = buildCanonicalTags({ title: 'B', publishedDate: '2010-11-02', genres: ['Fantasy', 'Adventure'] });
+    expect(tags.date).toBe('2010');
+    expect(tags.genre).toBe('Fantasy');
+  });
+
+  it('omits date when no 4-digit year; omits genre when array empty', () => {
+    const tags = buildCanonicalTags({ title: 'B', publishedDate: 'n/a', genres: [] });
+    expect(tags.date).toBeUndefined();
+    expect(tags.genre).toBeUndefined();
+  });
+
+  it('omits genre when genres undefined or first element empty', () => {
+    expect(buildCanonicalTags({ title: 'B' }).genre).toBeUndefined();
+    expect(buildCanonicalTags({ title: 'B', genres: [''] }).genre).toBeUndefined();
+  });
+
+  it('seriesPosition 0 maps to seriesPart 0 (!= null, not truthy)', () => {
+    expect(buildCanonicalTags({ title: 'B', seriesPosition: 0 }).seriesPart).toBe(0);
+    expect(buildCanonicalTags({ title: 'B', seriesPosition: null }).seriesPart).toBeUndefined();
+  });
+
+  it('seriesName populates both grouping and series', () => {
+    const tags = buildCanonicalTags({ title: 'B', seriesName: 'Stormlight' });
+    expect(tags.grouping).toBe('Stormlight');
+    expect(tags.series).toBe('Stormlight');
+  });
+
+  it('threads asin/subtitle/description/publisher verbatim, omitting empties', () => {
+    const tags = buildCanonicalTags({ title: 'B', asin: 'B0X', subtitle: 'Sub', description: 'D', publisher: 'P' });
+    expect(tags).toMatchObject({ asin: 'B0X', subtitle: 'Sub', description: 'D', publisher: 'P' });
+    const empty = buildCanonicalTags({ title: 'B', asin: '', subtitle: '', description: '', publisher: '' });
+    expect(empty.asin).toBeUndefined();
+    expect(empty.subtitle).toBeUndefined();
+  });
+});
+
+describe('readExistingTags new-field readback (#1671)', () => {
+  it('reads new fields from common + native (series/series-part)', async () => {
+    (parseFile as Mock).mockResolvedValueOnce({
+      common: {
+        subtitle: ['Sub'], publisher: ['Tor'], description: ['Desc'], genre: ['Fantasy', 'X'],
+        asin: 'B0X', year: 2010,
+      },
+      native: { 'ID3v2.4': [{ id: 'TXXX:series', value: 'Stormlight' }, { id: 'TXXX:series-part', value: '2' }] },
+      format: {},
+    });
+    const tags = await readExistingTags('/book.mp3');
+    expect(tags).toMatchObject({
+      subtitle: 'Sub', publisher: 'Tor', description: 'Desc', genre: 'Fantasy', asin: 'B0X',
+      date: '2010', series: 'Stormlight', seriesPart: 2,
+    });
+  });
+
+  it('reads date from common.date when present, else year', async () => {
+    (parseFile as Mock).mockResolvedValueOnce({ common: { date: '2018' }, format: {} });
+    expect((await readExistingTags('/b.mp3')).date).toBe('2018');
+  });
+});
+
+describe('resolveTags new-field populate_missing awareness (#1671)', () => {
+  const desired: TagMetadata = {
+    series: 'S', seriesPart: 3, subtitle: 'Sub', asin: 'B0X',
+    publisher: 'P', description: 'D', date: '2010', genre: 'Fantasy',
+  };
+
+  it('populates a new field when existing is empty/absent', () => {
+    const resolved = resolveTags(desired, {}, 'populate_missing');
+    expect(resolved).toMatchObject({ series: 'S', seriesPart: 3, subtitle: 'Sub', asin: 'B0X', publisher: 'P', description: 'D', date: '2010', genre: 'Fantasy' });
+  });
+
+  it('does NOT overwrite a populated new field', () => {
+    const existing: Partial<TagMetadata> = {
+      series: 'old', seriesPart: 9, subtitle: 'old', asin: 'OLD', publisher: 'old', description: 'old', date: '1999', genre: 'old',
+    };
+    const resolved = resolveTags(desired, existing, 'populate_missing');
+    // every desired new field is already populated → nothing to write
+    expect(resolved).toBeNull();
+  });
+
+  it('seriesPart 0 populates an absent value (!= null, not truthy)', () => {
+    const resolved = resolveTags({ seriesPart: 0 }, {}, 'populate_missing');
+    expect(resolved).toEqual({ seriesPart: 0 });
+  });
+
+  it('empty-string desired value is dropped (truthy coercion, pinned intentional)', () => {
+    const resolved = resolveTags({ subtitle: '' }, {}, 'populate_missing');
+    expect(resolved).toBeNull();
   });
 });
 
@@ -441,6 +572,8 @@ describe('TaggingService', () => {
     id?: number; title?: string; path?: string | null;
     authors?: { name: string }[]; narrators?: { name: string }[];
     seriesName?: string | null; seriesPosition?: number | null; coverUrl?: string | null;
+    asin?: string | null; subtitle?: string | null; description?: string | null;
+    publisher?: string | null; publishedDate?: string | null; genres?: string[] | null;
   } = {}) {
     return {
       id: 1,
@@ -450,6 +583,12 @@ describe('TaggingService', () => {
       narrators: [],
       seriesName: null,
       seriesPosition: null,
+      asin: null,
+      subtitle: null,
+      description: null,
+      publisher: null,
+      publishedDate: null,
+      genres: null,
       coverUrl: null,
       ...overrides,
     };
@@ -559,6 +698,33 @@ describe('TaggingService', () => {
 
       // Should complete without error — author is optional
       expect(result.tagged).toBe(1);
+    });
+
+    it('threads new ABS fields + seriesPosition=0 into the applied ffmpeg args (#1671)', async () => {
+      const db = createMockDb();
+      mockBookService.getById.mockResolvedValue(makeBook({
+        title: 'Book', path: '/library/x', authors: [{ name: 'Author' }],
+        seriesName: 'Stormlight', seriesPosition: 0,
+        asin: 'B0XYZ', subtitle: 'Sub', description: 'Desc', publisher: 'Tor',
+        publishedDate: '2014-03-04', genres: ['Fantasy', 'Adventure'],
+      }));
+      const settings = createMockSettingsService(taggingDefaults);
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+      _readdirFiles = ['book.mp3'];
+      (execFile as unknown as Mock).mockClear();
+
+      const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+      await service.retagBook(1);
+
+      const args = ((execFile as unknown as Mock).mock.calls[0]![1] as string[]).join(' ');
+      expect(args).toContain('series=Stormlight');
+      expect(args).toContain('series-part=0');
+      expect(args).toContain('asin=B0XYZ');
+      expect(args).toContain('subtitle=Sub');
+      expect(args).toContain('description=Desc');
+      expect(args).toContain('publisher=Tor');
+      expect(args).toContain('date=2014');
+      expect(args).toContain('genre=Fantasy');
     });
   });
 
@@ -739,8 +905,12 @@ describe('TaggingService', () => {
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
 
       const result = await service.tagBook(1, '/books/test', {
-        title: 'Test', authorName: 'Author', narrator: 'Reader', seriesName: 'Series',
-      }, '/usr/bin/ffmpeg', 'overwrite', false, new Set(['artist', 'albumArtist', 'album', 'title', 'composer', 'grouping', 'track']));
+        title: 'Test', authorName: 'Author', narrator: 'Reader', seriesName: 'Series', seriesPosition: 1,
+        asin: 'B0TEST', subtitle: 'Sub', description: 'Desc', publisher: 'Pub', publishedDate: '2010', genres: ['Fantasy'],
+      }, '/usr/bin/ffmpeg', 'overwrite', false, new Set([
+        'artist', 'albumArtist', 'album', 'title', 'composer', 'grouping', 'track',
+        'series', 'seriesPart', 'subtitle', 'asin', 'publisher', 'description', 'date', 'genre',
+      ]));
 
       expect(result.tagged).toBe(0);
       expect(result.skipped).toBe(2);
@@ -954,6 +1124,8 @@ describe('TaggingService', () => {
       id?: number; title?: string; path?: string | null;
       authors?: { name: string }[]; narrators?: { name: string }[];
       seriesName?: string | null; seriesPosition?: number | null; coverUrl?: string | null;
+      asin?: string | null; subtitle?: string | null; description?: string | null;
+      publisher?: string | null; publishedDate?: string | null; genres?: string[] | null;
     } = {}) {
       return {
         id: 1,
@@ -963,6 +1135,12 @@ describe('TaggingService', () => {
         narrators: [],
         seriesName: null,
         seriesPosition: null,
+        asin: null,
+        subtitle: null,
+        description: null,
+        publisher: null,
+        publishedDate: null,
+        genres: null,
         coverUrl: null,
         ...overrides,
       };
@@ -988,9 +1166,30 @@ describe('TaggingService', () => {
         title: 'The Way of Kings',
         composer: 'Michael Kramer',
         grouping: 'Stormlight',
+        // `series` carries the series name alongside `grouping` (survives MP3) (#1671).
+        series: 'Stormlight',
       });
       expect(plan.mode).toBe('overwrite');
       expect(plan.isSingleFile).toBe(true);
+    });
+
+    it('preview canonical exposes the new ABS fields + seriesPosition (#1671)', async () => {
+      _readdirFiles = ['book.mp3'];
+      setupBook({
+        title: 'Words of Radiance', authors: [{ name: 'Brandon Sanderson' }],
+        seriesName: 'Stormlight', seriesPosition: 0,
+        asin: 'B0XYZ', subtitle: 'Sub', description: 'Desc', publisher: 'Tor',
+        publishedDate: '2014-03-04', genres: ['Fantasy', 'Adventure'],
+      });
+      const settings = createMockSettingsService(taggingDefaults);
+      const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+      const plan = await service.planRetag(1);
+      // seriesPosition reaches preview (was previously dropped) — series-part stringified, 0 preserved.
+      expect(plan.canonical).toMatchObject({
+        series: 'Stormlight', seriesPart: '0', subtitle: 'Sub', asin: 'B0XYZ',
+        publisher: 'Tor', description: 'Desc', date: '2014', genre: 'Fantasy',
+      });
     });
 
     it('omits canonical fields when book has no author/narrator/series', async () => {
@@ -1075,6 +1274,8 @@ describe('TaggingService', () => {
           artist: 'A', albumartist: 'A', album: 'B', title: 'T', composer: ['C'], grouping: 'G',
           track: { no: 1 },
         },
+        // `series` has no common mapping — it round-trips through the native TXXX frame (#1671).
+        native: { 'ID3v2.4': [{ id: 'TXXX:series', value: 'G' }] },
         format: {},
       });
       setupBook({ title: 'B', authors: [{ name: 'A' }], narrators: [{ name: 'C' }], seriesName: 'G' });

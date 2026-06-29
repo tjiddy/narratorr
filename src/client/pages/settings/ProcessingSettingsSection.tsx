@@ -282,7 +282,7 @@ export function ProcessingSettingsSection() {
             <div>
               <label htmlFor="taggingEnabled" className="block text-sm font-medium">Tag Embedding</label>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Write book metadata (author, title, series, narrator) into audio file tags on import. Requires ffmpeg.
+                Write book metadata (author, title, series, narrator, subtitle, ASIN, publisher, description, year, genre) into audio file tags on import. Series, series part, subtitle, ASIN, and publisher survive on MP3 but are dropped on M4B by the container. Requires ffmpeg.
               </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">

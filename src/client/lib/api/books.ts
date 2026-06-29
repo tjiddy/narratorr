@@ -171,6 +171,7 @@ export interface RetagResult {
   warnings: string[];
 }
 
+// Mirror of `RETAG_EXCLUDABLE_FIELDS` in `src/shared/schemas/book.ts` (#1671) — keep in lockstep.
 export type RetagExcludableField =
   | 'artist'
   | 'albumArtist'
@@ -178,6 +179,14 @@ export type RetagExcludableField =
   | 'title'
   | 'composer'
   | 'grouping'
+  | 'series'
+  | 'seriesPart'
+  | 'subtitle'
+  | 'asin'
+  | 'publisher'
+  | 'description'
+  | 'date'
+  | 'genre'
   | 'track';
 
 export interface RetagPlanFileDiff {
@@ -207,6 +216,9 @@ export interface RetagPlan {
     albumArtist?: string;
     composer?: string;
     grouping?: string;
+    // ABS-survivable set (#1671); `seriesPart` stringified for display.
+    series?: string; seriesPart?: string; subtitle?: string; asin?: string;
+    publisher?: string; description?: string; date?: string; genre?: string;
   };
   files: RetagPlanFile[];
   warnings: string[];

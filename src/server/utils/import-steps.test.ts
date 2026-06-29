@@ -223,7 +223,9 @@ describe('checkDiskSpace', () => {
 // ── embedTagsForImport ──────────────────────────────────────────────────
 
 describe('embedTagsForImport', () => {
-  const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, coverUrl: 'http://cover.jpg' };
+  // Carries a new bibliographic field (publisher) + seriesPosition so the
+  // caller-propagation contract (#1671) is exercised end-to-end into tagBook.
+  const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' };
 
   it('calls tagBook when tagging enabled and ffmpegPath configured', async () => {
     const log = createMockLog();
@@ -294,7 +296,8 @@ describe('embedTagsForImport', () => {
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
-      { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, coverUrl: 'http://cover.jpg' },
+      // publisher + seriesPosition reach tagBook → proves caller propagation (#1671).
+      { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
       '/ffmpeg', 'populate_missing', false,
     );
   });

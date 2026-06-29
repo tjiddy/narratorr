@@ -2,6 +2,7 @@ import { parseFile } from 'music-metadata';
 import { basename, extname } from 'node:path';
 import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
 import type { TagMetadata } from './tagging.service.js';
+import { extractYear } from '../utils/import-helpers.js';
 
 export interface RetagPlanFileDiff {
   field: RetagExcludableField;
@@ -24,6 +25,15 @@ export interface RetagPlanCanonical {
   albumArtist?: string;
   composer?: string;
   grouping?: string;
+  // ABS-survivable set (#1671). `seriesPart` is stringified for display.
+  series?: string;
+  seriesPart?: string;
+  subtitle?: string;
+  asin?: string;
+  publisher?: string;
+  description?: string;
+  date?: string;
+  genre?: string;
 }
 
 export interface RetagPlan {
@@ -36,7 +46,13 @@ export interface RetagPlan {
   warnings: string[];
 }
 
-const SIMPLE_EXCLUDABLE_FIELDS = ['artist', 'albumArtist', 'album', 'title', 'composer', 'grouping'] as const;
+// String-valued tag fields handled uniformly by the truthy populate_missing gate,
+// the exclude filter, and the diff builder. `seriesPart` (numeric) and `track`
+// (numeric pair) are NOT here — they need `!= null` handling so a 0 survives.
+const SIMPLE_EXCLUDABLE_FIELDS = [
+  'artist', 'albumArtist', 'album', 'title', 'composer', 'grouping',
+  'series', 'subtitle', 'asin', 'publisher', 'description', 'date', 'genre',
+] as const;
 const TAG_DIFF_FIELDS = SIMPLE_EXCLUDABLE_FIELDS;
 
 /**
@@ -47,19 +63,91 @@ const TAG_DIFF_FIELDS = SIMPLE_EXCLUDABLE_FIELDS;
 export async function readExistingTags(filePath: string): Promise<Partial<TagMetadata>> {
   try {
     const metadata = await parseFile(filePath);
-    const common = metadata.common;
-    const result: Partial<TagMetadata> = {};
-    if (common.artist) result.artist = common.artist;
-    if (common.albumartist) result.albumArtist = common.albumartist;
-    if (common.album) result.album = common.album;
-    if (common.title) result.title = common.title;
-    if (common.composer?.[0]) result.composer = common.composer[0];
-    if (common.grouping) result.grouping = common.grouping;
-    if (common.track?.no != null) result.track = common.track.no;
-    return result;
+    return {
+      ...readCommonCoreTags(metadata.common),
+      ...readCommonAbsTags(metadata.common),
+      ...readNativeSeriesTags(metadata.native as NativeTags),
+    };
   } catch {
     return {};
   }
+}
+
+type CommonTags = Awaited<ReturnType<typeof parseFile>>['common'];
+type NativeTags = Record<string, { id: string; value: unknown }[]> | undefined;
+
+/** The original Plex/track field set, read from music-metadata `common`. */
+function readCommonCoreTags(common: CommonTags): Partial<TagMetadata> {
+  const result: Partial<TagMetadata> = {};
+  if (common.artist) result.artist = common.artist;
+  if (common.albumartist) result.albumArtist = common.albumartist;
+  if (common.album) result.album = common.album;
+  if (common.title) result.title = common.title;
+  if (common.composer?.[0]) result.composer = common.composer[0];
+  if (common.grouping) result.grouping = common.grouping;
+  if (common.track?.no != null) result.track = common.track.no;
+  return result;
+}
+
+/**
+ * ABS-survivable set read from `common` (#1671). `subtitle`/`publisher`/
+ * `description`/`genre` are arrays in music-metadata; `asin`/`date`/`year` scalars.
+ */
+function readCommonAbsTags(common: CommonTags): Partial<TagMetadata> {
+  const result: Partial<TagMetadata> = {};
+  if (common.subtitle?.[0]) result.subtitle = common.subtitle[0];
+  if (common.publisher?.[0]) result.publisher = common.publisher[0];
+  if (common.description?.[0]) result.description = common.description[0];
+  if (common.genre?.[0]) result.genre = common.genre[0];
+  if (common.asin) result.asin = common.asin;
+  const date = common.date ?? (common.year != null ? String(common.year) : undefined);
+  if (date) result.date = date;
+  return result;
+}
+
+/**
+ * `series` / `series-part` have no `common` mapping — read them from native frames
+ * (TXXX:series, MP4 `----:…:series`, bare `series`) so populate_missing is field-aware.
+ */
+function readNativeSeriesTags(native: NativeTags): Partial<TagMetadata> {
+  const result: Partial<TagMetadata> = {};
+  const series = readNativeFreeform(native, 'series');
+  if (series) result.series = series;
+  const seriesPart = readNativeFreeform(native, 'series-part');
+  if (seriesPart) result.seriesPart = Number(seriesPart);
+  return result;
+}
+
+/**
+ * Read a freeform native tag value by key (case-insensitive). Matches the bare id
+ * (`series`), the ID3 `TXXX:series` shape, and the MP4 `----:com.apple.iTunes:series`
+ * shape. TXXX values may arrive as `{ description, text }` objects — handle both.
+ */
+function readNativeFreeform(
+  native: Record<string, { id: string; value: unknown }[]> | undefined,
+  key: string,
+): string | undefined {
+  if (!native) return undefined;
+  const keyLower = key.toLowerCase();
+  for (const tags of Object.values(native)) {
+    for (const tag of tags) {
+      const idLower = tag.id.toLowerCase();
+      if (idLower !== keyLower && !idLower.endsWith(`:${keyLower}`)) continue;
+      const value = nativeTagText(tag.value);
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
+function nativeTagText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value || undefined;
+  if (typeof value === 'number') return String(value);
+  if (value && typeof value === 'object' && 'text' in value) {
+    const text = (value as { text?: unknown }).text;
+    return typeof text === 'string' ? text || undefined : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -88,6 +176,12 @@ export function resolveTags(
     }
   }
 
+  // `seriesPart` is numeric — `!= null` so a desired 0 populates an absent value.
+  if (desired.seriesPart != null && existing.seriesPart == null) {
+    resolved.seriesPart = desired.seriesPart;
+    hasAnyTag = true;
+  }
+
   if (desired.track != null && existing.track == null) {
     resolved.track = desired.track;
     if (desired.trackTotal != null) resolved.trackTotal = desired.trackTotal;
@@ -98,8 +192,9 @@ export function resolveTags(
 }
 
 function hasAnyField(tags: TagMetadata): boolean {
-  return !!(tags.artist || tags.albumArtist || tags.album || tags.title || tags.composer || tags.grouping
-    || (tags.track != null && tags.trackTotal != null));
+  if (SIMPLE_EXCLUDABLE_FIELDS.some(field => tags[field])) return true;
+  if (tags.seriesPart != null) return true;
+  return tags.track != null && tags.trackTotal != null;
 }
 
 export async function fileHasCoverArt(filePath: string): Promise<boolean> {
@@ -121,14 +216,32 @@ export function buildCanonicalTags(
     authorName?: string | null | undefined;
     narrator?: string | null | undefined;
     seriesName?: string | null | undefined;
+    seriesPosition?: number | null | undefined;
+    asin?: string | null | undefined;
+    subtitle?: string | null | undefined;
+    description?: string | null | undefined;
+    publisher?: string | null | undefined;
+    publishedDate?: string | null | undefined;
+    genres?: string[] | null | undefined;
   },
 ): TagMetadata {
+  const year = extractYear(metadata.publishedDate);
+  const firstGenre = metadata.genres?.[0];
   return {
     album: metadata.title,
     title: metadata.title,
     ...(metadata.authorName && { artist: metadata.authorName, albumArtist: metadata.authorName }),
     ...(metadata.narrator && { composer: metadata.narrator }),
-    ...(metadata.seriesName && { grouping: metadata.seriesName }),
+    // `grouping` (survives M4B) and `series` (survives MP3) both carry the series name.
+    ...(metadata.seriesName && { grouping: metadata.seriesName, series: metadata.seriesName }),
+    // `!= null` so series position 0 is preserved (vs. a truthy check dropping it).
+    ...(metadata.seriesPosition != null && { seriesPart: metadata.seriesPosition }),
+    ...(metadata.subtitle && { subtitle: metadata.subtitle }),
+    ...(metadata.asin && { asin: metadata.asin }),
+    ...(metadata.publisher && { publisher: metadata.publisher }),
+    ...(metadata.description && { description: metadata.description }),
+    ...(year && { date: year }),
+    ...(firstGenre && { genre: firstGenre }),
   };
 }
 
@@ -203,6 +316,9 @@ export function applyExcludeFields(tags: TagMetadata, excludeFields: ReadonlySet
     const value = tags[field];
     if (value !== undefined && !excludeFields.has(field)) result[field] = value;
   }
+  if (!excludeFields.has('seriesPart') && tags.seriesPart !== undefined) {
+    result.seriesPart = tags.seriesPart;
+  }
   if (!excludeFields.has('track')) {
     if (tags.track !== undefined) result.track = tags.track;
     if (tags.trackTotal !== undefined) result.trackTotal = tags.trackTotal;
@@ -232,21 +348,27 @@ export async function planFile(
     return { file: fileName, outcome: 'skip-populated' };
   }
 
-  const diff: RetagPlanFileDiff[] = [];
-  if (resolvedTags) {
-    for (const field of TAG_DIFF_FIELDS) {
-      const next = resolvedTags[field];
-      if (next === undefined) continue;
-      const current = existing[field] ?? null;
-      diff.push({ field, current: stringify(current), next: stringify(next) });
-    }
-    if (resolvedTags.track != null && resolvedTags.trackTotal != null) {
-      const currentTrack = existing.track != null ? `${existing.track}` : null;
-      diff.push({ field: 'track', current: currentTrack, next: `${resolvedTags.track}/${resolvedTags.trackTotal}` });
-    }
-  }
-
+  const diff = resolvedTags ? buildTagDiff(resolvedTags, existing) : [];
   return { file: fileName, outcome: 'will-tag', diff, coverPending };
+}
+
+/** Build the current→next diff rows for a will-tag file (string fields + numeric series-part/track). */
+function buildTagDiff(resolved: TagMetadata, existing: Partial<TagMetadata>): RetagPlanFileDiff[] {
+  const diff: RetagPlanFileDiff[] = [];
+  for (const field of TAG_DIFF_FIELDS) {
+    const next = resolved[field];
+    if (next === undefined) continue;
+    diff.push({ field, current: stringify(existing[field] ?? null), next: stringify(next) });
+  }
+  if (resolved.seriesPart != null) {
+    const currentPart = existing.seriesPart != null ? `${existing.seriesPart}` : null;
+    diff.push({ field: 'seriesPart', current: currentPart, next: `${resolved.seriesPart}` });
+  }
+  if (resolved.track != null && resolved.trackTotal != null) {
+    const currentTrack = existing.track != null ? `${existing.track}` : null;
+    diff.push({ field: 'track', current: currentTrack, next: `${resolved.track}/${resolved.trackTotal}` });
+  }
+  return diff;
 }
 
 function stringify(value: string | number | null | undefined): string | null {
@@ -265,5 +387,13 @@ export function pickCanonical(tags: TagMetadata): RetagPlanCanonical {
   if (tags.albumArtist) result.albumArtist = tags.albumArtist;
   if (tags.composer) result.composer = tags.composer;
   if (tags.grouping) result.grouping = tags.grouping;
+  if (tags.series) result.series = tags.series;
+  if (tags.seriesPart != null) result.seriesPart = `${tags.seriesPart}`;
+  if (tags.subtitle) result.subtitle = tags.subtitle;
+  if (tags.asin) result.asin = tags.asin;
+  if (tags.publisher) result.publisher = tags.publisher;
+  if (tags.description) result.description = tags.description;
+  if (tags.date) result.date = tags.date;
+  if (tags.genre) result.genre = tags.genre;
   return result;
 }

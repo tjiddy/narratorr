@@ -7,6 +7,14 @@ export const FIELD_LABELS: Record<RetagExcludableField, string> = {
   title: 'Title',
   composer: 'Composer',
   grouping: 'Grouping',
+  series: 'Series',
+  seriesPart: 'Series Part',
+  subtitle: 'Subtitle',
+  asin: 'ASIN',
+  publisher: 'Publisher',
+  description: 'Description',
+  date: 'Year',
+  genre: 'Genre',
   track: 'Track',
 };
 
@@ -18,6 +26,14 @@ export const FIELD_ORDER: RetagExcludableField[] = [
   'title',
   'composer',
   'grouping',
+  'series',
+  'seriesPart',
+  'subtitle',
+  'asin',
+  'publisher',
+  'description',
+  'date',
+  'genre',
   'track',
 ];
 
