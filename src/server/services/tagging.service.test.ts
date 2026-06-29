@@ -280,6 +280,54 @@ describe('resolveTags new-field populate_missing awareness (#1671)', () => {
   });
 });
 
+describe('readExistingTags non-numeric native series-part (#1696)', () => {
+  const readSeriesPart = async (value: string): Promise<number | undefined> => {
+    (parseFile as Mock).mockResolvedValueOnce({
+      common: {},
+      native: { 'ID3v2.4': [{ id: 'TXXX:series-part', value }] },
+      format: {},
+    });
+    return (await readExistingTags('/book.mp3')).seriesPart;
+  };
+
+  it.each(['Book 2', 'II', '2 of 5'])('treats non-numeric native series-part %j as absent (not NaN)', async (value) => {
+    expect(await readSeriesPart(value)).toBeUndefined();
+  });
+
+  it('treats whitespace-only native series-part as absent (not 0)', async () => {
+    expect(await readSeriesPart('   ')).toBeUndefined();
+  });
+
+  it('treats empty-string native series-part as absent (existing truthy/empty-string drop)', async () => {
+    expect(await readSeriesPart('')).toBeUndefined();
+  });
+
+  it('reads a numeric native series-part as the number', async () => {
+    expect(await readSeriesPart('3')).toBe(3);
+  });
+
+  it('reads a whitespace-wrapped numeric native series-part as the number (trim then parse)', async () => {
+    expect(await readSeriesPart('  3  ')).toBe(3);
+  });
+});
+
+describe('resolveTags series-part populate_missing with malformed existing (#1696)', () => {
+  it('writes canonical seriesPart when existing is absent (non-numeric native read → undefined)', () => {
+    const resolved = resolveTags({ seriesPart: 2 }, {}, 'populate_missing');
+    expect(resolved).toEqual({ seriesPart: 2 });
+  });
+
+  it('suppresses the write when existing seriesPart is already a number', () => {
+    const resolved = resolveTags({ seriesPart: 3 }, { seriesPart: 3 }, 'populate_missing');
+    expect(resolved).toBeNull();
+  });
+
+  it('overwrite ignores a non-numeric existing series-part and returns desired (NaN cannot manifest)', () => {
+    const resolved = resolveTags({ seriesPart: 2 }, { seriesPart: Number.NaN }, 'overwrite');
+    expect(resolved).toEqual({ seriesPart: 2 });
+  });
+});
+
 describe('tagFile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
