@@ -566,3 +566,14 @@ The `narratorr/no-raw-error-logging` rule traces values back to their catch-bind
 ---
 
 Node 24's `AbortSignal.timeout(ms)` schedules on an internal native timer, NOT the patchable `globalThis.setTimeout` (verified: a wrapped `globalThis.setTimeout` is not invoked when `AbortSignal.timeout` is created, and the signal still aborts with `TimeoutError`). Consequence for testing retry adapters that pair `fetchWithTimeout` (`src/core/utils/network-service.ts` — built on `AbortSignal.timeout`) with their own `setTimeout` backoff: `vi.spyOn(globalThis, 'setTimeout')` can capture the adapter's exact backoff delay AND redirect it to fire immediately (`return original(fn, 0)`) while the per-call request timeout keeps working against real MSW responses. This gives deterministic exact-delay assertions (honored `Retry-After`, fallback default, max-clamp, caller-abort-during-backoff) with no `vi.useFakeTimers` / `advanceTimersByTimeAsync` / MSW interleaving fragility. Exemplar: `src/core/download-clients/retry.test.ts` (503 retry suite; `attribution.test.ts` was removed with the earwitness cut, #1596). Exception/guardrail: this works ONLY because `AbortSignal.timeout` is native — a hand-rolled `AbortController` + `setTimeout` timeout WOULD be captured by the spy, so the pattern breaks for clients not built on `fetchWithTimeout`.
+
+## music-metadata-common-shapes-and-native-freeform
+
+**source:** #1671  
+**added:** 2026-06-29  
+**files:** src/server/services/retag-plan.ts  
+**tags:** music-metadata, audio-tags, tag-readback
+
+---
+
+music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — read `?.[0]`: subtitle, publisher, description, genre, composer, label. These are scalars: artist, album, albumartist, grouping, asin (string), year (number), date (string). Freeform/custom tags (e.g. `series`, `series-part`) written via ffmpeg `-metadata key=value` do NOT appear in `common` at all — they only surface in `metadata.native` keyed by format, as `{ id, value }` arrays, with ids like `TXXX:series` (ID3v2), `----:com.apple.iTunes:series` (MP4), or a bare `series`; TXXX `value` can be a `{ description, text }` object rather than a plain string. Any tag-readback (populate_missing field-awareness, dedup, enrichment) must therefore handle: (1) array-vs-scalar per common field, and (2) a native-frame scan for freeform fields with no common mapping. retag-plan.ts splits this into readCommonCoreTags/readCommonAbsTags (common) + readNativeSeriesTags/readNativeFreeform (native), matching id by exact-equal or `:<key>` suffix, case-insensitive. Prior art for native ASIN scanning lives in src/core/utils/audio-scanner.ts (scanNativeForAsin).
