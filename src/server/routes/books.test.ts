@@ -43,7 +43,17 @@ vi.mock('../config.js', () => ({
   config: { configPath: '/test-config' },
 }));
 
+// #1670 — spy on the OPF writer (the per-book refresh helper calls it cross-module). The route
+// tests assert it is/isn't called with the right `enabled` + `bookFolder`, not OPF XML generation.
+vi.mock('../utils/opf-writer.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../utils/opf-writer.js')>()),
+  writeOpfForImport: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { serveCoverFromCache } from '../utils/cover-cache.js';
+import { writeOpfForImport } from '../utils/opf-writer.js';
+import { createMockSettingsService } from '../__tests__/helpers.js';
+import type { BookService } from '../services/book.service.js';
 
 const mockBook = {
   ...createMockDbBook(),
@@ -851,6 +861,68 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(404);
+    });
+  });
+
+  // #1670 — per-book OPF refresh on metadata-change triggers (PUT). The writer is spied; we assert
+  // the `enabled` gate (from tagging.writeOpf) and the `bookFolder` (the book's path) it is called with.
+  describe('PUT /api/books/:id — OPF sidecar refresh (#1670)', () => {
+    const writeOpfMock = vi.mocked(writeOpfForImport);
+
+    beforeEach(() => { writeOpfMock.mockClear(); });
+
+    function depsFor(opts: { writeOpf: boolean; path: string | null }) {
+      const bookService = inject<BookService>({
+        update: vi.fn().mockResolvedValue({ ...mockBook, id: 1, path: opts.path }),
+        getById: vi.fn().mockResolvedValue({ ...mockBook, id: 1, path: opts.path }),
+      });
+      return makeBookRouteDeps({
+        bookService,
+        settingsService: createMockSettingsService({ tagging: { writeOpf: opts.writeOpf } }),
+      });
+    }
+
+    it('refreshes the OPF after update on an imported book with writeOpf=true', async () => {
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: '/lib/Author/Book' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledTimes(1);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/lib/Author/Book' }));
+      await app2.close();
+    });
+
+    it('passes enabled=false (short-circuit) when writeOpf is off', async () => {
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: false, path: '/lib/Author/Book' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+      await app2.close();
+    });
+
+    it('skips the writer entirely for a not-imported book (path=null)', async () => {
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: null }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      await app2.close();
+    });
+
+    it('still returns 200 when the OPF refresh throws (nonfatal)', async () => {
+      writeOpfMock.mockRejectedValueOnce(new Error('boom'));
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: '/lib/Author/Book' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      await app2.close();
+    });
+
+    it('skips the write for a single-file pointer path (no crash)', async () => {
+      // The writer (real impl) guards the pointer path; here we assert it is invoked with that
+      // bookFolder and the route still succeeds — the spy stands in for the real skip.
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: '/audiobooks/Doctor Sleep.m4b' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ bookFolder: '/audiobooks/Doctor Sleep.m4b' }));
+      await app2.close();
     });
   });
 
@@ -2915,6 +2987,38 @@ describe('POST /api/books/:id/cover', () => {
     });
   });
 
+  // #1670 — a cover upload on an imported book refreshes the OPF sidecar (F3: bookFilesRoute now
+  // takes settingsService). A failing OPF refresh must not fail the upload response.
+  describe('OPF sidecar refresh (#1670)', () => {
+    const writeOpfMock = vi.mocked(writeOpfForImport);
+
+    it('refreshes the OPF after a successful upload when writeOpf=true', async () => {
+      writeOpfMock.mockClear();
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'tagging' ? { writeOpf: true } : {}));
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('x'), 'image/jpeg');
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/cover', payload, headers: { 'content-type': contentType } });
+
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/library/book' }));
+    });
+
+    it('still returns 200 when the OPF refresh throws (nonfatal)', async () => {
+      writeOpfMock.mockClear();
+      writeOpfMock.mockRejectedValueOnce(new Error('boom'));
+      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'tagging' ? { writeOpf: true } : {}));
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('x'), 'image/jpeg');
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/cover', payload, headers: { 'content-type': contentType } });
+
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
   describe('MIME type validation', () => {
     it('rejects application/pdf with 400', async () => {
       (services.book.uploadCover as Mock).mockRejectedValue(
@@ -3580,6 +3684,49 @@ describe('#1071 series routes', () => {
         expect(res.statusCode).toBe(200);
         expect(services.rename.renameBook).not.toHaveBeenCalled();
         expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      // #1670 — Fix Match refreshes the OPF on BOTH the retag and non-retag paths, gated on
+      // tagging.writeOpf, independent of retagFiles. Configure settings so the writer is reached.
+      function primeWriteOpfEnabled() {
+        (services.settings.get as Mock).mockImplementation((cat: string) =>
+          Promise.resolve(cat === 'tagging' ? { writeOpf: true } : {}));
+      }
+
+      it('retagFiles=false: still refreshes the OPF (non-retag path is the regression target)', async () => {
+        const writeOpfMock = vi.mocked(writeOpfForImport);
+        writeOpfMock.mockClear();
+        primeSuccessfulFixMatch();
+        primeWriteOpfEnabled();
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: false },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.tagging.retagBook).not.toHaveBeenCalled();
+        expect(writeOpfMock).toHaveBeenCalledTimes(1);
+        expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 7, bookFolder: '/library/book-7' }));
+      });
+
+      it('retagFiles=true: refreshes the OPF exactly once (no double write with the retag)', async () => {
+        const writeOpfMock = vi.mocked(writeOpfForImport);
+        writeOpfMock.mockClear();
+        primeSuccessfulFixMatch();
+        primeWriteOpfEnabled();
+        (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 7, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.tagging.retagBook).toHaveBeenCalledTimes(1);
+        expect(writeOpfMock).toHaveBeenCalledTimes(1);
       });
 
       it('renameFiles=true on book without path: skips renameService call', async () => {

@@ -170,6 +170,28 @@ describe('BulkOperationsSection', () => {
     expect(mockStartJob).toHaveBeenCalledWith('retag');
   });
 
+  // #1670 — write/refresh metadata sidecars reconcile action
+  it('renders the Write/refresh metadata sidecars button', () => {
+    setup();
+    expect(screen.getByRole('button', { name: /write\/refresh metadata sidecars/i })).toBeInTheDocument();
+  });
+
+  it('clicking Confirm on the sidecar modal calls startJob with "write_metadata_sidecars"', async () => {
+    const user = userEvent.setup({});
+    setup();
+    await user.click(screen.getByRole('button', { name: /write\/refresh metadata sidecars/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /write sidecars/i }));
+    expect(mockStartJob).toHaveBeenCalledWith('write_metadata_sidecars');
+  });
+
+  it('shows Writing sidecars... N/total with spinner while the reconcile job runs', () => {
+    setup({ isRunning: true, jobType: 'write_metadata_sidecars', completed: 4, total: 12 });
+    const btn = screen.getByRole('button', { name: /writing sidecars/i });
+    expect(btn).toBeDisabled();
+    expect(btn.textContent).toMatch(/4\/12/);
+  });
+
   // Progress
   it('after confirming rename, button shows Renaming... N/total with spinner and is disabled', async () => {
     setup({ isRunning: true, jobType: 'rename', completed: 3, total: 10 });

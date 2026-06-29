@@ -50,6 +50,7 @@ import {
 } from '../../shared/schemas.js';
 import { registerFixMatchRoute } from './books-fix-match.js';
 import { registerSeriesRoutes } from './books-series.js';
+import { refreshOpfForBook } from '../utils/opf-refresh.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
@@ -297,6 +298,16 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });
       }
+
+      // Keep the on-disk metadata.opf current with the edited DB state (gated on tagging.writeOpf,
+      // independent of any audio-retag). Skipped for not-yet-imported books (path === null).
+      await refreshOpfForBook({
+        settingsService: deps.settingsService,
+        bookService,
+        bookId: id,
+        bookFolder: book.path ?? null,
+        log: request.log,
+      });
 
       request.log.info({ id }, 'Book updated');
       return book;

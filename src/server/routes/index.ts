@@ -228,7 +228,7 @@ const routeRegistry: RouteFactory[] = [
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
   }),
-  (app, s) => bookFilesRoute(app, s.book),
+  (app, s) => bookFilesRoute(app, s.book, s.settings),
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.downloadOrchestrator),
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.bookImport, () => s.importQueueWorker.nudge()),

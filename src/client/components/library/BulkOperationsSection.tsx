@@ -11,7 +11,7 @@ import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { BulkRenameModal } from './BulkRenameModal.js';
 
-type PendingOp = 'rename' | 'retag' | 'removeMissing' | null;
+type PendingOp = 'rename' | 'retag' | 'removeMissing' | 'writeSidecars' | null;
 
 function Spinner() {
   return (
@@ -185,6 +185,19 @@ function BulkOperationModals({ pendingOp, retagCount, missingCount, onStartRenam
       />
     );
   }
+  if (pendingOp === 'writeSidecars') {
+    return (
+      <ConfirmModal
+        isOpen
+        title="Write Metadata Sidecars?"
+        message="Write a metadata.opf and folder cover image into every imported book's folder, refreshing them from the current library data. Foreign metadata.opf files are left untouched. This helps media servers like Audiobookshelf and Plex read your metadata."
+        confirmLabel="Write Sidecars"
+        cancelLabel="Cancel"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    );
+  }
   return null;
 }
 
@@ -231,6 +244,11 @@ export function BulkOperationsSection() {
       setPendingOp(null);
       setRetagCount(null);
       void startJob('retag');
+      return;
+    }
+    if (pendingOp === 'writeSidecars') {
+      setPendingOp(null);
+      void startJob('write_metadata_sidecars');
     }
   }
 
@@ -261,6 +279,14 @@ export function BulkOperationsSection() {
           progress={progress}
           onClick={handleRetagClick}
         />
+        <BulkButton
+          label="Write/refresh metadata sidecars"
+          runningLabel="Writing sidecars..."
+          isThisRunning={isRunning && jobType === 'write_metadata_sidecars'}
+          isAnyRunning={anyBulkBusy}
+          progress={progress}
+          onClick={() => setPendingOp('writeSidecars')}
+        />
         {missingCount > 0 && (
           <RemoveMissingBooksButton
             busy={removeMissingMutation.isPending}
@@ -268,6 +294,11 @@ export function BulkOperationsSection() {
           />
         )}
       </div>
+      <p className="text-xs text-muted-foreground">
+        Write/refresh metadata sidecars saves a <code>metadata.opf</code> and folder cover into each imported
+        book&apos;s folder so media servers (Audiobookshelf, Plex) read your library&apos;s metadata. It never
+        overwrites a foreign <code>metadata.opf</code> and leaves other files in place.
+      </p>
       {progress.failures > 0 && (
         <p className="text-xs text-destructive">{progress.failures} failure{progress.failures !== 1 ? 's' : ''}</p>
       )}

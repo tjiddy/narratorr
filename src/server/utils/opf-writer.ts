@@ -124,20 +124,29 @@ async function mayWriteOpf(opfPath: string, log: FastifyBaseLogger): Promise<boo
   return false;
 }
 
+/** Outcome of an OPF sidecar write attempt — lets bulk callers account for per-book failures. */
+export type OpfWriteOutcome = 'written' | 'skipped' | 'failed';
+
 /**
- * Shared OPF generate + write helper, invoked from BOTH import surfaces (auto orchestrator and
- * manual/adopt). Loads a FRESH `BookWithAuthor` by id at write time — never a pre-import snapshot —
- * so a narrator (or other field) filled by import enrichment is present in the written file. The
- * OPF is a canonical on-disk artifact, so this is an awaited inline write (NOT the droppable
- * connector queue). Failure is nonfatal: logged at warn, import continues.
+ * Shared OPF generate + write core, invoked from BOTH import surfaces (auto orchestrator and
+ * manual/adopt), the per-book edit triggers, and the library-reconcile bulk job. Loads a FRESH
+ * `BookWithAuthor` by id at write time — never a pre-import snapshot — so a narrator (or other
+ * field) filled by import enrichment is present in the written file. The OPF is a canonical on-disk
+ * artifact, so this is an awaited inline write (NOT the droppable connector queue).
+ *
+ * Returns an outcome rather than throwing: `'written'` on a successful write, `'skipped'` when the
+ * gate is off / the path is a single-file pointer / the book is missing / the target is a foreign
+ * OPF, and `'failed'` when the load or `writeFile` rejects. The reconcile bulk job uses this result
+ * to count failures; {@link writeOpfForImport} wraps it to preserve the legacy nonfatal `void`
+ * contract for the import and per-book edit callers.
  *
  * Never overwrites a foreign `metadata.opf` (an ABS/Calibre sidecar narratorr did not author): the
  * target is pre-read and the write is skipped unless the file is absent or carries the narratorr
  * provenance marker. See {@link mayWriteOpf}.
  */
-export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<void> {
+export async function writeOpfSidecar(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {
   const { enabled, bookService, bookId, bookFolder, log } = args;
-  if (!enabled) return;
+  if (!enabled) return 'skipped';
 
   // Pointer single-file imports persist a *file* path (e.g. `/audiobooks/Doctor Sleep.m4b`), not a
   // book directory. `join(<file>, OPF_FILENAME)` would target a path beneath a file (ENOTDIR), and
@@ -145,20 +154,31 @@ export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<vo
   // library root), so a sidecar there would be wrong/clobbering. Skip with a warning — never write.
   if (AUDIO_EXTENSIONS.has(extname(bookFolder).toLowerCase())) {
     log.warn({ bookId, bookFolder }, 'OPF write skipped — pointer single-file import has no dedicated book folder');
-    return;
+    return 'skipped';
   }
 
   try {
     const book = await bookService.getById(bookId);
     if (!book) {
       log.warn({ bookId }, 'OPF write skipped — book not found');
-      return;
+      return 'skipped';
     }
     const opfPath = join(bookFolder, OPF_FILENAME);
-    if (!(await mayWriteOpf(opfPath, log))) return;
+    if (!(await mayWriteOpf(opfPath, log))) return 'skipped';
     await writeFile(opfPath, generateOpf(book), 'utf-8');
     log.info({ bookId, opfPath }, 'Wrote metadata.opf sidecar');
+    return 'written';
   } catch (error: unknown) {
     log.warn({ error: serializeError(error), bookId }, 'Failed to write metadata.opf — continuing');
+    return 'failed';
   }
+}
+
+/**
+ * Thin nonfatal `void` wrapper over {@link writeOpfSidecar}, preserving the original import/per-book
+ * contract: errors are swallowed (already logged inside the core), so the caller's import or edit
+ * flow continues regardless of outcome.
+ */
+export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<void> {
+  await writeOpfSidecar(args);
 }
