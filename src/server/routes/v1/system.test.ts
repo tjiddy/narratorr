@@ -123,3 +123,49 @@ describe('v1 system route', () => {
     });
   });
 });
+
+/** A valid SystemV1 body, used as the base for the fail-closed regression tests. */
+function validSystemBody() {
+  return {
+    version: 'dev',
+    commit: 'unknown',
+    buildTime: 'unknown',
+    nodeVersion: 'v24.0.0',
+    os: 'Linux 6.1.0',
+  };
+}
+
+// Fail-closed regression coverage (F1). The no-leak guarantee rests entirely on
+// `systemV1Schema` being `.strict()`: the route body is always clean, so the
+// happy-path tests above would STILL pass if `.strict()` regressed to Zod's
+// default strip. These two tests pin the guarantee at both layers — the schema
+// itself rejects an extra key, and Fastify serialization fails-closed (5xx)
+// rather than stripping a leaked field. Mirrors books.test.ts's F6 test.
+describe('strict / fail-closed schema (F1)', () => {
+  it.each(['libraryPath', 'freeSpace', 'dbSize'])(
+    'systemV1Schema.parse rejects the sensitive %s field instead of stripping it',
+    (extra) => {
+      const result = systemV1Schema.safeParse({ ...validSystemBody(), [extra]: 'leaked' });
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it('Fastify serialization fails closed (500) when a handler leaks an internal field', async () => {
+    // A route declaring `response: systemV1Schema` whose handler returns a leaky
+    // object must FAIL serialization, not strip-and-ship. This pins the keystone
+    // behavior at the Fastify layer, not just at direct parse.
+    const leakyApp = Fastify({ logger: false });
+    leakyApp.setSerializerCompiler(serializerCompiler);
+    leakyApp.get('/leak', { schema: { response: { 200: systemV1Schema } } }, async () => ({
+      ...validSystemBody(),
+      dbSize: 4096,
+    }));
+    await leakyApp.ready();
+
+    const res = await leakyApp.inject({ method: 'GET', url: '/leak' });
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).not.toHaveProperty('dbSize');
+
+    await leakyApp.close();
+  });
+});
