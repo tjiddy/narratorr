@@ -114,7 +114,16 @@ function readNativeSeriesTags(native: NativeTags): Partial<TagMetadata> {
   const series = readNativeFreeform(native, 'series');
   if (series) result.series = series;
   const seriesPart = readNativeFreeform(native, 'series-part');
-  if (seriesPart) result.seriesPart = Number(seriesPart);
+  if (seriesPart) {
+    // `nativeTagText` drops only the exact empty string and does not trim, so a
+    // whitespace-only frame stays truthy (and `Number('   ')` is a finite `0`).
+    // Trim, treat a blank result as absent, and assign only a finite parse — a
+    // non-numeric embedded value (`"Book 2"`) must read as absent so
+    // populate_missing still writes the canonical series part.
+    const trimmed = seriesPart.trim();
+    const parsed = Number(trimmed);
+    if (trimmed && Number.isFinite(parsed)) result.seriesPart = parsed;
+  }
   return result;
 }
 
