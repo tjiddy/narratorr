@@ -1,4 +1,4 @@
-import type { BookStatus, EnrichmentStatus, LibraryFilterBucket } from '../../../shared/schemas.js';
+import type { BookStatus, EnrichmentStatus, LibraryFilterBucket, RetagExcludableField } from '../../../shared/schemas.js';
 import type { LibraryBookListItem, LibraryBookListResponse } from '../../../shared/schemas/library-book.js';
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '../../../core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
@@ -6,6 +6,7 @@ import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCand
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 export type { LibraryBookListItem, LibraryBookListResponse };
+export type { RetagExcludableField };
 export type { BookSeriesMemberCard, BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
 
 export interface Author {
@@ -170,24 +171,6 @@ export interface RetagResult {
   failed: number;
   warnings: string[];
 }
-
-// Mirror of `RETAG_EXCLUDABLE_FIELDS` in `src/shared/schemas/book.ts` (#1671) — keep in lockstep.
-export type RetagExcludableField =
-  | 'artist'
-  | 'albumArtist'
-  | 'album'
-  | 'title'
-  | 'composer'
-  | 'grouping'
-  | 'series'
-  | 'seriesPart'
-  | 'subtitle'
-  | 'asin'
-  | 'publisher'
-  | 'description'
-  | 'date'
-  | 'genre'
-  | 'track';
 
 export interface RetagPlanFileDiff {
   field: RetagExcludableField;

@@ -178,7 +178,7 @@ export const deleteBookQuerySchema = z.object({
  * The ABS-survivable set (`series`, `seriesPart`, `subtitle`, `asin`, `publisher`)
  * survives embedded tags on MP3 but is dropped by ffmpeg on M4B; `description`,
  * `date`, `genre` survive both (#1671). Order here is the canonical display order —
- * mirror it in the modal's `FIELD_ORDER` and the client API union.
+ * mirror it in the modal's `FIELD_ORDER`.
  */
 export const RETAG_EXCLUDABLE_FIELDS = [
   'artist',
