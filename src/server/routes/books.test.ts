@@ -98,8 +98,8 @@ function makeBookRouteDeps(overrides: Partial<BookRouteDeps> = {}): BookRouteDep
 }
 
 /** Minimal ConnectorService stand-in — only `notifyRefresh` is exercised by the refresh triggers. */
-function makeMockConnector(): BookRouteDeps['connectorService'] {
-  return { notifyRefresh: vi.fn().mockResolvedValue(undefined) } as unknown as BookRouteDeps['connectorService'];
+function makeMockConnector(): NonNullable<BookRouteDeps['connectorService']> {
+  return { notifyRefresh: vi.fn().mockResolvedValue(undefined) } as unknown as NonNullable<BookRouteDeps['connectorService']>;
 }
 
 /** Register only `booksRoutes` onto a fresh Fastify app, wired from the given
@@ -934,7 +934,7 @@ describe('books routes', () => {
     // #1707 — the standalone edit route fires a 'metadata' refresh only when the OPF was written.
     it("fires a 'metadata' refresh when the OPF is written, none when skipped", async () => {
       const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-      const connectorService = inject<BookRouteDeps['connectorService']>({ notifyRefresh });
+      const connectorService = inject<NonNullable<BookRouteDeps['connectorService']>>({ notifyRefresh });
 
       writeOpfMock.mockResolvedValueOnce('written');
       const app2 = await createAppFromDeps({ ...depsFor({ writeOpf: true, path: '/lib/Author/Book' }), connectorService });
