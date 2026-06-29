@@ -4,15 +4,16 @@ import type { FastifyInstance } from 'fastify';
 import { serveCoverFromCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { MAX_COVER_SIZE } from '../../shared/constants.js';
-import type { BookService, SettingsService } from '../services/index.js';
+import type { BookService, SettingsService, ConnectorService } from '../services/index.js';
 import { type z } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
 import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
+import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
-export async function bookFilesRoute(app: FastifyInstance, bookService: BookService, settingsService: SettingsService) {
+export async function bookFilesRoute(app: FastifyInstance, bookService: BookService, settingsService: SettingsService, connectorService?: ConnectorService) {
   // GET /api/books/:id/cover — serve embedded cover art from library
   app.get<{ Params: IdParam }>(
     '/api/books/:id/cover',
@@ -87,18 +88,31 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
 
       const mimeType = data.mimetype;
 
-      const book = await bookService.uploadCover(id, buffer, mimeType);
+      // A pre-rename failure (unsupported MIME, rename error) still rejects here, keeping the
+      // existing error response. `coverOutcome` is 'written' once the cover.* file committed —
+      // even if the post-rename DB coverUrl update threw.
+      const { book, coverOutcome } = await bookService.uploadCover(id, buffer, mimeType);
 
       // Refresh the OPF sidecar so it stays current with the DB after a cover change (gated on
       // tagging.writeOpf). The OPF embeds no cover reference — ABS reads the folder cover file — so
       // this keeps the sidecar generally fresh; nonfatal, never fails the upload response.
-      await refreshOpfForBook({
+      const opfOutcome = await refreshOpfForBook({
         settingsService,
         bookService,
         bookId: id,
         bookFolder: book.path ?? null,
         log: request.log,
       });
+
+      // Single aggregation point for this route's two possible media-visible writes (cover + OPF):
+      // fire EXACTLY ONE 'metadata' refresh when either materialized, so the book is never pushed
+      // twice for one upload. Fires off the cover write even with writeOpf off (OPF 'skipped'), and
+      // off a post-rename cover DB failure (coverOutcome stays 'written'). Both skipped/failed → none.
+      if (coverOutcome === 'written' || opfOutcome === 'written') {
+        enqueueBookRefresh(connectorService, request.log, 'metadata', {
+          bookId: id, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path!,
+        });
+      }
 
       request.log.info({ id }, 'Cover uploaded');
       return book;

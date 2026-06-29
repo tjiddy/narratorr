@@ -20,6 +20,7 @@ import type { Db } from '../../db/index.js';
 import type { RenameService } from './rename.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { BookService } from './book.service.js';
+import type { ConnectorService } from './connector.service.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 /** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
@@ -44,7 +45,7 @@ vi.mock('../utils/opf-writer.js', () => ({
 }));
 vi.mock('./cover-download.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./cover-download.js')>()),
-  downloadRemoteCover: vi.fn().mockResolvedValue(true),
+  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
 }));
 
 
@@ -92,6 +93,7 @@ function createService(opts?: {
   renameService?: RenameService;
   taggingService?: TaggingService;
   bookService?: BookService;
+  connectorService?: { notifyRefresh: ReturnType<typeof vi.fn> };
 }) {
   const db = createMockDb();
   const log = createMockLogger();
@@ -103,6 +105,7 @@ function createService(opts?: {
     processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     ...opts?.settingsOverrides,
   });
+  const connectorService = opts?.connectorService;
   const service = new BulkOperationService(
     inject<Db>(db),
     renameService,
@@ -110,8 +113,9 @@ function createService(opts?: {
     settingsService,
     bookService,
     inject<FastifyBaseLogger>(log),
+    connectorService ? inject<ConnectorService>(connectorService) : undefined,
   );
-  return { service, db, log, renameService, taggingService, bookService, settingsService };
+  return { service, db, log, renameService, taggingService, bookService, settingsService, connectorService };
 }
 
 async function waitForJob(service: BulkOperationService, jobId: string, maxMs = 2000): Promise<void> {
@@ -761,6 +765,25 @@ describe('BulkOperationService — re-tag batch', () => {
     expect(status?.total).toBe(1);
     expect(status?.failures).toBe(0);
   });
+
+  // #1707 — connector refresh after a bulk re-tag that actually tagged ≥1 file
+  it("enqueues a 'metadata' refresh for a book that tagged ≥1 file, and none for an all-skipped book", async () => {
+    const taggingService = makeTaggingService();
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    const bookService = makeBookService({ id: 1, title: 'Tagged Book', path: BOOK_PATH });
+    const { service, db } = createService({ taggingService, bookService, connectorService: { notifyRefresh } });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1 }, { id: 2 }]));
+    (taggingService.retagBook as Mock)
+      .mockResolvedValueOnce({ bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [] })
+      .mockResolvedValueOnce({ bookId: 2, tagged: 0, skipped: 3, failed: 0, warnings: [] });
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    expect(notifyRefresh).toHaveBeenCalledTimes(1);
+    expect(notifyRefresh).toHaveBeenCalledWith('metadata', [
+      expect.objectContaining({ bookId: 1, title: 'Tagged Book', libraryPath: BOOK_PATH }),
+    ]);
+  });
 });
 
 // ===== Retag eligibility: single shared predicate (count ↔ job lockstep) =====
@@ -862,6 +885,35 @@ describe('BulkOperationService — convert batch', () => {
       expect.objectContaining({ title: 'Title' }),
     );
     expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
+  });
+
+  // #1707 — connector refresh after the irreversible convert swap
+  it("enqueues one 'convert' refresh per converted book, after the swap", async () => {
+    setupConvertMocks();
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    const { service, db } = createService({ connectorService: { notifyRefresh } });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(notifyRefresh).toHaveBeenCalledTimes(1);
+    // The refresh item is built from the loaded book (re-read for title/author), so it carries the
+    // book's own title + path, not the bulk row's projection.
+    expect(notifyRefresh).toHaveBeenCalledWith('convert', [
+      expect.objectContaining({ bookId: 1, libraryPath: BOOK_PATH }),
+    ]);
+  });
+
+  it("still enqueues the 'convert' refresh when post-swap enrichment throws", async () => {
+    setupConvertMocks();
+    (enrichBookFromAudio as Mock).mockRejectedValue(new Error('enrich boom'));
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    const { service, db } = createService({ connectorService: { notifyRefresh } });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    // The refresh fires after the swap returns but before enrichment, so a later enrichment throw
+    // cannot suppress it (the originals are already deleted on disk).
+    expect(notifyRefresh).toHaveBeenCalledWith('convert', [expect.objectContaining({ bookId: 1 })]);
   });
 
   it('threads outputFormat and mergeBehavior from settings into processAudioFiles', async () => {
@@ -1110,7 +1162,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
   beforeEach(() => {
     vi.resetAllMocks();
     writeOpfMock.mockResolvedValue('written');
-    downloadMock.mockResolvedValue(true);
+    downloadMock.mockResolvedValue('written');
   });
 
   it('returns a UUID immediately and selects only imported books with a path', async () => {
@@ -1158,10 +1210,10 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
     expect(status?.failures).toBe(1);
   });
 
-  it('attempted cover download returning false → failure counted', async () => {
+  it("attempted cover download returning 'failed' → failure counted", async () => {
     const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
-    downloadMock.mockResolvedValue(false);
+    downloadMock.mockResolvedValue('failed');
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
     expect(service.getJob(id)?.failures).toBe(1);

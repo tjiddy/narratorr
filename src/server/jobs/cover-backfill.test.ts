@@ -4,11 +4,12 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
 vi.mock('../services/cover-download.js', () => ({
-  downloadRemoteCover: vi.fn().mockResolvedValue(true),
+  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
 }));
 
 import { downloadRemoteCover } from '../services/cover-download.js';
 import { runCoverBackfill } from './cover-backfill.js';
+import type { ConnectorService } from '../services/connector.service.js';
 
 function createMockLogger() {
   return inject<FastifyBaseLogger>({
@@ -24,11 +25,12 @@ function createMockLogger() {
   });
 }
 
-function createMockDb(rows: Array<{ id: number; coverUrl: string; path: string | null }>) {
+function createMockDb(rows: Array<{ id: number; coverUrl: string; path: string | null; title?: string }>) {
+  const withTitle = rows.map((r) => ({ title: `Book ${r.id}`, ...r }));
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(rows),
+        where: vi.fn().mockResolvedValue(withTitle),
       }),
     }),
   };
@@ -101,9 +103,9 @@ describe('runCoverBackfill', () => {
       { id: 3, coverUrl: 'https://cdn.example.com/cover3.jpg', path: '/books/book3' },
     ]);
     vi.mocked(downloadRemoteCover)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false) // second one fails
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce('written')
+      .mockResolvedValueOnce('failed') // second one fails
+      .mockResolvedValueOnce('written');
 
     await runCoverBackfill(inject<Db>(mockDb), log);
 
@@ -114,7 +116,7 @@ describe('runCoverBackfill', () => {
     const mockDb = createMockDb([
       { id: 1, coverUrl: 'https://cdn.example.com/cover1.jpg', path: '/books/book1' },
     ]);
-    vi.mocked(downloadRemoteCover).mockResolvedValueOnce(false);
+    vi.mocked(downloadRemoteCover).mockResolvedValueOnce('failed');
 
     await runCoverBackfill(inject<Db>(mockDb), log);
 
@@ -130,8 +132,8 @@ describe('runCoverBackfill', () => {
       { id: 2, coverUrl: 'https://cdn.example.com/cover2.jpg', path: '/books/book2' },
     ]);
     vi.mocked(downloadRemoteCover)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+      .mockResolvedValueOnce('written')
+      .mockResolvedValueOnce('failed');
 
     await runCoverBackfill(inject<Db>(mockDb), log);
 
@@ -161,6 +163,34 @@ describe('runCoverBackfill', () => {
     vi.mocked(downloadRemoteCover).mockRejectedValueOnce(new Error('Unexpected'));
 
     // Should not throw
+    await expect(runCoverBackfill(inject<Db>(mockDb), log)).resolves.toBeUndefined();
+  });
+
+  it("fires a 'metadata' connector refresh per book whose cover was 'written' (with the extended title)", async () => {
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    const connector = inject<ConnectorService>({ notifyRefresh });
+    const mockDb = createMockDb([
+      { id: 1, coverUrl: 'https://cdn.example.com/cover1.jpg', path: '/books/book1', title: 'Dune' },
+      { id: 2, coverUrl: 'https://cdn.example.com/cover2.jpg', path: '/books/book2', title: 'Hyperion' },
+    ]);
+    vi.mocked(downloadRemoteCover)
+      .mockResolvedValueOnce('written')
+      .mockResolvedValueOnce('failed'); // second cover did not materialize → no refresh
+
+    await runCoverBackfill(inject<Db>(mockDb), log, connector);
+
+    expect(notifyRefresh).toHaveBeenCalledTimes(1);
+    expect(notifyRefresh).toHaveBeenCalledWith('metadata', [
+      { bookId: 1, title: 'Dune', authorName: null, libraryPath: '/books/book1' },
+    ]);
+  });
+
+  it('does not fire a refresh when no connector is provided (silent no-op)', async () => {
+    const mockDb = createMockDb([
+      { id: 1, coverUrl: 'https://cdn.example.com/cover1.jpg', path: '/books/book1' },
+    ]);
+    vi.mocked(downloadRemoteCover).mockResolvedValueOnce('written');
+
     await expect(runCoverBackfill(inject<Db>(mockDb), log)).resolves.toBeUndefined();
   });
 });

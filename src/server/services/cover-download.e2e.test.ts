@@ -147,7 +147,7 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
       log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('failed');
     expect(lookupCalls).toEqual(['origin.test', 'rebind.test']);
     expect(requestCount).toBe(1);
     expect(mockedDnsLookup).toHaveBeenCalledTimes(2);
@@ -200,7 +200,7 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
       log,
     );
 
-    expect(result).toBe(true);
+    expect(result).toBe('written');
     expect(lookupCalls).toEqual(['origin.test', 'allowed.test']);
     expect(requestCount).toBe(2);
     expect(mockDb.update).toHaveBeenCalledOnce();

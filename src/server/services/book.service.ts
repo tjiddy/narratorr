@@ -1,6 +1,7 @@
 import { cleanEmptyParents } from '../utils/paths.js';
 import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/delete-managed-files.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
+import type { CoverWriteOutcome } from './cover-write.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
 import { eq, and, sql, notExists, inArray } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
@@ -496,12 +497,17 @@ export class BookService {
   /**
    * Upload a custom cover image for a book.
    * Validates book exists and has a path, then delegates to uploadBookCover utility.
+   *
+   * Returns the reloaded book PLUS the {@link CoverWriteOutcome} from the writer so the route can
+   * fire a connector refresh keyed off whether the `cover.*` file actually materialized — including
+   * the case where the post-rename DB `coverUrl` update threw (outcome stays `'written'`). Pre-rename
+   * failures still reject through `uploadBookCover` (the route keeps its existing error response).
    */
   async uploadCover(
     bookId: number,
     buffer: Buffer,
     mimeType: string,
-  ): Promise<BookWithAuthor> {
+  ): Promise<{ book: BookWithAuthor; coverOutcome: CoverWriteOutcome }> {
     if (!SUPPORTED_COVER_MIMES.has(mimeType)) {
       throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
     }
@@ -514,8 +520,9 @@ export class BookService {
       throw new CoverUploadError('Book has no path on disk', 'NO_PATH');
     }
 
-    await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
-    return this.getById(bookId) as Promise<BookWithAuthor>;
+    const coverOutcome = await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
+    const reloaded = await this.getById(bookId) as BookWithAuthor;
+    return { book: reloaded, coverOutcome };
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */

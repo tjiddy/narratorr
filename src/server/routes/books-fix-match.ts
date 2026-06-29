@@ -6,6 +6,7 @@ import type { BookMetadata } from '../../core/index.js';
 import type { BookRouteDeps } from './books.js';
 import type { FixMatchReplacement } from '../services/book.service.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
+import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { type z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -58,14 +59,21 @@ function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   return out;
 }
 
+/**
+ * Run Fix-Match's optional post-commit rename + retag. Returns whether the retag actually tagged
+ * ≥1 file, so the caller can fold it into the single `'metadata'` refresh. The rename's own
+ * `'rename'` connector refresh is fired independently by `RenameService` and is NOT this route's
+ * concern (so a `renameFiles=true` book may receive two refreshes total — one `'rename'`, one
+ * `'metadata'` — the accepted cross-operation same-book case).
+ */
 async function runPostCommitRenameRetag(
   deps: BookRouteDeps,
   bookId: number,
   hasPath: boolean,
   body: FixMatchRequest,
   log: { warn: (obj: unknown, msg: string) => void },
-): Promise<void> {
-  if (!hasPath) return;
+): Promise<{ retagged: boolean }> {
+  if (!hasPath) return { retagged: false };
   if (body.renameFiles) {
     try {
       await deps.renameService.renameBook(bookId);
@@ -73,12 +81,52 @@ async function runPostCommitRenameRetag(
       log.warn({ id: bookId, error: serializeError(error) }, 'Fix Match: post-commit rename failed');
     }
   }
+  let retagged = false;
   if (body.retagFiles) {
     try {
-      await deps.taggingService.retagBook(bookId, new Set(), {});
+      const result = await deps.taggingService.retagBook(bookId, new Set(), {});
+      retagged = result.tagged > 0;
     } catch (error: unknown) {
       log.warn({ id: bookId, error: serializeError(error) }, 'Fix Match: post-commit retag failed');
     }
+  }
+  return { retagged };
+}
+
+/**
+ * Refresh the on-disk `metadata.opf` for the (now corrected) book and fire EXACTLY ONE `'metadata'`
+ * connector refresh covering Fix-Match's retag + OPF writes (one item, not one per writer). When
+ * files were renamed the persisted path moved, so re-read the current folder before writing the
+ * sidecar into it (best-effort: fall back to the pre-rename path). The refresh fires when the retag
+ * tagged ≥1 file OR the OPF was written — covering the `writeOpf`-off case where only the retag
+ * changed a file. The rename's own `'rename'` refresh is fired independently by `RenameService`.
+ */
+async function refreshSidecarAndNotify(
+  deps: BookRouteDeps,
+  bookId: number,
+  updated: { title: string; path: string | null; authors?: Array<{ name: string }> | null },
+  body: FixMatchRequest,
+  retagged: boolean,
+  log: FastifyInstance['log'],
+): Promise<void> {
+  let bookFolder = updated.path ?? null;
+  if (body.renameFiles && updated.path) {
+    const refreshed = await deps.bookService.getById(bookId).catch(() => null);
+    bookFolder = refreshed?.path ?? updated.path;
+  }
+  const opfOutcome = await refreshOpfForBook({
+    settingsService: deps.settingsService,
+    bookService: deps.bookService,
+    bookId,
+    bookFolder,
+    log,
+  });
+
+  // `bookFolder` is non-null whenever either condition holds (both require an imported path).
+  if (retagged || opfOutcome === 'written') {
+    enqueueBookRefresh(deps.connectorService, log, 'metadata', {
+      bookId, title: updated.title, authorName: updated.authors?.[0]?.name ?? null, libraryPath: bookFolder!,
+    });
   }
 }
 
@@ -126,24 +174,8 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
         }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record metadata_fixed event'));
       }
 
-      await runPostCommitRenameRetag(deps, id, !!updated.path, body, request.log);
-
-      // Refresh the on-disk metadata.opf for the (now corrected) book — on BOTH the retag and
-      // non-retag paths, gated only on tagging.writeOpf. When files were renamed, the persisted
-      // path moved, so re-read the current folder before writing the sidecar into it (best-effort:
-      // fall back to the pre-rename path if the re-read fails).
-      let bookFolder = updated.path ?? null;
-      if (body.renameFiles && updated.path) {
-        const refreshed = await deps.bookService.getById(id).catch(() => null);
-        bookFolder = refreshed?.path ?? updated.path;
-      }
-      await refreshOpfForBook({
-        settingsService: deps.settingsService,
-        bookService: deps.bookService,
-        bookId: id,
-        bookFolder,
-        log: request.log,
-      });
+      const { retagged } = await runPostCommitRenameRetag(deps, id, !!updated.path, body, request.log);
+      await refreshSidecarAndNotify(deps, id, updated, body, retagged, request.log);
 
       return reply.status(200).send(updated);
     },
