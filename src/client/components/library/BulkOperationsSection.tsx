@@ -190,7 +190,7 @@ function BulkOperationModals({ pendingOp, retagCount, missingCount, onStartRenam
       <ConfirmModal
         isOpen
         title="Write Metadata Sidecars?"
-        message="Write a metadata.opf and folder cover image into every imported book's folder, refreshing them from the current library data. Foreign metadata.opf files are left untouched. This helps media servers like Audiobookshelf and Plex read your metadata."
+        message="Write a metadata.opf into each imported book's folder, refreshing it from the current library data, and download any cover that hasn't been saved locally yet. Foreign metadata.opf files are left untouched. This helps media servers like Audiobookshelf and Plex read your metadata."
         confirmLabel="Write Sidecars"
         cancelLabel="Cancel"
         onConfirm={onConfirm}
@@ -295,9 +295,10 @@ export function BulkOperationsSection() {
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Write/refresh metadata sidecars saves a <code>metadata.opf</code> and folder cover into each imported
-        book&apos;s folder so media servers (Audiobookshelf, Plex) read your library&apos;s metadata. It never
-        overwrites a foreign <code>metadata.opf</code> and leaves other files in place.
+        Write/refresh metadata sidecars saves a <code>metadata.opf</code> into each imported book&apos;s folder
+        and downloads any cover not already saved locally, so media servers (Audiobookshelf, Plex) read your
+        library&apos;s metadata. It never overwrites a foreign <code>metadata.opf</code> and leaves other files
+        in place.
       </p>
       {progress.failures > 0 && (
         <p className="text-xs text-destructive">{progress.failures} failure{progress.failures !== 1 ? 's' : ''}</p>
