@@ -1630,6 +1630,43 @@ describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
   });
 });
 
+// #1704 — the Library page must supply the sidecar gate from settings.tagging.writeOpf,
+// not a hardcoded boolean. Asserts the page-level wiring, not just the menu's prop behavior.
+describe('LibraryPage — settings-driven sidecar menu gate (#1704)', () => {
+  async function openLibraryActions(user: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /library actions/i }));
+  }
+
+  it('shows the Write / refresh sidecars item when settings.tagging.writeOpf is true', async () => {
+    mockLibraryData(mockBooks);
+    vi.mocked(api.getSettings).mockResolvedValue(createMockSettings({ tagging: { writeOpf: true } }));
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+    await openLibraryActions(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: /write \/ refresh sidecars/i })).toBeInTheDocument();
+    });
+  });
+
+  it('hides the Write / refresh sidecars item when settings.tagging.writeOpf is false', async () => {
+    mockLibraryData(mockBooks);
+    vi.mocked(api.getSettings).mockResolvedValue(createMockSettings({ tagging: { writeOpf: false } }));
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+    await openLibraryActions(user);
+
+    // Menu is open (the bulk group renders) but the settings-gated sidecar item is absent.
+    expect(screen.getByRole('menuitem', { name: /rename all books/i })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /sidecars/i })).not.toBeInTheDocument();
+  });
+});
+
 // #183 — Test coverage gaps
 
 describe('LibraryPage — view mode localStorage edge cases (#183)', () => {
