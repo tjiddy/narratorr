@@ -173,6 +173,12 @@ export const deleteBookQuerySchema = z.object({
 /**
  * User-facing tag field names the preview modal exposes a per-field checkbox for.
  * `track` covers both `track` and `trackTotal` (they're a bundle in ffmpeg args).
+ * `seriesPart` is the numeric `series-part` tag (mapped from `seriesPosition`).
+ *
+ * The ABS-survivable set (`series`, `seriesPart`, `subtitle`, `asin`, `publisher`)
+ * survives embedded tags on MP3 but is dropped by ffmpeg on M4B; `description`,
+ * `date`, `genre` survive both (#1671). Order here is the canonical display order —
+ * mirror it in the modal's `FIELD_ORDER` and the client API union.
  */
 export const RETAG_EXCLUDABLE_FIELDS = [
   'artist',
@@ -181,6 +187,14 @@ export const RETAG_EXCLUDABLE_FIELDS = [
   'title',
   'composer',
   'grouping',
+  'series',
+  'seriesPart',
+  'subtitle',
+  'asin',
+  'publisher',
+  'description',
+  'date',
+  'genre',
   'track',
 ] as const;
 export const retagExcludableFieldSchema = z.enum(RETAG_EXCLUDABLE_FIELDS);
