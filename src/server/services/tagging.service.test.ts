@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { buildFfmpegArgs, tagFile, TaggingService, RetagError, type TagMetadata } from './tagging.service.js';
-import { buildCanonicalTags, readExistingTags, resolveTags } from './retag-plan.js';
+import { buildFfmpegArgs, tagFile, TaggingService, RetagError, STRING_METADATA_TAGS, type TagMetadata } from './tagging.service.js';
+import { buildCanonicalTags, readExistingTags, resolveTags, SIMPLE_EXCLUDABLE_FIELDS } from './retag-plan.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
 // Mock child_process — the callback is the LAST arg, which may be the 3rd (cmd, args, cb)
@@ -66,6 +66,22 @@ import { rename, unlink, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
 import { parseFile } from 'music-metadata';
+
+describe('STRING_METADATA_TAGS', () => {
+  // Guard B — binds the ffmpeg write map to the server-side string-field diff list.
+  // `STRING_METADATA_TAGS` maps each string field to its ffmpeg `-metadata` key; its
+  // field-key set must match `SIMPLE_EXCLUDABLE_FIELDS` (the diff list) exactly. Without
+  // this guard a field could be diffable by the apply path but never written to ffmpeg —
+  // the preview would show a change that the write path silently drops. Numeric
+  // `seriesPart`/`track` are written separately and are absent from both lists by design.
+  // Mirrors the connector registry schema-alignment precedent
+  // (src/core/connectors/registry.test.ts).
+  it('field-key set equals SIMPLE_EXCLUDABLE_FIELDS', () => {
+    expect(new Set(STRING_METADATA_TAGS.map(([field]) => field))).toEqual(
+      new Set(SIMPLE_EXCLUDABLE_FIELDS),
+    );
+  });
+});
 
 describe('buildFfmpegArgs', () => {
   it('builds correct args for MP3 with all tags', () => {

@@ -49,7 +49,7 @@ export interface RetagPlan {
 // String-valued tag fields handled uniformly by the truthy populate_missing gate,
 // the exclude filter, and the diff builder. `seriesPart` (numeric) and `track`
 // (numeric pair) are NOT here — they need `!= null` handling so a 0 survives.
-const SIMPLE_EXCLUDABLE_FIELDS = [
+export const SIMPLE_EXCLUDABLE_FIELDS = [
   'artist', 'albumArtist', 'album', 'title', 'composer', 'grouping',
   'series', 'subtitle', 'asin', 'publisher', 'description', 'date', 'genre',
 ] as const;
