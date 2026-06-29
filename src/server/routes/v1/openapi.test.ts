@@ -18,6 +18,7 @@ import { v1SeriesRoutes } from './series.js';
 import { v1DownloadsRoutes } from './downloads.js';
 import { v1ActionsRoutes } from './actions.js';
 import { v1MetadataRoutes } from './metadata.js';
+import { v1SystemRoutes } from './system.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors books.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -91,6 +92,7 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       downloadService: downloadService as never,
     }, db);
     await v1MetadataRoutes(scoped, { metadataService: metadataService as never, bookService: bookService as never });
+    await v1SystemRoutes(scoped);
     // Non-v1 decoys (must be ABSENT from the public spec).
     scoped.get('/api/books', async () => ({ ok: true }));
     scoped.get('/api/v1/system/status', async () => ({ ok: true })); // Prowlarr-compat shim
@@ -113,6 +115,9 @@ const READ_PATHS = [
   '/api/v1/downloads/{publicId}',
 ];
 const ACTION_PATHS = ['/api/v1/books/{publicId}/search', '/api/v1/books/{publicId}/grab'];
+// Singleton resources — no `{publicId}` detail and no list `{ data, total }`
+// envelope, so they sit outside READ_PATHS' DETAIL/LIST 400/404 assertions.
+const SINGLETON_PATHS = ['/api/v1/system'];
 const DETAIL_PATHS = READ_PATHS.filter((p) => p.endsWith('{publicId}'));
 const LIST_PATHS = READ_PATHS.filter((p) => !p.endsWith('{publicId}'));
 
@@ -130,7 +135,7 @@ describe('v1 OpenAPI spec generation', () => {
   afterAll(async () => { await app.close(); });
 
   it('documents every v1 read endpoint and both action endpoints', () => {
-    for (const p of [...READ_PATHS, ...ACTION_PATHS]) {
+    for (const p of [...READ_PATHS, ...ACTION_PATHS, ...SINGLETON_PATHS]) {
       expect(spec.paths).toHaveProperty([p]);
     }
   });

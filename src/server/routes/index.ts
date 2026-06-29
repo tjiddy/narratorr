@@ -83,6 +83,7 @@ import { v1SeriesRoutes } from './v1/series.js';
 import { v1DownloadsRoutes } from './v1/downloads.js';
 import { v1ActionsRoutes } from './v1/actions.js';
 import { v1MetadataRoutes } from './v1/metadata.js';
+import { v1SystemRoutes } from './v1/system.js';
 
 // The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
 // (the correct layer — routes depend on services, not the reverse). Imported for
@@ -282,6 +283,7 @@ const routeRegistry: RouteFactory[] = [
     downloadService: s.download,
   }, db),
   (app, s) => v1MetadataRoutes(app, { metadataService: s.metadata, bookService: s.book }),
+  (app) => v1SystemRoutes(app),
 ];
 
 export { routeRegistry };
