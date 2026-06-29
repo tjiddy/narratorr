@@ -8,22 +8,35 @@ import { EmptyLibraryState } from './EmptyLibraryState.js';
 import { LibraryErrorState } from './LibraryErrorState.js';
 import { NoMatchState } from './NoMatchState.js';
 import { LibraryHeader } from './LibraryHeader.js';
+import { LibraryActionsMenu } from './LibraryActionsMenu.js';
 import { Pagination } from '@/components/Pagination';
 import { useLibraryPageState } from './useLibraryPageState.js';
 
 export function LibraryPage() {
   const s = useLibraryPageState();
 
-  if (s.isLoading) return <PageLoading header={<LibraryHeader />} />;
+  const actionsMenu = (
+    <LibraryActionsMenu
+      missingCount={s.missingCount}
+      onRemoveMissing={() => s.setShowRemoveMissingModal(true)}
+      onSearchAllWanted={() => s.setShowSearchAllWantedModal(true)}
+      isSearchingAllWanted={s.searchAllWantedMutation.isPending}
+      onRescan={() => s.rescanMutation.mutate()}
+      isRescanning={s.rescanMutation.isPending}
+      writeOpf={s.settings?.tagging.writeOpf ?? false}
+    />
+  );
+
+  if (s.isLoading) return <PageLoading header={<LibraryHeader actions={actionsMenu} />} />;
   if (s.booksError) return (
     <div className="space-y-6">
-      <LibraryHeader />
+      <LibraryHeader actions={actionsMenu} />
       <LibraryErrorState />
     </div>
   );
   if (s.totalAll === 0 && s.totalBooks === 0 && !s.filters.state.isSearching && s.filters.state.statusFilter === 'all') return (
     <div className="space-y-6">
-      <LibraryHeader />
+      <LibraryHeader actions={actionsMenu} />
       <EmptyLibraryState hasLibraryPath={Boolean(s.settings?.library.path)} />
     </div>
   );
@@ -40,7 +53,7 @@ export function LibraryPage() {
 
   return (
     <div className="space-y-5">
-      <LibraryHeader subtitle={s.subtitle} />
+      <LibraryHeader subtitle={s.subtitle} actions={actionsMenu} />
 
       <LibraryToolbar
         searchQuery={s.filters.state.searchQuery}
@@ -58,12 +71,6 @@ export function LibraryPage() {
         onCollapseSeriesToggle={() => s.filters.actions.setCollapseSeriesEnabled(!s.filters.state.collapseSeriesEnabled)}
         viewMode={s.viewMode}
         onViewModeChange={s.handleViewModeChange}
-        onRescan={() => s.rescanMutation.mutate()}
-        isRescanning={s.rescanMutation.isPending}
-        missingCount={s.missingCount}
-        onRemoveMissing={() => s.setShowRemoveMissingModal(true)}
-        onSearchAllWanted={() => s.setShowSearchAllWantedModal(true)}
-        isSearchingAllWanted={s.searchAllWantedMutation.isPending}
       />
 
       {s.viewMode === 'table' && s.bulk.selectedIds.size > 0 && (
