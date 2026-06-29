@@ -19,10 +19,14 @@ describe('LibraryHeader', () => {
     expect(screen.getByText('41 books in your collection')).toBeInTheDocument();
   });
 
-  it('renders Import Files link pointing to /import', () => {
+  it('renders the actions slot when provided', () => {
+    renderWithProviders(<LibraryHeader actions={<button type="button">Library Actions</button>} />);
+    expect(screen.getByRole('button', { name: 'Library Actions' })).toBeInTheDocument();
+  });
+
+  it('does not render a standalone Import Files link (folded into the actions menu)', () => {
     renderWithProviders(<LibraryHeader />);
-    const link = screen.getByText('Import Files').closest('a');
-    expect(link).toHaveAttribute('href', '/import');
+    expect(screen.queryByRole('link', { name: /import files/i })).not.toBeInTheDocument();
   });
 
   describe('animation dedup', () => {

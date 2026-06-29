@@ -55,12 +55,6 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     onCollapseSeriesToggle: vi.fn(),
     viewMode: 'grid' as const,
     onViewModeChange: vi.fn(),
-    onRescan: vi.fn(),
-    isRescanning: false,
-    missingCount: 0,
-    onRemoveMissing: vi.fn(),
-    onSearchAllWanted: vi.fn(),
-    isSearchingAllWanted: false,
     ...rest,
   };
 }
@@ -209,75 +203,12 @@ describe('LibraryToolbar', () => {
     });
   });
 
-  describe('overflow menu (replaces top-level action buttons)', () => {
-    it('renders a ⋮ overflow menu trigger instead of top-level Rescan/Search Wanted/Import buttons', () => {
+  describe('library-wide actions moved out of the toolbar (#1704)', () => {
+    it('no longer renders an overflow "⋮" trigger or top-level Rescan/Search Wanted buttons', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByRole('button', { name: /more actions/i })).toBeInTheDocument();
-      // Top-level Rescan and Search Wanted buttons should not be present outside the menu
+      expect(screen.queryByRole('button', { name: /more actions/i })).not.toBeInTheDocument();
       expect(screen.queryByText('Rescan')).not.toBeInTheDocument();
       expect(screen.queryByText('Search Wanted')).not.toBeInTheDocument();
-    });
-
-    it('clicking ⋮ opens menu with Rescan, Search Wanted, Import items', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-
-      expect(screen.getByRole('menuitem', { name: /rescan/i })).toBeInTheDocument();
-      expect(screen.getByRole('menuitem', { name: /search wanted/i })).toBeInTheDocument();
-      expect(screen.getByRole('menuitem', { name: /import/i })).toBeInTheDocument();
-    });
-
-    it('overflow menu Rescan item calls onRescan', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps();
-      renderWithProviders(<LibraryToolbar {...props} />);
-
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
-
-      expect(props.onRescan).toHaveBeenCalledTimes(1);
-    });
-
-    it('overflow menu Search Wanted item calls onSearchAllWanted', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps();
-      renderWithProviders(<LibraryToolbar {...props} />);
-
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      await user.click(screen.getByRole('menuitem', { name: /search wanted/i }));
-
-      expect(props.onSearchAllWanted).toHaveBeenCalledTimes(1);
-    });
-
-    it('Remove Missing item appears in overflow menu when missingCount > 0', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<LibraryToolbar {...defaultProps({ missingCount: 3 })} />);
-
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-
-      expect(screen.getByRole('menuitem', { name: /remove missing/i })).toBeInTheDocument();
-    });
-
-    it('Remove Missing item absent from overflow menu when missingCount is 0', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<LibraryToolbar {...defaultProps({ missingCount: 0 })} />);
-
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-
-      expect(screen.queryByRole('menuitem', { name: /remove missing/i })).not.toBeInTheDocument();
-    });
-
-    it('overflow menu Remove Missing item calls onRemoveMissing', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps({ missingCount: 5 });
-      renderWithProviders(<LibraryToolbar {...props} />);
-
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
-
-      expect(props.onRemoveMissing).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -338,14 +269,14 @@ describe('LibraryToolbar', () => {
       expect(toolbarRow.firstElementChild).toBe(searchContainer);
     });
 
-    it('overflow trigger is the last direct child of the toolbar row', () => {
+    it('view toggle is the last direct child of the toolbar row', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
 
       const searchInput = screen.getByPlaceholderText('Search library...');
       const toolbarRow = searchInput.parentElement!.parentElement!;
-      const overflowTrigger = screen.getByRole('button', { name: /more actions/i });
+      const viewToggle = screen.getByLabelText('Grid view');
 
-      expect(toolbarRow.lastElementChild).toContainElement(overflowTrigger);
+      expect(toolbarRow.lastElementChild).toContainElement(viewToggle);
     });
 
     it('search input container carries the min-w-[200px] width contract', () => {

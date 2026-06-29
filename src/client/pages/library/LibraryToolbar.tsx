@@ -5,7 +5,6 @@ import { StatusDropdown } from './StatusDropdown';
 import { FilterRow, type FilterProps } from './FilterRow';
 import { SortDropdown, type SortProps } from './SortDropdown';
 import { ViewToggle } from './ViewToggle.js';
-import { OverflowMenu } from './OverflowMenu.js';
 
 export type ViewMode = 'grid' | 'table';
 
@@ -17,9 +16,6 @@ export function LibraryToolbar({
   sortProps,
   collapseSeriesEnabled, onCollapseSeriesToggle,
   viewMode, onViewModeChange,
-  onRescan, isRescanning,
-  missingCount, onRemoveMissing,
-  onSearchAllWanted, isSearchingAllWanted,
 }: {
   searchQuery: string;
   onSearchChange: (q: string) => void;
@@ -36,12 +32,6 @@ export function LibraryToolbar({
   onCollapseSeriesToggle: () => void;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
-  onRescan: () => void;
-  isRescanning: boolean;
-  missingCount: number;
-  onRemoveMissing: () => void;
-  onSearchAllWanted: () => void;
-  isSearchingAllWanted: boolean;
 }) {
   return (
     <div className="space-y-3 animate-fade-in-up stagger-1">
@@ -103,15 +93,6 @@ export function LibraryToolbar({
         </FilterPill>
 
         <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
-
-        <OverflowMenu
-          missingCount={missingCount}
-          onRemoveMissing={onRemoveMissing}
-          onSearchAllWanted={onSearchAllWanted}
-          isSearchingAllWanted={isSearchingAllWanted}
-          onRescan={onRescan}
-          isRescanning={isRescanning}
-        />
       </div>
 
       {filtersOpen && <FilterRow {...filterProps} />}
