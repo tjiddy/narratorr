@@ -69,7 +69,7 @@ export interface RetagResult {
 }
 
 /** String tag field → ffmpeg `-metadata` key. Numeric `seriesPart`/`track` are handled separately. */
-const STRING_METADATA_TAGS: ReadonlyArray<readonly [keyof TagMetadata, string]> = [
+export const STRING_METADATA_TAGS: ReadonlyArray<readonly [keyof TagMetadata, string]> = [
   ['artist', 'artist'], ['albumArtist', 'album_artist'], ['album', 'album'], ['title', 'title'],
   ['composer', 'composer'], ['grouping', 'grouping'], ['series', 'series'], ['subtitle', 'subtitle'],
   ['asin', 'asin'], ['publisher', 'publisher'], ['description', 'description'], ['date', 'date'], ['genre', 'genre'],
