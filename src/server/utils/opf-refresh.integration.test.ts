@@ -134,16 +134,41 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
     await mkdir(bookFolder, { recursive: true });
     const opfPath = join(bookFolder, OPF_FILENAME);
     await writeFile(opfPath, FOREIGN_OPF, 'utf-8');
+    const bookService = makeBookService();
 
     await refreshOpfForBook({
       settingsService: makeSettingsService(false),
-      bookService: makeBookService(),
+      bookService,
       bookId: 1,
       bookFolder,
       log: makeLog(),
     });
 
-    // The `enabled` short-circuit in writeOpfSidecar means the foreign file is never even read.
+    // The `enabled` short-circuit in writeOpfSidecar fires before the book load — the foreign file is
+    // never even read. (Asserting getById is not called distinguishes the short-circuit from the
+    // foreign-marker gate, which would *also* preserve this file but only after loading the book.)
+    expect(bookService.getById).not.toHaveBeenCalled();
     expect(await readFile(opfPath, 'utf-8')).toBe(FOREIGN_OPF);
+  }));
+
+  it('writes nothing and never loads the book when writeOpf=false and no OPF exists', withTmp(async (root) => {
+    // With NO existing OPF, the foreign-marker gate can't be what prevents a write (an absent file is
+    // ENOENT → mayWriteOpf returns true → it WOULD write). So if no `metadata.opf` appears, the only
+    // thing that stopped it is the `enabled` short-circuit. Deleting that guard makes this test fail.
+    const bookFolder = join(root, 'Author', 'Book');
+    await mkdir(bookFolder, { recursive: true });
+    const opfPath = join(bookFolder, OPF_FILENAME);
+    const bookService = makeBookService();
+
+    await refreshOpfForBook({
+      settingsService: makeSettingsService(false),
+      bookService,
+      bookId: 1,
+      bookFolder,
+      log: makeLog(),
+    });
+
+    expect(bookService.getById).not.toHaveBeenCalled();
+    expect(await pathExists(opfPath)).toBe(false);
   }));
 });
