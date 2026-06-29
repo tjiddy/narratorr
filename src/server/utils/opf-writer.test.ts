@@ -9,7 +9,7 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 import { readFile, writeFile } from 'node:fs/promises';
-import { generateOpf, writeOpfForImport } from './opf-writer.js';
+import { generateOpf, writeOpfForImport, writeOpfSidecar } from './opf-writer.js';
 import { parseOpfMetadata } from './abs-opf-parser.fixture.js';
 import { NARRATORR_OPF_MARKER } from '../../core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
@@ -457,5 +457,61 @@ describe('writeOpfForImport', () => {
       expect.objectContaining({ opfPath: expect.stringContaining('metadata.opf') }),
       expect.stringContaining('skipping'),
     );
+  });
+});
+
+// The result-returning variant the reconcile bulk job uses to count per-book failures (#1670 F2).
+describe('writeOpfSidecar — result API (#1670)', () => {
+  const writeFileMock = vi.mocked(writeFile);
+  const readFileMock = vi.mocked(readFile);
+
+  function makeBookService(book: BookWithAuthor | null): BookService {
+    return { getById: vi.fn().mockResolvedValue(book) } as unknown as BookService;
+  }
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("returns 'written' on a fresh/marked target", async () => {
+    const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+    expect(outcome).toBe('written');
+    expect(writeFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns 'skipped' when disabled — no fresh load, no write", async () => {
+    const outcome = await writeOpfSidecar({ enabled: false, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+    expect(outcome).toBe('skipped');
+    expect(writeFileMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 'skipped' for a single-file pointer path", async () => {
+    const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/audiobooks/Doctor Sleep.m4b', log: makeLog() });
+    expect(outcome).toBe('skipped');
+    expect(writeFileMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 'skipped' when the book is missing", async () => {
+    const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(null), bookId: 9, bookFolder: '/lib/Book', log: makeLog() });
+    expect(outcome).toBe('skipped');
+    expect(writeFileMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 'skipped' for a foreign (unmarked) existing OPF", async () => {
+    readFileMock.mockResolvedValueOnce('<?xml version="1.0"?><package><metadata><dc:title>ABS</dc:title></metadata></package>');
+    const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+    expect(outcome).toBe('skipped');
+    expect(writeFileMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 'failed' when writeFile rejects", async () => {
+    writeFileMock.mockRejectedValueOnce(new Error('EACCES'));
+    const outcome = await writeOpfSidecar({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() });
+    expect(outcome).toBe('failed');
+  });
+
+  it('writeOpfForImport wrapper stays void + nonfatal over a failing core (regression guard)', async () => {
+    writeFileMock.mockRejectedValueOnce(new Error('EACCES'));
+    await expect(
+      writeOpfForImport({ enabled: true, bookService: makeBookService(makeBook()), bookId: 1, bookFolder: '/lib/Book', log: makeLog() }),
+    ).resolves.toBeUndefined();
   });
 });

@@ -5,6 +5,7 @@ import { idParamSchema, fixMatchRequestSchema, type FixMatchRequest } from '../.
 import type { BookMetadata } from '../../core/index.js';
 import type { BookRouteDeps } from './books.js';
 import type { FixMatchReplacement } from '../services/book.service.js';
+import { refreshOpfForBook } from '../utils/opf-refresh.js';
 import { type z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -126,6 +127,24 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
       }
 
       await runPostCommitRenameRetag(deps, id, !!updated.path, body, request.log);
+
+      // Refresh the on-disk metadata.opf for the (now corrected) book — on BOTH the retag and
+      // non-retag paths, gated only on tagging.writeOpf. When files were renamed, the persisted
+      // path moved, so re-read the current folder before writing the sidecar into it (best-effort:
+      // fall back to the pre-rename path if the re-read fails).
+      let bookFolder = updated.path ?? null;
+      if (body.renameFiles && updated.path) {
+        const refreshed = await deps.bookService.getById(id).catch(() => null);
+        bookFolder = refreshed?.path ?? updated.path;
+      }
+      await refreshOpfForBook({
+        settingsService: deps.settingsService,
+        bookService: deps.bookService,
+        bookId: id,
+        bookFolder,
+        log: request.log,
+      });
+
       return reply.status(200).send(updated);
     },
   );

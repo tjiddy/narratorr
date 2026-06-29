@@ -4,14 +4,15 @@ import type { FastifyInstance } from 'fastify';
 import { serveCoverFromCache, COVER_FILE_REGEX } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { MAX_COVER_SIZE } from '../../shared/constants.js';
-import type { BookService } from '../services/index.js';
+import type { BookService, SettingsService } from '../services/index.js';
 import { type z } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
 import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
+import { refreshOpfForBook } from '../utils/opf-refresh.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
-export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
+export async function bookFilesRoute(app: FastifyInstance, bookService: BookService, settingsService: SettingsService) {
   // GET /api/books/:id/cover — serve embedded cover art from library
   app.get<{ Params: IdParam }>(
     '/api/books/:id/cover',
@@ -87,6 +88,18 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
       const mimeType = data.mimetype;
 
       const book = await bookService.uploadCover(id, buffer, mimeType);
+
+      // Refresh the OPF sidecar so it stays current with the DB after a cover change (gated on
+      // tagging.writeOpf). The OPF embeds no cover reference — ABS reads the folder cover file — so
+      // this keeps the sidecar generally fresh; nonfatal, never fails the upload response.
+      await refreshOpfForBook({
+        settingsService,
+        bookService,
+        bookId: id,
+        bookFolder: book.path ?? null,
+        log: request.log,
+      });
+
       request.log.info({ id }, 'Cover uploaded');
       return book;
     },

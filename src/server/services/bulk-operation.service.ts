@@ -13,6 +13,7 @@ import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
+import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -25,7 +26,7 @@ import { serializeError } from '../utils/serialize-error.js';
 
 // ============ Types ============
 
-export type BulkOpType = 'rename' | 'retag' | 'convert';
+export type BulkOpType = 'rename' | 'retag' | 'convert' | 'write_metadata_sidecars';
 
 export interface BulkJobStatus {
   jobId: string;
@@ -294,11 +295,7 @@ export class BulkOperationService {
       }
     }, () => this.onJobComplete(id));
 
-    this.jobs.set(id, job);
-    this.activeJobId = id;
-    job.start();
-    this.log.info({ jobId: id }, 'Bulk rename job started');
-    return id;
+    return this.launch(id, job, 'Bulk rename job started');
   }
 
   startRetagJob(): string {
@@ -328,11 +325,23 @@ export class BulkOperationService {
       }
     }, () => this.onJobComplete(id));
 
-    this.jobs.set(id, job);
-    this.activeJobId = id;
-    job.start();
-    this.log.info({ jobId: id }, 'Bulk re-tag job started');
-    return id;
+    return this.launch(id, job, 'Bulk re-tag job started');
+  }
+
+  /**
+   * Library reconcile: (re)write the `metadata.opf` + folder cover sidecar for every imported book
+   * with a path, backfilling existing libraries and backstopping any drift. The per-book body and
+   * row loop live in `bulk-sidecar-reconcile.ts` (this file is at the line cap). No cancel — the
+   * bulk infra is start+poll only. Writes regardless of `tagging.writeOpf` (the button is the opt-in).
+   */
+  startWriteMetadataSidecarsJob(): string {
+    this.assertNoActiveJob();
+    const id = randomUUID();
+    const reconcileDeps = { db: this.db, bookService: this.bookService, log: this.log, jobId: id, where: this.retagEligibleWhere() };
+    const job = new BulkJob(id, 'write_metadata_sidecars', this.log,
+      (setTotal, tick) => runSidecarReconcile(reconcileDeps, setTotal, tick),
+      () => this.onJobComplete(id));
+    return this.launch(id, job, 'Bulk write-metadata-sidecars job started');
   }
 
   async startConvertJob(): Promise<string> {
@@ -372,11 +381,7 @@ export class BulkOperationService {
       }
     }, () => this.onJobComplete(id));
 
-    this.jobs.set(id, job);
-    this.activeJobId = id;
-    job.start();
-    this.log.info({ jobId: id }, 'Bulk convert job started');
-    return id;
+    return this.launch(id, job, 'Bulk convert job started');
   }
 
   getJob(jobId: string): BulkJobStatus | null {
@@ -476,6 +481,15 @@ export class BulkOperationService {
     } finally {
       await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
     }
+  }
+
+  /** Register a freshly-built job as the active one, start it, log, and return its id. */
+  private launch(id: string, job: BulkJob, startedMsg: string): string {
+    this.jobs.set(id, job);
+    this.activeJobId = id;
+    job.start();
+    this.log.info({ jobId: id }, startedMsg);
+    return id;
   }
 
   private onJobComplete(jobId: string): void {

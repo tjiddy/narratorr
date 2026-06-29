@@ -12,6 +12,8 @@ import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { writeOpfSidecar } from '../utils/opf-writer.js';
+import { downloadRemoteCover } from './cover-download.js';
 import { cp, mkdir, rename, rm, readdir, unlink } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -33,6 +35,16 @@ vi.mock('./enrichment-utils.js', () => ({
 
 vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
+}));
+
+// #1670 — the reconcile job composes the OPF writer + cover downloader; mock them at their module
+// boundaries to drive per-book outcomes (isRemoteCoverUrl stays real for the remote/local gate).
+vi.mock('../utils/opf-writer.js', () => ({
+  writeOpfSidecar: vi.fn().mockResolvedValue('written'),
+}));
+vi.mock('./cover-download.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./cover-download.js')>()),
+  downloadRemoteCover: vi.fn().mockResolvedValue(true),
 }));
 
 
@@ -1086,5 +1098,142 @@ describe('TTL cleanup', () => {
         expect.stringContaining('book failed'),
       );
     });
+  });
+});
+
+// ===== Library reconcile: write/refresh metadata sidecars (#1670) =====
+
+describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () => {
+  const writeOpfMock = vi.mocked(writeOpfSidecar);
+  const downloadMock = vi.mocked(downloadRemoteCover);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    writeOpfMock.mockResolvedValue('written');
+    downloadMock.mockResolvedValue(true);
+  });
+
+  it('returns a UUID immediately and selects only imported books with a path', async () => {
+    const { service, db } = createService();
+    const jobChain = mockDbChain([
+      { id: 1, path: '/lib/A/1', coverUrl: null },
+      { id: 2, path: '/lib/A/2', coverUrl: null },
+    ]);
+    db.select.mockReturnValueOnce(jobChain);
+
+    const id = service.startWriteMetadataSidecarsJob();
+    expect(id).toMatch(/[0-9a-f-]{36}/);
+    await waitForJob(service, id);
+
+    const where = (jobChain.where as Mock).mock.calls[0]![0];
+    const { sql } = toSQL(where);
+    expect(sql).toMatch(/"books"\."status" = \?/i);
+    expect(sql).toMatch(/"books"\."path" is not null/i);
+    expect(service.getJob(id)?.total).toBe(2);
+  });
+
+  it('a normal imported book → OPF written + cover materialized, counted success', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/lib/A/1' }));
+    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/A/1', 'https://x/c.png', expect.anything(), expect.anything());
+    const status = service.getJob(id);
+    expect(status?.status).toBe('completed');
+    expect(status?.failures).toBe(0);
+    expect(status?.completed).toBe(1);
+  });
+
+  it("OPF write 'failed' → failure counted, job still completes", async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null }]));
+    writeOpfMock.mockResolvedValue('failed');
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    const status = service.getJob(id);
+    expect(status?.status).toBe('completed');
+    expect(status?.failures).toBe(1);
+  });
+
+  it('attempted cover download returning false → failure counted', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
+    downloadMock.mockResolvedValue(false);
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+    expect(service.getJob(id)?.failures).toBe(1);
+  });
+
+  it('coverUrl=null → no download attempt, counted success', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null }]));
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+    expect(downloadMock).not.toHaveBeenCalled();
+    expect(service.getJob(id)?.failures).toBe(0);
+  });
+
+  it('single-file pointer (.m4b) → BOTH OPF and cover skipped, NOT a failure (F4)', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/audiobooks/Doctor Sleep.m4b', coverUrl: 'https://x/c.png' }]));
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    expect(writeOpfMock).not.toHaveBeenCalled();
+    expect(downloadMock).not.toHaveBeenCalled();
+    const status = service.getJob(id);
+    expect(status?.failures).toBe(0);
+    expect(status?.completed).toBe(1);
+  });
+
+  it('one book failing never aborts the run (other books still processed)', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: '/lib/A/1', coverUrl: null },
+      { id: 2, path: '/lib/A/2', coverUrl: null },
+    ]));
+    writeOpfMock.mockResolvedValueOnce('failed').mockResolvedValue('written');
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    const status = service.getJob(id);
+    expect(status?.completed).toBe(2);
+    expect(status?.failures).toBe(1);
+  });
+
+  it('F5: a remote coverUrl is downloaded on the first run but a now-local one is not on the second', async () => {
+    const { service, db } = createService();
+    // First run sees a remote URL → download attempted (localizes the DB in production).
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
+    const id1 = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id1);
+    expect(downloadMock).toHaveBeenCalledTimes(1);
+
+    // Second run sees the now-local URL → no remote download attempted (idempotent from here on).
+    downloadMock.mockClear();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: '/api/books/1/cover' }]));
+    const id2 = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id2);
+    expect(downloadMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a second concurrent start with BULK_OP_IN_PROGRESS and reports the active job', async () => {
+    const { service, db } = createService();
+    // Never-resolving where() keeps the first job running so the second start collides.
+    let resolveFn!: (v: unknown[]) => void;
+    db.select.mockReturnValue({
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnValue(new Promise(r => { resolveFn = r; })),
+    });
+    const id = service.startWriteMetadataSidecarsJob();
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(service.getActiveJob()?.jobId).toBe(id);
+    expect(service.getActiveJob()?.type).toBe('write_metadata_sidecars');
+    expect(() => service.startWriteMetadataSidecarsJob()).toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
+    resolveFn([]);
   });
 });

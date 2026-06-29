@@ -19,6 +19,7 @@ function makeBulkService(overrides?: Record<string, unknown>) {
     startRenameJob: vi.fn().mockResolvedValue('job-uuid-1'),
     startRetagJob: vi.fn().mockResolvedValue('job-uuid-2'),
     startConvertJob: vi.fn().mockResolvedValue('job-uuid-3'),
+    startWriteMetadataSidecarsJob: vi.fn().mockReturnValue('job-uuid-4'),
     getJob: vi.fn().mockReturnValue(null),
     ...overrides,
   };
@@ -217,6 +218,34 @@ describe('POST /api/books/bulk/convert', () => {
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
     const resp = await app.inject({ method: 'POST', url: '/api/books/bulk/convert' });
+    expect(resp.statusCode).toBe(409);
+  });
+});
+
+describe('POST /api/books/bulk/write-metadata-sidecars (#1670)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('returns 202 { jobId } and starts the reconcile job', async () => {
+    const bulkOperation = makeBulkService({ startWriteMetadataSidecarsJob: vi.fn().mockReturnValue('job-uuid-4') });
+    const services = createMockServices({ bulkOperation });
+    const app = await createTestApp(services);
+    const resp = await app.inject({ method: 'POST', url: '/api/books/bulk/write-metadata-sidecars' });
+    expect(resp.statusCode).toBe(202);
+    expect(resp.json()).toEqual({ jobId: 'job-uuid-4' });
+    expect(bulkOperation.startWriteMetadataSidecarsJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 409 BULK_OP_IN_PROGRESS when a job is already running', async () => {
+    const bulkOperation = makeBulkService({
+      startWriteMetadataSidecarsJob: vi.fn().mockImplementation(() => {
+        throw new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS');
+      }),
+    });
+    const services = createMockServices({ bulkOperation });
+    const app = await createTestApp(services);
+    const resp = await app.inject({ method: 'POST', url: '/api/books/bulk/write-metadata-sidecars' });
     expect(resp.statusCode).toBe(409);
   });
 });

@@ -54,6 +54,19 @@ export async function bulkOperationsRoutes(
     }
   });
 
+  app.post('/api/books/bulk/write-metadata-sidecars', async (request, reply) => {
+    try {
+      const jobId = bulkOperationService.startWriteMetadataSidecarsJob();
+      return await reply.status(202).send({ jobId });
+    } catch (error: unknown) {
+      if (error instanceof BulkOpError) {
+        if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
+      }
+      request.log.error({ error: serializeError(error) }, 'Failed to start bulk write-metadata-sidecars job');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
   app.post('/api/books/bulk/convert', async (request, reply) => {
     try {
       const jobId = await bulkOperationService.startConvertJob();
