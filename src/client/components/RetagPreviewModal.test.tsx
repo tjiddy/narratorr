@@ -85,6 +85,46 @@ const emptyPlan: RetagPlan = {
   warnings: ['No taggable audio files found'],
 };
 
+// Single-file plan carrying the #1671 ABS-survivable set in both the canonical card
+// and the per-file diff, so the new FIELD_LABELS/FIELD_ORDER entries are load-bearing
+// (deleting them would drop these rows and fail the assertions below).
+const absFieldsPlan: RetagPlan = {
+  mode: 'overwrite',
+  embedCover: false,
+  hasCoverFile: false,
+  isSingleFile: true,
+  canonical: {
+    artist: 'Brandon Sanderson',
+    albumArtist: 'Brandon Sanderson',
+    album: 'Words of Radiance',
+    title: 'Words of Radiance',
+    composer: 'Michael Kramer',
+    grouping: 'The Stormlight Archive',
+    series: 'The Stormlight Archive',
+    seriesPart: '2',
+    subtitle: 'Book Two',
+    asin: 'B00ABCDEFG',
+    publisher: 'Tor Books',
+    description: 'An epic fantasy.',
+    date: '2014',
+    genre: 'Fantasy',
+  },
+  files: [
+    {
+      file: 'book.mp3',
+      outcome: 'will-tag',
+      diff: [
+        { field: 'series', current: null, next: 'The Stormlight Archive' },
+        { field: 'seriesPart', current: null, next: '2' },
+        { field: 'asin', current: null, next: 'B00ABCDEFG' },
+        { field: 'genre', current: null, next: 'Fantasy' },
+      ],
+      coverPending: false,
+    },
+  ],
+  warnings: [],
+};
+
 function freshClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
@@ -303,6 +343,36 @@ describe('RetagPreviewModal', () => {
     // Default overrides untouched — wire payload omits them
     expect(calledWith.mode).toBeUndefined();
     expect(calledWith.embedCover).toBeUndefined();
+  });
+
+  it('renders the new ABS-survivable fields as per-field checkboxes in the canonical card (#1671)', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(absFieldsPlan);
+    renderModal();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    // Exact accessible-name match ("Include Series" must not match "Include Series Part").
+    for (const label of ['Series', 'Series Part', 'Subtitle', 'ASIN', 'Publisher', 'Description', 'Year', 'Genre']) {
+      expect(screen.getByRole('checkbox', { name: `Include ${label}` })).toBeChecked();
+    }
+    // The new fields also surface in the (inline, single-file) per-file diff —
+    // each new value appears in both the canonical card and the diff row (>= 2).
+    expect(screen.getAllByText('B00ABCDEFG').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('Fantasy').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('excluding a new field (ASIN) flows into the confirm payload excludeFields (#1671)', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue(absFieldsPlan);
+    const { onConfirm } = renderModal();
+    const user = userEvent.setup();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    await user.click(screen.getByRole('checkbox', { name: 'Include ASIN' }));
+    await user.click(screen.getByRole('button', { name: /Re-tag/ }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    const calledWith = onConfirm.mock.calls[0]![0] as { excludeFields: RetagExcludableField[] };
+    // Excluding a new field omits its -metadata arg in apply — preview/apply agree.
+    expect(calledWith.excludeFields).toEqual(['asin']);
   });
 
   it('renders empty state when no taggable files', async () => {
