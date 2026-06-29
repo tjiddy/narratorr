@@ -26,9 +26,15 @@ export interface ConvertProcessingSettings {
   bitrate?: number | null;
 }
 
-/** Move converted output files to the book directory and remove originals that weren't outputs. */
-async function swapConvertedFiles(outputFiles: string[], originalFiles: string[], bookPath: string): Promise<void> {
-  if (outputFiles.length === 0) return;
+/**
+ * Move converted output files to the book directory and remove originals that weren't outputs.
+ * Returns `true` when an irreversible swap actually committed (≥1 output renamed in), `false` when
+ * there was nothing to swap (`processAudioFiles` can report success with `outputFiles: []` when the
+ * staging dir held no audio) — the caller gates the connector refresh on that so a no-mutation
+ * convert does not report a media-visible change that never happened.
+ */
+async function swapConvertedFiles(outputFiles: string[], originalFiles: string[], bookPath: string): Promise<boolean> {
+  if (outputFiles.length === 0) return false;
   const outputFileNames = new Set(outputFiles.map(f => basename(f)));
   for (const outputFile of outputFiles) {
     await fsRename(outputFile, join(bookPath, basename(outputFile)));
@@ -38,6 +44,7 @@ async function swapConvertedFiles(outputFiles: string[], originalFiles: string[]
       await unlink(join(bookPath, file)).catch(() => {});
     }
   }
+  return true;
 }
 
 /**
@@ -87,8 +94,10 @@ export async function convertBook(
     }
     result.warnings?.forEach(w => log.warn({ bookId }, w));
 
-    await swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
-    await enqueueBookRefreshById(connectorService, bookService, log, 'convert', bookId);
+    const swapped = await swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
+    // Only refresh when an irreversible swap actually committed. A success-with-no-output convert
+    // (empty staging → `outputFiles: []`) mutated nothing on disk, so it has no media-visible change.
+    if (swapped) await enqueueBookRefreshById(connectorService, bookService, log, 'convert', bookId);
 
     // Refresh DB audio fields
     const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);

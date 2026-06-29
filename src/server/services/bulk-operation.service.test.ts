@@ -916,6 +916,20 @@ describe('BulkOperationService — convert batch', () => {
     expect(notifyRefresh).toHaveBeenCalledWith('convert', [expect.objectContaining({ bookId: 1 })]);
   });
 
+  it("does NOT enqueue a 'convert' refresh when the processor succeeds with no output files (no swap)", async () => {
+    setupConvertMocks();
+    // processAudioFiles can return success with an empty outputFiles list (e.g. an empty staging
+    // dir — audio-processor.ts). No rename/unlink happens, so nothing media-visible changed and no
+    // refresh must fire — keying the trigger off an actual irreversible swap, not job success.
+    (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [] });
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    const { service, db } = createService({ connectorService: { notifyRefresh } });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(notifyRefresh).not.toHaveBeenCalled();
+  });
+
   it('threads outputFormat and mergeBehavior from settings into processAudioFiles', async () => {
     setupConvertMocks();
     const { service, db } = createService({
