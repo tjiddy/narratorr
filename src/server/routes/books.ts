@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService, ConnectorService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
@@ -27,6 +27,7 @@ export interface BookRouteDeps {
   eventBroadcaster: EventBroadcasterService;
   seriesCardService: SeriesCardService;
   metadataService: MetadataService;
+  connectorService?: ConnectorService;
 }
 import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
 import { z } from 'zod';
@@ -51,6 +52,7 @@ import {
 import { registerFixMatchRoute } from './books-fix-match.js';
 import { registerSeriesRoutes } from './books-series.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
+import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
@@ -301,13 +303,22 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
       // Keep the on-disk metadata.opf current with the edited DB state (gated on tagging.writeOpf,
       // independent of any audio-retag). Skipped for not-yet-imported books (path === null).
-      await refreshOpfForBook({
+      const opfOutcome = await refreshOpfForBook({
         settingsService: deps.settingsService,
         bookService,
         bookId: id,
         bookFolder: book.path ?? null,
         log: request.log,
       });
+
+      // Standalone metadata-edit route: a refresh only when the OPF actually got written
+      // ('skipped'/'failed' → none). The cover-upload and Fix-Match routes aggregate their own
+      // OPF write into a single refresh, so this independent OPF fire is scoped to the edit route.
+      if (opfOutcome === 'written') {
+        enqueueBookRefresh(deps.connectorService, request.log, 'metadata', {
+          bookId: id, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path!,
+        });
+      }
 
       request.log.info({ id }, 'Book updated');
       return book;
@@ -369,6 +380,20 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const excludeFields = new Set(request.body?.excludeFields ?? []);
       const result = await taggingService.retagBook(id, excludeFields, pickRetagOverrides(request.body ?? undefined));
+
+      // A re-tag rewrites embedded audio tags in place (new inode, same path) — fire a 'metadata'
+      // refresh when ≥1 file was tagged so ABS/Plex re-reads the changed files. RetagResult carries
+      // only counts, so reload the book to build the refresh item; all-skipped → none. Best-effort:
+      // a reload failure is swallowed (`.catch`) so it can never fail the successful re-tag response.
+      if (result.tagged > 0) {
+        const book = await bookService.getById(id).catch(() => null);
+        if (book?.path) {
+          enqueueBookRefresh(deps.connectorService, request.log, 'metadata', {
+            bookId: id, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path,
+          });
+        }
+      }
+
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
       return result;
     },

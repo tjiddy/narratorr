@@ -724,6 +724,7 @@ describe('startJobs', () => {
       expect(runCoverBackfill).toHaveBeenCalledWith(
         expect.anything(), // db
         log,
+        services.connector, // #1707 — threaded so the backfill can fire connector refreshes
       );
     });
 

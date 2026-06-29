@@ -9,6 +9,7 @@ import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { ConnectorService } from './connector.service.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
@@ -91,7 +92,7 @@ const SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
+function createService(opts?: { eventHistory?: EventHistoryService; eventBroadcaster?: EventBroadcasterService; connector?: { notifyRefresh: ReturnType<typeof vi.fn> }; processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; mergeBehavior: 'always' | 'multi-file-only' | 'never'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }> }) {
   const db = createMockDb();
   const bookService = {
     getById: vi.fn().mockResolvedValue(mockBook),
@@ -109,9 +110,10 @@ function createService(opts?: { eventHistory?: EventHistoryService; eventBroadca
     inject<FastifyBaseLogger>(log),
     opts?.eventHistory,
     opts?.eventBroadcaster,
+    opts?.connector ? inject<ConnectorService>(opts.connector) : undefined,
   );
 
-  return { service, db, bookService, log };
+  return { service, db, bookService, log, connector: opts?.connector };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 50));
@@ -523,6 +525,65 @@ describe('MergeService', () => {
       // Merge still completes: staging dir cleanup runs (success-only path)
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
       expect(log.error).not.toHaveBeenCalled();
+    });
+
+    // #1707 — connector refresh after the irreversible swap
+    describe('connector refresh', () => {
+      it("enqueues exactly one 'merge' refresh after the originals-unlink swap", async () => {
+        setupHappyPath();
+        const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+        const { service } = createService({ connector: { notifyRefresh } });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        expect(notifyRefresh).toHaveBeenCalledTimes(1);
+        expect(notifyRefresh).toHaveBeenCalledWith('merge', [
+          expect.objectContaining({ bookId: 42, title: 'The Way of Kings', libraryPath: BOOK_PATH }),
+        ]);
+      });
+
+      it('still enqueues the refresh when the staging rm cleanup throws AFTER the swap', async () => {
+        setupHappyPath();
+        (rm as Mock).mockRejectedValue(new Error('rm failed'));
+        const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+        const { service } = createService({ connector: { notifyRefresh } });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        // The refresh fires before the rm (which is the only step that can throw after the swap),
+        // so the late rm failure can't suppress it.
+        expect(unlink).toHaveBeenCalled();
+        expect(notifyRefresh).toHaveBeenCalledWith('merge', [expect.objectContaining({ bookId: 42 })]);
+      });
+
+      it('enqueues NO refresh when the DB size update fails before the unlink (pre-swap failure)', async () => {
+        setupHappyPath();
+        const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+        const { service, db } = createService({ connector: { notifyRefresh } });
+        db.update.mockReturnValue({
+          set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }),
+        });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        expect(unlink).not.toHaveBeenCalled();
+        expect(notifyRefresh).not.toHaveBeenCalled();
+      });
+
+      it('a rejecting notifyRefresh does not fail the merge (fire-and-forget)', async () => {
+        setupHappyPath();
+        const notifyRefresh = vi.fn().mockRejectedValue(new Error('connector down'));
+        const { service, log } = createService({ connector: { notifyRefresh } });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+        expect(log.error).not.toHaveBeenCalled();
+      });
     });
 
     it('db.update receives both size and updatedAt from stat() on the post-rename destination path', async () => {

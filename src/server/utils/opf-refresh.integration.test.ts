@@ -120,7 +120,7 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
       bookId: 1,
       bookFolder: null,
       log: makeLog(),
-    })).resolves.toBeUndefined();
+    })).resolves.toBe('skipped');
 
     // The null guard short-circuits before the writer — settings/book are never consulted and no
     // stray file is joined into the process CWD.

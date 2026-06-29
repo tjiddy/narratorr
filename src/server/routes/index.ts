@@ -128,7 +128,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   const qualityGateService = new QualityGateService(db, log);
   const renameService = new RenameService(db, book, settings, log, eventHistory, connector);
-  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
+  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster, connector);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const importList = new ImportListService(db, log, book, metadata, {
@@ -142,7 +142,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   });
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, settings);
-  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log);
+  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector);
 
   // Bootstrap processing defaults on first run (no-op if row exists)
   const { probeFfmpeg, detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
@@ -227,8 +227,9 @@ const routeRegistry: RouteFactory[] = [
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    connectorService: s.connector,
   }),
-  (app, s) => bookFilesRoute(app, s.book, s.settings),
+  (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.downloadOrchestrator),
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.bookImport, () => s.importQueueWorker.nudge()),

@@ -6,17 +6,22 @@ import { books } from '../../db/schema.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import type { BookService } from './book.service.js';
+import type { ConnectorService } from './connector.service.js';
 
 export interface ReconcileBookSidecarsArgs {
   bookId: number;
+  /** Book title for the connector-refresh item (the reconcile SELECT loads it; authors are not). */
+  title: string;
   /** Non-null book folder (the reconcile query guarantees `path IS NOT NULL`). */
   bookFolder: string;
   coverUrl: string | null;
   bookService: BookService;
   db: Db;
   log: FastifyBaseLogger;
+  connectorService?: ConnectorService | undefined;
 }
 
 /**
@@ -30,7 +35,7 @@ export interface ReconcileBookSidecarsArgs {
  * `tagging.writeOpf` setting — the bulk action is itself the operator's explicit opt-in.
  */
 export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Promise<boolean> {
-  const { bookId, bookFolder, coverUrl, bookService, db, log } = args;
+  const { bookId, title, bookFolder, coverUrl, bookService, db, log, connectorService } = args;
 
   // Single-file pointer (path is a loose audio file, not a book directory): skip BOTH sidecars.
   // The OPF writer already guards this; the cover materialization must too, else
@@ -41,17 +46,28 @@ export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Pr
   }
 
   let failed = false;
+  let wrote = false;
 
   // OPF: always enabled for the explicit reconcile action. 'skipped' (foreign OPF / missing book)
-  // is not a failure; only a 'failed' write counts.
+  // is not a failure; only a 'failed' write counts. A 'written' OPF warrants a refresh.
   const opfOutcome = await writeOpfSidecar({ enabled: true, bookService, bookId, bookFolder, log });
   if (opfOutcome === 'failed') failed = true;
+  if (opfOutcome === 'written') wrote = true;
 
   // Cover: only a remote coverUrl is materialized. null / already-local → no download attempt,
-  // not a failure. A download that was attempted but returned false IS a failure.
+  // not a failure. 'failed' (pre-rename) counts as a failure; a post-rename DB failure stays
+  // 'written' (the file materialized) → a refresh, not a counted failure.
   if (coverUrl && isRemoteCoverUrl(coverUrl)) {
-    const ok = await downloadRemoteCover(bookId, bookFolder, coverUrl, db, log);
-    if (!ok) failed = true;
+    const coverOutcome = await downloadRemoteCover(bookId, bookFolder, coverUrl, db, log);
+    if (coverOutcome === 'failed') failed = true;
+    if (coverOutcome === 'written') wrote = true;
+  }
+
+  // One refresh per book when an OPF or cover actually materialized; books that only skipped
+  // (foreign OPF / single-file pointer / already-local cover) enqueue nothing. authorName is null —
+  // the reconcile projection does not load authors and the field is observability-only.
+  if (wrote) {
+    enqueueBookRefresh(connectorService, log, 'metadata', { bookId, title, authorName: null, libraryPath: bookFolder });
   }
 
   return failed;
@@ -64,6 +80,7 @@ export interface RunSidecarReconcileDeps {
   jobId: string;
   /** Eligibility predicate (`status = 'imported' AND path IS NOT NULL`). */
   where: SQL | undefined;
+  connectorService?: ConnectorService | undefined;
 }
 
 /**
@@ -77,9 +94,9 @@ export async function runSidecarReconcile(
   setTotal: (n: number) => void,
   tick: (isFailure: boolean) => void,
 ): Promise<void> {
-  const { db, bookService, log, jobId, where } = deps;
+  const { db, bookService, log, jobId, where, connectorService } = deps;
   const rows = await db
-    .select({ id: books.id, path: books.path, coverUrl: books.coverUrl })
+    .select({ id: books.id, path: books.path, coverUrl: books.coverUrl, title: books.title })
     .from(books)
     .where(where);
 
@@ -90,11 +107,13 @@ export async function runSidecarReconcile(
     try {
       const failure = await reconcileBookSidecars({
         bookId: row.id,
+        title: row.title,
         bookFolder: row.path,
         coverUrl: row.coverUrl,
         bookService,
         db,
         log,
+        connectorService,
       });
       tick(failure);
     } catch (error: unknown) {
