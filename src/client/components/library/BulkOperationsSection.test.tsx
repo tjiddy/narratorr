@@ -185,6 +185,35 @@ describe('BulkOperationsSection', () => {
     expect(mockStartJob).toHaveBeenCalledWith('write_metadata_sidecars');
   });
 
+  // #1698 — copy must not promise a folder cover for every/each book (cover is remote-only)
+  it('helper paragraph describes OPF + conditional cover without promising a cover for each book', () => {
+    setup();
+    const helper = screen.getByText(/Write\/refresh metadata sidecars saves a/i);
+    // Retains OPF behavior and the foreign-OPF / media-server explanation.
+    expect(helper).toHaveTextContent('metadata.opf');
+    expect(helper).toHaveTextContent(/never overwrites a foreign/i);
+    expect(helper).toHaveTextContent(/Audiobookshelf, Plex/i);
+    // Cover is only materialized when not yet localized.
+    expect(helper).toHaveTextContent(/cover not already saved locally/i);
+    // Regression: must no longer promise a folder cover for each/every book.
+    expect(helper).not.toHaveTextContent(/folder cover into each/i);
+  });
+
+  it('sidecar confirm modal describes OPF + conditional cover without promising a cover for every book', async () => {
+    const user = userEvent.setup({});
+    setup();
+    await user.click(screen.getByRole('button', { name: /write\/refresh metadata sidecars/i }));
+    const dialog = await screen.findByRole('dialog');
+    // Retains OPF behavior, foreign-OPF preservation, and media-server explanation.
+    expect(within(dialog).getByText(/metadata\.opf into each imported book's folder/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Foreign metadata\.opf files are left untouched/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Audiobookshelf and Plex/i)).toBeInTheDocument();
+    // Cover is only downloaded when not yet localized.
+    expect(within(dialog).getByText(/cover that hasn't been saved locally yet/i)).toBeInTheDocument();
+    // Regression: must no longer promise a cover image for every book.
+    expect(within(dialog).queryByText(/cover image into every/i)).not.toBeInTheDocument();
+  });
+
   it('shows Writing sidecars... N/total with spinner while the reconcile job runs', () => {
     setup({ isRunning: true, jobType: 'write_metadata_sidecars', completed: 4, total: 12 });
     const btn = screen.getByRole('button', { name: /writing sidecars/i });
