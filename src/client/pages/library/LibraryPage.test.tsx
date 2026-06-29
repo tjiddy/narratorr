@@ -26,6 +26,7 @@ vi.mock('@/lib/api', async () => {
       searchBook: vi.fn(),
       updateBook: vi.fn(),
       retryBookImport: vi.fn(),
+      getActiveBulkJob: vi.fn().mockResolvedValue(null),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
       getIndexers: vi.fn().mockResolvedValue([
         { id: 1, name: 'Indexer A', enabled: true },
@@ -836,10 +837,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: /more actions/i }));
+    await user.click(screen.getByRole('button', { name: /library actions/i }));
 
     await waitFor(() => {
-      const importLink = screen.getByRole('menuitem', { name: /import/i });
+      const importLink = screen.getByRole('menuitem', { name: /import files/i });
       expect(importLink).toHaveAttribute('href', '/import');
     });
   });
@@ -864,7 +865,7 @@ describe('LibraryPage', () => {
     ];
 
     async function openOverflowMenu(user: ReturnType<typeof userEvent.setup>) {
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
     }
 
     it('shows Remove Missing item in overflow menu when missing books exist', async () => {
@@ -997,8 +998,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /refresh library/i }));
 
       await waitFor(() => {
         expect(api.rescanLibrary).toHaveBeenCalledTimes(1);
@@ -1016,8 +1017,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /refresh library/i }));
 
       await waitFor(() => {
         expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
@@ -1037,8 +1038,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
-      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /refresh library/i }));
 
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
@@ -1322,7 +1323,7 @@ describe('LibraryPage', () => {
 
   describe('Search All Wanted', () => {
     async function openSearchWanted(user: ReturnType<typeof userEvent.setup>) {
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
       await user.click(screen.getByRole('menuitem', { name: /search wanted/i }));
     }
 
@@ -1429,7 +1430,7 @@ describe('LibraryPage', () => {
       });
 
       // Open overflow menu — Search Wanted item should be enabled initially
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
       const searchWantedItem = screen.getByRole('menuitem', { name: /search wanted/i });
       expect(searchWantedItem).toBeEnabled();
 
@@ -1443,7 +1444,7 @@ describe('LibraryPage', () => {
       await user.click(screen.getByText('Search', { selector: 'button' }));
 
       // Reopen overflow menu — Search Wanted should now be disabled while mutation is pending
-      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('button', { name: /library actions/i }));
       await waitFor(() => {
         expect(screen.getByRole('menuitem', { name: /search wanted/i })).toBeDisabled();
       });
@@ -2686,16 +2687,20 @@ describe('LibraryPage — error states (#480)', () => {
       expect(screen.queryByTestId('library-error')).not.toBeInTheDocument();
     });
 
-    it('preserves LibraryHeader with Import Files action during loading', () => {
+    it('preserves LibraryHeader with the Library Actions menu during loading', async () => {
       vi.mocked(api.listLibraryBooks).mockReturnValue(new Promise(() => {}));
       vi.mocked(api.getBookStats).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
 
       renderWithProviders(<LibraryPage />);
 
       expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
-      const importLink = screen.getByRole('link', { name: /import files/i });
-      expect(importLink).toBeInTheDocument();
-      expect(importLink).toHaveAttribute('href', '/import');
+      const trigger = screen.getByRole('button', { name: /library actions/i });
+      expect(trigger).toBeInTheDocument();
+      // The standalone Import Files link is gone — it now lives inside the menu.
+      expect(screen.queryByRole('link', { name: /import files/i })).not.toBeInTheDocument();
+      await user.click(trigger);
+      expect(screen.getByRole('menuitem', { name: /import files/i })).toHaveAttribute('href', '/import');
     });
   });
 

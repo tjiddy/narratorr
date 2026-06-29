@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useRef, useState, useEffect, useCallback, type ReactNode, type RefObject, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -90,6 +90,144 @@ function BulkItem({ icon, label, runningLabel, isThisRunning, anyBulkBusy, progr
   );
 }
 
+interface ActionMenuItemsProps {
+  onCloseMenu: () => void;
+  isRescanning: boolean;
+  onRefresh: () => void;
+  isSearchingAllWanted: boolean;
+  onSearch: () => void;
+  anyBulkBusy: boolean;
+  isRunning: boolean;
+  jobType: BulkOpType | null;
+  progress: BulkProgress;
+  onRename: () => void;
+  onRetag: () => void;
+  writeOpf: boolean;
+  onWriteSidecars: () => void;
+  missingCount: number;
+  onRemoveMissing: () => void;
+}
+
+/** The grouped menu items — extracted to bound the main component's length. */
+function ActionMenuItems(props: ActionMenuItemsProps) {
+  const { isRunning, jobType, progress, anyBulkBusy } = props;
+  return (
+    <>
+      <ActionLink icon={<ImportIcon className="w-3.5 h-3.5" />} label="Import Files" to="/import" onClick={props.onCloseMenu} />
+      <ActionLink icon={<FolderInputIcon className="w-3.5 h-3.5" />} label="Import Existing Library" to="/library-import" onClick={props.onCloseMenu} />
+
+      <div className={DIVIDER_CLASS} />
+
+      <ActionButton
+        icon={props.isRescanning ? <LoadingSpinner className="w-3.5 h-3.5" /> : <RefreshIcon className="w-3.5 h-3.5" />}
+        label="Refresh Library"
+        disabled={props.isRescanning}
+        onClick={props.onRefresh}
+      />
+      <ActionButton
+        icon={props.isSearchingAllWanted ? <LoadingSpinner className="w-3.5 h-3.5" /> : <SearchIcon className="w-3.5 h-3.5" />}
+        label="Search Wanted"
+        disabled={props.isSearchingAllWanted}
+        onClick={props.onSearch}
+      />
+
+      <div className={DIVIDER_CLASS} />
+
+      <BulkItem
+        icon={<PencilIcon className="w-3.5 h-3.5" />}
+        label="Rename All Books"
+        runningLabel="Renaming..."
+        isThisRunning={isRunning && jobType === 'rename'}
+        anyBulkBusy={anyBulkBusy}
+        progress={progress}
+        onClick={props.onRename}
+      />
+      <BulkItem
+        icon={<TagIcon className="w-3.5 h-3.5" />}
+        label="Re-tag All Books"
+        runningLabel="Re-tagging..."
+        isThisRunning={isRunning && jobType === 'retag'}
+        anyBulkBusy={anyBulkBusy}
+        progress={progress}
+        onClick={props.onRetag}
+      />
+      {props.writeOpf && (
+        <BulkItem
+          icon={<PackageIcon className="w-3.5 h-3.5" />}
+          label="Write / refresh sidecars"
+          runningLabel="Writing sidecars..."
+          isThisRunning={isRunning && jobType === 'write_metadata_sidecars'}
+          anyBulkBusy={anyBulkBusy}
+          progress={progress}
+          onClick={props.onWriteSidecars}
+        />
+      )}
+
+      {props.missingCount > 0 && (
+        <>
+          <div className={DIVIDER_CLASS} />
+          <button
+            role="menuitem"
+            type="button"
+            onClick={props.onRemoveMissing}
+            className={DESTRUCTIVE_ITEM_CLASS}
+          >
+            <TrashIcon className="w-3.5 h-3.5" />
+            Remove Missing Books
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+interface RovingMenu {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  menuRef: RefObject<HTMLDivElement | null>;
+  close: () => void;
+  handleKeyDown: (e: KeyboardEvent) => void;
+}
+
+const MENUITEM_QUERY = '[role="menuitem"]:not([disabled])';
+
+/** Open/focus state + arrow-key roving focus for the dropdown, mirroring the prior OverflowMenu. */
+function useRovingMenu(): RovingMenu {
+  const [open, setOpen] = useState(false);
+  const [focusIndex, setFocusIndex] = useState(0);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelectorAll<HTMLElement>(MENUITEM_QUERY)[focusIndex]?.focus();
+  }, [focusIndex, open]);
+
+  const close = useCallback(() => {
+    setFocusIndex(0);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>(MENUITEM_QUERY) ?? []);
+    const count = items.length;
+    if (count === 0) return;
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); setFocusIndex((i) => (i + 1) % count); break;
+      case 'ArrowUp': e.preventDefault(); setFocusIndex((i) => (i - 1 + count) % count); break;
+      case 'Enter': e.preventDefault(); items[focusIndex]?.click(); break;
+      case ' ':
+        e.preventDefault();
+        if (items[focusIndex]?.tagName !== 'A') items[focusIndex]?.click();
+        break;
+    }
+  }, [focusIndex]);
+
+  return { open, setOpen, triggerRef, menuRef, close, handleKeyDown };
+}
+
 /** Rename/retag/write-sidecars confirmations — kept separate to bound the menu's complexity. */
 function BulkActionModals({ pendingOp, retagCount, onStartRename, onConfirm, onCancel }: {
   pendingOp: PendingOp;
@@ -151,10 +289,7 @@ export function LibraryActionsMenu({
   isRescanning,
   writeOpf,
 }: LibraryActionsMenuProps) {
-  const [open, setOpen] = useState(false);
-  const [focusIndex, setFocusIndex] = useState(0);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const { open, setOpen, triggerRef, menuRef, close, handleKeyDown } = useRovingMenu();
 
   const { isRunning, jobType, progress, startJob } = useBulkOperation();
   const [pendingOp, setPendingOp] = useState<PendingOp>(null);
@@ -162,37 +297,16 @@ export function LibraryActionsMenu({
   const [isLoadingCount, setIsLoadingCount] = useState(false);
   const anyBulkBusy = isRunning || isLoadingCount;
 
-  function getFocusableItems(): HTMLElement[] {
-    return Array.from(
-      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? [],
-    );
-  }
-
-  useEffect(() => {
-    if (!open) return;
-    getFocusableItems()[focusIndex]?.focus();
-  }, [focusIndex, open]);
-
-  function handleClose() {
-    setFocusIndex(0);
-    setOpen(false);
-    triggerRef.current?.focus();
-  }
-
   // Run a non-navigation action: close the menu, refocus the trigger, then act.
   function runAction(fn: () => void) {
-    setFocusIndex(0);
-    setOpen(false);
-    triggerRef.current?.focus();
+    close();
     fn();
   }
 
   // Retag pre-fetches a count for its count-only confirm; the trigger shows a
   // busy state while the count loads so there's no silent gap before the modal.
   async function handleRetag() {
-    setFocusIndex(0);
-    setOpen(false);
-    triggerRef.current?.focus();
+    close();
     setIsLoadingCount(true);
     try {
       const { total } = await api.getBulkRetagCount();
@@ -218,35 +332,6 @@ export function LibraryActionsMenu({
     }
   }
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? [],
-    );
-    const count = items.length;
-    if (count === 0) return;
-
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        setFocusIndex((i) => (i + 1) % count);
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setFocusIndex((i) => (i - 1 + count) % count);
-        break;
-      case 'Enter':
-        e.preventDefault();
-        items[focusIndex]?.click();
-        break;
-      case ' ':
-        e.preventDefault();
-        if (items[focusIndex]?.tagName !== 'A') {
-          items[focusIndex]?.click();
-        }
-        break;
-    }
-  }, [focusIndex]); // menuRef is a stable ref, not needed in deps
-
   const triggerLabel = isLoadingCount
     ? 'Loading…'
     : isRunning
@@ -266,7 +351,7 @@ export function LibraryActionsMenu({
         aria-label="Library Actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => (open ? handleClose() : setOpen(true))}
+        onClick={() => (open ? close() : setOpen(true))}
         className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-muted-foreground rounded-xl hover:text-foreground hover:bg-white/5 hover:border hover:border-white/10 transition-all focus-ring"
       >
         {anyBulkBusy && <LoadingSpinner className="w-4 h-4" />}
@@ -274,77 +359,30 @@ export function LibraryActionsMenu({
         <ChevronDownIcon className={`w-4 h-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={handleClose}>
+      <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={close}>
         <div
           ref={menuRef}
           role="menu"
           onKeyDown={handleKeyDown}
           className="min-w-[200px] glass-card rounded-xl overflow-hidden shadow-lg border border-border animate-fade-in"
         >
-          <ActionLink icon={<ImportIcon className="w-3.5 h-3.5" />} label="Import Files" to="/import" onClick={() => setOpen(false)} />
-          <ActionLink icon={<FolderInputIcon className="w-3.5 h-3.5" />} label="Import Existing Library" to="/library-import" onClick={() => setOpen(false)} />
-
-          <div className={DIVIDER_CLASS} />
-
-          <ActionButton
-            icon={isRescanning ? <LoadingSpinner className="w-3.5 h-3.5" /> : <RefreshIcon className="w-3.5 h-3.5" />}
-            label="Refresh Library"
-            disabled={isRescanning}
-            onClick={() => runAction(onRescan)}
-          />
-          <ActionButton
-            icon={isSearchingAllWanted ? <LoadingSpinner className="w-3.5 h-3.5" /> : <SearchIcon className="w-3.5 h-3.5" />}
-            label="Search Wanted"
-            disabled={isSearchingAllWanted}
-            onClick={() => runAction(onSearchAllWanted)}
-          />
-
-          <div className={DIVIDER_CLASS} />
-
-          <BulkItem
-            icon={<PencilIcon className="w-3.5 h-3.5" />}
-            label="Rename All Books"
-            runningLabel="Renaming..."
-            isThisRunning={isRunning && jobType === 'rename'}
+          <ActionMenuItems
+            onCloseMenu={() => setOpen(false)}
+            isRescanning={isRescanning}
+            onRefresh={() => runAction(onRescan)}
+            isSearchingAllWanted={isSearchingAllWanted}
+            onSearch={() => runAction(onSearchAllWanted)}
             anyBulkBusy={anyBulkBusy}
+            isRunning={isRunning}
+            jobType={jobType}
             progress={progress}
-            onClick={() => runAction(() => setPendingOp('rename'))}
+            onRename={() => runAction(() => setPendingOp('rename'))}
+            onRetag={handleRetag}
+            writeOpf={writeOpf}
+            onWriteSidecars={() => runAction(() => setPendingOp('writeSidecars'))}
+            missingCount={missingCount}
+            onRemoveMissing={() => runAction(onRemoveMissing)}
           />
-          <BulkItem
-            icon={<TagIcon className="w-3.5 h-3.5" />}
-            label="Re-tag All Books"
-            runningLabel="Re-tagging..."
-            isThisRunning={isRunning && jobType === 'retag'}
-            anyBulkBusy={anyBulkBusy}
-            progress={progress}
-            onClick={handleRetag}
-          />
-          {writeOpf && (
-            <BulkItem
-              icon={<PackageIcon className="w-3.5 h-3.5" />}
-              label="Write / refresh sidecars"
-              runningLabel="Writing sidecars..."
-              isThisRunning={isRunning && jobType === 'write_metadata_sidecars'}
-              anyBulkBusy={anyBulkBusy}
-              progress={progress}
-              onClick={() => runAction(() => setPendingOp('writeSidecars'))}
-            />
-          )}
-
-          {missingCount > 0 && (
-            <>
-              <div className={DIVIDER_CLASS} />
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => runAction(onRemoveMissing)}
-                className={DESTRUCTIVE_ITEM_CLASS}
-              >
-                <TrashIcon className="w-3.5 h-3.5" />
-                Remove Missing Books
-              </button>
-            </>
-          )}
         </div>
       </ToolbarDropdown>
 

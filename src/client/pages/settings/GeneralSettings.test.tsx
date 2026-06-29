@@ -12,10 +12,6 @@ vi.mock('sonner', () => ({
 const { toast } = await import('sonner');
 const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
 
-vi.mock('@/components/library/BulkOperationsSection', () => ({
-  BulkOperationsSection: () => null,
-}));
-
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),

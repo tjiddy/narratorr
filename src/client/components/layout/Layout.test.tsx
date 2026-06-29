@@ -26,10 +26,6 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-vi.mock('@/components/library/BulkOperationsSection', () => ({
-  BulkOperationsSection: () => null,
-}));
-
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
