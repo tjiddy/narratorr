@@ -13,6 +13,7 @@ import type { EnrichmentDeps } from '../enrichment-orchestration.helpers.js';
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
+import * as importOrchestration from '../import-orchestration.helpers.js';
 import { writeOpfForImport } from '../../utils/opf-writer.js';
 
 // Boundary choice: this file mocks fs primitives + stageSourceAudio (the import-steps `copyToLibrary`
@@ -23,6 +24,12 @@ import { writeOpfForImport } from '../../utils/opf-writer.js';
 // rather than its stream primitives because its dedicated tests (import-steps.test.ts,
 // copy-to-library-progress.test.ts) exercise real audio-filtering + streaming behavior; here it is
 // the copy boundary the pipeline forwards (sourcePath, targetPath, sourceStats, onProgress) into.
+//
+// Exception (#1740): the edition-threading test ("uses the FRESH copy-result label") narrowly
+// `vi.spyOn`s the pipeline `copyToLibrary` to return a non-empty `editionLabel` — the only place
+// that label is derived is the occupied-target disambiguation path, which is impractical to fake
+// faithfully here. The spy is scoped to that single test and `mockRestore`d immediately after, so
+// every other test keeps the real pipeline copier running against the lower mocks.
 
 vi.mock('../enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
@@ -1006,7 +1013,41 @@ describe('ManualImportAdapter', () => {
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Jane Narrator.mp3`]);
       });
 
-      it('mode=copy + fileFormat=\'{title} ({edition})\' + getById returns editionLabel: rendered filename includes the stored edition label (#1712 F2)', async () => {
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + copyToLibrary derives editionLabel: rename uses the FRESH copy-result label, not the stale getById value (#1740)', async () => {
+        // Regression guard (#1740): the rename runs BEFORE edition_label is persisted, so the
+        // hydrated `getById` book still carries the stale/null label. The label that must drive the
+        // rename is the one `copyToLibrary` returned on THIS import. We stub the pipeline copier
+        // (the documented seam is otherwise real — see boundary note above) to return a non-empty
+        // editionLabel while `getById` returns a DIFFERENT (null) value, proving precedence.
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
+        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary')
+          .mockResolvedValue({ targetPath: TARGET_PATH, editionLabel: 'Full Cast' });
+        const settingsSvc = makeRenameSettingsService('{title} ({edition})');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
+            narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            editionLabel: null, status: 'importing', size: 100_000, genres: [],
+          }),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+        copySpy.mockRestore();
+
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (Full Cast).mp3`]);
+      });
+
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + no copy-result label + getById returns editionLabel: falls back to the stored label (#1740)', async () => {
+        // The undefined-passthrough branch: when no disambiguation occurred (copyToLibrary returns
+        // no editionLabel), the rename still honors the hydrated/stored edition_label (#1712).
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title} ({edition})');
@@ -1017,7 +1058,7 @@ describe('ManualImportAdapter', () => {
             id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
             narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
             publishedDate: '2024-01-15', path: '/library/Author/Title',
-            editionLabel: 'Full Cast', status: 'importing', size: 100_000, genres: [],
+            editionLabel: 'Unabridged', status: 'importing', size: 100_000, genres: [],
           }),
         });
         adapter = new ManualImportAdapter(deps);
@@ -1027,7 +1068,7 @@ describe('ManualImportAdapter', () => {
 
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
-          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (Full Cast).mp3`]);
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (Unabridged).mp3`]);
       });
 
       it('mode=copy + fileFormat=\'{title} ({edition})\' + null editionLabel: renders no stray brackets (#1712 F2)', async () => {
