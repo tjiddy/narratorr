@@ -1601,4 +1601,18 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     ).rejects.toMatchObject({ name: 'OwnedRecordingError' });
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
   });
+
+  it('different recording whose label sanitizes to null (e.g. ":::") → held for review, not base-collapsed (#1739, F5)', async () => {
+    // `deriveEditionLabel([":::"])` returns the truthy raw ":::", but it sanitizes to null — so the
+    // guard must run on the sanitized discriminator and hold for review rather than rebuild a path
+    // (the pre-fix raw `!label` check passed ":::" through to an illegal-colon disambiguated folder).
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: [':::'] };
+    await expect(
+      copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
+    ).rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review-no-disambiguator' });
+    // The base target's incumbent audio is untouched — the candidate was never collapsed onto it.
+    expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
+    // No illegal-colon disambiguated sibling was created.
+    expect((await readdir(join(libraryRoot, 'Author'))).some((n) => n.includes(':'))).toBe(false);
+  });
 });

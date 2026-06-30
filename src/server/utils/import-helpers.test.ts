@@ -168,6 +168,123 @@ describe('buildTargetPath', () => {
       expect(withoutToken).toBe('/audiobooks/Blake Crouch/Dark Matter');
     });
   });
+
+  describe('edition discriminator is sanitized as one path segment (#1739)', () => {
+    const book = { title: 'Dark Matter' };
+
+    it('a slash in the label does NOT fragment the path into extra segments (suffix branch)', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', undefined, 'R.C. Bray/Full Cast');
+      // Exactly three segments under the library root: author / leaf — no phantom nested folder.
+      expect(norm(result)).toBe('/audiobooks/Blake Crouch/Dark Matter (R.C. BrayFull Cast)');
+    });
+
+    it('a slash in the label does NOT fragment the path (token branch)', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', undefined, 'R.C. Bray/Full Cast');
+      expect(norm(result)).toBe('/audiobooks/Blake Crouch/Dark Matter (R.C. BrayFull Cast)');
+    });
+
+    it('colons and control chars are stripped to a Windows-legal leaf in both branches', () => {
+      const suffix = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', undefined, 'Cast: Ensemble');
+      const token = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', undefined, 'Cast: Ensemble');
+      expect(suffix).toBe(token);
+      expect(norm(suffix)).toBe('/audiobooks/Blake Crouch/Dark Matter (Cast Ensemble)');
+      // The colon — illegal on NTFS — never reaches the leaf.
+      expect(suffix.split('/').pop()).not.toContain(':');
+    });
+
+    it('a label that sanitizes to empty is treated like null — no Unknown discriminator (both branches)', () => {
+      const suffix = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', undefined, ':::');
+      const token = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', undefined, ':::');
+      expect(suffix).toBe('/audiobooks/Blake Crouch/Dark Matter');
+      expect(token).toBe('/audiobooks/Blake Crouch/Dark Matter');
+      expect(suffix).not.toContain('Unknown');
+    });
+
+    it('a label ending in a reserved import-sibling suffix never yields a folder ending in it', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', undefined, 'Full Cast.import-bak');
+      expect(norm(result).endsWith('.import-bak')).toBe(false);
+      expect(norm(result)).toBe('/audiobooks/Blake Crouch/Dark Matter (Full Cast)');
+    });
+
+    describe('no truncation-collapse with a 255-char title (F9)', () => {
+      const longTitle = 'T'.repeat(255);
+      const longBook = { title: longTitle };
+
+      it('suffix branch: the discriminator survives, leaf ≤255, Windows-legal', () => {
+        const result = buildTargetPath('/audiobooks', '{author}/{title}', longBook, 'Author', undefined, 'Full Cast');
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        expect(leaf).toContain('(Full Cast)');
+      });
+
+      it('token branch: the in-place {edition} discriminator survives generic segment truncation', () => {
+        const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, 'Full Cast');
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        expect(leaf).toContain('(Full Cast)');
+        // The {edition} keeps its in-place wrapper — it is not normalized to a trailing suffix.
+        expect(leaf.endsWith('(Full Cast)')).toBe(true);
+      });
+
+      it('two distinct editions of the same long title do NOT collapse to the same path (token branch)', () => {
+        const a = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, 'Full Cast');
+        const b = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, 'Stephen Fry');
+        expect(a).not.toBe(b);
+      });
+
+      it('suffix branch: an overlong discriminator behind a long title still survives non-empty (F1)', () => {
+        const longLabel = 'N'.repeat(255);
+        const result = buildTargetPath('/audiobooks', '{author}/{title}', longBook, 'Author', undefined, longLabel);
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        // The discriminator is never reduced to empty: the long title is sacrificed, the label remains.
+        expect(leaf).toContain('N');
+      });
+
+      it('token branch: discriminator survives when BOTH {title} and {titleSort} land in the leaf (F2)', () => {
+        // A legal template that renders two unbounded title contributions before {edition}; the
+        // per-contribution budgeting must still leave the in-place (Full Cast) intact.
+        const result = buildTargetPath('/audiobooks', '{author}/{title} - {titleSort} ({edition})', longBook, 'Author', undefined, 'Full Cast');
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        expect(leaf).toContain('(Full Cast)');
+        expect(leaf.endsWith('(Full Cast)')).toBe(true);
+      });
+
+      it('token branch: an overlong discriminator with a 255-char title still survives non-empty (F3)', () => {
+        // When the discriminator itself is ~255 chars, the budgeting probes must NOT saturate (which
+        // would leave the title unbudgeted and let the final render truncate {edition} away entirely).
+        // The title is budgeted to near-nothing so the long discriminator dominates and survives.
+        const longLabel = 'N'.repeat(255);
+        const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, longLabel);
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        // The discriminator survives (non-empty), and the title did NOT consume the whole leaf.
+        expect(leaf).toContain('N');
+        expect(leaf).toContain('(N');
+      });
+    });
+
+    describe('naming-options parity: token and suffix branches agree on the discriminator (F6)', () => {
+      for (const options of [undefined, { separator: 'period' as const, case: 'upper' as const }]) {
+        const label = options ? 'non-default (period/upper)' : 'default';
+        it(`same discriminator under ${label} naming options`, () => {
+          const suffix = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', options, 'Full Cast');
+          const token = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', options, 'Full Cast');
+          expect(suffix).toBe(token);
+          // Discriminator is verbatim — NOT styled to "FULL.CAST" by the naming transforms.
+          expect(suffix.split('/').pop()).toContain('(Full Cast)');
+        });
+
+        it(`sanitize-to-empty renders the unchanged base in both branches under ${label}`, () => {
+          const suffix = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', options, ':::');
+          const token = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', options, ':::');
+          expect(suffix).toBe(token);
+          expect(suffix.split('/').pop()).not.toContain('(');
+        });
+      }
+    });
+  });
 });
 
 describe('getPathSize', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizePath, renderTemplate, renderFilename, parseTemplate, templateHasToken, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
+import { sanitizePath, renderTemplate, renderFilename, parseTemplate, templateHasToken, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT } from './naming.js';
 
 describe('sanitizePath', () => {
   it('removes illegal filesystem characters', () => {
@@ -382,6 +382,79 @@ describe('renderFilename', () => {
   it('returns Unknown for empty result', () => {
     const result = renderFilename('{author}', { author: '' });
     expect(result).toBe('Unknown');
+  });
+
+  describe('{edition} stays transformed in FILE templates (#1739, F8)', () => {
+    it('applies namingSeparator/namingCase to {edition} (verbatim bypass is folder-only)', () => {
+      // renderFilename does NOT pass the folder verbatim-token set, so the edition token keeps
+      // being styled by the naming options exactly as before this fix.
+      const result = renderFilename('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' }, { separator: 'period', case: 'upper' });
+      expect(result).toBe('DARK.MATTER (FULL.CAST)');
+    });
+  });
+});
+
+describe('sanitizeEditionDiscriminator (#1739)', () => {
+  it('strips path separators into one segment', () => {
+    expect(sanitizeEditionDiscriminator('R.C. Bray/Full Cast')).toBe('R.C. BrayFull Cast');
+    expect(sanitizeEditionDiscriminator('A\\B')).toBe('AB');
+  });
+
+  it('strips colons, other illegal chars, and control chars', () => {
+    expect(sanitizeEditionDiscriminator('Cast: Ensemble')).toBe('Cast Ensemble');
+    expect(sanitizeEditionDiscriminator('a<b>c|d?e*f')).toBe('abcdef');
+    expect(sanitizeEditionDiscriminator('Full\x01\x02Cast')).toBe('FullCast');
+  });
+
+  it('removes trailing dots and collapses whitespace', () => {
+    expect(sanitizeEditionDiscriminator('Full Cast...')).toBe('Full Cast');
+    expect(sanitizeEditionDiscriminator('Full   Cast')).toBe('Full Cast');
+  });
+
+  it('returns null (not "Unknown") for empty / null / sanitize-to-empty input', () => {
+    expect(sanitizeEditionDiscriminator(null)).toBeNull();
+    expect(sanitizeEditionDiscriminator(undefined)).toBeNull();
+    expect(sanitizeEditionDiscriminator('')).toBeNull();
+    expect(sanitizeEditionDiscriminator('   ')).toBeNull();
+    expect(sanitizeEditionDiscriminator(':::')).toBeNull();
+    expect(sanitizeEditionDiscriminator('\x01\x02')).toBeNull();
+  });
+
+  it('caps output at the segment limit', () => {
+    const out = sanitizeEditionDiscriminator('A'.repeat(400));
+    expect(out).not.toBeNull();
+    expect(out!.length).toBe(PATH_SEGMENT_LIMIT);
+  });
+
+  it('does not retain a reserved import-sibling suffix', () => {
+    expect(sanitizeEditionDiscriminator('Full Cast.import-bak')).toBe('Full Cast');
+    expect(sanitizeEditionDiscriminator('.import-tmp')).toBeNull();
+  });
+});
+
+describe('composeEditionSuffixLeaf (#1739)', () => {
+  it('appends the discriminator verbatim as one segment', () => {
+    expect(composeEditionSuffixLeaf('Dark Matter', 'Full Cast')).toBe('Dark Matter (Full Cast)');
+  });
+
+  it('budgets the base so the discriminator survives the segment cap', () => {
+    const leaf = composeEditionSuffixLeaf('A'.repeat(PATH_SEGMENT_LIMIT), 'Full Cast');
+    expect(leaf.length).toBeLessThanOrEqual(PATH_SEGMENT_LIMIT);
+    expect(leaf.endsWith('(Full Cast)')).toBe(true);
+  });
+
+  it('never ends in a reserved import-sibling suffix', () => {
+    expect(composeEditionSuffixLeaf('Book', 'Full Cast').endsWith('.import-bak')).toBe(false);
+  });
+
+  it('keeps a non-empty discriminator visible when discriminator + wrapper exceed the cap, sacrificing the base first (F1)', () => {
+    // A pathologically long discriminator behind a long base: base-first truncation must drop the
+    // base ENTIRELY and keep the discriminator non-empty, never bury it behind 255 chars of base.
+    const leaf = composeEditionSuffixLeaf('B'.repeat(PATH_SEGMENT_LIMIT), 'D'.repeat(PATH_SEGMENT_LIMIT));
+    expect(leaf.length).toBeLessThanOrEqual(PATH_SEGMENT_LIMIT);
+    expect(leaf).toContain('D');           // discriminator survives, non-empty
+    expect(leaf).not.toContain('B');        // base sacrificed first
+    expect(leaf.startsWith('(')).toBe(true);
   });
 });
 

@@ -3,7 +3,10 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { join, extname, basename, dirname } from 'node:path';
-import { renderTemplate, templateHasToken, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import {
+  renderTemplate, templateHasToken, toLastFirst, toSortTitle, AUDIO_EXTENSIONS,
+  sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT,
+} from '../../core/utils/index.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 import {
   DISC_FOLDER_PATTERN, parseTitledDiscFolder, parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass,
@@ -65,14 +68,56 @@ export function extractYear(publishedDate: string | null | undefined): string | 
 }
 
 /**
- * Sanitize an edition label for use as a folder-name suffix (#1711): strip path
- * separators and control chars, collapse whitespace. Returns null for an
- * empty/whitespace-only result so the caller renders the unchanged base path.
+ * Cap the unbounded `{title}`/`{titleSort}` token values (#1739) so the in-place `{edition}`
+ * discriminator in the folder leaf survives the segment-length cap instead of being dropped by
+ * generic truncation. Only the token branch needs this — the suffix branch budgets via
+ * `composeEditionSuffixLeaf`. Token-naming transforms only ever shrink (or preserve) length, so
+ * capping the raw value before render keeps the rendered leaf ≤ limit.
+ *
+ * The leaf length is measured with SHORT stand-ins for BOTH the title tokens and the `{edition}`
+ * discriminator, so the probe renders never themselves hit the 255-char cap — a real ~255-char
+ * discriminator would otherwise saturate every probe, hide the title-contribution count, and leave
+ * the title unbudgeted so the final render truncates `{edition}` away entirely (F3). From the probes
+ * we derive: how many title contributions land in the leaf (`titleCount`), how many `{edition}`
+ * occurrences (`editionCount`), and the pure literal/wrapper `structureLen`. The real discriminator's
+ * verbatim length is then added back analytically. When the discriminator alone saturates the
+ * segment, `perTokenBudget` floors to 1 so the title shrinks to near-nothing and the (still long)
+ * discriminator dominates the leaf and survives truncation at the tail (never reduced to empty).
  */
-function sanitizeEditionLabel(label: string | null | undefined): string | null {
-  if (!label) return null;
-  const cleaned = label.replace(/[/\\]/g, " ").replace(/\s+/g, " ").trim();
-  return cleaned.length > 0 ? cleaned : null;
+function budgetTitleTokensForEdition(
+  folderFormat: string,
+  tokens: Record<string, string | number | undefined>,
+  options: NamingOptions | undefined,
+): void {
+  const titleKeys = (['title', 'titleSort'] as const).filter((k) => typeof tokens[k] === 'string');
+  if (titleKeys.length === 0) return;
+
+  const leafLen = (titleStandIn: string, editionStandIn: string): number => {
+    const probe: Record<string, string | number | undefined> = { ...tokens };
+    for (const k of titleKeys) probe[k] = titleStandIn;
+    probe.edition = editionStandIn;
+    const segments = renderTemplate(folderFormat, probe, options).split('/');
+    return (segments[segments.length - 1] ?? '').length;
+  };
+  // Each title contribution grows by 1 char from `Y` → `YY` (edition held at the short `E`); the
+  // delta is the title-contribution count. Likewise for the `{edition}` occurrence count.
+  const baseLen = leafLen('Y', 'E');
+  const titleCount = leafLen('YY', 'E') - baseLen;
+  if (titleCount <= 0) return; // no title token contributes to the discriminator leaf
+  const editionCount = leafLen('Y', 'EE') - baseLen;
+
+  // Subtract the 1-char title and edition stand-ins to recover the pure literal/wrapper length, then
+  // add back the real discriminator's verbatim length at each occurrence.
+  const structureLen = baseLen - titleCount - editionCount;
+  const discriminatorLen = String(tokens.edition ?? '').length;
+  const fixedLen = structureLen + editionCount * discriminatorLen;
+  const perTokenBudget = Math.max(1, Math.floor((PATH_SEGMENT_LIMIT - fixedLen) / titleCount));
+  for (const key of titleKeys) {
+    const value = tokens[key];
+    if (typeof value === 'string' && value.length > perTokenBudget) {
+      tokens[key] = value.slice(0, perTokenBudget).trim();
+    }
+  }
 }
 
 /**
@@ -107,6 +152,12 @@ export function buildTargetPath(
   const author = authorName || 'Unknown Author';
   const narratorNames = book.narrators?.map(n => n.name) ?? [];
   const primaryNarrator = narratorNames[0];
+  // Sanitize the edition label ONCE into a path-safe discriminator (#1739) consumed by BOTH the
+  // in-place `{edition}` token and the mandatory suffix, so the two folder paths can never diverge
+  // on slash-fragmentation, illegal chars, or length. Null/empty (incl. a label that sanitizes to
+  // empty) renders the unchanged base path — no token, no suffix, never an `Unknown` discriminator.
+  const discriminator = sanitizeEditionDiscriminator(editionLabel);
+  const hasEditionToken = templateHasToken(folderFormat, 'edition');
   const tokens: Record<string, string | number | undefined> = {
     author,
     authorLastFirst: toLastFirst(author),
@@ -117,17 +168,24 @@ export function buildTargetPath(
     narrator: primaryNarrator || undefined,
     narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
-    // Sourced from the stored edition_label column (never re-derived). Null/empty
-    // renders nothing via the EMPTY_TOKEN_SENTINEL + stripEmptyWrappers machinery.
-    edition: editionLabel ?? undefined,
+    // The sanitized discriminator (never the raw label). Null renders nothing via the
+    // EMPTY_TOKEN_SENTINEL + stripEmptyWrappers machinery; non-null renders verbatim (folder-only).
+    edition: discriminator ?? undefined,
   };
 
+  // Token branch: the `{edition}` discriminator is rendered in place, so budget the title down first
+  // (#1739, F9) — otherwise generic segment truncation drops the trailing `(label)` after a long title.
+  if (discriminator && hasEditionToken) {
+    budgetTitleTokensForEdition(folderFormat, tokens, options);
+  }
+
   let rendered = renderTemplate(folderFormat, tokens, options);
-  const label = sanitizeEditionLabel(editionLabel);
-  // Suppress the mandatory suffix when the template renders the label itself via {edition}.
-  if (label && !templateHasToken(folderFormat, 'edition')) {
+  // Suffix branch: append the mandatory collision suffix only when the template does NOT render the
+  // discriminator itself via `{edition}`. `composeEditionSuffixLeaf` budgets the base so the
+  // discriminator survives the segment cap and never ends in a reserved import-sibling suffix.
+  if (discriminator && !hasEditionToken) {
     const segments = rendered.split('/');
-    segments[segments.length - 1] = `${segments[segments.length - 1]} (${label})`;
+    segments[segments.length - 1] = composeEditionSuffixLeaf(segments[segments.length - 1] ?? '', discriminator);
     rendered = segments.join('/');
   }
   // Always use POSIX separators — paths are stored in DB and consumed inside Docker (Linux)

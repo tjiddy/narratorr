@@ -172,6 +172,67 @@ export function sanitizePath(segment: string): string {
   return result || 'Unknown';
 }
 
+/** Filesystem path-segment length limit, exposed for the folder builders' leaf budgeting (#1739). */
+export const PATH_SEGMENT_LIMIT = MAX_SEGMENT_LENGTH;
+
+/**
+ * Sanitize an edition label into ONE filesystem-path-safe discriminator segment (#1739).
+ *
+ * The single shared seam consumed by BOTH folder branches (`buildTargetPath` / `computeFolderTarget`):
+ * the in-place `{edition}` token AND the mandatory collision suffix. Co-located with `sanitizePath`
+ * so it reuses the private `ILLEGAL_CHARS` + `stripReservedSuffixes` without exporting them — the two
+ * paths can never diverge on what is path-safe again.
+ *
+ * Strips path separators + the full illegal/control-char set (`ILLEGAL_CHARS` covers `/ \ < > : " | ? *`
+ * and `\x00-\x1f`), collapses whitespace, drops trailing dots, caps at the segment limit, and reserves
+ * the import-sibling suffixes. Returns `null` (NOT `'Unknown'`) when the result is empty so the caller
+ * treats it exactly like a null label and renders the unchanged base path.
+ */
+export function sanitizeEditionDiscriminator(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let result = raw
+    .replace(ILLEGAL_CHARS, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\.+$/, '')
+    .trim();
+  if (result.length > MAX_SEGMENT_LENGTH) {
+    result = result.slice(0, MAX_SEGMENT_LENGTH).trim();
+  }
+  result = stripReservedSuffixes(result);
+  return result.length > 0 ? result : null;
+}
+
+/**
+ * Compose the suffix-branch leaf `base (discriminator)` (#1739), budgeting the BASE down so the
+ * discriminator survives the segment-length cap rather than being silently truncated away. The
+ * discriminator is appended VERBATIM (already sanitized by `sanitizeEditionDiscriminator`), so the
+ * suffix branch yields a byte-identical discriminator to the verbatim `{edition}` token branch.
+ *
+ * Budget order (F7): the base title is truncated first; a non-empty discriminator always survives.
+ * Only a pathologically long discriminator — whose own ` (…)` wrapper alone exceeds the segment cap —
+ * is itself truncated, and never to empty. The composed leaf is re-run through the reserved
+ * import-sibling-suffix guard (AC5) so it can never end in `.import-bak` / `.import-tmp` /
+ * `.import-commit-pending`.
+ */
+export function composeEditionSuffixLeaf(base: string, discriminator: string): string {
+  const suffix = ` (${discriminator})`;
+  const budget = MAX_SEGMENT_LENGTH - suffix.length;
+  let leaf: string;
+  if (budget <= 0) {
+    // The discriminator + ` ()` wrapper alone exceed the segment limit. Base-first truncation (F7):
+    // sacrifice the base ENTIRELY before touching the discriminator, then truncate the discriminator
+    // itself only as far as the bare `()` wrapper requires — never to empty — so a pathologically
+    // long discriminator still stays visible rather than being buried behind base text.
+    const discBudget = Math.max(1, MAX_SEGMENT_LENGTH - 2); // reserve the bare "()" wrapper
+    const trimmedDisc = discriminator.length > discBudget ? discriminator.slice(0, discBudget).trim() : discriminator;
+    leaf = `(${trimmedDisc})`;
+  } else {
+    const trimmedBase = base.length > budget ? base.slice(0, budget).trim() : base;
+    leaf = `${trimmedBase}${suffix}`;
+  }
+  return stripReservedSuffixes(leaf) || leaf;
+}
+
 /**
  * Suffix-first disambiguation for the token regex.
  *
@@ -228,6 +289,11 @@ function resolveTokens(
   template: string,
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
+  // Tokens whose value must render VERBATIM, bypassing separator/case transforms (#1739).
+  // `renderTemplate` (folder paths) passes `edition` so the in-place `{edition}` token matches
+  // the verbatim suffix branch; `renderFilename` leaves it empty so file/audio `{edition}`
+  // rendering is unchanged (it keeps applying namingSeparator/namingCase, F8).
+  verbatimTokens?: ReadonlySet<string>,
 ): string {
   return template.replace(
     new RegExp(TOKEN_PATTERN_SOURCE, 'g'),
@@ -253,8 +319,10 @@ function resolveTokens(
         }
       }
 
-      // Apply separator/case transforms to non-numeric token values
-      if (!isNumericFormatted(padSpec, raw)) {
+      // Apply separator/case transforms to non-numeric token values — unless the token is
+      // marked verbatim (#1739: the folder `{edition}` discriminator is metadata identity, not
+      // a stylable title token, so it must render identically to the verbatim suffix branch).
+      if (!isNumericFormatted(padSpec, raw) && !verbatimTokens?.has(name)) {
         value = applyTokenTransforms(value, options);
       }
 
@@ -271,6 +339,14 @@ function resolveTokens(
     },
   );
 }
+
+/**
+ * Tokens rendered VERBATIM in FOLDER templates (#1739) \u2014 the `{edition}` discriminator bypasses
+ * `namingSeparator`/`namingCase` so the token branch and the mandatory suffix branch produce a
+ * byte-identical discriminator. Scoped to `renderTemplate` (folders) only; `renderFilename` does
+ * NOT pass this set, so file/audio `{edition}` rendering keeps applying the transforms (F8).
+ */
+const FOLDER_VERBATIM_TOKENS: ReadonlySet<string> = new Set(['edition']);
 
 /** Zero-width sentinel emitted by resolveTokens for empty/undefined token values. */
 const EMPTY_TOKEN_SENTINEL = '\u200B';
@@ -307,7 +383,7 @@ export function renderTemplate(
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options));
+  const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options, FOLDER_VERBATIM_TOKENS));
 
   // Split by /, sanitize non-empty segments, filter empties
   return rendered
