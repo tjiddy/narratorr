@@ -14,7 +14,7 @@ import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
-import type { BookStatus, ProductionType } from '../../shared/schemas/book.js';
+import { productionTypeSchema, type BookStatus, type ProductionType } from '../../shared/schemas/book.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
 
 export { CoverUploadError } from './cover-upload.js';
@@ -333,7 +333,9 @@ export class BookService {
           genres: data.genres,
           status: data.status || 'wanted',
           enrichmentStatus: data.enrichmentStatus,
-          productionType: data.productionType,
+          // SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
+          // so validate the value at the write boundary; absent → column default.
+          productionType: productionTypeSchema.parse(data.productionType ?? 'unknown'),
           importListId: data.importListId,
         })
         .returning();
