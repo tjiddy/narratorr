@@ -193,7 +193,7 @@ describe('EventHistorySection', () => {
       );
     });
 
-    it('Needs Review chip sends eventType=held_for_review', async () => {
+    it('Needs Review chip sends both held_for_review and recording_review_skipped', async () => {
       const user = userEvent.setup();
       mockDefaultHook();
 
@@ -201,7 +201,7 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Needs Review'));
 
       expect(mockUseEventHistory).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: 'held_for_review' }),
+        expect.objectContaining({ eventType: 'held_for_review,recording_review_skipped' }),
       );
     });
 
