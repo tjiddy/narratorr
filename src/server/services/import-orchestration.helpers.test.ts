@@ -286,6 +286,46 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     expect(mockBookService.findDuplicate).toHaveBeenNthCalledWith(2, expect.objectContaining({ title: 'Meta Asin', authors: [{ name: 'Author' }], asin: 'B0METADATA' }));
   });
 
+  // #1728 F1 — confirm-time forwarding of the matched production form. The
+  // classifyConfirmItem dedup must pass the normalized metadata.formatType into
+  // findDuplicate so an abridged-vs-unabridged item with no usable duration is HELD
+  // before copy (review → no create, no enqueue), not silently let through. Deleting
+  // the productionType spread would make the veto inert on this path.
+  it('forwards normalized metadata.formatType as productionType to findDuplicate and holds a review verdict (#1728 F1)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'review', book: { id: 88, title: 'Maybe Owned' } });
+
+    const result = await confirmImport(
+      [{ path: '/a/format', title: 'Format Item', authorName: 'Author', metadata: { title: 'Format Item', authors: [{ name: 'Author' }], formatType: 'Unabridged' } }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    // F1 — the normalized production form reaches the resolver.
+    expect(mockBookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
+    // Held for review: not accepted, no placeholder created, nothing enqueued.
+    expect(result.accepted).toBe(0);
+    expect(result.heldReview).toEqual([
+      { path: '/a/format', title: 'Format Item', reason: 'recording-review-required', existingBookId: 88 },
+    ]);
+    expect(mockBookService.create).not.toHaveBeenCalled();
+    expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('confirm-time dedup omits productionType when the matched metadata has no formatType (#1728 F1 unchanged)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'different-recording', book: null });
+
+    await confirmImport(
+      [{ path: '/a/noformat', title: 'No Format', authorName: 'Author', metadata: { title: 'No Format', authors: [{ name: 'Author' }] } }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(mockBookService.findDuplicate).toHaveBeenCalledTimes(1);
+    expect(mockBookService.findDuplicate.mock.calls[0]![0]).not.toHaveProperty('productionType');
+  });
+
   it('forceImport item bypasses the dedup check entirely and still imports (#1662)', async () => {
     mockBookService.findDuplicate.mockResolvedValue({ verdict: 'same-recording', book: { id: 5, title: 'Owned' } });
     mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Owned', status: 'importing' });

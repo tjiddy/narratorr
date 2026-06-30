@@ -367,6 +367,12 @@ describe('MatchJobService', () => {
       // Display string is the human warning, NOT the machine reason literal.
       expect(result.reviewReason).toBe(RECORDING_REVIEW_REASON);
       expect(result.reviewReason).not.toBe('production-type-mismatch');
+      // Observability AC (#1728): the held downgrade is diagnosable — the machine
+      // reason rides the post-match review log context (never the display string).
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ recordingReviewReason: 'production-type-mismatch', existingBookId: 88 }),
+        'Post-match recording review required',
+      );
     });
 
     it('post-match: a bestMatch with no formatType passes NO productionType to findDuplicate (#1728 F2 unchanged)', async () => {
