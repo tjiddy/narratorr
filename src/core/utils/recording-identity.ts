@@ -20,6 +20,7 @@
 
 import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './similarity.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
 import { slugify } from '../../shared/utils.js';
 import type { RecordingVerdict } from '../../shared/schemas/recording-verdict.js';
 
@@ -183,7 +184,7 @@ function corroborateWithDuration(candidate: number | null | undefined, library: 
  * Resolve whether `candidate` is the same recording as the library `entry`,
  * a different recording, or needs human review (#1710).
  *
- *  1. ASIN equal (case-insensitive, both present) → `same-recording`. The ONLY
+ *  1. ASIN equal (canonical form, both present) → `same-recording`. The ONLY
  *     ASIN-based conclusion — a *different* ASIN does NOT short-circuit (Tehanu is
  *     a different Audible ASIN of the same recording), it defers to narrator.
  *  2. else scope by normalized title (`normalizeTitleForDedup`) + primary-author
@@ -195,8 +196,16 @@ function corroborateWithDuration(candidate: number | null | undefined, library: 
  *  4. no title+author match → `different-recording` (new).
  */
 export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: LibraryRecording): RecordingVerdict {
-  // (1) ASIN equal — the only ASIN-based conclusion.
-  if (candidate.asin && entry.asin && candidate.asin.toLowerCase() === entry.asin.toLowerCase()) {
+  // (1) ASIN equal — the only ASIN-based conclusion. Both sides are reduced to the
+  // shared canonical form (trim + UPPERCASE → null on blank, #1733) before compare,
+  // so a padded/case-drifted pre-write candidate (`' B01ABC '`) still matches a
+  // stored canonical ASIN. `canonicalizeAsin` folds blank/whitespace to null, so a
+  // one-sided or empty ASIN can never satisfy the both-present guard and falls
+  // through to the title/author + narrator path (#1729). The earlier
+  // `gatherIncumbentIds` site canonicalizes identically so the two never drift.
+  const candidateAsin = canonicalizeAsin(candidate.asin);
+  const entryAsin = canonicalizeAsin(entry.asin);
+  if (candidateAsin && entryAsin && candidateAsin === entryAsin) {
     return 'same-recording';
   }
 

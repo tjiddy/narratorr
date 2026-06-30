@@ -110,6 +110,23 @@ describe('deriveEditionLabel (#1711)', () => {
   it('trims surrounding whitespace from the narrator name', () => {
     expect(deriveEditionLabel(['  Kate Reading  '])).toBe('Kate Reading');
   });
+
+  // (#1729 gap c) The label is the RAW trimmed name, not the normalized signal —
+  // it is a human-facing edition discriminator, so a parenthetical or role-prefix
+  // is signal for the no-signal check (via normalizeNarrator) but is preserved
+  // verbatim in the returned label. Pinning the exact string guards the documented
+  // "a rescan re-derives the same label" stability against a future normalize-the-label change.
+  it('returns the raw label for a parenthetical name (divergent from the normalized form)', () => {
+    // normalizeNarrator strips the parenthetical to 'james marsters' (signal), so the
+    // raw branch is reached and the parenthetical survives in the returned label.
+    expect(deriveEditionLabel(['James Marsters (Spike)'])).toBe('James Marsters (Spike)');
+  });
+
+  it('returns the raw label for a role-prefixed name (divergent from the normalized form)', () => {
+    // normalizeNarrator strips the 'Narrator:' role prefix to 'jim dale' (signal), so the
+    // raw branch is reached and the prefix survives in the returned label.
+    expect(deriveEditionLabel(['Narrator: Jim Dale'])).toBe('Narrator: Jim Dale');
+  });
 });
 
 // ── Resolver ────────────────────────────────────────────────────────────
@@ -137,6 +154,55 @@ describe('resolveRecordingIdentity (#1710)', () => {
       library({ asin: 'B-OLD', title: 'Tehanu', primaryAuthorSlug: 'ursula-k-le-guin', narrators: ['Jenny Sterlin'], duration: 36100 }),
     );
     expect(verdict).toBe('same-recording');
+  });
+
+  // (#1729 gap a) The ASIN guard is `if (candidate.asin && entry.asin && …)` — a
+  // ONE-sided ASIN must NOT short-circuit on the ASIN branch; it falls through to
+  // the title + primary-author scope and the narrator predicate. Both existing ASIN
+  // tests set the ASIN on both sides, leaving the single-sided fall-through unpinned.
+  describe('single-sided ASIN falls through to the narrator path (#1729)', () => {
+    it('candidate-only ASIN + matching title/author + equal narrators → same-recording (via narrator)', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ asin: 'B01ABC', narrators: ['Jim Dale'] }),
+        library({ asin: null, narrators: ['Jim Dale'] }),
+      )).toBe('same-recording');
+    });
+
+    it('candidate-only ASIN + matching title/author + not-equal narrators → different-recording (ASIN did not short-circuit)', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ asin: 'B01ABC', narrators: ['Jim Dale'] }),
+        library({ asin: null, narrators: ['Kate Reading', 'Michael Kramer'] }),
+      )).toBe('different-recording');
+    });
+
+    it('entry-only ASIN + matching title/author + equal narrators → same-recording (via narrator)', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ asin: null, narrators: ['Jim Dale'] }),
+        library({ asin: 'B01ABC', narrators: ['Jim Dale'] }),
+      )).toBe('same-recording');
+    });
+
+    it('entry-only ASIN + matching title/author + not-equal narrators → different-recording (ASIN did not short-circuit)', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ asin: null, narrators: ['Jim Dale'] }),
+        library({ asin: 'B01ABC', narrators: ['Kate Reading', 'Michael Kramer'] }),
+      )).toBe('different-recording');
+    });
+  });
+
+  // (#1729 gap b) DECISION: the candidate ASIN is canonicalized (trim + UPPERCASE
+  // via the shared `canonicalizeAsin`, #1733) before the resolver's ASIN compare,
+  // so a padded/case-drifted pre-write candidate still matches a stored canonical
+  // ASIN. The same decision is applied at the earlier `gatherIncumbentIds` site
+  // (see book.service.dedup.integration.test.ts) so the two sites cannot drift.
+  // Narrators are deliberately not-equal here so ONLY the ASIN branch could yield
+  // same-recording — a non-canonicalizing resolver would fall through to
+  // different-recording.
+  it('whitespace-padded candidate ASIN canonicalizes and short-circuits → same-recording (#1729 gap b)', () => {
+    expect(resolveRecordingIdentity(
+      candidate({ asin: ' B01ABC ', narrators: ['X'] }),
+      library({ asin: 'B01ABC', narrators: ['Y'] }),
+    )).toBe('same-recording');
   });
 
   it('crux: HP single narrator vs full-cast superset → different-recording', () => {
@@ -285,6 +351,27 @@ describe('resolveRecordingIdentity (#1710)', () => {
         const verdict = resolveRecordingIdentity(candidate({ ...eq, duration: d }), library({ ...eqLib, duration: 36000 }));
         expect(verdict).not.toBe('different-recording');
       }
+    });
+
+    // (#1729 gap d) The corroborator uses `distance <= DURATION_TOLERANCE` (0.15) —
+    // INCLUSIVE at the edge. Existing cases only cover well-inside (8.3%) and
+    // far-outside (50%); pin the exact 0.15 boundary and one tick beyond, on both
+    // the shorter-candidate and longer-candidate sides of the band. Library 36000,
+    // band edge Δ = 36000 * 0.15 = 5400 → 30600 (short) / 41400 (long).
+    it('exact 15% boundary on the shorter-candidate side → same-recording (inclusive)', () => {
+      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 30600 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+    });
+
+    it('one tick beyond 15% on the shorter-candidate side → review', () => {
+      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 30599 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+    });
+
+    it('exact 15% boundary on the longer-candidate side → same-recording (inclusive)', () => {
+      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 41400 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+    });
+
+    it('one tick beyond 15% on the longer-candidate side → review', () => {
+      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 41401 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
     });
   });
 });

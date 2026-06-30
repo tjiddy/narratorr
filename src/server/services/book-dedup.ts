@@ -10,6 +10,7 @@ import { eq, and, sql, notExists } from 'drizzle-orm';
 import { slugify } from '../../core/index.js';
 import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict } from '../../core/utils/recording-identity.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
 import { books, authors, bookAuthors } from '../../db/schema.js';
 import type { Db } from '../../db/index.js';
 import type { BookWithAuthor } from './book.service.js';
@@ -127,10 +128,17 @@ export function toLibraryRecording(b: BookWithAuthor): LibraryRecording {
 async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promise<number[]> {
   const ids = new Set<number>();
 
-  // (1) ASIN — case-insensitive, ALL hits (aligns with findLibraryStatusByAsins).
-  if (candidate.asin) {
+  // Canonicalize the candidate ASIN ONCE (trim + UPPERCASE → null on blank, #1733)
+  // so a padded/case-drifted pre-write candidate (`' B01ABC '`) still finds the
+  // stored canonical row, and so the resolver (which canonicalizes identically,
+  // #1729) and this gather site cannot drift on the padded/blank-ASIN decision.
+  const canonicalAsin = canonicalizeAsin(candidate.asin);
+
+  // (1) ASIN — canonical compare against the stored upper(asin) (matches the durable
+  // upper(asin) unique index), ALL hits (aligns with findLibraryStatusByAsins).
+  if (canonicalAsin) {
     const byAsin = await db.select({ id: books.id }).from(books)
-      .where(eq(sql`lower(${books.asin})`, candidate.asin.toLowerCase()));
+      .where(eq(sql`upper(${books.asin})`, canonicalAsin));
     for (const r of byAsin) ids.add(r.id);
   }
 
@@ -151,7 +159,8 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
 
   // (3) Author-less exact title-only when no authors and no ASIN (#246). Only
   // zero-author rows so authored "Shogun" doesn't block authorless "Shogun" (#253).
-  if (!candidate.asin && (!authorList || authorList.length === 0)) {
+  // Uses the canonical ASIN so a blank/whitespace candidate ASIN counts as "no ASIN".
+  if (!canonicalAsin && (!authorList || authorList.length === 0)) {
     const byTitle = await db.select({ id: books.id }).from(books)
       .where(and(
         eq(books.title, candidate.title),
