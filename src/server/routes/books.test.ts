@@ -1229,18 +1229,21 @@ describe('books routes', () => {
     });
 
     // #1707 — the per-book retag route fires a 'metadata' refresh only when ≥1 file was tagged.
+    // #1721 — the refresh item now comes from RetagResult.refreshItem (built pre-tag-write), so the
+    // route no longer reloads the book after the mutation; getById rejecting can't drop the refresh.
     it("fires a 'metadata' refresh when ≥1 file tagged, none when all skipped", async () => {
       const notify = services.connector.notifyRefresh as Mock;
       notify.mockResolvedValue(undefined);
-      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, path: '/lib/A/Book' });
+      // A post-retag reload would fail — proves the refresh no longer depends on it.
+      (services.book.getById as Mock).mockRejectedValue(new Error('libSQL read failed'));
 
-      (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [] });
+      (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [], refreshItem: { bookId: 1, title: 'Book', authorName: 'A', libraryPath: '/lib/A/Book' } });
       notify.mockClear();
       expect((await app.inject({ method: 'POST', url: '/api/books/1/retag' })).statusCode).toBe(200);
       expect(notify).toHaveBeenCalledTimes(1);
       expect(notify).toHaveBeenCalledWith('metadata', [expect.objectContaining({ bookId: 1, libraryPath: '/lib/A/Book' })]);
 
-      (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 1, tagged: 0, skipped: 4, failed: 0, warnings: [] });
+      (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 1, tagged: 0, skipped: 4, failed: 0, warnings: [], refreshItem: { bookId: 1, title: 'Book', authorName: 'A', libraryPath: '/lib/A/Book' } });
       notify.mockClear();
       expect((await app.inject({ method: 'POST', url: '/api/books/1/retag' })).statusCode).toBe(200);
       expect(notify).not.toHaveBeenCalled();

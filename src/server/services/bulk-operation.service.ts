@@ -10,7 +10,7 @@ import { RetagError } from './tagging.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
-import { enqueueBookRefreshById } from '../utils/enqueue-book-refresh.js';
+import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
@@ -310,7 +310,9 @@ export class BulkOperationService {
       for (const { id: bookId } of rows) {
         try {
           const result = await this.taggingService.retagBook(bookId);
-          if (result.tagged > 0) await enqueueBookRefreshById(this.connectorService, this.bookService, this.log, 'metadata', bookId);
+          // Fire from the result's pre-mutation refresh item (built before the in-place tag rewrite)
+          // via the shared single-home helper — see the standalone route at books.ts.
+          enqueueRetagRefresh(this.connectorService, this.log, result);
         } catch (error: unknown) {
           if (error instanceof RetagError && error.code === 'NO_PATH') {
             tick(false); // skip silently

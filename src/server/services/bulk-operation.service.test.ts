@@ -784,18 +784,40 @@ describe('BulkOperationService — re-tag batch', () => {
   it("enqueues a 'metadata' refresh for a book that tagged ≥1 file, and none for an all-skipped book", async () => {
     const taggingService = makeTaggingService();
     const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-    const bookService = makeBookService({ id: 1, title: 'Tagged Book', path: BOOK_PATH });
-    const { service, db } = createService({ taggingService, bookService, connectorService: { notifyRefresh } });
+    const { service, db } = createService({ taggingService, connectorService: { notifyRefresh } });
     db.select.mockReturnValueOnce(mockDbChain([{ id: 1 }, { id: 2 }]));
     (taggingService.retagBook as Mock)
-      .mockResolvedValueOnce({ bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [] })
-      .mockResolvedValueOnce({ bookId: 2, tagged: 0, skipped: 3, failed: 0, warnings: [] });
+      .mockResolvedValueOnce({ bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [], refreshItem: { bookId: 1, title: 'Tagged Book', authorName: 'Author Name', libraryPath: BOOK_PATH } })
+      .mockResolvedValueOnce({ bookId: 2, tagged: 0, skipped: 3, failed: 0, warnings: [], refreshItem: { bookId: 2, title: 'Skipped Book', authorName: null, libraryPath: '/library/Author/Skipped' } });
     const id = service.startRetagJob();
     await waitForJob(service, id);
 
     expect(notifyRefresh).toHaveBeenCalledTimes(1);
     expect(notifyRefresh).toHaveBeenCalledWith('metadata', [
       expect.objectContaining({ bookId: 1, title: 'Tagged Book', libraryPath: BOOK_PATH }),
+    ]);
+  });
+
+  // #1721 — the refresh is built from RetagResult.refreshItem (loaded before the in-place tag
+  // rewrite), so a transient post-re-tag book reload failure can no longer drop it. The old code
+  // reloaded via bookService.getById after the mutation; this proves the refresh survives that miss.
+  it("still fires the 'metadata' refresh from preloaded state when a post-retag reload would fail", async () => {
+    const taggingService = makeTaggingService();
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    // getById rejects — the new path must not depend on it for the refresh item.
+    const bookService = inject<BookService>({ getById: vi.fn().mockRejectedValue(new Error('libSQL read failed')) });
+    const { service, db } = createService({ taggingService, bookService, connectorService: { notifyRefresh } });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
+    (taggingService.retagBook as Mock).mockResolvedValueOnce({
+      bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [],
+      refreshItem: { bookId: 1, title: 'Tagged Book', authorName: 'Author Name', libraryPath: BOOK_PATH },
+    });
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    expect(notifyRefresh).toHaveBeenCalledTimes(1);
+    expect(notifyRefresh).toHaveBeenCalledWith('metadata', [
+      expect.objectContaining({ bookId: 1, libraryPath: BOOK_PATH }),
     ]);
   });
 });
@@ -928,6 +950,28 @@ describe('BulkOperationService — convert batch', () => {
     // The refresh fires after the swap returns but before enrichment, so a later enrichment throw
     // cannot suppress it (the originals are already deleted on disk).
     expect(notifyRefresh).toHaveBeenCalledWith('convert', [expect.objectContaining({ bookId: 1 })]);
+  });
+
+  // #1721 — the convert refresh is built from the already-loaded book + bookPath/bookTitle (held
+  // from before the swap), not a fresh post-swap reload. So a transient post-swap getById failure
+  // can no longer drop it — the old path reloaded via enqueueBookRefreshById and would have dropped it.
+  it("still enqueues the 'convert' refresh when a post-swap book reload would fail", async () => {
+    setupConvertMocks();
+    const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+    // First load (pre-swap, for author/bitrate) succeeds; any later reload rejects.
+    const bookService = inject<BookService>({
+      getById: vi.fn()
+        .mockResolvedValueOnce({ id: 1, title: 'Title', path: BOOK_PATH, authors: [{ name: 'Author Name' }], narrators: [], audioBitrate: null })
+        .mockRejectedValue(new Error('libSQL read failed')),
+    });
+    const { service, db } = createService({ bookService, connectorService: { notifyRefresh } });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(notifyRefresh).toHaveBeenCalledTimes(1);
+    expect(notifyRefresh).toHaveBeenCalledWith('convert', [
+      expect.objectContaining({ bookId: 1, title: 'Title', libraryPath: BOOK_PATH }),
+    ]);
   });
 
   it("does NOT enqueue a 'convert' refresh when the processor succeeds with no output files (no swap)", async () => {

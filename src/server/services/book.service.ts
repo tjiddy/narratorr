@@ -505,7 +505,11 @@ export class BookService {
     }
 
     const coverOutcome = await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
-    const reloaded = await this.getById(bookId) as BookWithAuthor;
+    // Fall back to the pre-write `book` if the post-write reload throws, so the route always receives
+    // usable state and still fires its `'metadata'` refresh. `finalizeCoverWrite` deliberately keeps
+    // `coverOutcome === 'written'` on a post-rename DB failure *so the refresh fires* — re-throwing
+    // here on a reload miss would re-introduce the very failure point it avoids.
+    const reloaded = await this.getById(bookId).catch(() => book) as BookWithAuthor;
     return { book: reloaded, coverOutcome };
   }
 

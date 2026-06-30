@@ -4,7 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
-import { enqueueBookRefreshById } from '../utils/enqueue-book-refresh.js';
+import { enqueueBookRefresh, type BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
@@ -45,6 +45,22 @@ async function swapConvertedFiles(outputFiles: string[], originalFiles: string[]
     }
   }
   return true;
+}
+
+/**
+ * Fire the post-swap `'convert'` connector refresh from the already-loaded book state (held from
+ * before the irreversible swap), gated on an actual irreversible swap and a usable `libraryPath`.
+ * A success-with-no-output convert (empty staging → `outputFiles: []`) mutated nothing on disk, so
+ * it has no media-visible change. Building the item from pre-swap state — rather than a fresh
+ * post-swap reload — means a transient reload failure can't silently drop the refresh (#1721).
+ */
+function enqueueConvertRefresh(
+  deps: { connectorService?: ConnectorService | undefined; log: FastifyBaseLogger },
+  swapped: boolean,
+  item: BookRefreshItem,
+): void {
+  if (!swapped || !item.libraryPath) return;
+  enqueueBookRefresh(deps.connectorService, deps.log, 'convert', item);
 }
 
 /**
@@ -95,9 +111,7 @@ export async function convertBook(
     result.warnings?.forEach(w => log.warn({ bookId }, w));
 
     const swapped = await swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
-    // Only refresh when an irreversible swap actually committed. A success-with-no-output convert
-    // (empty staging → `outputFiles: []`) mutated nothing on disk, so it has no media-visible change.
-    if (swapped) await enqueueBookRefreshById(connectorService, bookService, log, 'convert', bookId);
+    enqueueConvertRefresh({ connectorService, log }, swapped, { bookId, title: bookTitle, authorName, libraryPath: bookPath });
 
     // Refresh DB audio fields
     const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
