@@ -250,6 +250,19 @@ describe('buildTargetPath', () => {
         expect(leaf).toContain('(Full Cast)');
         expect(leaf.endsWith('(Full Cast)')).toBe(true);
       });
+
+      it('token branch: an overlong discriminator with a 255-char title still survives non-empty (F3)', () => {
+        // When the discriminator itself is ~255 chars, the budgeting probes must NOT saturate (which
+        // would leave the title unbudgeted and let the final render truncate {edition} away entirely).
+        // The title is budgeted to near-nothing so the long discriminator dominates and survives.
+        const longLabel = 'N'.repeat(255);
+        const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, longLabel);
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        // The discriminator survives (non-empty), and the title did NOT consume the whole leaf.
+        expect(leaf).toContain('N');
+        expect(leaf).toContain('(N');
+      });
     });
 
     describe('naming-options parity: token and suffix branches agree on the discriminator (F6)', () => {

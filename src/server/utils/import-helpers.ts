@@ -74,12 +74,15 @@ export function extractYear(publishedDate: string | null | undefined): string | 
  * `composeEditionSuffixLeaf`. Token-naming transforms only ever shrink (or preserve) length, so
  * capping the raw value before render keeps the rendered leaf ≤ limit.
  *
- * Two probes with different-length stand-ins (`X` vs `XX`) isolate (a) how many title contributions
- * actually land in the discriminator-carrying leaf — `count` — and (b) the fixed (non-title) chars
- * there. This handles a leaf that renders MORE than one title contribution, e.g.
- * `{author}/{title} - {titleSort} ({edition})`: the room is split across the `count` contributions
- * so their combined rendered length can't push `{edition}` past the cap (F2). A leaf with no title
- * token (`count <= 0`) needs no budgeting.
+ * The leaf length is measured with SHORT stand-ins for BOTH the title tokens and the `{edition}`
+ * discriminator, so the probe renders never themselves hit the 255-char cap — a real ~255-char
+ * discriminator would otherwise saturate every probe, hide the title-contribution count, and leave
+ * the title unbudgeted so the final render truncates `{edition}` away entirely (F3). From the probes
+ * we derive: how many title contributions land in the leaf (`titleCount`), how many `{edition}`
+ * occurrences (`editionCount`), and the pure literal/wrapper `structureLen`. The real discriminator's
+ * verbatim length is then added back analytically. When the discriminator alone saturates the
+ * segment, `perTokenBudget` floors to 1 so the title shrinks to near-nothing and the (still long)
+ * discriminator dominates the leaf and survives truncation at the tail (never reduced to empty).
  */
 function budgetTitleTokensForEdition(
   folderFormat: string,
@@ -89,20 +92,26 @@ function budgetTitleTokensForEdition(
   const titleKeys = (['title', 'titleSort'] as const).filter((k) => typeof tokens[k] === 'string');
   if (titleKeys.length === 0) return;
 
-  const leafLenWith = (standIn: string): number => {
+  const leafLen = (titleStandIn: string, editionStandIn: string): number => {
     const probe: Record<string, string | number | undefined> = { ...tokens };
-    for (const k of titleKeys) probe[k] = standIn;
+    for (const k of titleKeys) probe[k] = titleStandIn;
+    probe.edition = editionStandIn;
     const segments = renderTemplate(folderFormat, probe, options).split('/');
     return (segments[segments.length - 1] ?? '').length;
   };
-  // Each title contribution in the leaf grows by exactly 1 char going from `X` → `XX`, so the delta
-  // is the contribution count; the single-char-probe leaf minus that count is the fixed length.
-  const len1 = leafLenWith('X');
-  const count = leafLenWith('XX') - len1;
-  if (count <= 0) return;
+  // Each title contribution grows by 1 char from `Y` → `YY` (edition held at the short `E`); the
+  // delta is the title-contribution count. Likewise for the `{edition}` occurrence count.
+  const baseLen = leafLen('Y', 'E');
+  const titleCount = leafLen('YY', 'E') - baseLen;
+  if (titleCount <= 0) return; // no title token contributes to the discriminator leaf
+  const editionCount = leafLen('Y', 'EE') - baseLen;
 
-  const fixedLen = len1 - count;
-  const perTokenBudget = Math.max(1, Math.floor((PATH_SEGMENT_LIMIT - fixedLen) / count));
+  // Subtract the 1-char title and edition stand-ins to recover the pure literal/wrapper length, then
+  // add back the real discriminator's verbatim length at each occurrence.
+  const structureLen = baseLen - titleCount - editionCount;
+  const discriminatorLen = String(tokens.edition ?? '').length;
+  const fixedLen = structureLen + editionCount * discriminatorLen;
+  const perTokenBudget = Math.max(1, Math.floor((PATH_SEGMENT_LIMIT - fixedLen) / titleCount));
   for (const key of titleKeys) {
     const value = tokens[key];
     if (typeof value === 'string' && value.length > perTokenBudget) {
