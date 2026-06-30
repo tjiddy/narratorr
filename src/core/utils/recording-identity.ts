@@ -167,9 +167,11 @@ export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: L
   }
 
   // (2) title + primary-author slug scope. A different ASIN falls through here.
+  // An empty slug (author-less candidate) never matches — mirrors the both-slugs-required
+  // guard in matchesLibraryIdentity so two author-less records can't share a scope (#1722).
   const candidateSlug = slugify(candidate.authors[0] ?? '');
   const titleMatch = normalizeTitleForDedup(candidate.title) === normalizeTitleForDedup(entry.title);
-  if (!titleMatch || candidateSlug !== entry.primaryAuthorSlug) {
+  if (!titleMatch || !candidateSlug || candidateSlug !== entry.primaryAuthorSlug) {
     // (4) no title+author match → different recording.
     return 'different-recording';
   }

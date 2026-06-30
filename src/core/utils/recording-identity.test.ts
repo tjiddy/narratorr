@@ -136,6 +136,30 @@ describe('resolveRecordingIdentity (#1710)', () => {
     )).toBe('different-recording');
   });
 
+  describe('author-less records never pass the author scope (#1722)', () => {
+    it('both author-less with normalize-equal titles → different-recording (equal narrators)', () => {
+      // Equal narrators would resolve same-recording if the empty-slug pair passed the scope.
+      expect(resolveRecordingIdentity(
+        candidate({ title: 'The Stranger', authors: [], narrators: ['X'] }),
+        library({ title: 'The Stranger', primaryAuthorSlug: '', narrators: ['X'] }),
+      )).toBe('different-recording');
+    });
+
+    it('author-less candidate vs authored entry → different-recording', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ title: 'The Stranger', authors: [], narrators: ['X'] }),
+        library({ title: 'The Stranger', primaryAuthorSlug: 'author-one', narrators: ['X'] }),
+      )).toBe('different-recording');
+    });
+
+    it('authored candidate vs author-less entry → different-recording', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ title: 'The Stranger', authors: ['Author One'], narrators: ['X'] }),
+        library({ title: 'The Stranger', primaryAuthorSlug: '', narrators: ['X'] }),
+      )).toBe('different-recording');
+    });
+  });
+
   describe('title-normalization drift scopes to the same incumbent', () => {
     it('colon subtitle (Mistborn: The Final Empire vs Mistborn)', () => {
       const verdict = resolveRecordingIdentity(
