@@ -668,9 +668,14 @@ describe('ImportListService', () => {
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
       });
 
-      // #1723 F8 — a `review` verdict (uncertain identity) is skipped on automated
-      // lists (no held-review surface): no create, no event row, no immediate search.
-      it('review verdict: skips create, no event, no immediate search (#1723 F8)', async () => {
+      // #1735 — a `review` verdict (uncertain identity) is still skipped on
+      // automated lists (no held-review UI), but it is now OBSERVABLE: it emits a
+      // `recording_review_skipped` event so the held candidate is queryable via the
+      // existing event-history surface instead of being lost to a server log line.
+      // No create, no immediate search. The mock returns a realistic review
+      // resolution carrying the incumbent (NOT `book: null`, which diverges from the
+      // real `resolveDuplicate` contract — see DV2).
+      it('review verdict: skips create but emits an observable recording_review_skipped event (#1735)', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Maybe Owned', author: 'Someone', asin: 'B_REVIEW' }]),
           test: vi.fn(),
@@ -678,12 +683,16 @@ describe('ImportListService', () => {
         mockFactories.nyt!.mockReturnValue(mockProvider);
 
         const db = createMockDb();
-        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.select.mockReturnValue(mockDbChain([dueNytList({ name: 'Review List' })]));
         const eventInsertChain = mockDbChain([]);
         db.insert.mockReturnValue(eventInsertChain);
         db.update.mockReturnValue(mockDbChain([]));
 
-        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'review', book: null });
+        const findDuplicate = vi.fn().mockResolvedValue({
+          verdict: 'review',
+          book: { id: 999, title: 'Owned Incumbent' },
+          hasIncumbent: true,
+        });
         const create = vi.fn();
         const searchDeps = makeSearchDeps({ searchImmediately: true });
         service = new ImportListService(
@@ -693,17 +702,57 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         expect(create).not.toHaveBeenCalled();
-        expect(eventInsertChain.values).not.toHaveBeenCalledWith(
-          expect.objectContaining({ source: 'import_list' }),
+        // The disposition is now observable outside logs: a recording_review_skipped
+        // row on the incumbent's history, carrying the list name + incumbent id.
+        expect(eventInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bookId: 999,
+            bookTitle: 'Maybe Owned',
+            authorName: 'Someone',
+            eventType: 'recording_review_skipped',
+            source: 'import_list',
+            reason: expect.objectContaining({ importListName: 'Review List', existingBookId: 999 }),
+          }),
         );
+        // A held item is wanted-but-uncertain, not grabbed: no immediate search.
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
-        // #1737 — assert the branch-specific info log at import-list.service.ts:306-307.
-        // This is what distinguishes the `review` skip from the `same-recording` skip
-        // (which logs at `debug` with a different message); without this assertion the
-        // test passes even if the review branch fell through to the same-recording log.
+        // #1735 — branch-specific info log distinguishes the review skip from the
+        // same-recording skip (which logs at `debug` with a different message).
         expect(mockLog.info).toHaveBeenCalledWith(
-          expect.objectContaining({ title: 'Maybe Owned', asin: 'B_REVIEW' }),
-          expect.stringContaining('needs recording review — skipping'),
+          expect.objectContaining({ title: 'Maybe Owned', asin: 'B_REVIEW', existingBookId: 999 }),
+          expect.stringContaining('needs recording review'),
+        );
+      });
+
+      // #1735 — the run distinguishes "synced N vs. held/skipped-for-review M": the
+      // sync-complete log carries a createdCount and heldReviewCount so a held item
+      // is no longer indistinguishable from a clean run.
+      it('sync-complete log surfaces createdCount vs heldReviewCount for a mixed run (#1735)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Fresh Book', author: 'Author One' },
+            { title: 'Held Book', author: 'Author Two' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList({ id: 9, name: 'Mixed Run' })]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn()
+          .mockResolvedValueOnce({ verdict: 'different-recording', book: null })
+          .mockResolvedValueOnce({ verdict: 'review', book: { id: 555, title: 'Owned' }, hasIncumbent: true });
+        const create = vi.fn().mockResolvedValue(createdBook(70, 'Fresh Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
+
+        await service.syncDueLists();
+
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 9, name: 'Mixed Run', createdCount: 1, heldReviewCount: 1 }),
+          expect.stringContaining('Import list sync completed'),
         );
       });
     });

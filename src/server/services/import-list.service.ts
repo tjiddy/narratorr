@@ -26,6 +26,23 @@ const MS_PER_MINUTE = 60_000;
 type NewImportList = typeof importLists.$inferInsert;
 
 /**
+ * Per-item disposition surfaced by {@link ImportListService.processItem} so
+ * {@link ImportListService.syncList} can distinguish a clean "synced N" run from
+ * one that held M items for recording review (#1735):
+ * - `created` — a book row was inserted (counts toward `createdCount`).
+ * - `held_review` — the `review` verdict skipped create but emitted an
+ *   observable `recording_review_skipped` event (counts toward `heldReviewCount`).
+ * - `skipped` — owned same-recording, or an ASIN-race owned skip — no count.
+ */
+type ItemOutcome = 'created' | 'held_review' | 'skipped';
+
+/** Synced-vs-held tally returned by {@link ImportListService.syncList} (#1735). */
+interface SyncCounts {
+  createdCount: number;
+  heldReviewCount: number;
+}
+
+/**
  * Parse a saved settings JSON blob through the per-type Zod schema.
  *
  * Normalizes legacy blank values that pre-date the type tightening (e.g. Hardcover
@@ -156,13 +173,16 @@ export class ImportListService {
 
     for (const list of dueLists) {
       try {
-        await this.syncList(list);
+        const counts = await this.syncList(list);
         const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
         await this.db
           .update(importLists)
           .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
           .where(eq(importLists.id, list.id));
-        this.log.info({ id: list.id, name: list.name }, 'Import list sync completed');
+        this.log.info(
+          { id: list.id, name: list.name, createdCount: counts.createdCount, heldReviewCount: counts.heldReviewCount },
+          'Import list sync completed',
+        );
       } catch (error: unknown) {
         const message = getErrorMessage(error);
         const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
@@ -175,7 +195,7 @@ export class ImportListService {
     }
   }
 
-  private async syncList(list: ImportListRow): Promise<void> {
+  private async syncList(list: ImportListRow): Promise<SyncCounts> {
     const decrypted = this.decryptRow(list);
     const factory = IMPORT_LIST_ADAPTER_FACTORIES[decrypted.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown provider type: ${decrypted.type}`);
@@ -188,6 +208,7 @@ export class ImportListService {
 
     const qualitySettings = this.searchDeps ? await this.searchDeps.settingsService.get('quality') : undefined;
 
+    const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0 };
     for (const item of items) {
       if (!item.title?.trim()) {
         this.log.warn({ listId: list.id, item }, 'Skipping item with empty/null title');
@@ -195,11 +216,14 @@ export class ImportListService {
       }
 
       try {
-        await this.processItem(item, list, qualitySettings);
+        const outcome = await this.processItem(item, list, qualitySettings);
+        if (outcome === 'created') counts.createdCount++;
+        else if (outcome === 'held_review') counts.heldReviewCount++;
       } catch (error: unknown) {
         this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
     }
+    return counts;
   }
 
   /**
@@ -284,30 +308,47 @@ export class ImportListService {
   }
 
   /**
-   * Three-way recording-identity skip decision (#1711). `enrichItem` supplies
-   * narrators + duration, so the resolver usually has signal: `same-recording` is
-   * owned → skip; `review` (no/ambiguous signal) is skipped+logged (import-list is
-   * automated, no held-review UI); `different-recording` proceeds so a second
-   * narration from a list is added rather than silently dropped.
+   * Three-way recording-identity resolution (#1711) for an enriched item.
+   * `enrichItem` supplies narrators + duration, so the resolver usually has
+   * signal: `same-recording` is owned; `review` is no/ambiguous signal;
+   * `different-recording` is a genuinely new recording. The caller
+   * ({@link processItem}) acts on the verdict — keeping `list` context out of
+   * this method's signature.
    */
-  private async shouldSkipImportListItem(enriched: EnrichedItem): Promise<boolean> {
+  private async resolveImportDisposition(enriched: EnrichedItem) {
     const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
-    const resolution = await this.bookService.findDuplicate({
+    return this.bookService.findDuplicate({
       title: enriched.title,
       ...(authorList && { authors: authorList }),
       ...(enriched.asin !== undefined && { asin: enriched.asin }),
       ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
       ...(enriched.duration != null && { duration: enriched.duration }),
     });
-    if (resolution.verdict === 'same-recording') {
-      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists (same recording), skipped');
-      return true;
-    }
-    if (resolution.verdict === 'review') {
-      this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: resolution.book?.id }, 'Import-list item needs recording review — skipping (no held-review surface for automated lists)');
-      return true;
-    }
-    return false;
+  }
+
+  /**
+   * Make the `review` disposition observable for automated import lists (#1735).
+   * Import lists have no interactive held-review UI, so a `review` verdict
+   * previously skipped the wanted recording with only a server log line. Emit a
+   * structured `recording_review_skipped` event (the same direct
+   * `this.db.insert(bookEvents)` precedent used for `book_added`) so the held
+   * candidate is queryable via the existing event-history surface and lands on
+   * the incumbent's book history. `bookTitle` is `notNull`, so it carries the
+   * candidate title; `existingBookId` is the incumbent the candidate matched.
+   */
+  private async recordReviewSkip(enriched: EnrichedItem, list: ImportListRow, existingBookId: number | null): Promise<void> {
+    this.log.info(
+      { title: enriched.title, asin: enriched.asin, existingBookId },
+      'Import-list item needs recording review — recording held-review event',
+    );
+    await this.db.insert(bookEvents).values({
+      bookId: existingBookId,
+      bookTitle: enriched.title,
+      authorName: enriched.authorName ?? null,
+      eventType: 'recording_review_skipped',
+      source: 'import_list',
+      reason: { importListName: list.name, existingBookId },
+    });
   }
 
   /**
@@ -346,13 +387,21 @@ export class ImportListService {
     }
   }
 
-  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
+  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<ItemOutcome> {
     const { enriched, enrichmentStatus } = await this.enrichItem(item);
 
-    if (await this.shouldSkipImportListItem(enriched)) return;
+    const resolution = await this.resolveImportDisposition(enriched);
+    if (resolution.verdict === 'same-recording') {
+      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists (same recording), skipped');
+      return 'skipped';
+    }
+    if (resolution.verdict === 'review') {
+      await this.recordReviewSkip(enriched, list, resolution.book?.id ?? null);
+      return 'held_review';
+    }
 
     const created = await this.createImportListBook(enriched, enrichmentStatus, list);
-    if (!created) return;
+    if (!created) return 'skipped';
 
     await this.db.insert(bookEvents).values({
       bookId: created.id,
@@ -372,6 +421,7 @@ export class ImportListService {
       };
       triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
     }
+    return 'created';
   }
 }
 
