@@ -1,0 +1,1 @@
+ALTER TABLE `books` ADD `edition_label` text;
