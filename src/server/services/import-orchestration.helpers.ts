@@ -348,7 +348,6 @@ export async function copyToLibrary(
  * Flatten a reconstructed multi-disc set into the library target. Aggregates source size across
  * all member discs for copy verification and removes every member folder on `move`.
  */
-// eslint-disable-next-line complexity -- disc-group flatten with collision fence + verification
 async function copyDiscGroupToLibrary(
   item: ImportConfirmItem,
   meta: BookMetadata | null,
@@ -444,6 +443,43 @@ function resolveDedupeAsin(item: ImportConfirmItem): string | undefined {
   return item.asin ?? item.metadata?.asin;
 }
 
+/**
+ * Pre-copy recording-identity classification for a confirm item (#1711). Threads
+ * candidate narrators + matched ASIN + duration into the three-way `findDuplicate`:
+ *  - `same-recording` → `'skip'` (owned, plain not-accepted skip — NOT held).
+ *  - `review`/no-signal → a `HeldReviewItem` (not copied, not enqueued).
+ *  - `different-recording` (or `forceImport`) → `'proceed'`.
+ */
+async function classifyConfirmItem(
+  item: ImportConfirmItem,
+  bookService: BookService,
+  log: FastifyBaseLogger,
+): Promise<'skip' | 'proceed' | HeldReviewItem> {
+  if (item.forceImport) return 'proceed';
+  const dedupeAsin = resolveDedupeAsin(item);
+  const resolution = await bookService.findDuplicate({
+    title: item.title,
+    ...(item.authorName ? { authors: [{ name: item.authorName }] } : {}),
+    ...(dedupeAsin !== undefined && { asin: dedupeAsin }),
+    ...(item.narrators !== undefined && { narrators: item.narrators }),
+    ...(item.metadata?.duration !== undefined && { duration: item.metadata.duration }),
+  });
+  if (resolution.verdict === 'same-recording') {
+    log.debug({ title: item.title }, 'Skipping owned duplicate during import (same recording)');
+    return 'skip';
+  }
+  if (resolution.verdict === 'review') {
+    log.info({ title: item.title, existingBookId: resolution.book?.id }, 'Holding import item for recording review');
+    return {
+      path: item.path,
+      title: item.title,
+      reason: 'recording-review-required',
+      ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
+    };
+  }
+  return 'proceed';
+}
+
 export async function confirmImport(
   items: ImportConfirmItem[],
   deps: ImportPipelineDeps,
@@ -459,36 +495,11 @@ export async function confirmImport(
 
   for (const item of items) {
     try {
-      if (!item.forceImport) {
-        // Three-way recording identity (#1711). Thread candidate narrators +
-        // matched ASIN + duration so the resolver can tell same-from-different:
-        //  - same-recording → owned, plain not-accepted skip (NOT held).
-        //  - review/no-signal → held-review item (not copied, not enqueued);
-        //    the user re-confirms with forceImport.
-        //  - different-recording → proceed (the copy-path collision fence keeps
-        //    both recordings in distinct folders).
-        const dedupeAsin = resolveDedupeAsin(item);
-        const resolution = await bookService.findDuplicate({
-          title: item.title,
-          ...(item.authorName ? { authors: [{ name: item.authorName }] } : {}),
-          ...(dedupeAsin !== undefined && { asin: dedupeAsin }),
-          ...(item.narrators !== undefined && { narrators: item.narrators }),
-          ...(item.metadata?.duration !== undefined && { duration: item.metadata.duration }),
-        });
-        if (resolution.verdict === 'same-recording') {
-          log.debug({ title: item.title }, 'Skipping owned duplicate during import (same recording)');
-          continue;
-        }
-        if (resolution.verdict === 'review') {
-          log.info({ title: item.title, existingBookId: resolution.book?.id }, 'Holding import item for recording review');
-          heldReview.push({
-            path: item.path,
-            title: item.title,
-            reason: 'recording-review-required',
-            ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
-          });
-          continue;
-        }
+      const classification = await classifyConfirmItem(item, bookService, log);
+      if (classification === 'skip') continue;
+      if (classification !== 'proceed') {
+        heldReview.push(classification);
+        continue;
       }
 
       log.debug(
