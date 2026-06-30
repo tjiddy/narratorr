@@ -9,14 +9,22 @@ import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 
+/** User-facing reason surfaced on a post-match recording-review row (#1711). */
+export const RECORDING_REVIEW_REASON =
+  'Possible different recording of a book you already own — review before importing';
+
 /**
- * Post-match library-duplicate check (#1662). On a resolved match, ask
- * `findDuplicate` (the shared ordered identity contract) whether the matched
- * book is already owned; on a hit, decorate the result with the duplicate fields
- * the client merge propagates onto the row. Every library-identity hit reports
- * `duplicateReason: 'slug'` — the badge renders all non-`within-scan` DB
- * duplicates identically, and no new enum value is introduced. A failed lookup
- * is non-fatal: the match still returns, just without the flag.
+ * Post-match recording-identity check (#1662, #1711). On a resolved match, ask
+ * the three-way `findDuplicate` whether the matched recording is already owned,
+ * a different recording, or needs review — `bestMatch` carries the narrators +
+ * duration the resolver needs (a no-author filename does not):
+ *
+ *  - `same-recording` → flag `isDuplicate=true, duplicateReason='slug'` (owned).
+ *  - `review`/no-signal → set the display-only `reviewReason` (NOT a hard
+ *    `isDuplicate`) so the UI surfaces it but the row still flows.
+ *  - `different-recording` → not a duplicate, return unchanged (keep-both).
+ *
+ * A failed lookup is non-fatal: the match still returns, just without a flag.
  */
 export async function applyLibraryDuplicate(
   result: MatchResult,
@@ -25,17 +33,30 @@ export async function applyLibraryDuplicate(
 ): Promise<MatchResult> {
   if (!result.bestMatch) return result;
   try {
-    const existing = await bookService.findDuplicate(
-      result.bestMatch.title,
-      result.bestMatch.authors,
-      result.bestMatch.asin,
-    );
-    if (existing) {
+    const resolution = await bookService.findDuplicate({
+      title: result.bestMatch.title,
+      authors: result.bestMatch.authors,
+      ...(result.bestMatch.asin !== undefined && { asin: result.bestMatch.asin }),
+      ...(result.bestMatch.narrators !== undefined && { narrators: result.bestMatch.narrators }),
+      ...(result.bestMatch.duration !== undefined && { duration: result.bestMatch.duration }),
+    });
+    if (resolution.verdict === 'same-recording' && resolution.book) {
       log.debug(
-        { path: result.path, existingBookId: existing.id, title: result.bestMatch.title },
-        'Post-match library duplicate detected',
+        { path: result.path, existingBookId: resolution.book.id, title: result.bestMatch.title },
+        'Post-match library duplicate detected (same recording)',
       );
-      return { ...result, isDuplicate: true, existingBookId: existing.id, duplicateReason: 'slug' };
+      return { ...result, isDuplicate: true, existingBookId: resolution.book.id, duplicateReason: 'slug' };
+    }
+    if (resolution.verdict === 'review') {
+      log.debug(
+        { path: result.path, existingBookId: resolution.book?.id, title: result.bestMatch.title },
+        'Post-match recording review required (narrators could not be compared)',
+      );
+      return {
+        ...result,
+        reviewReason: RECORDING_REVIEW_REASON,
+        ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
+      };
     }
   } catch (error: unknown) {
     log.warn({ error: serializeError(error), path: result.path }, 'Post-match duplicate check failed — proceeding without flag');

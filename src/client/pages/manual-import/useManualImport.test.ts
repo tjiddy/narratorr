@@ -376,7 +376,7 @@ describe('useManualImport', () => {
 
   it('select-all then import sends forceImport: true for duplicate rows (intended behavior per spec)', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 3 });
+    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 3, heldReview: [] });
 
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
     act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -427,7 +427,7 @@ describe('useManualImport', () => {
 
   it('handleImport sends selected rows to API and navigates on success', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 2 });
+    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 2, heldReview: [] });
 
     const { result } = renderHook(() => useManualImport(), {
       wrapper: createWrapper(),
@@ -530,7 +530,7 @@ describe('useManualImport', () => {
 
     it('handleImport after edit forwards metadata.narrators to ImportConfirmItem', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -557,7 +557,7 @@ describe('useManualImport', () => {
 
     it('handleImport after edit forwards coverUrl to ImportConfirmItem', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -618,7 +618,7 @@ describe('useManualImport', () => {
 
     it('handleImport forwards edited.narrators and seriesPosition (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -651,7 +651,7 @@ describe('useManualImport', () => {
         ],
         totalFolders: 1,
       });
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -690,7 +690,7 @@ describe('useManualImport', () => {
             },
           ],
         });
-        vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+        vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
         const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
         act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -713,7 +713,7 @@ describe('useManualImport', () => {
 
     it('handleImport forwards seriesPosition: 0 (regression guard against falsy drop) (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -739,7 +739,7 @@ describe('useManualImport', () => {
 
     it('handleImport does not forward narrators when empty array (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -1026,7 +1026,7 @@ describe('useManualImport', () => {
 
     it('handleImport sends forceImport: true for selected duplicate rows', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -1046,7 +1046,7 @@ describe('useManualImport', () => {
 
     it('handleImport omits forceImport for non-duplicate selected rows', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });

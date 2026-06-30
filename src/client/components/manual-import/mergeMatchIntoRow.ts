@@ -37,7 +37,9 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
       : (match.confidence === 'high' ? row.selected : false);
 
   // Propagate the post-match duplicate verdict onto the row's book so the badge
-  // + the hooks' `isDbDuplicate`/`isDuplicate` checks see it (#1662 F8).
+  // + the hooks' `isDbDuplicate`/`isDuplicate` checks see it (#1662 F8). A
+  // non-duplicate `review` verdict (#1711) instead surfaces a display-only
+  // `reviewReason` on the row — the row still flows (not hard-skipped).
   const book = isPostMatchDuplicate
     ? {
         ...row.book,
@@ -45,7 +47,9 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
         ...(match.existingBookId !== undefined && { existingBookId: match.existingBookId }),
         ...(match.duplicateReason !== undefined && { duplicateReason: match.duplicateReason }),
       }
-    : row.book;
+    : match.reviewReason !== undefined
+      ? { ...row.book, reviewReason: match.reviewReason }
+      : row.book;
 
   // Auto-populate edited fields from the best match only when the user hasn't
   // already edited this row. A row counts as edited if the user committed a fix

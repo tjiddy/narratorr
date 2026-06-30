@@ -93,6 +93,39 @@ export interface LibraryRecording {
 /** 3-way recording-identity verdict. */
 export type RecordingVerdict = 'same-recording' | 'different-recording' | 'review';
 
+/** Human-readable labels for the production forms that can stand in as an edition discriminator. */
+const PRODUCTION_FORM_LABELS: Record<string, string> = {
+  full_cast: 'Full Cast',
+  dramatized: 'Dramatized',
+  graphic_audio: 'GraphicAudio',
+  abridged: 'Abridged',
+  unabridged: 'Unabridged',
+};
+
+/**
+ * Derive a deterministic edition discriminator for a recording from STABLE
+ * metadata only (#1711) — never a `(2)` counter and never post-enrichment data,
+ * so a rescan re-derives the same label rather than spawning a phantom folder.
+ *
+ * Priority: the primary signal-carrying narrator's display name (the strongest
+ * discriminator between two readings of one book), falling back to the
+ * production form when no usable narrator signal exists. Returns `null` when
+ * nothing stable distinguishes the recording — the caller then takes the review
+ * disposition rather than overwriting or guessing.
+ */
+export function deriveEditionLabel(narrators: string[], productionType?: string | null): string | null {
+  for (const raw of narrators) {
+    const normalized = normalizeNarrator(raw);
+    if (normalized.length > 0 && !NARRATOR_PLACEHOLDERS.has(normalized)) {
+      return raw.trim();
+    }
+  }
+  if (productionType && productionType !== 'unknown') {
+    return PRODUCTION_FORM_LABELS[productionType] ?? null;
+  }
+  return null;
+}
+
 /** Duration is no-signal when missing or non-positive (mirrors `isDurationVerified`). */
 function durationNoSignal(d: number | null | undefined): boolean {
   return !d || d <= 0;

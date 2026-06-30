@@ -64,7 +64,26 @@ export function extractYear(publishedDate: string | null | undefined): string | 
   return match ? match[1] : undefined;
 }
 
-/** Build the target directory from a folder format string and book metadata. */
+/**
+ * Sanitize an edition label for use as a folder-name suffix (#1711): strip path
+ * separators and control chars, collapse whitespace. Returns null for an
+ * empty/whitespace-only result so the caller renders the unchanged base path.
+ */
+function sanitizeEditionLabel(label: string | null | undefined): string | null {
+  if (!label) return null;
+  const cleaned = label.replace(/[/\\]/g, " ").replace(/\s+/g, " ").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/**
+ * Build the target directory from a folder format string and book metadata.
+ *
+ * `editionLabel` (#1711) disambiguates a DIFFERENT recording of an owned book so
+ * the two coexist in distinct folders: when present (and non-empty after
+ * sanitization) it is appended as ` (label)` to the rendered leaf folder. A
+ * null/absent/empty label renders the EXACT same path as before — existing
+ * single-recording books are never re-pathed.
+ */
 export function buildTargetPath(
   libraryPath: string,
   folderFormat: string,
@@ -77,6 +96,7 @@ export function buildTargetPath(
   },
   authorName: string | null,
   options?: NamingOptions,
+  editionLabel?: string | null | undefined,
 ): string {
   const author = authorName || 'Unknown Author';
   const narratorNames = book.narrators?.map(n => n.name) ?? [];
@@ -93,7 +113,13 @@ export function buildTargetPath(
     year: extractYear(book.publishedDate),
   };
 
-  const rendered = renderTemplate(folderFormat, tokens, options);
+  let rendered = renderTemplate(folderFormat, tokens, options);
+  const label = sanitizeEditionLabel(editionLabel);
+  if (label) {
+    const segments = rendered.split('/');
+    segments[segments.length - 1] = `${segments[segments.length - 1]} (${label})`;
+    rendered = segments.join('/');
+  }
   // Always use POSIX separators — paths are stored in DB and consumed inside Docker (Linux)
   return join(libraryPath, ...rendered.split('/')).split('\\').join('/');
 }

@@ -39,7 +39,7 @@ function makeBookService(overrides: {
   findDuplicate?: ReturnType<typeof vi.fn>;
   create?: ReturnType<typeof vi.fn>;
 } = {}): BookService {
-  const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue(null);
+  const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
   const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
     id: 100,
     publicId: 'bk_test000000000000000',
@@ -58,6 +58,7 @@ function makeBookService(overrides: {
     status: 'wanted',
     enrichmentStatus: 'pending',
     productionType: 'unknown',
+    editionLabel: null,
     enrichmentAttempts: 0,
     path: null,
     size: null,
@@ -437,7 +438,7 @@ describe('ImportListService', () => {
       subtitle: null, description: null, publisher: null, coverUrl: null,
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,
-      status: 'wanted', enrichmentStatus: 'pending', productionType: 'unknown',
+      status: 'wanted', enrichmentStatus: 'pending', productionType: 'unknown', editionLabel: null,
       enrichmentAttempts: 0,
       path: null, size: null,
       audioCodec: null, audioBitrate: null, audioSampleRate: null,
@@ -474,12 +475,12 @@ describe('ImportListService', () => {
       db.update.mockReturnValue(mockDbChain([]));
 
       const create = vi.fn().mockResolvedValue(createdBook(42, 'New Book'));
-      const findDuplicate = vi.fn().mockResolvedValue(null);
+      const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }));
 
       await service.syncDueLists();
 
-      expect(findDuplicate).toHaveBeenCalledWith('New Book', [{ name: 'Author Name' }], undefined);
+      expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'New Book', authors: [{ name: 'Author Name' }] }));
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         title: 'New Book',
         authors: [{ name: 'Author Name' }],
@@ -583,7 +584,7 @@ describe('ImportListService', () => {
         db.insert.mockReturnValue(eventInsertChain);
         db.update.mockReturnValue(mockDbChain([]));
 
-        const findDuplicate = vi.fn().mockResolvedValue({ id: 999, title: 'Already Have' });
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'same-recording', book: { id: 999, title: 'Already Have' } });
         const create = vi.fn();
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue(null),
@@ -595,7 +596,7 @@ describe('ImportListService', () => {
 
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Already Have', [{ name: 'Someone' }], 'B_DUP');
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Already Have', authors: [{ name: 'Someone' }], asin: 'B_DUP' }));
         expect(create).not.toHaveBeenCalled();
         // No event row written
         expect(eventInsertChain.values).not.toHaveBeenCalledWith(
@@ -604,7 +605,7 @@ describe('ImportListService', () => {
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
         expect(mockLog.debug).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Already Have' }),
-          expect.stringContaining('Book already exists, skipped'),
+          expect.stringContaining('Book already exists (same recording), skipped'),
         );
       });
 
@@ -620,13 +621,14 @@ describe('ImportListService', () => {
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         const create = vi.fn().mockResolvedValue(createdBook(11, 'Anonymous Book'));
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
 
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Anonymous Book', undefined, undefined);
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book' }));
+        expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('authors');
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
       });
     });
@@ -793,13 +795,13 @@ describe('ImportListService', () => {
         db.update.mockReturnValue(mockDbChain([]));
 
         const create = vi.fn().mockResolvedValue(createdBook(10, 'Golden Son'));
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         service = new ImportListService(
           inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
         );
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Golden Son', [{ name: 'Pierce Brown' }], 'B00R6S1RCY');
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son', authors: [{ name: 'Pierce Brown' }], asin: 'B00R6S1RCY' }));
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'Golden Son',
           authors: [{ name: 'Pierce Brown' }],
@@ -830,13 +832,13 @@ describe('ImportListService', () => {
         db.update.mockReturnValue(mockDbChain([]));
 
         const create = vi.fn().mockResolvedValue(createdBook(10, 'Golden Son'));
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         service = new ImportListService(
           inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
         );
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Golden Son', [{ name: 'Pierce Brown' }], 'B00R6S1RCY');
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son', authors: [{ name: 'Pierce Brown' }], asin: 'B00R6S1RCY' }));
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son' }));
       });
 
@@ -1025,13 +1027,13 @@ describe('ImportListService', () => {
         db.update.mockReturnValue(mockDbChain([]));
 
         const create = vi.fn().mockResolvedValue(createdBook(10, 'Game On'));
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         service = new ImportListService(
           inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
         );
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Game On', [{ name: 'Navessa Allen' }], undefined);
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Game On', authors: [{ name: 'Navessa Allen' }] }));
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'Game On',
           authors: [{ name: 'Navessa Allen' }],

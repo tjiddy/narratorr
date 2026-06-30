@@ -16,6 +16,80 @@ import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
 import { productionTypeSchema, type BookStatus, type ProductionType } from '../../shared/schemas/book.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict } from '../../core/utils/recording-identity.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
+
+// `books.asin` carries a partial unique index (`idx_books_asin_unique` on the
+// non-null column). A create-time race (two writers inserting the same ASIN
+// between the dedupe check and the insert) still throws a SQLite UNIQUE
+// violation; detect it the way enrichment.ts/book-import.service.ts do — both
+// the index-name and column-message forms, checking `error.cause?.message`
+// first since Drizzle/libSQL nests the SQLite message under `.cause`.
+const ASIN_UNIQUE_VIOLATION = /UNIQUE constraint failed.*(?:idx_books_asin_unique|books\.asin)/;
+
+/**
+ * Typed fail-closed error for a recording that is already owned (#1711). Mirrors
+ * the `RenameError` idiom: a typed throw rather than a silent owner-return so an
+ * unmapped caller surfaces a loud error instead of enqueuing import work against
+ * an already-owned book. Carries the incumbent's id/title so route handlers can
+ * build a 409 body and import callers can log/skip.
+ */
+export class OwnedRecordingError extends Error {
+  readonly code = 'OWNED_RECORDING' as const;
+  readonly existingBookId: number;
+  readonly bookTitle: string;
+  readonly reason: string;
+  constructor(args: { existingBookId: number; title: string; reason: string }) {
+    super(`Recording already owned by book #${args.existingBookId} (${args.reason})`);
+    this.name = 'OwnedRecordingError';
+    this.existingBookId = args.existingBookId;
+    this.bookTitle = args.title;
+    this.reason = args.reason;
+  }
+}
+
+/** Candidate identity for the 3-way duplicate resolution (#1711). */
+export interface DuplicateCandidate {
+  title: string;
+  authors?: { name: string; asin?: string | undefined }[] | undefined;
+  asin?: string | undefined;
+  narrators?: string[] | undefined;
+  duration?: number | null | undefined;
+}
+
+export type DuplicateVerdict = RecordingVerdict;
+
+/**
+ * Three-way duplicate resolution (#1711). `book` is the owning incumbent for
+ * `same-recording`, a representative review incumbent for `review`, or `null`
+ * for `different-recording` (a genuinely new recording).
+ */
+export interface DuplicateResolution {
+  verdict: DuplicateVerdict;
+  book: BookWithAuthor | null;
+}
+
+/** Adapt a candidate identity into the core resolver's plain-primitive shape. */
+function toRecordingCandidate(c: DuplicateCandidate): RecordingCandidate {
+  return {
+    title: c.title,
+    authors: (c.authors ?? []).map((a) => a.name),
+    narrators: c.narrators ?? [],
+    asin: c.asin ?? null,
+    duration: c.duration ?? null,
+  };
+}
+
+/** Adapt a hydrated library row into the core resolver's library-recording shape. */
+function toLibraryRecording(b: BookWithAuthor): LibraryRecording {
+  return {
+    title: b.title,
+    primaryAuthorSlug: slugify(b.authors[0]?.name ?? ''),
+    narrators: b.narrators.map((n) => n.name),
+    asin: b.asin ?? null,
+    duration: b.duration ?? null,
+  };
+}
 
 export { CoverUploadError } from './cover-upload.js';
 
@@ -122,35 +196,32 @@ export class BookService {
     };
   }
 
-  async findDuplicate(
-    title: string,
-    authorList?: { name: string; asin?: string | undefined }[] | undefined,
-    asin?: string | undefined,
-  ): Promise<BookWithAuthor | null> {
-    // Mirrors the shared `matchesLibraryIdentity` ordered contract against the DB (#1662):
-    // (1) ASIN case-insensitive, (2) normalized-title + position-0 author slug,
-    // (3) author-less exact title-only with the #253 guard.
+  /**
+   * Gather the ids of every plausible incumbent in the bibliographic scope
+   * (#1711). Multi-narration means a normalized title + primary-author slug can
+   * legitimately match more than one row, so this returns ALL of them (no
+   * `limit(1)`) — `findDuplicate` then runs the recording resolver over each and
+   * applies multi-incumbent precedence. The three gathering branches mirror the
+   * pre-#1711 ordered identity contract: (1) ASIN case-insensitive, (2)
+   * normalized-title + position-0 author slug, (3) author-less exact title-only
+   * with the #253 notExists guard.
+   */
+  private async gatherIncumbentIds(candidate: DuplicateCandidate): Promise<number[]> {
+    const ids = new Set<number>();
 
-    // (1) Check by ASIN first if available (opportunistic). Case-insensitive —
-    // ASINs are not globally normalized, so an exact `eq` would miss case drift
-    // (aligns with findLibraryStatusByAsins).
-    if (asin) {
+    // (1) ASIN — case-insensitive, ALL hits (aligns with findLibraryStatusByAsins).
+    if (candidate.asin) {
       const byAsin = await this.db
         .select({ id: books.id })
         .from(books)
-        .where(eq(sql`lower(${books.asin})`, asin.toLowerCase()))
-        .limit(1);
-
-      if (byAsin.length > 0) {
-        return this.getById(byAsin[0]!.id);
-      }
+        .where(eq(sql`lower(${books.asin})`, candidate.asin.toLowerCase()));
+      for (const r of byAsin) ids.add(r.id);
     }
 
-    // (2) Check by normalized title + position-0 author slug. Fetch the
-    // candidate rows by author slug (subtitle/paren/series stripping is not
-    // SQLite-expressible) and compare titles with `normalizeTitleForDedup` in
-    // application code so case / colon-subtitle / parenthetical / `, Book N`
-    // drift no longer creates a duplicate.
+    // (2) normalized title + position-0 author slug — ALL hits. Title normalization
+    // (subtitle/paren/series stripping) is not SQLite-expressible, so fetch by
+    // author slug and compare titles in application code.
+    const authorList = candidate.authors;
     if (authorList && authorList.length > 0) {
       const primarySlug = slugify(authorList[0]!.name);
       const byAuthor = await this.db
@@ -159,35 +230,73 @@ export class BookService {
         .innerJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
         .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
         .where(eq(authors.slug, primarySlug));
-
-      const wanted = normalizeTitleForDedup(title);
-      const hit = byAuthor.find((row) => normalizeTitleForDedup(row.title) === wanted);
-      if (hit) {
-        return this.getById(hit.id);
+      const wanted = normalizeTitleForDedup(candidate.title);
+      for (const row of byAuthor) {
+        if (normalizeTitleForDedup(row.title) === wanted) ids.add(row.id);
       }
     }
 
-    // Title-only dedup when no authors and no ASIN — shared across manual add,
-    // library import, and discovery callers (#246)
-    // Only match books with zero authors so authored "Shogun" doesn't block authorless "Shogun" (#253)
-    if (!asin && (!authorList || authorList.length === 0)) {
+    // (3) Author-less exact title-only when no authors and no ASIN (#246). Only
+    // zero-author rows so authored "Shogun" doesn't block authorless "Shogun" (#253).
+    if (!candidate.asin && (!authorList || authorList.length === 0)) {
       const byTitle = await this.db
         .select({ id: books.id })
         .from(books)
         .where(and(
-          eq(books.title, title),
+          eq(books.title, candidate.title),
           notExists(
             this.db.select({ id: bookAuthors.bookId }).from(bookAuthors).where(eq(bookAuthors.bookId, books.id)),
           ),
-        ))
-        .limit(1);
-
-      if (byTitle.length > 0) {
-        return this.getById(byTitle[0]!.id);
-      }
+        ));
+      for (const r of byTitle) ids.add(r.id);
     }
 
-    return null;
+    return [...ids];
+  }
+
+  /**
+   * Three-way, multi-incumbent-aware duplicate resolution (#1711). Gathers every
+   * plausible incumbent in the bibliographic scope, runs `resolveRecordingIdentity`
+   * over each, and applies the precedence ladder: any `same-recording` ⇒ owned
+   * (order-independent); else any `review`/no-signal ⇒ review; else all
+   * `different-recording` ⇒ a genuinely new recording.
+   */
+  async findDuplicate(candidate: DuplicateCandidate): Promise<DuplicateResolution> {
+    const ids = await this.gatherIncumbentIds(candidate);
+    if (ids.length === 0) return { verdict: 'different-recording', book: null };
+
+    const recordingCandidate = toRecordingCandidate(candidate);
+    let reviewBook: BookWithAuthor | null = null;
+    for (const id of ids) {
+      const book = await this.getById(id);
+      if (!book) continue;
+      const verdict = resolveRecordingIdentity(recordingCandidate, toLibraryRecording(book));
+      // any same-recording wins as owned, regardless of row order.
+      if (verdict === 'same-recording') return { verdict: 'same-recording', book };
+      if (verdict === 'review' && !reviewBook) reviewBook = book;
+    }
+    if (reviewBook) return { verdict: 'review', book: reviewBook };
+    return { verdict: 'different-recording', book: null };
+  }
+
+  /**
+   * Return EVERY library row whose stored `path` equals the given normalized path
+   * (#1711). `books.path` is indexed but NOT unique, so the occupied-target
+   * collision fence must branch on cardinality (0 / exactly-1 / 2+). Mirrors the
+   * rename-service normalization (`normalize(resolve(path))`); the CALLER
+   * normalizes before passing so this stays a pure lookup.
+   */
+  async findPathOwners(normalizedPath: string): Promise<BookWithAuthor[]> {
+    const rows = await this.db
+      .select({ id: books.id })
+      .from(books)
+      .where(eq(books.path, normalizedPath));
+    const owners: BookWithAuthor[] = [];
+    for (const r of rows) {
+      const book = await this.getById(r.id);
+      if (book) owners.push(book);
+    }
+    return owners;
   }
 
   /**
@@ -314,54 +423,72 @@ export class BookService {
       }
     }
 
-    const bookId = await this.db.transaction(async (tx) => {
-      const result = await tx
-        .insert(books)
-        .values({
-          publicId: generatePublicId('bk'),
-          title: data.title,
-          subtitle: data.subtitle,
-          description: data.description,
-          publisher: data.publisher,
-          coverUrl: data.coverUrl,
-          asin: enrichedAsin,
-          isbn: data.isbn,
-          seriesName: data.seriesName,
-          seriesPosition: data.seriesPosition,
-          duration: data.duration,
-          publishedDate: data.publishedDate,
-          genres: data.genres,
-          status: data.status || 'wanted',
-          enrichmentStatus: data.enrichmentStatus,
-          // SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
-          // so validate the value at the write boundary; absent → column default.
-          productionType: productionTypeSchema.parse(data.productionType ?? 'unknown'),
-          importListId: data.importListId,
-        })
-        .returning();
+    let bookId: number;
+    try {
+      bookId = await this.db.transaction(async (tx) => {
+        const result = await tx
+          .insert(books)
+          .values({
+            publicId: generatePublicId('bk'),
+            title: data.title,
+            subtitle: data.subtitle,
+            description: data.description,
+            publisher: data.publisher,
+            coverUrl: data.coverUrl,
+            asin: enrichedAsin,
+            isbn: data.isbn,
+            seriesName: data.seriesName,
+            seriesPosition: data.seriesPosition,
+            duration: data.duration,
+            publishedDate: data.publishedDate,
+            genres: data.genres,
+            status: data.status || 'wanted',
+            enrichmentStatus: data.enrichmentStatus,
+            // SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
+            // so validate the value at the write boundary; absent → column default.
+            productionType: productionTypeSchema.parse(data.productionType ?? 'unknown'),
+            importListId: data.importListId,
+          })
+          .returning();
 
-      const id = result[0]!.id;
+        const id = result[0]!.id;
 
-      await this.syncAuthors(tx, id, data.authors);
-      if (data.narrators && data.narrators.length > 0) {
-        await this.syncNarrators(tx, id, data.narrators);
+        await this.syncAuthors(tx, id, data.authors);
+        if (data.narrators && data.narrators.length > 0) {
+          await this.syncNarrators(tx, id, data.narrators);
+        }
+
+        // Upsert series + local member row at create time so the Series card
+        // can render immediately. The Hardcover lazy-populate flow at GET time
+        // replaces this local row with canonical Hardcover members when a key
+        // is configured.
+        if (data.seriesName) {
+          await upsertSeriesLink(tx, this.log, id, {
+            name: data.seriesName,
+            position: data.seriesPosition ?? null,
+            title: data.title,
+            authorName: data.authors[0]?.name ?? null,
+          });
+        }
+
+        return id;
+      });
+    } catch (error: unknown) {
+      // Same-ASIN create-time race against the partial unique index (#1711).
+      // Two non-null equal ASINs are `same-recording` by the resolver contract,
+      // so this is a deterministically-owned recording, not a candidate for
+      // review: resolve the incumbent and throw a typed `OwnedRecordingError`
+      // so each caller fail-closes (409 / owned skip, never enqueue).
+      if (enrichedAsin && isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
+        // sourceBookId sentinel (-1): the new row rolled back, so there is no
+        // self-row to exclude — any match is the incumbent.
+        const collision = await this.findAsinCollision(-1, enrichedAsin);
+        if (collision) {
+          throw new OwnedRecordingError({ existingBookId: collision.conflictBookId, title: collision.conflictTitle, reason: 'asin-owned' });
+        }
       }
-
-      // Upsert series + local member row at create time so the Series card
-      // can render immediately. The Hardcover lazy-populate flow at GET time
-      // replaces this local row with canonical Hardcover members when a key
-      // is configured.
-      if (data.seriesName) {
-        await upsertSeriesLink(tx, this.log, id, {
-          name: data.seriesName,
-          position: data.seriesPosition ?? null,
-          title: data.title,
-          authorName: data.authors[0]?.name ?? null,
-        });
-      }
-
-      return id;
-    });
+      throw error;
+    }
 
     this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));

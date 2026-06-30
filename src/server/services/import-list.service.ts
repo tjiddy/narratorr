@@ -9,7 +9,7 @@ import type { BookMetadata } from '../../core/metadata/types.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import type { BookService } from './book.service.js';
+import { OwnedRecordingError, type BookService } from './book.service.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
@@ -285,32 +285,57 @@ export class ImportListService {
     const { enriched, enrichmentStatus } = await this.enrichItem(item);
 
     const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
-    const duplicate = await this.bookService.findDuplicate(enriched.title, authorList, enriched.asin);
-    if (duplicate) {
-      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists, skipped');
+    // Three-way recording identity (#1711). `enrichItem` supplies narrators +
+    // duration, so the resolver usually has signal: `same-recording` is owned →
+    // skip; `review` (no/ambiguous signal) is skipped+logged (import-list is
+    // automated, no held-review UI); `different-recording` proceeds to create so
+    // a second narration from a list is added rather than silently dropped.
+    const resolution = await this.bookService.findDuplicate({
+      title: enriched.title,
+      ...(authorList && { authors: authorList }),
+      ...(enriched.asin !== undefined && { asin: enriched.asin }),
+      ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
+      ...(enriched.duration != null && { duration: enriched.duration }),
+    });
+    if (resolution.verdict === 'same-recording') {
+      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists (same recording), skipped');
+      return;
+    }
+    if (resolution.verdict === 'review') {
+      this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: resolution.book?.id }, 'Import-list item needs recording review — skipping (no held-review surface for automated lists)');
       return;
     }
 
-    const created = await this.bookService.create({
-      title: enriched.title,
-      authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
-      narrators: enriched.narrators,
-      subtitle: enriched.subtitle,
-      description: enriched.description,
-      publisher: enriched.publisher,
-      coverUrl: enriched.coverUrl,
-      asin: enriched.asin,
-      isbn: enriched.isbn,
-      seriesName: enriched.seriesName,
-      seriesPosition: enriched.seriesPosition,
-      seriesAsin: enriched.seriesAsin,
-      duration: enriched.duration,
-      publishedDate: enriched.publishedDate,
-      genres: enriched.genres,
-      status: 'wanted',
-      enrichmentStatus,
-      importListId: list.id,
-    });
+    let created;
+    try {
+      created = await this.bookService.create({
+        title: enriched.title,
+        authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
+        narrators: enriched.narrators,
+        subtitle: enriched.subtitle,
+        description: enriched.description,
+        publisher: enriched.publisher,
+        coverUrl: enriched.coverUrl,
+        asin: enriched.asin,
+        isbn: enriched.isbn,
+        seriesName: enriched.seriesName,
+        seriesPosition: enriched.seriesPosition,
+        seriesAsin: enriched.seriesAsin,
+        duration: enriched.duration,
+        publishedDate: enriched.publishedDate,
+        genres: enriched.genres,
+        status: 'wanted',
+        enrichmentStatus,
+        importListId: list.id,
+      });
+    } catch (error: unknown) {
+      // Same-ASIN create-time race (#1711) — already owned; skip without enqueue.
+      if (error instanceof OwnedRecordingError) {
+        this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: error.existingBookId }, 'Import-list item already owned (ASIN race), skipped');
+        return;
+      }
+      throw error;
+    }
 
     await this.db.insert(bookEvents).values({
       bookId: created.id,

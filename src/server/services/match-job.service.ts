@@ -37,6 +37,10 @@ export interface MatchResult {
   isDuplicate?: boolean;
   existingBookId?: number;
   duplicateReason?: DuplicateReason;
+  /** Display-only recording-review warning (#1711): the matched recording may be a
+   * DIFFERENT recording of a book you own but narrators could not be compared. Not
+   * a hard duplicate — the row still flows; the client surfaces it on `row.book`. */
+  reviewReason?: string;
 }
 
 export interface MatchJobStatus {

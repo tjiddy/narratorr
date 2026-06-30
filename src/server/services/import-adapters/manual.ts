@@ -96,12 +96,18 @@ export class ManualImportAdapter implements ImportAdapter {
       }
 
       let finalPath = payload.path;
+      // Edition discriminator (#1711): set when the collision fence disambiguated
+      // a different recording into a new folder. Persisted so a rescan reuses the
+      // same label rather than re-deriving from later-enriched metadata.
+      let editionLabel: string | undefined;
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+        const copyResult = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
+        finalPath = copyResult.targetPath;
+        editionLabel = copyResult.editionLabel;
 
         await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings);
       }
@@ -109,7 +115,12 @@ export class ManualImportAdapter implements ImportAdapter {
       const stats = await getAudioStats(finalPath, log);
       log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
 
-      await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
+      await db.update(books).set({
+        path: finalPath,
+        size: stats.totalSize,
+        ...(editionLabel !== undefined && { editionLabel }),
+        updatedAt: new Date(),
+      }).where(eq(books.id, bookId));
 
       await ctx.setPhase('fetching_metadata');
 

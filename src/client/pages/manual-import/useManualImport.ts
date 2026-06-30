@@ -104,6 +104,11 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       toast.success(`${result.accepted} book${result.accepted !== 1 ? 's' : ''} queued for import`);
+      // Surface items the server held for recording review (#1711) so they are not
+      // silently dropped — re-confirm them from the Library Import page.
+      if (result.heldReview.length > 0) {
+        toast.warning(`${result.heldReview.length} held for recording review — re-confirm from Library Import`);
+      }
       navigate('/library');
     },
     onError: (error: Error) => {
