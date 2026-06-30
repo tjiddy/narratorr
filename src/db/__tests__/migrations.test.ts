@@ -93,13 +93,21 @@ describe('drizzle baseline migration', () => {
     expect(suggestionColumns.has('dismissed_at'), 'expected survivor column suggestions.dismissed_at').toBe(true);
 
     // The flattened baseline must fold in columns that shipped as ADD COLUMN
-    // migrations before each re-flatten: subtitle/publisher (#1614) and
-    // enrichment_attempts (#1630). Pin their presence so a future re-flatten that
-    // drops any of them fails here.
+    // migrations before each re-flatten: subtitle/publisher (#1614),
+    // enrichment_attempts (#1630), production_type (#1717 story 1,
+    // drizzle/0001_melted_human_robot.sql) and edition_label (#1717 this story,
+    // drizzle/0002_futuristic_fat_cobra.sql). Pin their presence so a future
+    // re-flatten that drops any of them fails here. Both production_type (edition
+    // discriminator) and edition_label (persisted folder suffix) are load-bearing
+    // for the keep-both edition-safe ingest path. These pins guard column
+    // PRESENCE only, not enum-value integrity — production_type is a
+    // text(..., { enum }) column with no DB-level CHECK ([[drizzle-sqlite-text-enum-no-db-check]]).
     const bookColumns = await columnNames(dbPath, 'books');
     expect(bookColumns.has('subtitle'), 'expected books.subtitle in the baseline schema').toBe(true);
     expect(bookColumns.has('publisher'), 'expected books.publisher in the baseline schema').toBe(true);
     expect(bookColumns.has('enrichment_attempts'), 'expected books.enrichment_attempts in the baseline schema').toBe(true);
+    expect(bookColumns.has('production_type'), 'expected books.production_type in the baseline schema').toBe(true);
+    expect(bookColumns.has('edition_label'), 'expected books.edition_label in the baseline schema').toBe(true);
   });
 
   it('is idempotent — re-running the migrator is a no-op', async () => {
