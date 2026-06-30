@@ -10,6 +10,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
 import type { HeldReviewItem } from '../../shared/schemas/library-scan.js';
 import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate, type LibraryRecording } from '../../core/utils/recording-identity.js';
+import { sanitizeEditionDiscriminator } from '../../core/utils/naming.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { slugify } from '../../core/index.js';
 import type { BookImportService } from './book-import.service.js';
@@ -168,22 +169,27 @@ async function disambiguateTarget(
   deps: ImportPipelineDeps,
   rebuild: (label: string) => string,
 ): Promise<OccupiedResolution> {
-  const label = deriveEditionLabel(candidate.narrators, productionType);
-  if (!label) {
+  // Sanitize the derived label into a path-safe discriminator BEFORE the no-disambiguator guard
+  // (#1739, F5): `deriveEditionLabel` returns the raw trimmed narrator name, so a label like `:::`
+  // or control chars is truthy yet path-empty. Gating on the sanitized discriminator makes a
+  // distinct recording whose label sanitizes to nothing deterministically held for review rather
+  // than collapsed onto the occupied base folder.
+  const discriminator = sanitizeEditionDiscriminator(deriveEditionLabel(candidate.narrators, productionType));
+  if (!discriminator) {
     throw new OwnedRecordingError({
       existingBookId: owner?.id ?? -1,
       title: owner?.title ?? candidate.title,
       reason: 'recording-review-no-disambiguator',
     });
   }
-  const newTarget = rebuild(label);
+  const newTarget = rebuild(discriminator);
   if (await getTargetAudioSize(newTarget) === 0) {
-    return { targetPath: newTarget, editionLabel: label, swap: false };
+    return { targetPath: newTarget, editionLabel: discriminator, swap: false };
   }
   // The disambiguated folder is itself occupied — only a same-recording re-import may swap.
   const newOwners = await deps.bookService.findPathOwners(normalize(resolve(newTarget)));
   if (newOwners.length === 1 && resolveRecordingIdentity(candidate, ownerToLibraryRecording(newOwners[0]!)) === 'same-recording') {
-    return { targetPath: newTarget, editionLabel: label, swap: true };
+    return { targetPath: newTarget, editionLabel: discriminator, swap: true };
   }
   throw new OwnedRecordingError({
     existingBookId: newOwners[0]?.id ?? -1,

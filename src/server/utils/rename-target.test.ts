@@ -102,6 +102,60 @@ describe('computeFolderTarget', () => {
       expect(result.targetPath).toBe('/library/Blake Crouch/Dark Matter');
     });
   });
+
+  describe('edition discriminator is sanitized as one path segment (#1739)', () => {
+    const norm = (s: string) => s.split('\\').join('/');
+    const tokenLib = { path: '/library', folderFormat: '{author}/{title} ({edition})' };
+
+    it('a slash in the label does not fragment the bulk-rename target (both branches agree)', () => {
+      const suffix = computeFolderTarget(
+        row({ path: '/library/x', title: 'Dark Matter', editionLabel: 'R.C. Bray/Full Cast' }),
+        'Blake Crouch', LIBRARY, OPTS,
+      );
+      const token = computeFolderTarget(
+        row({ path: '/library/x', title: 'Dark Matter', editionLabel: 'R.C. Bray/Full Cast' }),
+        'Blake Crouch', tokenLib, OPTS,
+      );
+      expect(norm(suffix.targetPath)).toBe('/library/Blake Crouch/Dark Matter (R.C. BrayFull Cast)');
+      expect(suffix.targetPath).toBe(token.targetPath);
+    });
+
+    it('sanitize-to-empty label is treated like null (no Unknown, base path unchanged)', () => {
+      const result = computeFolderTarget(
+        row({ path: '/library/Blake Crouch/Dark Matter', title: 'Dark Matter', editionLabel: ':::' }),
+        'Blake Crouch', LIBRARY, OPTS,
+      );
+      expect(result.changed).toBe(false);
+      expect(result.targetPath).toBe('/library/Blake Crouch/Dark Matter');
+    });
+
+    it('discriminator survives a 255-char title in both folder branches (F9)', () => {
+      const longTitle = 'T'.repeat(255);
+      for (const lib of [LIBRARY, tokenLib]) {
+        const result = computeFolderTarget(
+          row({ path: '/library/x', title: longTitle, editionLabel: 'Full Cast' }),
+          'Author', lib, OPTS,
+        );
+        const leaf = norm(result.targetPath).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        expect(leaf).toContain('(Full Cast)');
+      }
+    });
+
+    it('verbatim discriminator: token and suffix branches agree under non-default naming options (F6)', () => {
+      const opts = { separator: 'period' as const, case: 'upper' as const };
+      const suffix = computeFolderTarget(
+        row({ path: '/library/x', title: 'Dark Matter', editionLabel: 'Full Cast' }),
+        'Blake Crouch', LIBRARY, opts,
+      );
+      const token = computeFolderTarget(
+        row({ path: '/library/x', title: 'Dark Matter', editionLabel: 'Full Cast' }),
+        'Blake Crouch', tokenLib, opts,
+      );
+      expect(suffix.targetPath).toBe(token.targetPath);
+      expect(suffix.targetPath.split('/').pop()).toContain('(Full Cast)');
+    });
+  });
 });
 
 describe('toLibraryRelative', () => {
