@@ -3,6 +3,7 @@ import type { BookMetadata } from './books.js';
 
 export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
 import type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
+import type { RecordingVerdict } from '../../../shared/schemas/recording-verdict.js';
 
 export interface ImportConfirmItem {
   path: string;
@@ -69,7 +70,7 @@ export interface MatchResult {
    * `MatchResult`. `mergeMatchIntoRow` propagates it onto `row.book.recordingVerdict`
    * so `ImportCard` renders the three-way duplicate badge.
    */
-  recordingVerdict?: 'same-recording' | 'different-recording' | 'review';
+  recordingVerdict?: RecordingVerdict;
 }
 
 export interface MatchJobStatus {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordingVerdictSchema } from './recording-verdict.js';
 
 // ============================================================================
 // Library scan / import schemas
@@ -39,7 +40,7 @@ export const discoveredBookSchema = z.object({
    * badge in `ImportCard` (Already owned / New version of an owned title / Possible
    * duplicate). Absent for a genuinely new book and for scan-time DB duplicates.
    */
-  recordingVerdict: z.enum(['same-recording', 'different-recording', 'review']).optional(),
+  recordingVerdict: recordingVerdictSchema.optional(),
 });
 
 export type DiscoveredBook = z.infer<typeof discoveredBookSchema>;
