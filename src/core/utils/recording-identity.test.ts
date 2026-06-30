@@ -45,6 +45,45 @@ describe('compareRecordingNarrators (#1710)', () => {
   it('initials-collapse collision pin: R. C. Bray is not equal to R. K. Bray (#1657)', () => {
     expect(compareRecordingNarrators(['R. C. Bray'], ['R. K. Bray'])).toBe('not-equal');
   });
+
+  describe('packed narrator strings tokenize before comparison (#1725)', () => {
+    it('comma-packed candidate vs split library → equal', () => {
+      expect(compareRecordingNarrators(['Kate Reading, Michael Kramer'], ['Kate Reading', 'Michael Kramer'])).toBe('equal');
+    });
+
+    it('semicolon- and ampersand-packed variants → equal', () => {
+      expect(compareRecordingNarrators(['Kate Reading; Michael Kramer'], ['Kate Reading', 'Michael Kramer'])).toBe('equal');
+      expect(compareRecordingNarrators(['Kate Reading & Michael Kramer'], ['Kate Reading', 'Michael Kramer'])).toBe('equal');
+    });
+
+    it('packed on both sides and packed-on-library-side-only → equal parity', () => {
+      expect(compareRecordingNarrators(['Kate Reading, Michael Kramer'], ['Kate Reading, Michael Kramer'])).toBe('equal');
+      expect(compareRecordingNarrators(['Kate Reading', 'Michael Kramer'], ['Kate Reading, Michael Kramer'])).toBe('equal');
+    });
+
+    it('packed superset stays not-equal (file {A,B} vs edition {A})', () => {
+      expect(compareRecordingNarrators(['Kate Reading, Michael Kramer'], ['Kate Reading'])).toBe('not-equal');
+    });
+  });
+
+  describe('one-sided placeholder → no-signal, never collapses to the survivor (#1725)', () => {
+    it('lead-plus-fullcast vs lead → no-signal (not equal)', () => {
+      expect(compareRecordingNarrators(['Full Cast', 'Jim Dale'], ['Jim Dale'])).toBe('no-signal');
+    });
+
+    it('packed placeholder-only candidate → no-signal (no leaked token)', () => {
+      expect(compareRecordingNarrators(['Full Cast, Various'], ['Jim Dale'])).toBe('no-signal');
+    });
+
+    it('regression: all-placeholder both sides stays no-signal', () => {
+      expect(compareRecordingNarrators(['Full Cast'], ['Various'])).toBe('no-signal');
+      expect(compareRecordingNarrators(['Full Cast, Various'], ['Various Narrators'])).toBe('no-signal');
+    });
+
+    it('regression: symmetric placeholders on both sides compare survivors (unchanged)', () => {
+      expect(compareRecordingNarrators(['Full Cast', 'Jim Dale'], ['Full Cast', 'Jim Dale'])).toBe('equal');
+    });
+  });
 });
 
 describe('deriveEditionLabel (#1711)', () => {
@@ -183,6 +222,39 @@ describe('resolveRecordingIdentity (#1710)', () => {
         library({ title: 'Foo', narrators: ['Scott Brick'] }),
       );
       expect(verdict).toBe('same-recording');
+    });
+  });
+
+  describe('packed + one-sided-placeholder narrator shapes (#1725)', () => {
+    it('comma-packed candidate vs split library, absent duration → same-recording', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Kate Reading, Michael Kramer'] }),
+        library({ narrators: ['Kate Reading', 'Michael Kramer'] }),
+      )).toBe('same-recording');
+    });
+
+    it('comma-packed candidate vs split library, close duration → same-recording', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Kate Reading, Michael Kramer'], duration: 36000 }),
+        library({ narrators: ['Kate Reading', 'Michael Kramer'], duration: 39000 }),
+      )).toBe('same-recording');
+    });
+
+    it('previously-different-recording packed case now flips to same-recording (Bug-1 repair)', () => {
+      // Before the tokenize fix, the packed candidate had set size 1 vs the split
+      // library set size 2 → not-equal → different-recording. It must now match.
+      expect(compareRecordingNarrators(['Kate Reading, Michael Kramer'], ['Kate Reading', 'Michael Kramer'])).toBe('equal');
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Kate Reading, Michael Kramer'] }),
+        library({ narrators: ['Kate Reading', 'Michael Kramer'] }),
+      )).toBe('same-recording');
+    });
+
+    it('lead-plus-fullcast candidate vs lead library → review, NOT same-recording (Bug-2 guard)', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Full Cast', 'Jim Dale'] }),
+        library({ narrators: ['Jim Dale'] }),
+      )).toBe('review');
     });
   });
 
