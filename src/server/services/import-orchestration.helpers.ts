@@ -207,10 +207,12 @@ async function disambiguateTarget(
  * Force contract (#1736), copy-time half: this fence does NOT take `forceImport` and is NOT
  * relaxed by it — `forceImport` only bypasses the confirm-time bibliographic dedup (see
  * `classifyConfirmItem`); the on-disk never-overwrite invariant holds regardless. Every uncertain
- * case still throws `OwnedRecordingError`. The change in #1736 is downstream: that typed throw now
- * drives a DISTINCT refused terminal disposition in `ImportQueueWorker.markJobRefused` (cleanup +
- * structured `forced-import-refused` reason) instead of an opaque generic failure — so the two
- * halves agree that force never silently overwrites an occupied target.
+ * case still throws `OwnedRecordingError`. The change in #1736 is downstream and FORCE-SCOPED: when
+ * the refused import was forced, that typed throw drives a DISTINCT refused terminal disposition in
+ * `ImportQueueWorker` (placeholder cleanup + structured `forced-import-refused` reason) instead of an
+ * opaque generic failure — so the two halves agree that force never silently overwrites an occupied
+ * target. A NON-forced throw from this same fence is an ordinary generic failure (it was never
+ * user-forced, so it is not a "force refused" event) — the worker/adapter gate on `forceImport`.
  */
 async function resolveOccupiedTarget(
   baseTargetPath: string,

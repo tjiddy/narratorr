@@ -73,6 +73,19 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     return { bookId: book.id, jobId: job!.id };
   }
 
+  /** Seed an `importing` placeholder + a pending manual job WITHOUT `forceImport` (the F1 case). */
+  async function seedNonForcedJob(): Promise<{ bookId: number; jobId: number }> {
+    const book = await bookService.create({ title: 'Plain Book', authors: [{ name: 'Author' }], status: 'importing' });
+    const [job] = await db.insert(importJobs).values({
+      bookId: book.id,
+      type: 'manual',
+      status: 'pending',
+      phase: 'queued',
+      metadata: JSON.stringify({ path: '/dl/Plain Book', title: 'Plain Book' }),
+    }).returning();
+    return { bookId: book.id, jobId: job!.id };
+  }
+
   /** Register a manual adapter that rethrows the given OwnedRecordingError (as the real adapter does). */
   function registerRefusingAdapter(error: OwnedRecordingError): void {
     const adapter: ImportAdapter = {
@@ -163,6 +176,32 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(payload.error_message).not.toContain('#-1');
     expect(payload.error_message).toContain('no identifiable owner');
     void jobId;
+  });
+
+  it('F1 — NON-forced OwnedRecordingError takes the generic path, NOT the forced-refused disposition', async () => {
+    // The copy-time collision fence is force-independent, so a non-forced import can also throw
+    // OwnedRecordingError. That was never user-forced — it must settle as a generic failure (book
+    // reverts to `failed`, survives; no structured refusal reason; no worker-recorded event), never
+    // a `forced-import-refused` disposition with a deleted placeholder.
+    const { bookId, jobId } = await seedNonForcedJob();
+    registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' }));
+
+    await runWorker();
+
+    const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
+    expect(jobRow!.status).toBe('failed');
+    expect(jobRow!.phase).toBe('failed');
+    // Generic path: lastError carries NO structured refusal discriminator.
+    expect(JSON.parse(jobRow!.lastError!).refusal).toBeUndefined();
+    // Placeholder NOT deleted — it reverts importing → failed and survives, keeping its FK link.
+    const [bookRow] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
+    expect(bookRow).toBeDefined();
+    expect(bookRow!.status).toBe('failed');
+    expect(jobRow!.bookId).toBe(bookId);
+    // SSE import_failed without a structured refusal reason; no worker-recorded refusal event.
+    const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
+    expect(payload.refusal_reason).toBeUndefined();
+    expect(eventCreate).not.toHaveBeenCalled();
   });
 
   it('non-Owned failure is unchanged: generic markJobFailed path, book reverts to failed (not deleted)', async () => {

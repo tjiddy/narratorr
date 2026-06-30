@@ -422,7 +422,11 @@ export class ImportQueueWorker {
       // of the opaque generic failure path — branch BEFORE markJobFailed. The placeholder book row
       // is deleted (not left in `importing`/`failed` limbo) and the failure carries a structured
       // `forced-import-refused` reason so the user can see force was refused and why.
-      if (error instanceof OwnedRecordingError) {
+      //
+      // Gated to FORCED imports (F1): the copy-time fence is force-independent, so a non-forced
+      // import can also throw `OwnedRecordingError`. That was never user-forced, so it is an ordinary
+      // generic failure (markJobFailed below) — labeling it `forced-import-refused` would be wrong.
+      if (error instanceof OwnedRecordingError && this.isForcedImport(job)) {
         await finalizeForcedImportRefusal(
           { db: this.db, broadcaster: this.broadcaster, eventHistory: this.eventHistory, log: this.log },
           { jobId, bookId, currentPhase, bookTitle, error, phaseHistory },
@@ -518,6 +522,25 @@ export class ImportQueueWorker {
 
     const result = manualImportJobPayloadSchema.safeParse(parsed);
     return result.success ? result.data.title : 'Unknown';
+  }
+
+  /**
+   * True only for a `manual` job whose payload set `forceImport: true`. The forced-import-refused
+   * terminal disposition (#1736) is scoped to forced imports — a NON-forced copy-time
+   * `OwnedRecordingError` (the on-disk collision fence is force-independent and reachable without
+   * force) is an ordinary generic failure, not a "force refused" event, so it must NOT be mislabeled
+   * (F1). Non-manual jobs and unparseable/non-forced payloads return false. Never throws.
+   */
+  private isForcedImport(job: ImportJobRow): boolean {
+    if (job.type !== 'manual') return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(job.metadata);
+    } catch {
+      return false;
+    }
+    const result = manualImportJobPayloadSchema.safeParse(parsed);
+    return result.success && result.data.forceImport === true;
   }
 
   /** Create a throttled progress emitter for a specific job. */

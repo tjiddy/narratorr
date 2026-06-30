@@ -994,17 +994,17 @@ describe('ManualImportAdapter', () => {
         }));
       });
 
-      // #1736 — the adapter stops translating a copy-time OwnedRecordingError into a generic failure.
-      // It must rethrow the typed error WITHOUT emitting the generic `book_status_change → failed`
-      // SSE or recording the opaque generic `import_failed` event — the worker's `markJobRefused`
-      // owns the distinct refused terminal disposition. Contrast with the ENOSPC failure above,
-      // which DOES emit/record the generic side effects.
-      it('mode=copy + copyToLibrary throws OwnedRecordingError: rethrows typed error, skips generic failure side effects', async () => {
+      // #1736 — a FORCED import's copy-time OwnedRecordingError is not translated into a generic
+      // failure. The adapter must rethrow the typed error WITHOUT emitting the generic
+      // `book_status_change → failed` SSE or recording the opaque generic `import_failed` event — the
+      // worker's refused terminal disposition owns it. Contrast with the ENOSPC failure above, which
+      // DOES emit/record the generic side effects.
+      it('mode=copy + forceImport + copyToLibrary throws OwnedRecordingError: rethrows typed error, skips generic failure side effects', async () => {
         const { safeEmit } = await import('../../utils/safe-emit.js');
         const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
         const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
 
-        const job = makeJob();
+        const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy', forceImport: true }) });
         await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
         copySpy.mockRestore();
 
@@ -1016,6 +1016,29 @@ describe('ManualImportAdapter', () => {
         );
         // No generic opaque `import_failed` event recorded by the adapter.
         expect(mockEventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
+      });
+
+      // #1736 F1 — a NON-forced import's copy-time OwnedRecordingError was never user-forced, so the
+      // copy-time fence's refusal is an ordinary generic failure, NOT a "force refused" event. The
+      // adapter must keep the generic side effects (gate on `forceImport`), exactly as it did before
+      // #1736 — otherwise a non-forced collision is silently mislabeled as a forced refusal.
+      it('mode=copy WITHOUT forceImport + copyToLibrary throws OwnedRecordingError: keeps the generic failure side effects', async () => {
+        const { safeEmit } = await import('../../utils/safe-emit.js');
+        const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
+        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
+
+        // makeJob()'s default payload has no `forceImport`.
+        const job = makeJob();
+        await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
+        copySpy.mockRestore();
+
+        // Generic failure path retained: book reverted to failed + opaque import_failed event recorded.
+        expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
+          expect.anything(), 'book_status_change',
+          expect.objectContaining({ book_id: 42, new_status: 'failed' }),
+          expect.anything(),
+        );
+        expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
       });
 
       it('mode=copy + copyToLibrary throws a non-Owned error: keeps the generic failure side effects', async () => {
