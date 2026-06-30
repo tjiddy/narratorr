@@ -9,10 +9,10 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
 import type { HeldReviewItem } from '../../shared/schemas/library-scan.js';
-import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate, type LibraryRecording } from '../../core/utils/recording-identity.js';
+import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate } from '../../core/utils/recording-identity.js';
 import { sanitizeEditionDiscriminator } from '../../core/utils/naming.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
-import { slugify } from '../../core/index.js';
+import { toLibraryRecording } from './book-dedup.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
@@ -143,17 +143,6 @@ function buildRecordingCandidate(item: ImportConfirmItem, meta: BookMetadata | n
   };
 }
 
-/** Adapt a hydrated owner row into the resolver's library-recording shape. */
-function ownerToLibraryRecording(owner: BookWithAuthor): LibraryRecording {
-  return {
-    title: owner.title,
-    primaryAuthorSlug: slugify(owner.authors[0]?.name ?? ''),
-    narrators: owner.narrators.map((n) => n.name),
-    asin: owner.asin ?? null,
-    duration: owner.duration ?? null,
-  };
-}
-
 /**
  * Disambiguate a different-recording (or unidentifiable) collision into a new
  * `(edition)` folder. Derives a deterministic label from stable recording
@@ -188,7 +177,7 @@ async function disambiguateTarget(
   }
   // The disambiguated folder is itself occupied — only a same-recording re-import may swap.
   const newOwners = await deps.bookService.findPathOwners(normalize(resolve(newTarget)));
-  if (newOwners.length === 1 && resolveRecordingIdentity(candidate, ownerToLibraryRecording(newOwners[0]!)) === 'same-recording') {
+  if (newOwners.length === 1 && resolveRecordingIdentity(candidate, toLibraryRecording(newOwners[0]!)) === 'same-recording') {
     return { targetPath: newTarget, editionLabel: discriminator, swap: true };
   }
   throw new OwnedRecordingError({
@@ -223,7 +212,7 @@ async function resolveOccupiedTarget(
 ): Promise<OccupiedResolution> {
   const owners = await deps.bookService.findPathOwners(normalize(resolve(baseTargetPath)));
   if (owners.length === 1) {
-    const verdict = resolveRecordingIdentity(candidate, ownerToLibraryRecording(owners[0]!));
+    const verdict = resolveRecordingIdentity(candidate, toLibraryRecording(owners[0]!));
     if (verdict === 'same-recording') return { targetPath: baseTargetPath, swap: true };
     if (verdict === 'different-recording') {
       return disambiguateTarget(candidate, productionType, owners[0]!, deps, rebuild);
