@@ -21,6 +21,7 @@ import { triggerImmediateSearch } from '../../services/trigger-immediate-search.
 import { snapshotBookForEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import type { BookMetadata } from '../../../core/index.js';
+import { normalizeProductionType } from '../../../core/metadata/production-type.js';
 import {
   bookV1Schema,
   bookV1ListQuerySchema,
@@ -96,6 +97,10 @@ function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): Cre
   copyOptional(out, 'publishedDate', meta.publishedDate);
   copyOptional(out, 'genres', meta.genres);
   copyOptional(out, 'providerId', meta.providerId);
+  // Recording production form (#1731). Gate on presence: `normalizeProductionType`
+  // never returns undefined, so piping it unconditionally would write an explicit
+  // 'unknown' for ASINs with no formatType, regressing the absent-input contract.
+  if (meta.formatType) copyOptional(out, 'productionType', normalizeProductionType(meta.formatType));
   return out;
 }
 

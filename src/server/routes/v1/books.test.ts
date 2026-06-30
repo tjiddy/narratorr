@@ -376,9 +376,23 @@ describe('v1 books routes', () => {
         seriesProvider: 'audible',
       });
       // Unsupplied optional fields must be ABSENT, not present-as-undefined.
-      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'seriesAsin', 'providerId']) {
+      // productionType included: a record with no formatType must NOT write an
+      // explicit 'unknown' (defect vector — absent input stays unset, #1731).
+      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'seriesAsin', 'providerId', 'productionType']) {
         expect(payload).not.toHaveProperty(key);
       }
+    });
+
+    it('maps a known formatType to the normalized productionType (#1731)', async () => {
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
+        kind: 'ok',
+        book: metaBook({ formatType: 'Abridged' }),
+      });
+
+      await post({ asin: ASIN });
+
+      const [payload] = (bookService.create as Mock).mock.calls[0]!;
+      expect(payload.productionType).toBe('abridged');
     });
 
     it('records a manual book_added event', async () => {

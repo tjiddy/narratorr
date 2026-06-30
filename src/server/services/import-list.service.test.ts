@@ -837,6 +837,76 @@ describe('ImportListService', () => {
         }));
       });
 
+      // #1731 — production_type is populated from the matched record's formatType
+      // on the import-list create path (previously dropped → always 'unknown').
+      it('matched item with a mixed-case formatType flows normalized productionType to create (#1731)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B002', title: 'Matched Title', authors: [{ name: 'Matched Author' }],
+            formatType: 'Unabridged',
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Item', author: 'Author', asin: 'B002' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(11, 'Matched Title'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
+      });
+
+      it('matched item with no formatType leaves productionType unset → create takes the DB default (#1731)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B002', title: 'Matched Title', authors: [{ name: 'Matched Author' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Item', author: 'Author', asin: 'B002' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(12, 'Matched Title'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create.mock.calls[0]![0].productionType).toBeUndefined();
+      });
+
+      it('unmatched (raw) item carries no production signal to create (#1731 F1)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Raw Only', author: 'Raw Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(13, 'Raw Only'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
+        await service.syncDueLists();
+
+        expect(create.mock.calls[0]![0].productionType).toBeUndefined();
+      });
+
       // #1119 AC test #1 — ASIN-identity: metadata author + title win at the
       // create payload (replaces the prior `ASIN-identity path skips §4 fuzzy
       // validation` test that blessed the chimera behavior).
