@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FOLDER_ALLOWED_TOKENS } from '../../naming-constants.js';
+import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '../../naming-constants.js';
 import {
   hasTitle,
   hasAuthor,
@@ -161,6 +161,14 @@ describe('error message constants', () => {
 
   it('exports file token message', () => {
     expect(FILE_TOKEN_MSG).toContain('Unknown token in template');
+  });
+
+  it('lists {edition} in the file allowed-token error copy, derived from the allow-list (#1712)', () => {
+    expect(FILE_TOKEN_MSG).toContain('{edition}');
+    // Derived, not hand-maintained — every allowed file token appears.
+    for (const token of FILE_ALLOWED_TOKENS) {
+      expect(FILE_TOKEN_MSG).toContain(`{${token}}`);
+    }
   });
 });
 
