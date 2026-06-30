@@ -8,6 +8,12 @@ import type { ScanResult } from '@/lib/api';
 import { createMockSettings } from '@/__tests__/factories';
 import { toast } from 'sonner';
 
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 const mockScanDirectory = vi.fn();
 const mockConfirmImport = vi.fn();
 const mockStartMatchJob = vi.fn();
@@ -29,7 +35,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
 function createWrapper() {
@@ -360,7 +366,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('Register call: confirmImport called with correct items payload and no mode', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
@@ -380,8 +386,53 @@ describe('useLibraryImport hook (#133)', () => {
     );
   });
 
+  it('register returning heldReview stores the held items, stays on the page, and warns (#1711 F1)', async () => {
+    const heldPath = '/audiobooks/AuthorA/Book1';
+    mockConfirmImport.mockResolvedValueOnce({
+      accepted: 0,
+      heldReview: [{ path: heldPath, title: 'Book One', reason: 'recording-review-required', existingBookId: 9 }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+
+    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+    expect(result.current.heldReview[0]!.path).toBe(heldPath);
+    expect(result.current.heldReview[0]!.reason).toBe('recording-review-required');
+    // Partial success keeps the user on the import page (does not navigate away).
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalled();
+  });
+
+  it('handleReconfirmHeld re-submits the held rows with forceImport=true (#1711 F1)', async () => {
+    const heldPath = '/audiobooks/AuthorA/Book1';
+    mockConfirmImport.mockResolvedValueOnce({
+      accepted: 0,
+      heldReview: [{ path: heldPath, title: 'Book One', reason: 'recording-review-required' }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+
+    // Re-confirm: the held row is resubmitted with forceImport bypassing the safety-net.
+    mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+    await act(async () => { result.current.handleReconfirmHeld(); });
+
+    const lastCall = mockConfirmImport.mock.calls.at(-1)!;
+    expect(lastCall[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: heldPath, forceImport: true }),
+    ]));
+    // The re-confirm with nothing held navigates to the library.
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
+  });
+
   it('handleRegister forwards edited.narrators and seriesPosition (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -411,7 +462,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('handleRegister forwards seriesPosition: 0 (regression guard) (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -440,7 +491,7 @@ describe('useLibraryImport hook (#133)', () => {
       ],
       totalFolders: 1,
     });
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
@@ -475,7 +526,7 @@ describe('useLibraryImport hook (#133)', () => {
         },
       ],
     });
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
@@ -492,7 +543,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('handleRegister does not forward narrators when empty array (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -1480,7 +1531,7 @@ describe('empty result edge case', () => {
         totalFolders: 2,
       };
       mockScanDirectory.mockResolvedValue(scanResult);
-      mockConfirmImport.mockResolvedValue({ accepted: 2 });
+      mockConfirmImport.mockResolvedValue({ accepted: 2, heldReview: [] });
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.step).toBe('review'); });

@@ -208,6 +208,65 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
   });
 
+  it('review verdict returns the item in heldReview, does NOT enqueue, and is not accepted (#1711 F1)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'review', book: { id: 88, title: 'Maybe Owned' } });
+
+    const result = await confirmImport(
+      [{ path: '/a/review-me', title: 'Maybe Owned', authorName: 'Author' }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(result.accepted).toBe(0);
+    expect(result.heldReview).toEqual([
+      { path: '/a/review-me', title: 'Maybe Owned', reason: 'recording-review-required', existingBookId: 88 },
+    ]);
+    expect(mockBookService.create).not.toHaveBeenCalled();
+    expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
+    expect(nudgeWorker).not.toHaveBeenCalled();
+  });
+
+  it('review held item omits existingBookId when the resolver returns no incumbent (#1711 F1)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'review', book: null });
+
+    const result = await confirmImport(
+      [{ path: '/a/no-owner', title: 'No Owner', authorName: 'Author' }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(result.heldReview).toEqual([
+      { path: '/a/no-owner', title: 'No Owner', reason: 'recording-review-required' },
+    ]);
+    expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('mixed batch: accepts a new recording, skips an owned one, and holds a review one (#1711 F1)', async () => {
+    mockBookService.findDuplicate
+      .mockResolvedValueOnce({ verdict: 'different-recording', book: null })  // accepted
+      .mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Owned' } })  // skipped
+      .mockResolvedValueOnce({ verdict: 'review', book: { id: 2, title: 'Held' } });  // held
+    mockBookService.create.mockResolvedValueOnce({ id: 50, title: 'New', status: 'importing' });
+
+    const result = await confirmImport(
+      [
+        { path: '/a/new', title: 'New', authorName: 'Author' },
+        { path: '/a/owned', title: 'Owned', authorName: 'Author' },
+        { path: '/a/held', title: 'Held', authorName: 'Author' },
+      ],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(result.accepted).toBe(1);
+    expect(result.heldReview).toHaveLength(1);
+    expect(result.heldReview[0]!.path).toBe('/a/held');
+    expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(1);
+  });
+
   it('forwards the matched ASIN to findDuplicate, falling back to metadata.asin (#1662)', async () => {
     mockBookService.findDuplicate.mockResolvedValue({ verdict: 'different-recording', book: null });
 
