@@ -25,10 +25,17 @@ import { writeOpfForImport } from '../../utils/opf-writer.js';
  * full book (which carries ordered narrators + the stored `edition_label`, #1712) and
  * falling back to the job's `bookRow` for the fields it has. Extracted to keep
  * `renameIfConfigured` under the complexity cap.
+ *
+ * `pendingEditionLabel` (#1740) is the label freshly derived by `copyToLibrary` on
+ * THIS import — it has not been persisted yet, so the hydrated `fullBook` still
+ * carries the stale/null value. Prefer it (nullish, never `||`, so a deliberate
+ * empty-string label is not dropped) so `{edition}` renders on the creating import;
+ * when undefined (no disambiguation occurred), fall through to the stored value.
  */
 function buildRenameableBook(
   fullBook: BookWithAuthor | null,
   bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
+  pendingEditionLabel?: string,
 ): RenameableBook {
   return {
     title: fullBook?.title ?? bookRow.title,
@@ -36,8 +43,9 @@ function buildRenameableBook(
     seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
     narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
     publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
-    // Stored edition_label (#1712) — sourced from the hydrated book so {edition} renders end-to-end.
-    editionLabel: fullBook?.editionLabel ?? null,
+    // Freshly-derived label (#1740) wins over the not-yet-persisted hydrated value;
+    // else the stored edition_label (#1712) so {edition} renders end-to-end.
+    editionLabel: pendingEditionLabel ?? fullBook?.editionLabel ?? null,
   };
 }
 
@@ -131,7 +139,7 @@ export class ManualImportAdapter implements ImportAdapter {
         finalPath = copyResult.targetPath;
         editionLabel = copyResult.editionLabel;
 
-        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings);
+        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings, editionLabel);
       }
 
       const stats = await getAudioStats(finalPath, log);
@@ -224,12 +232,14 @@ export class ManualImportAdapter implements ImportAdapter {
     finalPath: string, bookId: number, bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
     payload: ManualImportJobPayload, ctx: ImportAdapterContext,
     librarySettings: AppSettings['library'],
+    // #1740: label freshly derived by copyToLibrary on this import, not yet persisted.
+    editionLabel?: string,
   ): Promise<void> {
     if (!librarySettings.fileFormat?.trim()) return;
 
     await ctx.setPhase('renaming');
     const fullBook = await this.deps.bookService.getById(bookId);
-    const renameableBook = buildRenameableBook(fullBook, bookRow);
+    const renameableBook = buildRenameableBook(fullBook, bookRow, editionLabel);
     const namingOptions = toNamingOptions(librarySettings);
     await renameFilesWithTemplate(
       finalPath,
