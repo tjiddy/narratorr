@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
+import { OwnedRecordingError } from './book-dedup.js';
 import type { MetadataService } from './metadata.service.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
@@ -630,6 +631,72 @@ describe('ImportListService', () => {
         expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book' }));
         expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('authors');
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
+      });
+
+      // #1723 F8 — create-time ASIN race: the pre-create guard says
+      // different-recording, but create() fail-closes with OwnedRecordingError.
+      // createImportListBook maps that to an owned skip (returns null) → no event
+      // row, no immediate search.
+      it('owned ASIN race (create throws OwnedRecordingError): skips, no event, no immediate search (#1723 F8)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Race Book', author: 'Someone', asin: 'B_RACE' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
+        const create = vi.fn().mockRejectedValue(
+          new OwnedRecordingError({ existingBookId: 321, title: 'Race Book', reason: 'asin-owned' }),
+        );
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), undefined, searchDeps,
+        );
+
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(eventInsertChain.values).not.toHaveBeenCalledWith(
+          expect.objectContaining({ source: 'import_list' }),
+        );
+        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+      });
+
+      // #1723 F8 — a `review` verdict (uncertain identity) is skipped on automated
+      // lists (no held-review surface): no create, no event row, no immediate search.
+      it('review verdict: skips create, no event, no immediate search (#1723 F8)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Maybe Owned', author: 'Someone', asin: 'B_REVIEW' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'review', book: null });
+        const create = vi.fn();
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), undefined, searchDeps,
+        );
+
+        await service.syncDueLists();
+
+        expect(create).not.toHaveBeenCalled();
+        expect(eventInsertChain.values).not.toHaveBeenCalledWith(
+          expect.objectContaining({ source: 'import_list' }),
+        );
+        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
       });
     });
 

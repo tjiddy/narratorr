@@ -9,6 +9,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
 import { confirmImport, copyToLibrary, type ImportPipelineDeps } from './import-orchestration.helpers.js';
+import { OwnedRecordingError } from './book-dedup.js';
 import { ContentFailureError } from '../utils/import-helpers.js';
 import { MarkerPathConflictError } from '../utils/import-staging.js';
 import { mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/promises';
@@ -297,6 +298,30 @@ describe('confirmImport — import_jobs creation (#635)', () => {
 
     expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
     expect(result).toEqual({ accepted: 1, heldReview: [] });
+  });
+
+  // #1723 F8 — create-time ASIN race: bookService.create throws OwnedRecordingError
+  // (the recording is already owned). The confirm path must treat this as a plain
+  // not-accepted skip — never enqueue import work and never nudge the worker.
+  it('skips an owned create-time ASIN race (OwnedRecordingError) without enqueue (#1723 F8)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'different-recording', book: null });
+    mockBookService.create.mockRejectedValueOnce(
+      new OwnedRecordingError({ existingBookId: 77, title: 'Owned Race', reason: 'asin-owned' }),
+    );
+
+    const result = await confirmImport(
+      [{ path: '/a/race', title: 'Owned Race', authorName: 'Author' }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    // Absent from `accepted`, not held, no enqueue, no worker nudge.
+    expect(result).toEqual({ accepted: 0, heldReview: [] });
+    expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
+    expect(nudgeWorker).not.toHaveBeenCalled();
+    // It is a quiet skip, not a hard failure — the error path is not taken.
+    expect(deps.log.error).not.toHaveBeenCalled();
   });
 
   it('logs serialized error shape when bookService.create throws (#621)', async () => {

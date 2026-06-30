@@ -17,6 +17,7 @@ import { v1BooksRoutes } from './books.js';
 import { bookV1Schema } from '../../../shared/schemas/v1/books.js';
 import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
+import { OwnedRecordingError } from '../../services/book-dedup.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors auth.plugin.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -423,6 +424,29 @@ describe('v1 books routes', () => {
       expect(body.existingId).toBe('bk_created00000000000');
       // The retry produced no second book.
       expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+    });
+
+    // #1723 F8 — the create-time ASIN race catch (distinct from the pre-create
+    // find-by-ASIN 409 above): findDuplicate clears the guard (different-recording)
+    // but create() fail-closes with OwnedRecordingError. With getById resolving the
+    // incumbent owner, the route returns the v1 book_exists envelope + the owner's
+    // publicId, and never fires the immediate search.
+    it('409 on a create-time ASIN race (OwnedRecordingError): book_exists + incumbent existingId, no search (#1723 F8)', async () => {
+      (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (bookService.create as Mock).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 5, title: 'The Way of Kings', reason: 'asin-owned' }),
+      );
+      (bookService.getById as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_owner00000000000000' }));
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(409);
+      const body = res.json();
+      expect(body.error.code).toBe('book_exists');
+      expect(typeof body.error.message).toBe('string');
+      expect(body.existingId).toBe('bk_owner00000000000000');
+      expect(bookService.getById as Mock).toHaveBeenCalledWith(5);
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
 
     it('422 edition_rejected: a reject-word-matching edition is refused before create (#1545)', async () => {
