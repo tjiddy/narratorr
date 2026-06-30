@@ -590,6 +590,28 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.duplicate.reason).toBeNull();
     });
 
+    // #1723 F8 — scan-debug is diagnostic: it surfaces the resolver verdict in the
+    // trace (it never 409s or enqueues). A `review` verdict with an incumbent reports
+    // reason='review' and the incumbent id, but isDuplicate stays false (only
+    // same-recording is a hard duplicate).
+    it('surfaces a review verdict in the trace (reason=review, isDuplicate=false) (#1723 F8)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ verdict: 'review', book: { id: 77, title: 'Title' } });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Author/Title' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.duplicate.reason).toBe('review');
+      expect(body.duplicate.existingBookId).toBe(77);
+      expect(body.duplicate.isDuplicate).toBe(false);
+    });
+
     it('uses title-only matching for authorless input', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });

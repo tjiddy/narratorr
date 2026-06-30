@@ -6,6 +6,7 @@ import { DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
+import { OwnedRecordingError } from '../services/book-dedup.js';
 import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
@@ -532,6 +533,51 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).title).toBe('The Way of Kings');
+      expect(services.book.create).not.toHaveBeenCalled();
+    });
+
+    // #1723 F8 — a create-time ASIN race: findDuplicate clears the pre-create guard
+    // (different-recording) but create() fail-closes with OwnedRecordingError. The
+    // route must 409 with the incumbent owner (fetched via getById) and fire NONE of
+    // the post-create side effects, even with searchImmediately:true requested.
+    it('returns 409 with the incumbent owner on a create-time ASIN race and fires no post-create side effects (#1723 F8)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (services.book.create as Mock).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 7, title: 'The Way of Kings', reason: 'asin-owned' }),
+      );
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 7 });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).id).toBe(7);
+      expect(services.book.getById).toHaveBeenCalledWith(7);
+
+      // Give any (incorrectly) fired fire-and-forget work a tick to surface.
+      await new Promise(r => setTimeout(r, 50));
+      expect(services.eventHistory.create).not.toHaveBeenCalled();
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
+      expect(services.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    });
+
+    // #1723 F8 — a `review` verdict (uncertain recording identity) carrying an
+    // incumbent must block with 409 surfacing that incumbent, never create.
+    it('returns 409 with the incumbent on a review verdict, without creating (#1723 F8)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'review', book: { ...mockBook, id: 88 } });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).id).toBe(88);
       expect(services.book.create).not.toHaveBeenCalled();
     });
 
