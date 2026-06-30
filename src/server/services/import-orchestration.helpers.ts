@@ -203,6 +203,14 @@ async function disambiguateTarget(
  * path-owner cardinality, then the recording verdict — see the Disposition
  * Contract. Never permits a staged swap except for exactly-one-owner +
  * same-recording.
+ *
+ * Force contract (#1736), copy-time half: this fence does NOT take `forceImport` and is NOT
+ * relaxed by it — `forceImport` only bypasses the confirm-time bibliographic dedup (see
+ * `classifyConfirmItem`); the on-disk never-overwrite invariant holds regardless. Every uncertain
+ * case still throws `OwnedRecordingError`. The change in #1736 is downstream: that typed throw now
+ * drives a DISTINCT refused terminal disposition in `ImportQueueWorker.markJobRefused` (cleanup +
+ * structured `forced-import-refused` reason) instead of an opaque generic failure — so the two
+ * halves agree that force never silently overwrites an occupied target.
  */
 async function resolveOccupiedTarget(
   baseTargetPath: string,
@@ -461,6 +469,12 @@ async function classifyConfirmItem(
   bookService: BookService,
   log: FastifyBaseLogger,
 ): Promise<'skip' | 'proceed' | HeldReviewItem> {
+  // Force contract (#1736), confirm-time half: `forceImport` means "bypass the confirm-time
+  // BIBLIOGRAPHIC dedup (skip/hold) and proceed to copy". It does NOT promise an overwrite — the
+  // copy-time on-disk collision fence in `resolveOccupiedTarget` is independent and still fails
+  // closed for an occupied target (never overwrites). The two agree: force gets you past confirm,
+  // but an ambiguous on-disk target is refused LOUDLY via the worker's refused terminal disposition
+  // (a structured `forced-import-refused` failure + placeholder cleanup), not silently swapped.
   if (item.forceImport) return 'proceed';
   const dedupeAsin = resolveDedupeAsin(item);
   const resolution = await bookService.findDuplicate({

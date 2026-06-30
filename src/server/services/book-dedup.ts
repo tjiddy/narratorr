@@ -13,6 +13,7 @@ import { normalizeTitleForDedup } from '../../shared/dedup.js';
 import { books, authors, bookAuthors } from '../../db/schema.js';
 import type { Db } from '../../db/index.js';
 import type { BookWithAuthor } from './book.service.js';
+import type { ForcedImportRefusedReason } from '../../shared/schemas/sse-events.js';
 
 /** Hydrate a book row by id — the `BookService.getById` bound method. */
 type GetByIdFn = (id: number) => Promise<BookWithAuthor | null>;
@@ -44,6 +45,22 @@ export class OwnedRecordingError extends Error {
     this.bookTitle = args.title;
     this.reason = args.reason;
   }
+}
+
+/**
+ * Map an `OwnedRecordingError` raised by the copy-time collision fence into the
+ * structured `forced-import-refused` discriminator (#1736). The fence's ownerless
+ * throw sites (`recording-review-no-disambiguator`, `recording-review-disambiguated-collision`
+ * with zero path owners) carry the `-1` sentinel rather than a real incumbent id, so
+ * any non-positive/absent id maps to `null` — the user-facing reason never reports
+ * "book #-1". Single-/2+-owner throws carry a real `owners[0].id` and keep it.
+ */
+export function buildForcedImportRefusedReason(error: OwnedRecordingError): ForcedImportRefusedReason {
+  return {
+    kind: 'forced-import-refused',
+    recordingReason: error.reason,
+    existingBookId: error.existingBookId > 0 ? error.existingBookId : null,
+  };
 }
 
 /** Candidate identity for the 3-way duplicate resolution (#1711). */

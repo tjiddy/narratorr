@@ -11,7 +11,7 @@ import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAud
 import { reconstructDiscGroup } from '../../utils/import-helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
 import type { RenameableBook } from '../../utils/paths.js';
-import type { BookWithAuthor } from '../book.service.js';
+import { OwnedRecordingError, type BookWithAuthor } from '../book.service.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
@@ -213,6 +213,11 @@ export class ManualImportAdapter implements ImportAdapter {
     error: unknown, bookId: number, payload: ManualImportJobPayload, log: ImportAdapterContext['log'],
   ): void {
     const { eventHistory, broadcaster } = this.deps;
+    // Forced-import refusal (#1736): a copy-time `OwnedRecordingError` is NOT a generic failure —
+    // stop translating it here (no generic `book_status_change → failed`, no opaque `import_failed`
+    // event). The worker's `markJobRefused` owns the distinct refused terminal disposition
+    // (placeholder deletion + enriched `import_failed` event/SSE) after this rethrows.
+    if (error instanceof OwnedRecordingError) return;
     // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
     safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'failed' }, log);
     recordImportFailedEvent({
