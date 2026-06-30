@@ -161,6 +161,23 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.book?.id).toBe(id);
       expect(res.hasIncumbent).toBe(true);
     });
+
+    it('author-less candidate with a whitespace-only ASIN still gathers the author-less title-only incumbent (#1729 F1)', async () => {
+      // The author-less title-only gather guard (book-dedup.ts branch 3) keys off
+      // `!canonicalAsin`, not raw `!candidate.asin`. `canonicalizeAsin('   ')` → null,
+      // so a candidate with no authors and a whitespace-only ASIN enters branch (3)
+      // and gathers the author-less incumbent. Reverting the guard to `!candidate.asin`
+      // would treat '   ' as present, SKIP branch (3), gather nothing, and report
+      // `hasIncumbent: false` — so the hasIncumbent assertion is the load-bearing pin.
+      await seed({ title: 'Author Less Title' }); // no author, no ASIN
+      const res = await service.findDuplicate({ title: 'Author Less Title', asin: '   ' });
+      // Incumbent WAS gathered via the author-less title-only branch.
+      expect(res.hasIncumbent).toBe(true);
+      // An author-less candidate never passes the resolver's author scope (#1722),
+      // so the gathered incumbent resolves to different-recording, book null.
+      expect(res.verdict).toBe('different-recording');
+      expect(res.book).toBeNull();
+    });
   });
 
   describe('multi-incumbent precedence (order-independent)', () => {
