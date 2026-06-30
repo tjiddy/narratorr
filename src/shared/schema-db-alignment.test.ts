@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bookStatusSchema, BOOK_STATUSES } from './schemas/book.js';
+import { bookStatusSchema, BOOK_STATUSES, productionTypeSchema, PRODUCTION_TYPES } from './schemas/book.js';
 import { enrichmentStatusSchema, ENRICHMENT_STATUSES } from './schemas/enrichment.js';
 import { indexerTypeSchema } from './schemas/indexer.js';
 import { downloadClientTypeSchema } from './schemas/download-client.js';
@@ -72,6 +72,13 @@ describe('schema-DB alignment', () => {
 
     it('books.enrichmentStatus DB column enum matches ENRICHMENT_STATUSES', () => {
       expect([...books.enrichmentStatus.enumValues].sort()).toEqual([...ENRICHMENT_STATUSES].sort());
+    });
+
+    // #1710: SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
+    // so this set-equality test is the only guard against productionTypeSchema and
+    // the books.production_type column drifting apart.
+    it('books.productionType DB column enum matches PRODUCTION_TYPES', () => {
+      expect([...books.productionType.enumValues].sort()).toEqual([...PRODUCTION_TYPES].sort());
     });
 
     it('indexers.type DB column enum matches INDEXER_TYPES', () => {
@@ -151,6 +158,10 @@ describe('schema-DB alignment', () => {
 
     it('ENRICHMENT_STATUSES equals enrichmentStatusSchema.options', () => {
       expect([...ENRICHMENT_STATUSES].sort()).toEqual([...enrichmentStatusSchema.options].sort());
+    });
+
+    it('PRODUCTION_TYPES equals productionTypeSchema.options', () => {
+      expect([...PRODUCTION_TYPES].sort()).toEqual([...productionTypeSchema.options].sort());
     });
 
     it('DOWNLOAD_STATUSES equals downloadStatusSchema.options', () => {

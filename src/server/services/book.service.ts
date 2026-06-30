@@ -14,9 +14,8 @@ import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import type { BookStatus, ProductionType } from '../../shared/schemas/book.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
-
 
 export { CoverUploadError } from './cover-upload.js';
 
@@ -297,6 +296,7 @@ export class BookService {
     genres?: string[] | undefined;
     status?: BookRow['status'] | undefined;
     enrichmentStatus?: BookRow['enrichmentStatus'] | undefined;
+    productionType?: ProductionType | undefined;
     providerId?: string | undefined;
     importListId?: number | undefined;
   }): Promise<BookWithAuthor> {
@@ -333,6 +333,7 @@ export class BookService {
           genres: data.genres,
           status: data.status || 'wanted',
           enrichmentStatus: data.enrichmentStatus,
+          productionType: data.productionType,
           importListId: data.importListId,
         })
         .returning();
@@ -361,9 +362,7 @@ export class BookService {
     });
 
     this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
-    this.trackUnmatchedGenres(data.genres).catch((error) => {
-      this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
-    });
+    this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 

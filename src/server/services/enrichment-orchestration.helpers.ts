@@ -8,6 +8,7 @@ import type { SettingsService } from './settings.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { RateLimitError } from '../../core/index.js';
 import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -329,6 +330,9 @@ export function buildBookCreatePayload(
     publishedDate: meta?.publishedDate,
     genres: meta?.genres,
     providerId: meta?.providerId,
+    // Recording production form (#1710). Only this manual-import/enrichment path
+    // populates it in story 1; every other create path takes the column default.
+    productionType: normalizeProductionType(meta?.formatType),
     status,
   };
 }
