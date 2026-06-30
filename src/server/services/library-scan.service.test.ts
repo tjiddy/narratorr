@@ -273,7 +273,7 @@ describe('LibraryScanService', () => {
     db.update.mockReturnValue(chainMethods as never);
     mockDb = Object.assign(db, chainMethods);
     mockBookService = {
-      findDuplicate: vi.fn().mockResolvedValue(null),
+      findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }),
       create: vi.fn().mockImplementation(async (data: { title: string; authors?: { name: string }[] }) => ({
         id: 1,
         title: data.title,
@@ -331,7 +331,7 @@ describe('LibraryScanService', () => {
     });
 
     it('skips duplicates during import', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
 
       const result = await service.confirmImport([
         { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
@@ -351,7 +351,7 @@ describe('LibraryScanService', () => {
     });
 
     it('does not count skipped duplicates as accepted', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
 
       const result = await service.confirmImport([
         { path: '/audiobooks/A', title: 'Existing', authorName: 'Author' },
@@ -459,7 +459,7 @@ describe('LibraryScanService', () => {
     });
 
     it('returns zero accepted when all items are duplicates', async () => {
-      mockBookService.findDuplicate.mockResolvedValue({ id: 1, title: 'Dup' });
+      mockBookService.findDuplicate.mockResolvedValue({ verdict: 'same-recording', book: { id: 1, title: 'Dup' } });
 
       const result = await service.confirmImport([
         { path: '/a/b', title: 'Dup 1' },
@@ -491,7 +491,7 @@ describe('LibraryScanService', () => {
         { path: '/audiobooks/Author/Title', title: 'Test', authorName: 'Author' },
       ], 'copy');
 
-      expect(result).toEqual({ accepted: 1 });
+      expect(result).toEqual({ accepted: 1, heldReview: [] });
       expect(mockBookImportService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
         type: 'manual',
@@ -510,18 +510,18 @@ describe('LibraryScanService', () => {
         { path: '/a/c', title: 'Book B' },
       ]);
 
-      expect(result).toEqual({ accepted: 2 });
+      expect(result).toEqual({ accepted: 2, heldReview: [] });
       expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
     });
 
     it('does not create import_jobs row for duplicate-skipped items', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Dup' });
+      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Dup' } });
 
       const result = await service.confirmImport([
         { path: '/a/b', title: 'Dup', authorName: 'Author' },
       ]);
 
-      expect(result).toEqual({ accepted: 0 });
+      expect(result).toEqual({ accepted: 0, heldReview: [] });
       expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
     });
 
@@ -675,7 +675,7 @@ describe('LibraryScanService', () => {
       expect(result.totalFolders).toBe(1);
     });
 
-    it('marks folders that match existing book by title+author as isDuplicate: true', async () => {
+    it('title+author match without a decisive ASIN is NOT a hard duplicate — flows through match with a review hint (#1711 F6)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         {
           path: '/audiobooks/Author/Title',
@@ -690,7 +690,8 @@ describe('LibraryScanService', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries).toHaveLength(1);
-      expect(result.discoveries[0]!.isDuplicate).toBe(true);
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[0]!.reviewReason).toBeDefined();
     });
 
     it('does not check title+author duplicate when parsed title is empty', async () => {
@@ -725,11 +726,13 @@ describe('LibraryScanService', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // All 4 folders appear in discoveries; 2 are marked as duplicates
+      // All 4 folders appear in discoveries. Only the PATH duplicate is a hard
+      // duplicate now; the title+author match (TitleDup) flows through as a
+      // non-duplicate review-hint candidate (#1711 F6).
       expect(result.discoveries).toHaveLength(4);
       const nonDups = result.discoveries.filter((d) => !d.isDuplicate);
-      expect(nonDups.map((d) => d.parsedTitle)).toEqual(['Book1', 'Book2']);
-      expect(result.discoveries.filter((d) => d.isDuplicate)).toHaveLength(2);
+      expect(nonDups.map((d) => d.parsedTitle).sort()).toEqual(['Book1', 'Book2', 'TitleDup']);
+      expect(result.discoveries.filter((d) => d.isDuplicate)).toHaveLength(1);
       expect(result.totalFolders).toBe(4);
     });
 
@@ -827,7 +830,7 @@ describe('LibraryScanService', () => {
         expect(newBook?.existingBookId).toBeUndefined();
       });
 
-      it('marks title+author matched folders as isDuplicate: true', async () => {
+      it('title+author match (no decisive ASIN) is a review-hint candidate, not a hard duplicate (#1711 F6)', async () => {
         vi.mocked(discoverBooks).mockResolvedValue([
           { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 2, totalSize: 200 },
         ]);
@@ -836,11 +839,12 @@ describe('LibraryScanService', () => {
         const result = await service.scanDirectory('/audiobooks');
 
         expect(result.discoveries).toHaveLength(1);
-        expect(result.discoveries[0]!.isDuplicate).toBe(true);
+        expect(result.discoveries[0]!.isDuplicate).toBe(false);
         expect(result.discoveries[0]!.existingBookId).toBe(7);
+        expect(result.discoveries[0]!.reviewReason).toBeDefined();
       });
 
-      it('title+author duplicate check is case-insensitive on title', async () => {
+      it('title+author normalized match is case-insensitive on title (still surfaces a review hint) (#1711 F6)', async () => {
         vi.mocked(discoverBooks).mockResolvedValue([
           { path: '/audiobooks/Author/Harry Potter And The Chamber Of Secrets', folderParts: ['Author', 'Harry Potter And The Chamber Of Secrets'], audioFileCount: 2, totalSize: 200 },
         ]);
@@ -850,9 +854,9 @@ describe('LibraryScanService', () => {
         const result = await service.scanDirectory('/audiobooks');
 
         expect(result.discoveries).toHaveLength(1);
-        expect(result.discoveries[0]!.isDuplicate).toBe(true);
+        expect(result.discoveries[0]!.isDuplicate).toBe(false);
         expect(result.discoveries[0]!.existingBookId).toBe(9);
-        expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+        expect(result.discoveries[0]!.reviewReason).toBeDefined();
       });
 
       it('within-scan duplicate check is case-insensitive on title', async () => {
@@ -902,8 +906,10 @@ describe('LibraryScanService', () => {
         const book2 = result.discoveries.find((d) => d.parsedTitle === 'Book2');
         expect(pathDup?.isDuplicate).toBe(true);
         expect(pathDup?.existingBookId).toBe(10);
-        expect(titleDup?.isDuplicate).toBe(true);
+        // title+author match is no longer a hard duplicate (#1711 F6) — review hint only.
+        expect(titleDup?.isDuplicate).toBe(false);
         expect(titleDup?.existingBookId).toBe(20);
+        expect(titleDup?.reviewReason).toBeDefined();
         expect(book1?.isDuplicate).toBe(false);
         expect(book2?.isDuplicate).toBe(false);
       });
@@ -985,7 +991,7 @@ describe('LibraryScanService', () => {
   // =========================================================================
   describe('confirmImport forceImport override', () => {
     it('when forceImport is absent, silently skips a title+author duplicate (safety-net preserved)', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
 
       const result = await service.confirmImport([
         { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
@@ -996,7 +1002,7 @@ describe('LibraryScanService', () => {
     });
 
     it('when forceImport is true, bypasses the safety-net check and processes the book', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
 
       const result = await service.confirmImport([
         { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author', forceImport: true },
@@ -1021,7 +1027,7 @@ describe('LibraryScanService', () => {
     });
 
     it('accepted count reflects only processed (non-skipped) items', async () => {
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Dup' });
+      mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Dup' } });
 
       const result = await service.confirmImport([
         { path: '/a/dup', title: 'Dup', authorName: 'Author' },
@@ -1308,7 +1314,7 @@ describe('LibraryScanService', () => {
       });
 
       it('does NOT record book_added event for duplicate-skipped items', async () => {
-        mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+        mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'same-recording', book: { id: 1, title: 'Existing' } });
 
         await service.confirmImport([
           { path: '/audiobooks/Author/Title', title: 'Existing', authorName: 'Author' },
@@ -1349,7 +1355,7 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
     db.select.mockReturnValue(chainMethods as never);
     db.update.mockReturnValue(chainMethods as never);
     mockBookService = {
-      findDuplicate: vi.fn().mockResolvedValue(null),
+      findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }),
       create: vi.fn().mockImplementation(async (data: { title: string }) => ({ id: 99, title: data.title, status: 'imported' })),
       update: vi.fn().mockResolvedValue({ id: 99, title: 'Test', authors: [], narrators: [] }),
     };
@@ -1448,7 +1454,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     const mockSettingsService = createMockSettingsService({ library: { path: '/audiobooks' } });
     service = new LibraryScanService(
       inject<Db>(mockDb),
-      inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
+      inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
       inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
       inject<SettingsService>(mockSettingsService),
@@ -1494,7 +1500,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     expect(result.discoveries[0]!.duplicateReason).toBe('path');
   });
 
-  it('finds existing book by title+author slug match → duplicateReason=slug', async () => {
+  it('title+author slug match (no decisive ASIN) → review-hint candidate, not a hard duplicate (#1711 F6)', async () => {
     vi.mocked(discoverBooks).mockResolvedValue([{
       path: '/audiobooks/Author/Title',
       folderParts: ['Author', 'Title'],
@@ -1507,8 +1513,8 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
     const result = await service.scanDirectory('/audiobooks');
 
-    expect(result.discoveries[0]!.isDuplicate).toBe(true);
-    expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+    expect(result.discoveries[0]!.isDuplicate).toBe(false);
+    expect(result.discoveries[0]!.reviewReason).toBeDefined();
     expect(result.discoveries[0]!.existingBookId).toBe(99);
   });
 
@@ -1530,7 +1536,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
   });
 
-  it('2-part Series–Number–Title path deduplicates against existing book by slug (#333)', async () => {
+  it('2-part Series–Number–Title path normalizes to an existing book by slug → review-hint candidate (#333, #1711 F6)', async () => {
     vi.mocked(discoverBooks).mockResolvedValue([{
       path: '/audiobooks/Joe Abercrombie/First Law World – 02 – The Heroes',
       folderParts: ['Joe Abercrombie', 'First Law World – 02 – The Heroes'],
@@ -1543,8 +1549,8 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
     const result = await service.scanDirectory('/audiobooks');
 
-    expect(result.discoveries[0]!.isDuplicate).toBe(true);
-    expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+    expect(result.discoveries[0]!.isDuplicate).toBe(false);
+    expect(result.discoveries[0]!.reviewReason).toBeDefined();
     expect(result.discoveries[0]!.existingBookId).toBe(42);
   });
 
@@ -1587,7 +1593,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
     });
 
-    it('slug-duplicate branch preserves reviewReason', async () => {
+    it('title+author review-hint branch preserves an existing discovery reviewReason (#1711 F6)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([folder]);
       mockDb.select
         .mockReturnValueOnce(mockDbChain([]))
@@ -1595,7 +1601,9 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+      // A title+author match is no longer a hard slug duplicate; it carries the
+      // existing discovery reviewReason (not overwritten by the scan hint).
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
     });
 
@@ -2127,7 +2135,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     const mockSettingsService = createMockSettingsService({ library: { path: '/audiobooks' } });
     service = new LibraryScanService(
       inject<Db>(mockDb),
-      inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
+      inject<BookService>({ findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }), create: vi.fn().mockResolvedValue({ id: 1 }), update: vi.fn().mockResolvedValue({ id: 1 }) }),
       inject<BookImportService>({ enqueue: vi.fn().mockResolvedValue({ jobId: 1 }) }),
       inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
       inject<SettingsService>(mockSettingsService),
@@ -2285,7 +2293,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
     });
 
-    it('folder matching DB by slug → duplicateReason=slug, not checked for within-scan', async () => {
+    it('folder matching DB by slug → review-hint candidate, not checked for within-scan (#1711 F6)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
       ]);
@@ -2295,8 +2303,8 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[0]!.isDuplicate).toBe(true);
-      expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+      expect(result.discoveries[0]!.isDuplicate).toBe(false);
+      expect(result.discoveries[0]!.reviewReason).toBeDefined();
       expect(result.discoveries[0]).not.toHaveProperty('duplicateFirstPath');
     });
 
@@ -2313,18 +2321,16 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // First: DB path dup
+      // First: DB path dup (still a hard duplicate)
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
-      // Second: DB slug dup
-      expect(result.discoveries[1]!.duplicateReason).toBe('slug');
+      // Second: DB title+author match → review-hint candidate, NOT a hard duplicate (#1711 F6).
+      expect(result.discoveries[1]!.isDuplicate).toBe(false);
+      expect(result.discoveries[1]!.reviewReason).toBeDefined();
       expect(result.discoveries[1]!.existingBookId).toBe(42);
-      // Third: within-scan dup (same title+author as second, but second was DB-dup so not in within-scan map)
-      // Actually: second was a DB slug dup and got `continue`, so it was never added to the within-scan map.
-      // Third has same title+author as second, but since second never reached the within-scan check, third is a new discovery.
-      // Wait — third has same folder parts as second: ['Author', 'BookB']. Second matched DB slug, so third:
-      // - path check: not in DB path map → no
-      // - DB slug check: 'BookB|author' IS in existingTitleAuthorMap → yes, DB slug dup
-      expect(result.discoveries[2]!.duplicateReason).toBe('slug');
+      // Third: same title+author → also a review-hint candidate (the title+author branch
+      // continues before the within-scan map is populated, so it is never a within-scan dup).
+      expect(result.discoveries[2]!.isDuplicate).toBe(false);
+      expect(result.discoveries[2]!.reviewReason).toBeDefined();
       // Fourth: new discovery
       expect(result.discoveries[3]!.isDuplicate).toBe(false);
     });

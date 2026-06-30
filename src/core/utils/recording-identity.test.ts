@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compareRecordingNarrators,
   resolveRecordingIdentity,
+  deriveEditionLabel,
   type RecordingCandidate,
   type LibraryRecording,
 } from './recording-identity.js';
@@ -43,6 +44,32 @@ describe('compareRecordingNarrators (#1710)', () => {
 
   it('initials-collapse collision pin: R. C. Bray is not equal to R. K. Bray (#1657)', () => {
     expect(compareRecordingNarrators(['R. C. Bray'], ['R. K. Bray'])).toBe('not-equal');
+  });
+});
+
+describe('deriveEditionLabel (#1711)', () => {
+  it('returns the primary signal-carrying narrator display name', () => {
+    expect(deriveEditionLabel(['Stephen Fry'])).toBe('Stephen Fry');
+    expect(deriveEditionLabel(['Jim Dale', 'Someone Else'])).toBe('Jim Dale');
+  });
+
+  it('skips placeholders and picks the first real narrator', () => {
+    expect(deriveEditionLabel(['Full Cast', 'Jason Isaacs'])).toBe('Jason Isaacs');
+  });
+
+  it('falls back to the production form when no usable narrator signal exists', () => {
+    expect(deriveEditionLabel(['full cast'], 'full_cast')).toBe('Full Cast');
+    expect(deriveEditionLabel([], 'dramatized')).toBe('Dramatized');
+  });
+
+  it('returns null when nothing stable distinguishes the recording', () => {
+    expect(deriveEditionLabel([])).toBeNull();
+    expect(deriveEditionLabel(['full cast'])).toBeNull();
+    expect(deriveEditionLabel([], 'unknown')).toBeNull();
+  });
+
+  it('trims surrounding whitespace from the narrator name', () => {
+    expect(deriveEditionLabel(['  Kate Reading  '])).toBe('Kate Reading');
   });
 });
 

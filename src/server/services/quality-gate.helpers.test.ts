@@ -12,7 +12,7 @@ const baseBook = {
   rating: null, ratingCount: null, pageCount: null,
   audioBitrate: null, audioCodec: 'AAC', audioSampleRate: null,
   audioChannels: 2, updatedAt: new Date(), addedAt: new Date(),
-  createdAt: new Date(), enrichmentStatus: 'pending' as const, productionType: 'unknown' as const, enrichmentAttempts: 0,
+  createdAt: new Date(), enrichmentStatus: 'pending' as const, productionType: 'unknown' as const, editionLabel: null, enrichmentAttempts: 0,
   audioBitrateMode: null, audioFileFormat: null, audioFileCount: null, topLevelAudioFileCount: null,
   seriesId: null, importListId: null,
   lastGrabGuid: null, lastGrabInfoHash: null,

@@ -1,8 +1,8 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
-export type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
-import type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
+export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
 
 export interface ImportConfirmItem {
   path: string;
@@ -25,6 +25,8 @@ export interface ScanResult {
 
 export interface ImportResult {
   accepted: number;
+  /** Items held back for recording review (#1711) — not enqueued; re-confirm with forceImport. */
+  heldReview: HeldReviewItem[];
 }
 
 export interface RescanResult {
@@ -56,6 +58,12 @@ export interface MatchResult {
   isDuplicate?: boolean;
   existingBookId?: number;
   duplicateReason?: DuplicateReason;
+  /**
+   * Display-only recording-review warning (#1711). Mirrors the server `MatchResult`.
+   * `mergeMatchIntoRow` propagates this onto `row.book.reviewReason` so the import
+   * UI surfaces "possible different recording" without hard-skipping the row.
+   */
+  reviewReason?: string;
 }
 
 export interface MatchJobStatus {

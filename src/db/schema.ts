@@ -72,6 +72,13 @@ export const books = sqliteTable('books', {
   })
     .notNull()
     .default('unknown'),
+  // Edition discriminator for multiple-narration coexistence (#1711, Multiple
+  // Narrations 2/3). NULL/absent for single-recording books (their on-disk path
+  // renders unchanged); set to a deterministic, stable-metadata-derived label
+  // (primary narrator / production form) the first time a different-recording
+  // path collision is disambiguated, so a rescan reuses the same folder rather
+  // than re-deriving from later-enriched metadata and spawning a phantom folder.
+  editionLabel: text('edition_label'),
   // Persisted count of background-enrichment failure attempts. Incremented on
   // every `failed`/no-match transition through markFailedGuarded so the
   // candidate query can cap unresolvable rows (they rest as terminal `failed`,

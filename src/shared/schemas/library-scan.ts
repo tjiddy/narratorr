@@ -57,6 +57,32 @@ export const importConfirmItemSchema = z.object({
   forceImport: z.boolean().optional(),
 });
 
+/**
+ * A confirm/import item held back for recording review (#1711). The recording
+ * resolver returned `review`/no-signal (or an ambiguous path-owner cardinality),
+ * so the item is NOT copied/overwritten and NOT enqueued — it is reported to the
+ * UI so the user can re-confirm it with `forceImport=true`. `path` is the item
+ * identity (equals `importConfirmItemSchema.path`).
+ */
+export const heldReviewItemSchema = z.object({
+  path: z.string(),
+  title: z.string(),
+  reason: z.enum(['recording-review-required']),
+  existingBookId: z.number().optional(),
+});
+export type HeldReviewItem = z.infer<typeof heldReviewItemSchema>;
+
+/**
+ * The confirm/import result (#1711). `accepted` counts enqueued imports;
+ * `heldReview` carries the review-verdict items (empty array when nothing held).
+ * Route status stays 200 — held items are a partial-success outcome, not errors.
+ */
+export const importResultSchema = z.object({
+  accepted: z.number(),
+  heldReview: z.array(heldReviewItemSchema),
+});
+export type ImportResult = z.infer<typeof importResultSchema>;
+
 export const importConfirmBodySchema = z.object({
   books: z.array(importConfirmItemSchema).min(1, 'books array is required'),
   mode: importModeSchema.optional(),

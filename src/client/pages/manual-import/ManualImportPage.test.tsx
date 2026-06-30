@@ -581,7 +581,7 @@ describe('ManualImportPage', () => {
 
   describe('import execution', () => {
     it('calls confirmImport with selected rows and copy mode', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1 });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -600,7 +600,7 @@ describe('ManualImportPage', () => {
     });
 
     it('sends move mode when user switches to Move', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1 });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -618,7 +618,7 @@ describe('ManualImportPage', () => {
     });
 
     it('passes metadata through from match (no redundant provider lookups)', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1 });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
       const book = makeDiscoveredBook();
       const bestMatch = {
         title: 'Book Title',

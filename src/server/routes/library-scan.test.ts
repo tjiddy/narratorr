@@ -140,7 +140,7 @@ describe('library-scan routes', () => {
   describe('POST /api/library/import/confirm', () => {
     it('returns import results', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 3 });
+        .mockResolvedValue({ accepted: 3, heldReview: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -154,7 +154,7 @@ describe('library-scan routes', () => {
         },
       });
 
-      expect(res.statusCode).toBe(202);
+      expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.accepted).toBe(3);
     });
@@ -181,7 +181,7 @@ describe('library-scan routes', () => {
 
     it('passes mode to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1 });
+        .mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -192,7 +192,7 @@ describe('library-scan routes', () => {
         },
       });
 
-      expect(res.statusCode).toBe(202);
+      expect(res.statusCode).toBe(200);
       expect(services.libraryScan.confirmImport).toHaveBeenCalledWith(
         [{ path: '/a/b', title: 'Book', authorName: 'Author' }],
         'copy',
@@ -201,7 +201,7 @@ describe('library-scan routes', () => {
 
     it('forwards narrators and seriesPosition to the service (#1028)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1 });
+        .mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -217,7 +217,7 @@ describe('library-scan routes', () => {
         },
       });
 
-      expect(res.statusCode).toBe(202);
+      expect(res.statusCode).toBe(200);
       expect(services.libraryScan.confirmImport).toHaveBeenCalledWith(
         [expect.objectContaining({ narrators: ['Jim Dale'], seriesPosition: 27 })],
         undefined,
@@ -226,7 +226,7 @@ describe('library-scan routes', () => {
 
     it('round-trips seriesPosition: 0 from request body to service (#1028)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1 });
+        .mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -236,7 +236,7 @@ describe('library-scan routes', () => {
         },
       });
 
-      expect(res.statusCode).toBe(202);
+      expect(res.statusCode).toBe(200);
       const calls = (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>).mock.calls;
       const items = calls[0]![0] as Array<Record<string, unknown>>;
       expect(items[0]!.seriesPosition).toBe(0);
@@ -627,7 +627,7 @@ describe('library-scan routes', () => {
   describe('POST /api/library/import/confirm — forceImport field', () => {
     it('accepts items with forceImport: true and passes them to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1 });
+        .mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -637,7 +637,7 @@ describe('library-scan routes', () => {
         },
       });
 
-      expect(res.statusCode).toBe(202);
+      expect(res.statusCode).toBe(200);
       expect(services.libraryScan.confirmImport).toHaveBeenCalledWith(
         [{ path: '/a/dup', title: 'Dup Book', forceImport: true }],
         undefined,
@@ -646,7 +646,7 @@ describe('library-scan routes', () => {
 
     it('accepts items without forceImport field (field is optional)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1 });
+        .mockResolvedValue({ accepted: 1, heldReview: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -656,7 +656,7 @@ describe('library-scan routes', () => {
         },
       });
 
-      expect(res.statusCode).toBe(202);
+      expect(res.statusCode).toBe(200);
     });
   });
 });

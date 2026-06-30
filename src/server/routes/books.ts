@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService, ConnectorService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
+import { OwnedRecordingError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
@@ -106,13 +107,35 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { body: createBookBodySchema } },
     async (request, reply) => {
       const body = request.body;
-      const existing = await deps.bookService.findDuplicate(body.title, body.authors, body.asin);
-      if (existing) {
-        request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
-        return reply.status(409).send(existing);
+      // Three-way recording identity (#1711): only an owned (same-recording) OR
+      // an uncertain (review/no-signal) verdict blocks with 409 — a genuinely
+      // different recording of an owned title is allowed through (keep-both). A
+      // 'different-recording' verdict returns `book: null`, so the 409 only fires
+      // when there is an incumbent to surface.
+      const resolution = await deps.bookService.findDuplicate({
+        title: body.title,
+        authors: body.authors,
+        ...(body.asin !== undefined && { asin: body.asin }),
+        ...(body.narrators !== undefined && { narrators: body.narrators }),
+        ...(body.duration !== undefined && { duration: body.duration }),
+      });
+      if (resolution.verdict !== 'different-recording' && resolution.book) {
+        request.log.info({ title: body.title, existingId: resolution.book.id, verdict: resolution.verdict }, 'Duplicate book detected');
+        return reply.status(409).send(resolution.book);
       }
 
-      const book = await deps.bookService.create(body);
+      let book;
+      try {
+        book = await deps.bookService.create(body);
+      } catch (error: unknown) {
+        // Same-ASIN create-time race (#1711) → the recording is already owned.
+        if (error instanceof OwnedRecordingError) {
+          request.log.info({ title: body.title, existingId: error.existingBookId }, 'Duplicate book detected (ASIN race)');
+          const owner = await deps.bookService.getById(error.existingBookId);
+          return reply.status(409).send(owner);
+        }
+        throw error;
+      }
 
       deps.eventHistory.create({
         bookId: book.id,

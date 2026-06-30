@@ -4,7 +4,40 @@ import {
   jobIdParamSchema,
   matchCandidateSchema,
   scanDirectoryBodySchema,
+  heldReviewItemSchema,
+  importResultSchema,
 } from './library-scan.js';
+
+describe('heldReviewItemSchema / importResultSchema (#1711)', () => {
+  it('round-trips a held-review item with an optional existingBookId', () => {
+    const item = { path: '/lib/Author/Title', title: 'Title', reason: 'recording-review-required' as const, existingBookId: 42 };
+    const result = heldReviewItemSchema.safeParse(item);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual(item);
+  });
+
+  it('accepts a held-review item without existingBookId', () => {
+    const result = heldReviewItemSchema.safeParse({ path: '/lib/x', title: 'X', reason: 'recording-review-required' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown reason enum value', () => {
+    const result = heldReviewItemSchema.safeParse({ path: '/lib/x', title: 'X', reason: 'something-else' });
+    expect(result.success).toBe(false);
+  });
+
+  it('round-trips an importResult with accepted + heldReview array', () => {
+    const payload = { accepted: 2, heldReview: [{ path: '/lib/x', title: 'X', reason: 'recording-review-required' as const }] };
+    const result = importResultSchema.safeParse(payload);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.heldReview).toHaveLength(1);
+  });
+
+  it('accepts an empty heldReview array (nothing held)', () => {
+    const result = importResultSchema.safeParse({ accepted: 5, heldReview: [] });
+    expect(result.success).toBe(true);
+  });
+});
 
 describe('scanDirectoryBodySchema — trim behavior', () => {
   it('rejects whitespace-only path', () => {

@@ -50,7 +50,7 @@ function createMockMetadataService(): MetadataService {
 /** Mock BookService for the post-match duplicate pass — defaults to no duplicate. */
 function createMockBookService(): BookService {
   return inject<BookService>({
-    findDuplicate: vi.fn().mockResolvedValue(null),
+    findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }),
   });
 }
 
@@ -315,7 +315,7 @@ describe('MatchJobService', () => {
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 421, title: 'Tehanu' });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'same-recording', book: { id: 421, title: 'Tehanu' } });
 
       const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
       await waitForJob(service, id);
@@ -325,13 +325,42 @@ describe('MatchJobService', () => {
       expect(result.existingBookId).toBe(421);
       expect(result.duplicateReason).toBe('slug');
       // findDuplicate is keyed off the MATCHED metadata, not the (author-less) candidate.
-      expect(bookService.findDuplicate).toHaveBeenCalledWith('Tehanu', meta.authors, 'B01G9EPERE');
+      expect(bookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Tehanu', authors: meta.authors, asin: 'B01G9EPERE' }));
+    });
+
+    it('post-match: a review verdict sets reviewReason but NOT isDuplicate (#1711)', async () => {
+      const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+      (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'review', book: { id: 77, title: 'Tehanu' } });
+
+      const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.isDuplicate).toBeUndefined();
+      expect(result.reviewReason).toBeDefined();
+      expect(result.existingBookId).toBe(77);
+    });
+
+    it('post-match: a different-recording verdict carries no duplicate or review fields (#1711 keep-both)', async () => {
+      const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+      (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      expect(result.isDuplicate).toBeUndefined();
+      expect(result.reviewReason).toBeUndefined();
     });
 
     it('post-match: a resolved match with no library duplicate carries no duplicate fields (#1662)', async () => {
       const meta = makeBookMetadata({ providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);

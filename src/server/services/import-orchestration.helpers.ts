@@ -3,11 +3,15 @@
  * import worker. Extracted for consistency with quality-gate helpers.
  */
 import { stat } from 'node:fs/promises';
-import { relative, resolve, isAbsolute } from 'node:path';
+import { relative, resolve, isAbsolute, normalize } from 'node:path';
 import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookService } from './book.service.js';
+import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
+import type { HeldReviewItem } from '../../shared/schemas/library-scan.js';
+import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate, type LibraryRecording } from '../../core/utils/recording-identity.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
+import { slugify } from '../../core/index.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
@@ -107,6 +111,119 @@ async function cleanupSourceManagedFilesNonfatal(
 // rename and merge writers can share the same `assertMarkerPathWritable` +
 // `prepareImportSiblings` sequence (#1418). Imported above.
 
+// ── Cross-row collision fence (#1711) ─────────────────────────────────────
+//
+// The Manual/Library copy path routes an occupied target through the staged swap
+// with NO owner check, so a DIFFERENT recording colliding on the same computed
+// folder would overwrite the incumbent's audio. The fence below resolves the
+// occupied target's owner(s), runs the recording resolver, and gates the swap:
+// a staged swap is permitted ONLY for exactly-one-owner + same-recording; a
+// different recording is disambiguated into a new `(edition)` folder (keep-both);
+// every uncertain case (review / 0 owners with no disambiguator / 2+ owners)
+// throws `OwnedRecordingError` so the import fails LOUDLY rather than overwriting.
+
+/** Decision for an occupied target: either swap in place, or copy into a disambiguated folder. */
+interface OccupiedResolution {
+  targetPath: string;
+  editionLabel?: string | undefined;
+  /** true → staged swap permitted (same recording); false → copy into a fresh disambiguated folder. */
+  swap: boolean;
+}
+
+/** Build the recording candidate (#1711) from the confirm item + accepted provider metadata. */
+function buildRecordingCandidate(item: ImportConfirmItem, meta: BookMetadata | null): RecordingCandidate {
+  const narrators = item.narrators?.length ? item.narrators : (meta?.narrators ?? []);
+  return {
+    title: item.title,
+    authors: item.authorName ? [item.authorName] : (meta?.authors?.map((a) => a.name) ?? []),
+    narrators,
+    asin: item.asin ?? meta?.asin ?? null,
+    duration: meta?.duration ?? null,
+  };
+}
+
+/** Adapt a hydrated owner row into the resolver's library-recording shape. */
+function ownerToLibraryRecording(owner: BookWithAuthor): LibraryRecording {
+  return {
+    title: owner.title,
+    primaryAuthorSlug: slugify(owner.authors[0]?.name ?? ''),
+    narrators: owner.narrators.map((n) => n.name),
+    asin: owner.asin ?? null,
+    duration: owner.duration ?? null,
+  };
+}
+
+/**
+ * Disambiguate a different-recording (or unidentifiable) collision into a new
+ * `(edition)` folder. Derives a deterministic label from stable recording
+ * metadata; throws `OwnedRecordingError` (review disposition) when no label can
+ * be derived. The disambiguated path is re-checked: if it is itself occupied by
+ * the SAME recording (a re-import) a staged swap is permitted; any other occupied
+ * outcome throws rather than overwrite.
+ */
+async function disambiguateTarget(
+  candidate: RecordingCandidate,
+  productionType: string | undefined,
+  owner: BookWithAuthor | null,
+  deps: ImportPipelineDeps,
+  rebuild: (label: string) => string,
+): Promise<OccupiedResolution> {
+  const label = deriveEditionLabel(candidate.narrators, productionType);
+  if (!label) {
+    throw new OwnedRecordingError({
+      existingBookId: owner?.id ?? -1,
+      title: owner?.title ?? candidate.title,
+      reason: 'recording-review-no-disambiguator',
+    });
+  }
+  const newTarget = rebuild(label);
+  if (await getTargetAudioSize(newTarget) === 0) {
+    return { targetPath: newTarget, editionLabel: label, swap: false };
+  }
+  // The disambiguated folder is itself occupied — only a same-recording re-import may swap.
+  const newOwners = await deps.bookService.findPathOwners(normalize(resolve(newTarget)));
+  if (newOwners.length === 1 && resolveRecordingIdentity(candidate, ownerToLibraryRecording(newOwners[0]!)) === 'same-recording') {
+    return { targetPath: newTarget, editionLabel: label, swap: true };
+  }
+  throw new OwnedRecordingError({
+    existingBookId: newOwners[0]?.id ?? -1,
+    title: newOwners[0]?.title ?? candidate.title,
+    reason: 'recording-review-disambiguated-collision',
+  });
+}
+
+/**
+ * Resolve how to place a candidate onto an OCCUPIED target (#1711). Branches on
+ * path-owner cardinality, then the recording verdict — see the Disposition
+ * Contract. Never permits a staged swap except for exactly-one-owner +
+ * same-recording.
+ */
+async function resolveOccupiedTarget(
+  baseTargetPath: string,
+  candidate: RecordingCandidate,
+  productionType: string | undefined,
+  deps: ImportPipelineDeps,
+  rebuild: (label: string) => string,
+): Promise<OccupiedResolution> {
+  const owners = await deps.bookService.findPathOwners(normalize(resolve(baseTargetPath)));
+  if (owners.length === 1) {
+    const verdict = resolveRecordingIdentity(candidate, ownerToLibraryRecording(owners[0]!));
+    if (verdict === 'same-recording') return { targetPath: baseTargetPath, swap: true };
+    if (verdict === 'different-recording') {
+      return disambiguateTarget(candidate, productionType, owners[0]!, deps, rebuild);
+    }
+    // review / no-signal → never overwrite.
+    throw new OwnedRecordingError({ existingBookId: owners[0]!.id, title: owners[0]!.title, reason: 'recording-review' });
+  }
+  if (owners.length === 0) {
+    // Audio on disk but no row claims this exact path: cannot identify a recording
+    // to compare — disambiguate to a new folder when possible, else review.
+    return disambiguateTarget(candidate, productionType, null, deps, rebuild);
+  }
+  // 2+ owners (data anomaly) → never staged-swap.
+  throw new OwnedRecordingError({ existingBookId: owners[0]!.id, title: owners[0]!.title, reason: 'recording-review-ambiguous-owner' });
+}
+
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
 export async function copyToLibrary(
   item: ImportConfirmItem,
@@ -114,7 +231,7 @@ export async function copyToLibrary(
   mode: ImportMode,
   deps: ImportPipelineDeps,
   onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
-): Promise<string> {
+): Promise<{ targetPath: string; editionLabel?: string }> {
   const { log, settingsService } = deps;
 
   const librarySettings = await settingsService.get('library');
@@ -124,25 +241,25 @@ export async function copyToLibrary(
   // on Audible can be a broader universe entry rather than the real book series.
   // When `meta` is null (no provider match accepted), fall back to item-derived values.
   const metaPrimarySeries = meta?.seriesPrimary ?? meta?.series?.[0];
-  const targetPath = buildTargetPath(
-    librarySettings.path,
-    librarySettings.folderFormat,
-    {
-      title: item.title,
-      seriesName: metaPrimarySeries?.name ?? item.seriesName ?? undefined,
-      seriesPosition: metaPrimarySeries?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
-      narrators: item.narrators?.length
-        ? item.narrators.map(name => ({ name }))
-        : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
-      publishedDate: meta?.publishedDate,
-    },
-    item.authorName ?? null,
-    namingOptions,
-  );
+  const targetBook = {
+    title: item.title,
+    seriesName: metaPrimarySeries?.name ?? item.seriesName ?? undefined,
+    seriesPosition: metaPrimarySeries?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
+    narrators: item.narrators?.length
+      ? item.narrators.map(name => ({ name }))
+      : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
+    publishedDate: meta?.publishedDate,
+  };
+  // Rebuild closure (#1711): re-render the SAME path with an edition-label suffix
+  // when a different-recording collision needs disambiguating.
+  const rebuild = (label: string): string =>
+    buildTargetPath(librarySettings.path, librarySettings.folderFormat, targetBook, item.authorName ?? null, namingOptions, label);
+  let targetPath = rebuild('');
+  let editionLabel: string | undefined;
 
   if (resolve(item.path) === resolve(targetPath)) {
     log.info({ path: targetPath, mode }, 'Source and target are the same path — skipping file operation');
-    return targetPath;
+    return { targetPath };
   }
 
   const rel = relative(resolve(librarySettings.path), resolve(item.path));
@@ -154,7 +271,7 @@ export async function copyToLibrary(
   // member set from disk and flatten every disc into one target (AC7), instead of copying just one.
   const memberPaths = await reconstructDiscGroup(item.path);
   if (memberPaths.length >= 2) {
-    return copyDiscGroupToLibrary(item, targetPath, memberPaths, mode, deps, librarySettings.path, onProgress);
+    return copyDiscGroupToLibrary(item, meta, targetPath, memberPaths, mode, deps, librarySettings.path, rebuild, onProgress);
   }
 
   // Recover any interrupted commit (#1337) BEFORE the populated-target gate: an
@@ -163,27 +280,41 @@ export async function copyToLibrary(
   // fast path orphaning the marker/backup. No-op when no commit was interrupted.
   await recoverInterruptedCommit(targetPath, librarySettings.path, log);
 
-  // Populated-target guard (#1287): a manual import whose computed target already
-  // contains audio must NOT merge-copy in place (that recreates the #1252
-  // Frankenbook). Route through the staged audio swap, flattening the source's
-  // audio to the staging top level so the commit moves every file. Empty/missing
-  // target keeps the simple direct-copy fast path below (AC3).
+  // Populated-target guard (#1287) + cross-row collision fence (#1711): a manual
+  // import whose computed target already contains audio must NOT merge-copy in
+  // place. Resolve the occupied target's owner(s) and the recording verdict — a
+  // staged swap is permitted ONLY for exactly-one-owner + same-recording; a
+  // different recording disambiguates into a new `(edition)` folder (keep-both),
+  // and every uncertain case throws (never overwrite). Empty/missing target keeps
+  // the simple direct-copy fast path below (AC3).
   if (await getTargetAudioSize(targetPath) > 0) {
-    const sourceStats = await stat(item.path);
-    const sourceAudioSize = await getAudioPathSize(item.path);
-    log.info({ source: item.path, target: targetPath, mode, sourceAudioSize }, 'Target already contains audio — routing manual import through staged swap');
-    await stagedAudioReplace({
-      targetPath,
-      libraryRoot: librarySettings.path,
-      log,
-      sourceAudioSize,
-      stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
-    });
-    if (mode === 'move') {
-      // Post-commit cleanup: the staged swap has already committed the new audio to the library.
-      await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
+    const candidate = buildRecordingCandidate(item, meta);
+    const productionType = meta?.formatType ? normalizeProductionType(meta.formatType) : undefined;
+    const occ = await resolveOccupiedTarget(targetPath, candidate, productionType, deps, rebuild);
+    if (occ.swap) {
+      const sourceStats = await stat(item.path);
+      const sourceAudioSize = await getAudioPathSize(item.path);
+      log.info({ source: item.path, target: occ.targetPath, mode, sourceAudioSize }, 'Occupied target is the same recording — routing manual import through staged swap');
+      await stagedAudioReplace({
+        targetPath: occ.targetPath,
+        libraryRoot: librarySettings.path,
+        log,
+        sourceAudioSize,
+        stage: (stagingPath) => stageSourceAudio({ sourcePath: item.path, targetPath: stagingPath, sourceStats, log, onProgress }),
+      });
+      if (mode === 'move') {
+        // Post-commit cleanup: the staged swap has already committed the new audio to the library.
+        await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
+      }
+      return { targetPath: occ.targetPath };
     }
-    return targetPath;
+    // Different recording (or 0-owner) → keep-both: copy into the disambiguated,
+    // freshly-empty folder; the incumbent's audio is never touched. Fall through
+    // to the empty-target copy on the new path.
+    log.info({ source: item.path, base: targetPath, disambiguated: occ.targetPath, editionLabel: occ.editionLabel }, 'Different recording on occupied target — copying into a disambiguated folder (keep-both)');
+    targetPath = occ.targetPath;
+    editionLabel = occ.editionLabel;
+    await recoverInterruptedCommit(targetPath, librarySettings.path, log);
   }
 
   // Empty-target fast path (#1602): import AUDIO ONLY by reusing the SAME copier the populated-target
@@ -210,7 +341,7 @@ export async function copyToLibrary(
     await cleanupSourceManagedFilesNonfatal(item.path, librarySettings.path, log, SINGLE_SOURCE_CLEANUP);
   }
 
-  return targetPath;
+  return { targetPath, ...(editionLabel !== undefined && { editionLabel }) };
 }
 
 /**
@@ -219,14 +350,18 @@ export async function copyToLibrary(
  */
 async function copyDiscGroupToLibrary(
   item: ImportConfirmItem,
-  targetPath: string,
+  meta: BookMetadata | null,
+  baseTargetPath: string,
   memberPaths: string[],
   mode: ImportMode,
   deps: ImportPipelineDeps,
   libraryRoot: string,
+  rebuild: (label: string) => string,
   onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
-): Promise<string> {
+): Promise<{ targetPath: string; editionLabel?: string }> {
   const { log } = deps;
+  let targetPath = baseTargetPath;
+  let editionLabel: string | undefined;
   log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode }, 'Flattening multi-disc group to library');
 
   // Recover any interrupted commit (#1337) BEFORE the populated-target gate — the
@@ -234,17 +369,29 @@ async function copyDiscGroupToLibrary(
   // path. No-op when no commit was interrupted.
   await recoverInterruptedCommit(targetPath, libraryRoot, log);
 
-  // Populated-target guard (#1287, AC5): the disc-group flatten has the identical
-  // merge-into-target gap as the single-source path. When the target already holds
-  // audio, stage the flattened discs and atomically swap rather than merging.
+  // Populated-target guard (#1287, AC5) + cross-row collision fence (#1711): the
+  // disc-group flatten has the identical merge-into-target gap as the single-source
+  // path. Resolve the occupied target's owner(s) and verdict — staged swap ONLY for
+  // exactly-one-owner + same-recording; a different recording disambiguates; every
+  // uncertain case throws (never overwrite).
   if (await getTargetAudioSize(targetPath) > 0) {
+    const candidate = buildRecordingCandidate(item, meta);
+    const productionType = meta?.formatType ? normalizeProductionType(meta.formatType) : undefined;
+    const occ = await resolveOccupiedTarget(targetPath, candidate, productionType, deps, rebuild);
+    if (!occ.swap) {
+      log.info({ source: item.path, base: targetPath, disambiguated: occ.targetPath, editionLabel: occ.editionLabel }, 'Different recording on occupied disc-group target — copying into a disambiguated folder (keep-both)');
+      targetPath = occ.targetPath;
+      editionLabel = occ.editionLabel;
+      await recoverInterruptedCommit(targetPath, libraryRoot, log);
+      // fall through to the empty-target disc copy on the new path.
+    } else {
     let sourceAudioSize = 0;
     for (const memberPath of memberPaths) {
       sourceAudioSize += await getAudioPathSize(memberPath);
     }
-    log.info({ source: item.path, discMembers: memberPaths.length, target: targetPath, mode, sourceAudioSize }, 'Target already contains audio — routing multi-disc import through staged swap');
+    log.info({ source: item.path, discMembers: memberPaths.length, target: occ.targetPath, mode, sourceAudioSize }, 'Occupied disc-group target is the same recording — routing through staged swap');
     await stagedAudioReplace({
-      targetPath,
+      targetPath: occ.targetPath,
       libraryRoot,
       log,
       sourceAudioSize,
@@ -262,7 +409,8 @@ async function copyDiscGroupToLibrary(
       }
       log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
     }
-    return targetPath;
+    return { targetPath: occ.targetPath };
+    }
   }
 
   await copyDiscGroup(memberPaths, targetPath, onProgress);
@@ -287,7 +435,7 @@ async function copyDiscGroupToLibrary(
     log.info({ discMembers: memberPaths.length }, 'Source disc folders cleaned after move (foreign files preserved)');
   }
 
-  return targetPath;
+  return { targetPath, ...(editionLabel !== undefined && { editionLabel }) };
 }
 
 /** The matched ASIN to dedupe on (#1662): the top-level field, else the metadata's. */
@@ -295,33 +443,63 @@ function resolveDedupeAsin(item: ImportConfirmItem): string | undefined {
   return item.asin ?? item.metadata?.asin;
 }
 
+/**
+ * Pre-copy recording-identity classification for a confirm item (#1711). Threads
+ * candidate narrators + matched ASIN + duration into the three-way `findDuplicate`:
+ *  - `same-recording` → `'skip'` (owned, plain not-accepted skip — NOT held).
+ *  - `review`/no-signal → a `HeldReviewItem` (not copied, not enqueued).
+ *  - `different-recording` (or `forceImport`) → `'proceed'`.
+ */
+async function classifyConfirmItem(
+  item: ImportConfirmItem,
+  bookService: BookService,
+  log: FastifyBaseLogger,
+): Promise<'skip' | 'proceed' | HeldReviewItem> {
+  if (item.forceImport) return 'proceed';
+  const dedupeAsin = resolveDedupeAsin(item);
+  const resolution = await bookService.findDuplicate({
+    title: item.title,
+    ...(item.authorName ? { authors: [{ name: item.authorName }] } : {}),
+    ...(dedupeAsin !== undefined && { asin: dedupeAsin }),
+    ...(item.narrators !== undefined && { narrators: item.narrators }),
+    ...(item.metadata?.duration !== undefined && { duration: item.metadata.duration }),
+  });
+  if (resolution.verdict === 'same-recording') {
+    log.debug({ title: item.title }, 'Skipping owned duplicate during import (same recording)');
+    return 'skip';
+  }
+  if (resolution.verdict === 'review') {
+    log.info({ title: item.title, existingBookId: resolution.book?.id }, 'Holding import item for recording review');
+    return {
+      path: item.path,
+      title: item.title,
+      reason: 'recording-review-required',
+      ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
+    };
+  }
+  return 'proceed';
+}
+
 export async function confirmImport(
   items: ImportConfirmItem[],
   deps: ImportPipelineDeps,
   mode?: ImportMode,
   nudgeWorker?: () => void,
-): Promise<{ accepted: number }> {
+): Promise<{ accepted: number; heldReview: HeldReviewItem[] }> {
   const { log, bookService, bookImportService, eventHistory } = deps;
 
   log.info({ count: items.length, mode: mode ?? 'pointer' }, 'Accepting library import');
 
   const accepted: Array<{ bookId: number; item: ImportConfirmItem }> = [];
+  const heldReview: HeldReviewItem[] = [];
 
   for (const item of items) {
     try {
-      if (!item.forceImport) {
-        // Forward the matched ASIN (#1662) so the confirm-time skip routes through
-        // the same ASIN-first identity contract as scan/review — title/edition
-        // drift on an owned book no longer slips a duplicate through.
-        const existing = await bookService.findDuplicate(
-          item.title,
-          item.authorName ? [{ name: item.authorName }] : undefined,
-          resolveDedupeAsin(item),
-        );
-        if (existing) {
-          log.debug({ title: item.title }, 'Skipping duplicate during import');
-          continue;
-        }
+      const classification = await classifyConfirmItem(item, bookService, log);
+      if (classification === 'skip') continue;
+      if (classification !== 'proceed') {
+        heldReview.push(classification);
+        continue;
       }
 
       log.debug(
@@ -364,15 +542,21 @@ export async function confirmImport(
 
       accepted.push({ bookId: book.id, item });
     } catch (error: unknown) {
+      // Same-ASIN create-time race (#1711): the recording is already owned — a
+      // plain not-accepted skip (NOT held, NOT enqueued), never a hard failure.
+      if (error instanceof OwnedRecordingError) {
+        log.debug({ title: item.title, existingBookId: error.existingBookId }, 'Skipping owned duplicate during import (ASIN race)');
+        continue;
+      }
       log.error({ error: serializeError(error), title: item.title }, 'Failed to create placeholder for import');
     }
   }
 
-  log.info({ accepted: accepted.length }, 'Import jobs created, nudging worker');
+  log.info({ accepted: accepted.length, held: heldReview.length }, 'Import jobs created, nudging worker');
 
   if (accepted.length > 0 && nudgeWorker) {
     nudgeWorker();
   }
 
-  return { accepted: accepted.length };
+  return { accepted: accepted.length, heldReview };
 }

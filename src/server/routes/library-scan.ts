@@ -98,18 +98,19 @@ export async function libraryScanRoutes(
     },
   );
 
-  // Bulk confirm import (async — returns 202)
+  // Bulk confirm import. Returns 200 — `{ accepted, heldReview }` is a partial-
+  // success outcome (#1711): some items enqueued, some held for recording review.
   app.post<{ Body: ImportConfirmBody }>(
     '/api/library/import/confirm',
     { schema: { body: importConfirmBodySchema } },
     async (request, reply) => {
       const { books: items, mode } = request.body;
 
-      request.log.info({ count: items.length, mode }, 'Confirming library import (async)');
+      request.log.info({ count: items.length, mode }, 'Confirming library import');
 
       try {
         const result = await libraryScan.confirmImport(items as ImportConfirmItem[], mode);
-        return await reply.status(202).send(result);
+        return await reply.status(200).send(result);
       } catch (error: unknown) {
         request.log.error({ error: serializeError(error) }, 'Import confirmation failed');
         return reply.status(500).send({
@@ -196,10 +197,21 @@ async function handleScanDebug(
   let duplicate: ScanDebugTrace['duplicate'];
   try {
     const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
-    // Pass the parsed ASIN (#1662) so the diagnostic's verdict mirrors the real
-    // confirm-time identity check (ASIN-first, normalized title+author).
-    const existing = await bookService.findDuplicate(cleanedTitle, authorList, asin);
-    duplicate = { isDuplicate: existing !== null, existingBookId: existing?.id ?? null, reason: existing ? 'library-match' : null };
+    // Pass the parsed ASIN (#1662) so the diagnostic mirrors the real confirm-time
+    // identity check. With the 3-way verdict (#1711) the trace shows the resolver's
+    // outcome: `same-recording` is the only hard duplicate; a scan-time trace has no
+    // narrators so a title+author hit typically surfaces as `review`.
+    const resolution = await bookService.findDuplicate({
+      title: cleanedTitle,
+      ...(authorList && { authors: authorList }),
+      ...(asin !== undefined && { asin }),
+    });
+    const existing = resolution.book;
+    duplicate = {
+      isDuplicate: resolution.verdict === 'same-recording',
+      existingBookId: existing?.id ?? null,
+      reason: existing ? resolution.verdict : null,
+    };
   } catch (error: unknown) {
     request.log.error({ error: serializeError(error) }, 'Scan debug duplicate check failed');
     return reply.status(500).send({

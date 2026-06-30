@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
 import { books } from '../../../db/schema.js';
-import type { BookService } from '../../services/book.service.js';
+import { OwnedRecordingError, type BookService } from '../../services/book.service.js';
 import type { BookListService } from '../../services/book-list.service.js';
 import type {
   MetadataService,
@@ -214,14 +214,16 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         async (request, reply) => {
           const { asin } = request.body;
 
-          // Find-by-ASIN first. The ASIN (third arg) short-circuits findDuplicate
-          // on its ASIN branch; empty title + no authors are never read on that path.
-          const existing = await deps.bookService.findDuplicate('', undefined, asin);
-          if (existing) {
-            request.log.info({ asin, existingId: existing.publicId }, 'v1 add-by-ASIN: book already in library');
+          // Find-by-ASIN first (#1711). Add-by-ASIN is ASIN-only; an exact-ASIN
+          // incumbent resolves to `same-recording` (the resolver's authoritative
+          // ASIN-equal rule) → 409. A free ASIN gathers no incumbent →
+          // `different-recording` (book: null) → proceed.
+          const resolution = await deps.bookService.findDuplicate({ title: '', asin });
+          if (resolution.verdict !== 'different-recording' && resolution.book) {
+            request.log.info({ asin, existingId: resolution.book.publicId }, 'v1 add-by-ASIN: book already in library');
             return reply.status(409).send({
               error: { code: 'book_exists', message: 'A book with this ASIN already exists' },
-              existingId: existing.publicId,
+              existingId: resolution.book.publicId,
             });
           }
 
@@ -258,7 +260,23 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             );
           }
 
-          const book = await deps.bookService.create(metadataToCreatePayload(lookup.book, asin));
+          let book;
+          try {
+            book = await deps.bookService.create(metadataToCreatePayload(lookup.book, asin));
+          } catch (error: unknown) {
+            // Same-ASIN create-time race (#1711) — the recording is already owned.
+            if (error instanceof OwnedRecordingError) {
+              const owner = await deps.bookService.getById(error.existingBookId);
+              if (owner) {
+                request.log.info({ asin, existingId: owner.publicId }, 'v1 add-by-ASIN: book already in library (ASIN race)');
+                return reply.status(409).send({
+                  error: { code: 'book_exists', message: 'A book with this ASIN already exists' },
+                  existingId: owner.publicId,
+                });
+              }
+            }
+            throw error;
+          }
 
           deps.eventHistory
             .create({

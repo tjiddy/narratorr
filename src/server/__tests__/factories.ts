@@ -37,6 +37,7 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     status: 'wanted' as const,
     enrichmentStatus: 'pending' as const,
     productionType: 'unknown' as const,
+    editionLabel: null as string | null,
     enrichmentAttempts: 0,
     path: null as string | null,
     size: null as number | null,

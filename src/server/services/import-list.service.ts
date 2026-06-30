@@ -9,7 +9,7 @@ import type { BookMetadata } from '../../core/metadata/types.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import type { BookService } from './book.service.js';
+import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
@@ -281,36 +281,75 @@ export class ImportListService {
     );
   }
 
+  /**
+   * Three-way recording-identity skip decision (#1711). `enrichItem` supplies
+   * narrators + duration, so the resolver usually has signal: `same-recording` is
+   * owned → skip; `review` (no/ambiguous signal) is skipped+logged (import-list is
+   * automated, no held-review UI); `different-recording` proceeds so a second
+   * narration from a list is added rather than silently dropped.
+   */
+  private async shouldSkipImportListItem(enriched: EnrichedItem): Promise<boolean> {
+    const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
+    const resolution = await this.bookService.findDuplicate({
+      title: enriched.title,
+      ...(authorList && { authors: authorList }),
+      ...(enriched.asin !== undefined && { asin: enriched.asin }),
+      ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
+      ...(enriched.duration != null && { duration: enriched.duration }),
+    });
+    if (resolution.verdict === 'same-recording') {
+      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists (same recording), skipped');
+      return true;
+    }
+    if (resolution.verdict === 'review') {
+      this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: resolution.book?.id }, 'Import-list item needs recording review — skipping (no held-review surface for automated lists)');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Create the book row, mapping a same-ASIN create-time race (#1711) to an owned
+   * skip (returns null, no enqueue) rather than a hard failure.
+   */
+  private async createImportListBook(enriched: EnrichedItem, enrichmentStatus: 'failed' | undefined, list: ImportListRow): Promise<BookWithAuthor | null> {
+    try {
+      return await this.bookService.create({
+        title: enriched.title,
+        authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
+        narrators: enriched.narrators,
+        subtitle: enriched.subtitle,
+        description: enriched.description,
+        publisher: enriched.publisher,
+        coverUrl: enriched.coverUrl,
+        asin: enriched.asin,
+        isbn: enriched.isbn,
+        seriesName: enriched.seriesName,
+        seriesPosition: enriched.seriesPosition,
+        seriesAsin: enriched.seriesAsin,
+        duration: enriched.duration,
+        publishedDate: enriched.publishedDate,
+        genres: enriched.genres,
+        status: 'wanted',
+        enrichmentStatus,
+        importListId: list.id,
+      });
+    } catch (error: unknown) {
+      if (error instanceof OwnedRecordingError) {
+        this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: error.existingBookId }, 'Import-list item already owned (ASIN race), skipped');
+        return null;
+      }
+      throw error;
+    }
+  }
+
   private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
     const { enriched, enrichmentStatus } = await this.enrichItem(item);
 
-    const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
-    const duplicate = await this.bookService.findDuplicate(enriched.title, authorList, enriched.asin);
-    if (duplicate) {
-      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists, skipped');
-      return;
-    }
+    if (await this.shouldSkipImportListItem(enriched)) return;
 
-    const created = await this.bookService.create({
-      title: enriched.title,
-      authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
-      narrators: enriched.narrators,
-      subtitle: enriched.subtitle,
-      description: enriched.description,
-      publisher: enriched.publisher,
-      coverUrl: enriched.coverUrl,
-      asin: enriched.asin,
-      isbn: enriched.isbn,
-      seriesName: enriched.seriesName,
-      seriesPosition: enriched.seriesPosition,
-      seriesAsin: enriched.seriesAsin,
-      duration: enriched.duration,
-      publishedDate: enriched.publishedDate,
-      genres: enriched.genres,
-      status: 'wanted',
-      enrichmentStatus,
-      importListId: list.id,
-    });
+    const created = await this.createImportListBook(enriched, enrichmentStatus, list);
+    if (!created) return;
 
     await this.db.insert(bookEvents).values({
       bookId: created.id,

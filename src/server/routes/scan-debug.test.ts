@@ -25,7 +25,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Title', authors: [{ name: 'Author' }], asin: 'B001', providerId: 'us-B001' }]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -104,7 +104,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('accepts folderName exactly at the 1024-char cap (inclusive boundary) (#1333)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -118,7 +118,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('processes a pathological unclosed-bracket payload at the cap without stalling (#1333)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       // 1024 unclosed brackets is the worst case for the quadratic bracket-strip
       // regex; the cap keeps the input small enough that it completes negligibly.
@@ -135,7 +135,7 @@ describe('POST /api/library/scan-debug', () => {
   describe('pre-parse segmentation', () => {
     beforeEach(() => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
     });
 
     it('splits forward-slash path into parts array', async () => {
@@ -186,7 +186,7 @@ describe('POST /api/library/scan-debug', () => {
   describe('parsing step', () => {
     beforeEach(() => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
     });
 
     it('reports 1-part pattern for single segment input', async () => {
@@ -285,7 +285,7 @@ describe('POST /api/library/scan-debug', () => {
   describe('cleaning step', () => {
     beforeEach(() => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
     });
 
     it('includes all 13 cleaning sub-steps in trace', async () => {
@@ -324,7 +324,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('P5: strips "(Read by ...)" from cleaned title (issue #980)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -340,7 +340,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('P6: strips edition-annotation parens like "(2007 Full Cast Recording)" (issue #980)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -356,7 +356,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('extracts trailing "(Series Book N)" paren into series + position (issue #1194)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -379,7 +379,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('P4: routes "Discworld, Book 16 - Soul Music" through parsing as series + title (issue #980)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -395,7 +395,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('2-part flat-pack split (Sanderson/Mistborn 01 - The Final Empire.mp3) routes through P10 fallback (issue #1016)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -412,7 +412,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('P8: 2-part Hitchhiker raw output yields cleaning.author.result === "Douglas Adams" (issue #980)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -442,7 +442,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('unwraps a whole-title bracket instead of deleting it (issue #1316)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -467,7 +467,7 @@ describe('POST /api/library/scan-debug', () => {
         { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], asin: 'B001', providerId: 'us-B001' },
       ];
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(mockResults);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -489,7 +489,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce(mockResults);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -505,7 +505,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('shows swapRetry false when no author present', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -526,7 +526,7 @@ describe('POST /api/library/scan-debug', () => {
         { title: 'Title 2', authors: [{ name: 'Author' }], asin: 'B002', providerId: 'us-B002' },
       ];
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(mockResults);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -542,7 +542,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('returns status "no match" when no results', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -560,7 +560,7 @@ describe('POST /api/library/scan-debug', () => {
     it('reports isDuplicate true when findDuplicate returns a match', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ id: 42, title: 'Title' });
+        .mockResolvedValue({ verdict: 'same-recording', book: { id: 42, title: 'Title' } });
 
       const res = await app.inject({
         method: 'POST',
@@ -571,12 +571,12 @@ describe('POST /api/library/scan-debug', () => {
       const body = JSON.parse(res.payload);
       expect(body.duplicate.isDuplicate).toBe(true);
       expect(body.duplicate.existingBookId).toBe(42);
-      expect(body.duplicate.reason).toBe('library-match');
+      expect(body.duplicate.reason).toBe('same-recording');
     });
 
     it('reports isDuplicate false when no match', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -592,7 +592,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('uses title-only matching for authorless input', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -602,7 +602,7 @@ describe('POST /api/library/scan-debug', () => {
 
       expect(res.statusCode).toBe(200);
       // findDuplicate called with title only, no authorList, no parsed ASIN (#1662)
-      expect(services.book.findDuplicate).toHaveBeenCalledWith('JustATitle', undefined, undefined);
+      expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'JustATitle' }));
     });
   });
 
@@ -687,7 +687,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.getBook as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ title: 'Tress', authors: [{ name: 'Sanderson' }], asin: 'B0D18DYG5C', providerId: 'p1' });
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -704,7 +704,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Title', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -721,7 +721,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.getBook as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ title: 'Tress', authors: [{ name: 'Sanderson' }], asin: 'B0D18DYG5C', providerId: 'p1' });
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -737,7 +737,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.getBook as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ title: 'Tress', authors: [{ name: 'Sanderson' }], asin: 'B0D18DYG5C', providerId: 'p1' });
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -760,7 +760,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Fallback', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -781,7 +781,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Fallback', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -809,7 +809,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Sunrise on the Reaping', authors: [{ name: 'Suzanne Collins' }], asin: 'B0D2KCFS6Y', providerId: 'us-B0D2KCFS6Y' }]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -831,7 +831,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>)
         .mockResolvedValue([{ title: 'Title', authors: [{ name: 'Author' }], asin: null, providerId: null }]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
-        .mockResolvedValue(null);
+        .mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -847,7 +847,7 @@ describe('POST /api/library/scan-debug', () => {
   describe('all-numeric date-like titles (issue #701)', () => {
     it('Stephen King/11-22-63 preserves date-like title through parsing/cleaning into search', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -865,7 +865,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('Asimov/Foundation - 02 - Second Foundation (real series) still splits into series/title', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',
@@ -882,7 +882,7 @@ describe('POST /api/library/scan-debug', () => {
 
     it('3+-part Stephen King/Dates/11.22.63 preserves dot-separated title through cleaning into search (PR #702 F1)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
       const res = await app.inject({
         method: 'POST',

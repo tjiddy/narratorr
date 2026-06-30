@@ -22,13 +22,20 @@ import type { ConnectorImportItem } from '../../core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
-import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, HeldReviewItem } from '../../shared/schemas/library-scan.js';
 import { WireOnce } from './wire-helpers.js';
 
 
 export type { DiscoveredBook };
 
 export type ImportMode = 'copy' | 'move';
+
+/**
+ * Interim scan-time hint (#1711 F6) for a title+author folder that matches an
+ * existing library book but carries no decisive ASIN. Display-only; the match job
+ * later replaces it with the authoritative recording verdict once narrators exist.
+ */
+const SCAN_RECORDING_REVIEW_HINT = 'Possible match to an existing book — checking recording';
 
 export interface ImportConfirmItem {
   path: string;
@@ -213,9 +220,9 @@ export class LibraryScanService {
       existingPathRows.filter((r) => r.path != null).map((r) => [r.path!, r.id] as const),
     );
 
-    // Pre-fetch all title + author slug pairs with IDs for O(1) duplicate check
+    // Pre-fetch all title + author slug pairs (and ASINs) with IDs for O(1) checks.
     const titleAuthorRows = await this.db
-      .select({ id: books.id, title: books.title, slug: authors.slug })
+      .select({ id: books.id, title: books.title, slug: authors.slug, asin: books.asin })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
@@ -225,6 +232,14 @@ export class LibraryScanService {
       titleAuthorRows
         .filter((r) => r.title && r.slug)
         .map((r) => [`${normalizeTitleForDedup(r.title!)}|${r.slug}`, r.id] as [string, number]),
+    );
+    // Decisive-ASIN map (#1711 F6): a parsed-folder ASIN equal to an incumbent's
+    // non-null ASIN is `same-recording` deterministically — flag owned at scan and
+    // exclude from match. Case-insensitive (ASINs are not globally normalized).
+    const existingAsinMap = new Map<string, number>(
+      titleAuthorRows
+        .filter((r) => r.asin != null)
+        .map((r) => [r.asin!.toLowerCase(), r.id] as [string, number]),
     );
 
     const discoveries: DiscoveredBook[] = [];
@@ -244,15 +259,35 @@ export class LibraryScanService {
         continue;
       }
 
+      // Decisive ASIN at scan time (#1711 F6): a parsed-folder ASIN equal to an
+      // incumbent's non-null ASIN is the same recording deterministically → flag
+      // owned now and exclude from the match job, exactly as before.
+      if (parsed.asin && existingAsinMap.has(parsed.asin.toLowerCase())) {
+        this.log.debug({ path: folder.path, asin: parsed.asin }, 'Duplicate detected (decisive ASIN match)');
+        discoveries.push(buildDiscoveredBook(
+          folder.path, parsed, folder.audioFileCount, folder.totalSize,
+          { isDuplicate: true, existingBookId: existingAsinMap.get(parsed.asin.toLowerCase()), duplicateReason: 'slug', reviewReason },
+        ));
+        continue;
+      }
+
       // Check for duplicates by title + author slug (in-memory Map lookup)
       if (parsed.title && parsed.author) {
         const authorSlug = slugify(parsed.author);
         const key = `${normalizeTitleForDedup(parsed.title)}|${authorSlug}`;
         if (existingTitleAuthorMap.has(key)) {
-          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
+          // Title+author-only collision, NO decisive ASIN (#1711 F6): NOT a hard
+          // duplicate. Library Import has no narrators at scan time, so the
+          // same-vs-different-recording verdict cannot be decided here — emit a
+          // normal candidate carrying a display-only review hint so it FLOWS
+          // THROUGH the match job, where `applyLibraryDuplicate` computes the real
+          // 3-way verdict (same → flag owned; review → reviewReason; different →
+          // keep-both). Owned-book protection is preserved by the post-match and
+          // confirm-time `findDuplicate`, both of which run once narrators exist.
+          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Possible title+author match — deferring recording verdict to match job');
           discoveries.push(buildDiscoveredBook(
             folder.path, parsed, folder.audioFileCount, folder.totalSize,
-            { isDuplicate: true, existingBookId: existingTitleAuthorMap.get(key), duplicateReason: 'slug', reviewReason },
+            { isDuplicate: false, existingBookId: existingTitleAuthorMap.get(key), reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT },
           ));
           continue;
         }
@@ -297,7 +332,7 @@ export class LibraryScanService {
     };
   }
 
-  async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{ accepted: number }> {
+  async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{ accepted: number; heldReview: HeldReviewItem[] }> {
     const { nudgeImportWorker } = this.wired.require();
     return confirmImportHelper(items, this.importDeps, mode, nudgeImportWorker);
   }

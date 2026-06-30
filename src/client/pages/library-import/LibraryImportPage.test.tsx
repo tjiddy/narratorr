@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, act } from '@testing-library/react';
+import { screen, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibraryImportPage } from './LibraryImportPage';
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -532,7 +532,7 @@ describe('LibraryImportPage (#133)', () => {
     it('edited metadata persists through import confirm call', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.confirmImport!.mockResolvedValue({ accepted: 1 });
+      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [] });
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Match Title', authors: [{ name: 'Match Author' }], asin: 'ASIN1', coverUrl: 'http://cover.jpg' }, alternatives: [] }],
@@ -585,6 +585,61 @@ describe('LibraryImportPage (#133)', () => {
         expect(mockApi.confirmImport).toHaveBeenCalledWith(
           expect.arrayContaining([
             expect.objectContaining({ title: 'Custom Title' }),
+          ]),
+          undefined,
+        );
+      });
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe('held-review panel (#1711)', () => {
+    it('renders held items and re-confirms them with forceImport=true', async () => {
+      // Fake only the match-poll interval (mirrors the other import-flow tests) so the
+      // poll doesn't churn rows while userEvent (real setTimeout) drives the click.
+      // Fake only the match-poll interval (mirrors the other import-flow tests).
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      mockApi.scanDirectory!.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/A/B1', parsedTitle: 'Held Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        ],
+        totalFolders: 1,
+      });
+      // Match completes high-confidence so the Import button is enabled (no pending matches).
+      mockApi.getMatchJob!.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Held Book', authors: [{ name: 'Author' }], asin: 'ASIN1' }, alternatives: [] }],
+      });
+      mockApi.confirmImport!.mockResolvedValueOnce({
+        accepted: 0,
+        heldReview: [{ path: '/audiobooks/A/B1', title: 'Held Book', reason: 'recording-review-required', existingBookId: 7 }],
+      });
+
+      renderWithProviders(<LibraryImportPage />);
+      await waitFor(() => expect(screen.getByText('Held Book')).toBeInTheDocument());
+
+      // Advance the poll so the match merges and the Import button enables.
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await waitFor(() => expect(screen.getByRole('button', { name: /import 1 book/i })).toBeEnabled());
+
+      await user.click(screen.getByRole('button', { name: /import 1 book/i }));
+
+      // The held-review panel renders the held item list and a re-confirm button.
+      const panel = await screen.findByTestId('held-review-panel');
+      expect(within(panel).getByText('Held Book')).toBeInTheDocument();
+      const reconfirmBtn = within(panel).getByRole('button', { name: /re-confirm and import/i });
+
+      // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
+      mockApi.confirmImport!.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      await user.click(reconfirmBtn);
+
+      await waitFor(() => {
+        expect(mockApi.confirmImport).toHaveBeenLastCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({ path: '/audiobooks/A/B1', forceImport: true }),
           ]),
           undefined,
         );
@@ -783,7 +838,7 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('Import button enabled after poll resolves with completed job', async () => {
-      mockApi.confirmImport!.mockResolvedValue({ accepted: 1 });
+      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [] });
       // Completed match job — return a high-confidence result so the row is no longer pending.
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
