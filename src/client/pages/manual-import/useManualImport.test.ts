@@ -15,6 +15,7 @@ vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
@@ -452,6 +453,32 @@ describe('useManualImport', () => {
     expect(mode).toBe('copy');
 
     expect(toast.success).toHaveBeenCalledWith('2 books queued for import');
+    expect(mockNavigate).toHaveBeenCalledWith('/library');
+  });
+
+  it('warns when the server returns held-review items, and still navigates on success (#1711 F3)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 1,
+      heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+    });
+
+    const { result } = renderHook(() => useManualImport(), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+    // Held items are surfaced via a warning toast and not silently dropped...
+    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review — re-confirm from Library Import');
+    // ...and the existing success toast + navigation behavior is preserved.
+    expect(toast.success).toHaveBeenCalledWith('1 book queued for import');
     expect(mockNavigate).toHaveBeenCalledWith('/library');
   });
 
