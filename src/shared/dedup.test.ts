@@ -45,6 +45,25 @@ describe('matchesLibraryIdentity', () => {
     expect(matchesLibraryIdentity({ title: 'Different', asin: 'b01g9epere' }, owned)).toBe(true);
   });
 
+  // #1726 — the ASIN arm is canonicalized (trim + UPPERCASE via the shared
+  // `canonicalizeAsin`) so all three homes share one ASIN contract. A padded/case-
+  // drifted candidate folds to the stored canonical form and still matches.
+  it('matches a whitespace-padded, case-drifted ASIN via canonicalizeAsin (#1726)', () => {
+    expect(matchesLibraryIdentity({ title: 'Different', asin: '  b01g9epere  ' }, owned)).toBe(true);
+  });
+
+  it('folds a whitespace-only ASIN to "no ASIN" and falls through to the title/author ladder (#1726)', () => {
+    // The blank ASIN must not match on the ASIN arm; the title/author ladder decides.
+    expect(matchesLibraryIdentity(
+      { title: 'Tehanu: a subtitle', asin: '   ', authorName: 'Ursula K. Le Guin' },
+      owned,
+    )).toBe(true); // falls through → title+author match
+    expect(matchesLibraryIdentity(
+      { title: 'Brand New Book', asin: '   ', authorName: 'New Author' },
+      owned,
+    )).toBe(false); // falls through → no title/author match, blank ASIN never matched
+  });
+
   it('ASIN takes precedence over title/author', () => {
     expect(matchesLibraryIdentity(
       { title: 'Completely Other', asin: 'B01G9EPERE', authorName: 'Someone Else' },

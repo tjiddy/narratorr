@@ -252,23 +252,43 @@ describe('resolveRecordingIdentity (#1710)', () => {
     )).toBe('different-recording');
   });
 
-  describe('author-less records never pass the author scope (#1722)', () => {
-    it('both author-less with normalize-equal titles → different-recording (equal narrators)', () => {
-      // Equal narrators would resolve same-recording if the empty-slug pair passed the scope.
+  describe('author-less scope aligns with matchesLibraryIdentity (#1726)', () => {
+    it('both author-less with byte-identical titles ENTER scope → driven by narrator (equal → same-recording)', () => {
+      // The bug fix (#1726): an exact-title author-less pair now passes the scope gate
+      // and is adjudicated on narrator/duration. Equal narrators with no duration → same-recording.
+      // Pre-#1726 (the #1722 over-correction) this returned different-recording at the gate.
       expect(verdictOf(
-        candidate({ title: 'The Stranger', authors: [], narrators: ['X'] }),
-        library({ title: 'The Stranger', primaryAuthorSlug: '', narrators: ['X'] }),
+        candidate({ title: 'Tehanu', authors: [], narrators: ['X'] }),
+        library({ title: 'Tehanu', primaryAuthorSlug: '', narrators: ['X'] }),
+      )).toBe('same-recording');
+    });
+
+    it('both author-less, exact title, not-equal narrators → different-recording (gate passed, narrator separates)', () => {
+      // Proves the gate was PASSED (not short-circuited): the verdict is driven by the
+      // narrator predicate, not the scope-gate different-recording.
+      expect(verdictOf(
+        candidate({ title: 'Tehanu', authors: [], narrators: ['Kate Reading', 'Michael Kramer'] }),
+        library({ title: 'Tehanu', primaryAuthorSlug: '', narrators: ['Kate Reading'] }),
       )).toBe('different-recording');
     });
 
-    it('author-less candidate vs authored entry → different-recording', () => {
+    it('both author-less, subtitle drift (raw titles differ) → different-recording (not scoped together)', () => {
+      // Author-less arm gates on RAW title equality, not normalizeTitleForDedup, so a
+      // parenthetical/subtitle never collapses two author-less rows.
+      expect(verdictOf(
+        candidate({ title: 'Dune (Unabridged)', authors: [], narrators: ['X'] }),
+        library({ title: 'Dune', primaryAuthorSlug: '', narrators: ['X'] }),
+      )).toBe('different-recording');
+    });
+
+    it('author-less candidate vs authored entry → different-recording (one-sided, no regression)', () => {
       expect(verdictOf(
         candidate({ title: 'The Stranger', authors: [], narrators: ['X'] }),
         library({ title: 'The Stranger', primaryAuthorSlug: 'author-one', narrators: ['X'] }),
       )).toBe('different-recording');
     });
 
-    it('authored candidate vs author-less entry → different-recording', () => {
+    it('authored candidate vs author-less entry → different-recording (one-sided, no regression)', () => {
       expect(verdictOf(
         candidate({ title: 'The Stranger', authors: ['Author One'], narrators: ['X'] }),
         library({ title: 'The Stranger', primaryAuthorSlug: '', narrators: ['X'] }),

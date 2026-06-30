@@ -19,9 +19,8 @@
  */
 
 import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './similarity.js';
-import { normalizeTitleForDedup } from '../../shared/dedup.js';
+import { matchesLibraryIdentity } from '../../shared/dedup.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
-import { slugify } from '../../shared/utils.js';
 import type { RecordingVerdict, RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
 
 /**
@@ -230,13 +229,15 @@ function corroborateWithDuration(candidate: RecordingCandidate, library: Library
  *  1. ASIN equal (canonical form, both present) → `same-recording`. The ONLY
  *     ASIN-based conclusion — a *different* ASIN does NOT short-circuit (Tehanu is
  *     a different Audible ASIN of the same recording), it defers to narrator.
- *  2. else scope by normalized title (`normalizeTitleForDedup`) + primary-author
- *     slug. No match → step 4.
+ *  2. else delegate the bibliographic-scope gate to the canonical
+ *     `matchesLibraryIdentity` (#1726): normalized title + primary-author slug for
+ *     authored rows, raw exact-title for author-less rows on BOTH sides. No scope →
+ *     step 4.
  *  3. narrator predicate over the two sets:
  *       not-equal (incl. superset/subset) → `different-recording`;
  *       no-signal → `review`;
  *       equal → duration corroborator → `same-recording` or `review`.
- *  4. no title+author match → `different-recording` (new).
+ *  4. not in scope → `different-recording` (new).
  */
 export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: LibraryRecording): RecordingIdentityResult {
   // (1) ASIN equal — the only ASIN-based conclusion. Both sides are reduced to the
@@ -244,21 +245,27 @@ export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: L
   // so a padded/case-drifted pre-write candidate (`' B01ABC '`) still matches a
   // stored canonical ASIN. `canonicalizeAsin` folds blank/whitespace to null, so a
   // one-sided or empty ASIN can never satisfy the both-present guard and falls
-  // through to the title/author + narrator path (#1729). The earlier
-  // `gatherIncumbentIds` site canonicalizes identically so the two never drift.
+  // through to the scope + narrator path (#1729). The earlier `gatherIncumbentIds`
+  // site canonicalizes identically so the two never drift.
   const candidateAsin = canonicalizeAsin(candidate.asin);
   const entryAsin = canonicalizeAsin(entry.asin);
   if (candidateAsin && entryAsin && candidateAsin === entryAsin) {
     return { verdict: 'same-recording' };
   }
 
-  // (2) title + primary-author slug scope. A different ASIN falls through here.
-  // An empty slug (author-less candidate) never matches — mirrors the both-slugs-required
-  // guard in matchesLibraryIdentity so two author-less records can't share a scope (#1722).
-  const candidateSlug = slugify(candidate.authors[0] ?? '');
-  const titleMatch = normalizeTitleForDedup(candidate.title) === normalizeTitleForDedup(entry.title);
-  if (!titleMatch || !candidateSlug || candidateSlug !== entry.primaryAuthorSlug) {
-    // (4) no title+author match → different recording.
+  // (2) bibliographic-scope gate — delegate to the canonical `matchesLibraryIdentity`
+  // so the resolver, `matchesLibraryIdentity`, and the `gatherIncumbentIds` predicate
+  // share ONE scope contract and cannot drift (#1726). This covers the authored arm
+  // (normalized title + position-0 author slug) AND the author-less arm (both sides
+  // author-less → raw exact-title equality); a one-sided author-less pair is not in
+  // scope. The ASIN-equal case is already resolved above, so a different/missing ASIN
+  // simply falls through `matchesLibraryIdentity`'s ASIN arm to its title/author ladder.
+  const inScope = matchesLibraryIdentity(
+    { title: candidate.title, asin: candidate.asin, authorName: candidate.authors[0] },
+    { title: entry.title, asin: entry.asin, authorSlug: entry.primaryAuthorSlug },
+  );
+  if (!inScope) {
+    // (4) not in scope → different recording.
     return { verdict: 'different-recording' };
   }
 
