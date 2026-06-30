@@ -28,6 +28,7 @@ import {
 // Re-export the dedup primitives so callers keep importing them from this service.
 export {
   OwnedRecordingError,
+  buildForcedImportRefusedReason,
   type DuplicateCandidate,
   type DuplicateResolution,
   type DuplicateVerdict,

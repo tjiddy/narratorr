@@ -15,6 +15,9 @@ import { safeEmit } from '../utils/safe-emit.js';
 import { sweepCommitPendingMarkers } from '../utils/import-staging.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import { OwnedRecordingError } from './book.service.js';
+import type { EventHistoryService } from './event-history.service.js';
+import { finalizeForcedImportRefusal } from '../utils/import-refused.js';
 
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
@@ -25,6 +28,7 @@ export class ImportQueueWorker {
   private readonly log: FastifyBaseLogger;
   private readonly broadcaster: EventBroadcasterService | null;
   private readonly getLibraryRoot: (() => Promise<string | null | undefined>) | null;
+  private readonly eventHistory: EventHistoryService | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
@@ -37,17 +41,25 @@ export class ImportQueueWorker {
    * `getLibraryRoot` resolves the configured library root for the boot-time stranded-marker
    * sweep (#1338). Injected (rather than holding a `SettingsService`) to keep the worker's
    * dependency surface minimal; omitted in unit tests that don't exercise the sweep.
+   *
+   * `eventHistory` is used only by the forced-import-refused terminal disposition (#1736) to
+   * record the enriched `import_failed` event when the copy-time fence refuses a forced import.
+   * Optional (omitted in unit tests that don't exercise that branch); when absent the refusal
+   * still finalizes the job, deletes the placeholder, and emits the enriched SSE — only the
+   * durable event row is skipped (best-effort, matching the broadcaster contract).
    */
   constructor(
     db: Db,
     log: FastifyBaseLogger,
     broadcaster?: EventBroadcasterService,
     getLibraryRoot?: () => Promise<string | null | undefined>,
+    eventHistory?: EventHistoryService,
   ) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });
     this.broadcaster = broadcaster ?? null;
     this.getLibraryRoot = getLibraryRoot ?? null;
+    this.eventHistory = eventHistory ?? null;
   }
 
   /** Nudge the worker to check for new pending jobs. */
@@ -405,6 +417,22 @@ export class ImportQueueWorker {
         }
       }
       const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1]!.phase : 'queued';
+      // Forced-import refusal (#1736): a forced import that confirm-time honored but the copy-time
+      // collision fence refused (never-overwrite) surfaces a DISTINCT terminal disposition instead
+      // of the opaque generic failure path — branch BEFORE markJobFailed. The placeholder book row
+      // is deleted (not left in `importing`/`failed` limbo) and the failure carries a structured
+      // `forced-import-refused` reason so the user can see force was refused and why.
+      //
+      // Gated to FORCED imports (F1): the copy-time fence is force-independent, so a non-forced
+      // import can also throw `OwnedRecordingError`. That was never user-forced, so it is an ordinary
+      // generic failure (markJobFailed below) — labeling it `forced-import-refused` would be wrong.
+      if (error instanceof OwnedRecordingError && this.isForcedImport(job)) {
+        await finalizeForcedImportRefusal(
+          { db: this.db, broadcaster: this.broadcaster, eventHistory: this.eventHistory, log: this.log },
+          { jobId, bookId, currentPhase, bookTitle, error, phaseHistory },
+        );
+        return;
+      }
       await this.markJobFailed(jobId, bookId, currentPhase, bookTitle, JSON.stringify(serializeError(error)), phaseHistory);
     }
   }
@@ -494,6 +522,25 @@ export class ImportQueueWorker {
 
     const result = manualImportJobPayloadSchema.safeParse(parsed);
     return result.success ? result.data.title : 'Unknown';
+  }
+
+  /**
+   * True only for a `manual` job whose payload set `forceImport: true`. The forced-import-refused
+   * terminal disposition (#1736) is scoped to forced imports — a NON-forced copy-time
+   * `OwnedRecordingError` (the on-disk collision fence is force-independent and reachable without
+   * force) is an ordinary generic failure, not a "force refused" event, so it must NOT be mislabeled
+   * (F1). Non-manual jobs and unparseable/non-forced payloads return false. Never throws.
+   */
+  private isForcedImport(job: ImportJobRow): boolean {
+    if (job.type !== 'manual') return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(job.metadata);
+    } catch {
+      return false;
+    }
+    const result = manualImportJobPayloadSchema.safeParse(parsed);
+    return result.success && result.data.forceImport === true;
   }
 
   /** Create a throttled progress emitter for a specific job. */
