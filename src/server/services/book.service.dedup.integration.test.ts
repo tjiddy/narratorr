@@ -107,6 +107,79 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     expect(res.hasIncumbent).toBe(false);
   });
 
+  // ─── Resolver-boundary coverage over real hydrated rows (#1729) ───
+  describe('resolver boundaries (DB-backed, #1729)', () => {
+    it('single-sided ASIN: null-ASIN incumbent, ASIN-bearing candidate, equal narrator → same-recording', async () => {
+      // Incumbent has no ASIN, so the ASIN gather branch cannot find it — it is
+      // gathered via title/author, and the resolver's both-present ASIN guard is
+      // not satisfied, so the verdict comes from the title/author/narrator path.
+      const id = await seed({ title: 'Single Sided', author: 'Author X', narrators: ['Jim Dale'] });
+      const res = await service.findDuplicate({
+        title: 'Single Sided', authors: [{ name: 'Author X' }], narrators: ['Jim Dale'], asin: 'B0SINGLE01',
+      });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.book?.id).toBe(id);
+      expect(res.hasIncumbent).toBe(true);
+    });
+
+    it('padded candidate ASIN, ISOLATED to the gather path → same-recording (canonicalize, #1729 gap b)', async () => {
+      // Incumbent's title/author are deliberately DIFFERENT from the candidate's, so
+      // the title/author gather branch (and the resolver's title/author scope) cannot
+      // match — the ASIN gather branch is the ONLY way the incumbent can be found.
+      // This passes ONLY if `gatherIncumbentIds` canonicalizes the padded candidate
+      // (so the incumbent is gathered) AND the resolver's ASIN short-circuit
+      // canonicalizes (so it returns same-recording). A non-trimming gather → no
+      // incumbent → different-recording, so this fixture cannot go falsely green via
+      // a title/author fallback.
+      const id = await seed({ title: 'Gather Only Title', author: 'Gather Author', narrators: ['Reader A'], asin: 'B0PADTEST1' });
+      const res = await service.findDuplicate({
+        title: 'Totally Different', authors: [{ name: 'Other Author' }], narrators: ['Reader B'], asin: ' b0padtest1 ',
+      });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.book?.id).toBe(id);
+      expect(res.hasIncumbent).toBe(true);
+    });
+
+    it('exact 15% duration boundary over equal narrators → same-recording (inclusive)', async () => {
+      // Library 36000, candidate 30600 → distance == 0.15, inclusive edge.
+      const id = await seed({ title: 'Boundary Book', author: 'Dur Author', narrators: ['Jim Dale'], duration: 36000 });
+      const res = await service.findDuplicate({
+        title: 'Boundary Book', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 30600,
+      });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.book?.id).toBe(id);
+    });
+
+    it('one tick beyond the 15% duration boundary over equal narrators → review', async () => {
+      // Library 36000, candidate 30599 → distance > 0.15, downgrades an equal-narrator
+      // match to review over real hydrated rows.
+      const id = await seed({ title: 'Beyond Boundary', author: 'Dur Author', narrators: ['Jim Dale'], duration: 36000 });
+      const res = await service.findDuplicate({
+        title: 'Beyond Boundary', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 30599,
+      });
+      expect(res.verdict).toBe('review');
+      expect(res.book?.id).toBe(id);
+      expect(res.hasIncumbent).toBe(true);
+    });
+
+    it('author-less candidate with a whitespace-only ASIN still gathers the author-less title-only incumbent (#1729 F1)', async () => {
+      // The author-less title-only gather guard (book-dedup.ts branch 3) keys off
+      // `!canonicalAsin`, not raw `!candidate.asin`. `canonicalizeAsin('   ')` → null,
+      // so a candidate with no authors and a whitespace-only ASIN enters branch (3)
+      // and gathers the author-less incumbent. Reverting the guard to `!candidate.asin`
+      // would treat '   ' as present, SKIP branch (3), gather nothing, and report
+      // `hasIncumbent: false` — so the hasIncumbent assertion is the load-bearing pin.
+      await seed({ title: 'Author Less Title' }); // no author, no ASIN
+      const res = await service.findDuplicate({ title: 'Author Less Title', asin: '   ' });
+      // Incumbent WAS gathered via the author-less title-only branch.
+      expect(res.hasIncumbent).toBe(true);
+      // An author-less candidate never passes the resolver's author scope (#1722),
+      // so the gathered incumbent resolves to different-recording, book null.
+      expect(res.verdict).toBe('different-recording');
+      expect(res.book).toBeNull();
+    });
+  });
+
   describe('multi-incumbent precedence (order-independent)', () => {
     it('any same-recording wins as owned when a different-recording row was seeded first', async () => {
       // Seed the different-recording first, the same-recording second.
