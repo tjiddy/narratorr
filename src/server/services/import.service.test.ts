@@ -450,6 +450,32 @@ describe('ImportService', () => {
         expect.any(Object),
         expect.any(String),
         expect.objectContaining({ separator: 'period', case: 'upper' }),
+        null, // #1712 — stored edition_label (null for this book) threaded as the 6th arg
+      );
+    });
+
+    it('passes the stored edition label into buildTargetPath as the 6th arg (#1712 F1)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title} ({edition})', fileFormat: '', namingSeparator: 'space', namingCase: 'default' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+      mockBookService.getById.mockResolvedValueOnce(withAuthor({ ...mockBook, editionLabel: 'Full Cast' }));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(buildTargetPath).toHaveBeenCalledWith(
+        '/audiobooks',
+        '{author}/{title} ({edition})',
+        expect.any(Object),
+        expect.any(String),
+        expect.any(Object),
+        'Full Cast',
       );
     });
 

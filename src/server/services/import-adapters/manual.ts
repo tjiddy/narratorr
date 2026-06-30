@@ -11,6 +11,7 @@ import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAud
 import { reconstructDiscGroup } from '../../utils/import-helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
 import type { RenameableBook } from '../../utils/paths.js';
+import type { BookWithAuthor } from '../book.service.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
@@ -18,6 +19,27 @@ import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { fireAndForget } from '../../utils/fire-and-forget.js';
 import { writeOpfForImport } from '../../utils/opf-writer.js';
+
+/**
+ * Build the {@link RenameableBook} for the file-rename step, preferring the hydrated
+ * full book (which carries ordered narrators + the stored `edition_label`, #1712) and
+ * falling back to the job's `bookRow` for the fields it has. Extracted to keep
+ * `renameIfConfigured` under the complexity cap.
+ */
+function buildRenameableBook(
+  fullBook: BookWithAuthor | null,
+  bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
+): RenameableBook {
+  return {
+    title: fullBook?.title ?? bookRow.title,
+    seriesName: fullBook?.seriesName ?? bookRow.seriesName,
+    seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
+    narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
+    publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
+    // Stored edition_label (#1712) — sourced from the hydrated book so {edition} renders end-to-end.
+    editionLabel: fullBook?.editionLabel ?? null,
+  };
+}
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
   let parsedJson: unknown;
@@ -207,13 +229,7 @@ export class ManualImportAdapter implements ImportAdapter {
 
     await ctx.setPhase('renaming');
     const fullBook = await this.deps.bookService.getById(bookId);
-    const renameableBook: RenameableBook = {
-      title: fullBook?.title ?? bookRow.title,
-      seriesName: fullBook?.seriesName ?? bookRow.seriesName,
-      seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
-      narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
-      publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
-    };
+    const renameableBook = buildRenameableBook(fullBook, bookRow);
     const namingOptions = toNamingOptions(librarySettings);
     await renameFilesWithTemplate(
       finalPath,
