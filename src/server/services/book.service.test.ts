@@ -1638,6 +1638,30 @@ describe('BookService — transaction atomicity (#214)', () => {
       }));
     });
 
+    // #1721 — a transient post-write reload failure must not drop the route's connector refresh.
+    // uploadCover falls back to the pre-write `book` so it always resolves { book, coverOutcome }
+    // (never throws on a reload miss) and the coverOutcome stays 'written' (the cover.* file committed).
+    it("falls back to the pre-write book and keeps coverOutcome 'written' when the post-write reload fails", async () => {
+      vi.mocked(writeFile).mockReset();
+      vi.mocked(rename).mockReset();
+      vi.mocked(readdir).mockReset();
+      vi.mocked(unlink).mockReset();
+      const preWriteBook = createMockDbBook({ id: 1, path: '/library/book', coverUrl: null });
+      const getByIdSpy = vi.spyOn(service, 'getById')
+        .mockResolvedValueOnce(preWriteBook as Awaited<ReturnType<BookService['getById']>>) // initial existence/path check
+        .mockRejectedValueOnce(new Error('libSQL read failed')); // post-write reload throws
+      (writeFile as Mock).mockResolvedValue(undefined);
+      (rename as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValue([]);
+      db.update.mockReturnValue(mockDbChain([preWriteBook]));
+
+      const result = await service.uploadCover(1, testBuffer, 'image/jpeg');
+
+      expect(result.coverOutcome).toBe('written');
+      expect(result.book).toBe(preWriteBook);
+      getByIdSpy.mockRestore();
+    });
+
     it('throws CoverUploadError with NO_PATH when book has no path', async () => {
       (writeFile as Mock).mockClear();
       setupUploadMocks(null);

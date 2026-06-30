@@ -11,9 +11,9 @@ import type { SettingsService } from '../services/settings.service.js';
 
 /**
  * Real-fs coverage for the #1670 foreign-file preservation invariant. The route tests
- * (`books.test.ts`) mock `writeOpfForImport`, so they prove the route *calls* the writer but never
+ * (`books.test.ts`) mock `writeOpfSidecar`, so they prove the route *calls* the writer but never
  * that a foreign `metadata.opf` actually survives the route→writer path against a real filesystem.
- * These exercise `refreshOpfForBook` + `writeOpfForImport` end-to-end with real I/O. Mirrors the
+ * These exercise `refreshOpfForBook` + `writeOpfSidecar` end-to-end with real I/O. Mirrors the
  * temp-dir lifecycle in `delete-managed-files.test.ts`.
  */
 

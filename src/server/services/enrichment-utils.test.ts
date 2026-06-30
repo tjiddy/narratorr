@@ -473,7 +473,7 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
 });
 
 vi.mock('./cover-download.js', () => ({
-  downloadRemoteCover: vi.fn().mockResolvedValue(true),
+  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
   isRemoteCoverUrl: vi.fn((url: string | null | undefined) => {
     if (!url) return false;
     return url.startsWith('http://') || url.startsWith('https://');

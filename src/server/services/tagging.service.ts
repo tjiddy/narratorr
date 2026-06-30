@@ -7,6 +7,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
+import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 // Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
@@ -66,6 +67,13 @@ export interface RetagResult {
   skipped: number;
   failed: number;
   warnings: string[];
+  /**
+   * Connector-refresh item built from the book's pre-tag-write state (title/author/path loaded
+   * before the irreversible in-place tag rewrite), so the caller can fire the `'metadata'` refresh
+   * without a post-mutation reload that could silently drop it. `null` only when there's no usable
+   * `libraryPath` (empty/missing) — see {@link enqueueRetagRefresh}.
+   */
+  refreshItem: BookRefreshItem | null;
 }
 
 /** String tag field → ffmpeg `-metadata` key. Numeric `seriesPart`/`track` are handled separately. */
@@ -264,7 +272,13 @@ export class TaggingService {
     embedCover: boolean,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
   ): Promise<RetagResult> {
-    const result: RetagResult = { bookId, tagged: 0, skipped: 0, failed: 0, warnings: [] };
+    // Build the refresh item from the pre-write state passed in (title/author/path) so a re-tag
+    // caller fires the connector refresh without a post-mutation reload. Guard the path truthiness
+    // (empty string → no item) rather than asserting it non-null.
+    const refreshItem: BookRefreshItem | null = bookPath
+      ? { bookId, title: metadata.title, authorName: metadata.authorName ?? null, libraryPath: bookPath }
+      : null;
+    const result: RetagResult = { bookId, tagged: 0, skipped: 0, failed: 0, warnings: [], refreshItem };
 
     const audioFiles = await collectAudioFiles(bookPath);
 

@@ -53,7 +53,7 @@ import {
 import { registerFixMatchRoute } from './books-fix-match.js';
 import { registerSeriesRoutes } from './books-series.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
-import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
+import { enqueueBookRefresh, enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
@@ -405,20 +405,17 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const result = await taggingService.retagBook(id, excludeFields, pickRetagOverrides(request.body ?? undefined));
 
       // A re-tag rewrites embedded audio tags in place (new inode, same path) — fire a 'metadata'
-      // refresh when ≥1 file was tagged so ABS/Plex re-reads the changed files. RetagResult carries
-      // only counts, so reload the book to build the refresh item; all-skipped → none. Best-effort:
-      // a reload failure is swallowed (`.catch`) so it can never fail the successful re-tag response.
-      if (result.tagged > 0) {
-        const book = await bookService.getById(id).catch(() => null);
-        if (book?.path) {
-          enqueueBookRefresh(deps.connectorService, request.log, 'metadata', {
-            bookId: id, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path,
-          });
-        }
-      }
+      // refresh when ≥1 file was tagged so ABS/Plex re-reads the changed files. The refresh item is
+      // built from `RetagResult.refreshItem` (loaded before the tag write), so a post-re-tag reload
+      // failure can't drop it. Single home shared with the bulk re-tag job (bulk-operation.service.ts).
+      enqueueRetagRefresh(deps.connectorService, request.log, result);
 
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
-      return result;
+      // `refreshItem` is internal enqueue state (carries the absolute on-disk `libraryPath`) — strip it
+      // so the public response stays the counts/warnings shape the client `RetagResult` expects and the
+      // filesystem path never leaks to the API.
+      const { refreshItem: _refreshItem, ...response } = result;
+      return response;
     },
   );
 
