@@ -19,10 +19,15 @@ export const RECORDING_REVIEW_REASON =
  * a different recording, or needs review — `bestMatch` carries the narrators +
  * duration the resolver needs (a no-author filename does not):
  *
- *  - `same-recording` → flag `isDuplicate=true, duplicateReason='slug'` (owned).
+ *  - `same-recording` → flag `isDuplicate=true, duplicateReason='slug'` (owned),
+ *    plus `recordingVerdict:'same-recording'`.
  *  - `review`/no-signal → set the display-only `reviewReason` (NOT a hard
- *    `isDuplicate`) so the UI surfaces it but the row still flows.
- *  - `different-recording` → not a duplicate, return unchanged (keep-both).
+ *    `isDuplicate`) so the UI surfaces it but the row still flows, plus
+ *    `recordingVerdict:'review'`.
+ *  - `different-recording` WITH an incumbent → `recordingVerdict:'different-recording'`
+ *    (a deliberate new recording of an owned title); not a duplicate, row stays selected.
+ *  - `different-recording` WITHOUT an incumbent → a genuinely new book; left unflagged
+ *    (no verdict, no badge).
  *
  * A failed lookup is non-fatal: the match still returns, just without a flag.
  */
@@ -45,7 +50,7 @@ export async function applyLibraryDuplicate(
         { path: result.path, existingBookId: resolution.book.id, title: result.bestMatch.title },
         'Post-match library duplicate detected (same recording)',
       );
-      return { ...result, isDuplicate: true, existingBookId: resolution.book.id, duplicateReason: 'slug' };
+      return { ...result, isDuplicate: true, existingBookId: resolution.book.id, duplicateReason: 'slug', recordingVerdict: 'same-recording' };
     }
     if (resolution.verdict === 'review') {
       log.debug(
@@ -55,8 +60,18 @@ export async function applyLibraryDuplicate(
       return {
         ...result,
         reviewReason: RECORDING_REVIEW_REASON,
+        recordingVerdict: 'review',
         ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
       };
+    }
+    // `different-recording` WITH an incumbent → a new recording of an owned title.
+    // A different-recording with NO incumbent is a genuinely new book — left unflagged.
+    if (resolution.verdict === 'different-recording' && resolution.hasIncumbent) {
+      log.debug(
+        { path: result.path, title: result.bestMatch.title },
+        'Post-match: new recording of an owned title (different recording)',
+      );
+      return { ...result, recordingVerdict: 'different-recording' };
     }
   } catch (error: unknown) {
     log.warn({ error: serializeError(error), path: result.path }, 'Post-match duplicate check failed — proceeding without flag');

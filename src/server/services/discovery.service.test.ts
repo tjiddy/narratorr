@@ -34,7 +34,7 @@ const mockMetadataService = {
 };
 
 const mockBookService = {
-  findDuplicate: vi.fn().mockResolvedValue(null),
+  findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false }),
   create: vi.fn().mockResolvedValue({ id: 1, title: 'Test', status: 'wanted' }),
 };
 
@@ -103,7 +103,7 @@ function makeBookRow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
-  mockBookService.findDuplicate.mockResolvedValue(null);
+  mockBookService.findDuplicate.mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false });
   mockBookService.create.mockResolvedValue({ id: 1, title: 'Test', status: 'wanted' });
 });
 

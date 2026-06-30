@@ -16,6 +16,8 @@ export interface FolderTargetRow {
   seriesPosition?: number | null | undefined;
   narrators?: Array<{ name: string }> | null | undefined;
   publishedDate?: string | null | undefined;
+  /** Stored edition_label (#1712) — feeds the `{edition}` token + mandatory collision suffix. */
+  editionLabel?: string | null | undefined;
 }
 
 export interface LibraryFolderSettings {
@@ -37,7 +39,7 @@ export function computeFolderTarget(
   library: LibraryFolderSettings,
   namingOptions: NamingOptions,
 ): { targetPath: string; changed: boolean } {
-  const targetPath = buildTargetPath(library.path, library.folderFormat, row, authorName, namingOptions);
+  const targetPath = buildTargetPath(library.path, library.folderFormat, row, authorName, namingOptions, row.editionLabel);
   const normalizedCurrent = normalize(resolve(row.path.split('\\').join('/')));
   const normalizedTarget = normalize(resolve(targetPath));
   return { targetPath, changed: normalizedCurrent !== normalizedTarget };

@@ -33,6 +33,13 @@ export const discoveredBookSchema = z.object({
    * swept into a chapter book). Display-only — does not block import.
    */
   reviewReason: z.string().optional(),
+  /**
+   * Recording-identity verdict for a library hit (#1712), threaded from the match
+   * job onto the row via `mergeMatchIntoRow`. Drives the three-way import-review
+   * badge in `ImportCard` (Already owned / New version of an owned title / Possible
+   * duplicate). Absent for a genuinely new book and for scan-time DB duplicates.
+   */
+  recordingVerdict: z.enum(['same-recording', 'different-recording', 'review']).optional(),
 });
 
 export type DiscoveredBook = z.infer<typeof discoveredBookSchema>;

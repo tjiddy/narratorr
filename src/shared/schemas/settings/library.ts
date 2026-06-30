@@ -75,7 +75,8 @@ export function validateTokens(val: string, allowed: readonly string[]): boolean
 }
 
 export const FOLDER_TITLE_MSG = 'Template must include {title} or {titleSort}';
-export const FOLDER_TOKEN_MSG = 'Unknown token in template. Allowed: {author}, {authorLastFirst}, {title}, {titleSort}, {series}, {seriesPosition}, {year}, {narrator}, {narratorLastFirst}';
+/** Derived from FOLDER_ALLOWED_TOKENS so the copy can never drift from the allow-list (#1712). */
+export const FOLDER_TOKEN_MSG = `Unknown token in template. Allowed: ${FOLDER_ALLOWED_TOKENS.map((t) => `{${t}}`).join(', ')}`;
 export const FILE_TITLE_MSG = FOLDER_TITLE_MSG;
 export const FILE_TOKEN_MSG = 'Unknown token in template. Allowed: {author}, {title}, {trackNumber}, {trackTotal}, {partName}, and more';
 export const AUTHOR_ADVISORY_MSG = 'Consider including {author} for better organization';

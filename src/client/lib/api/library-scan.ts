@@ -64,6 +64,12 @@ export interface MatchResult {
    * UI surfaces "possible different recording" without hard-skipping the row.
    */
   reviewReason?: string;
+  /**
+   * Recording-identity verdict for a library hit (#1712). Mirrors the server
+   * `MatchResult`. `mergeMatchIntoRow` propagates it onto `row.book.recordingVerdict`
+   * so `ImportCard` renders the three-way duplicate badge.
+   */
+  recordingVerdict?: 'same-recording' | 'different-recording' | 'review';
 }
 
 export interface MatchJobStatus {

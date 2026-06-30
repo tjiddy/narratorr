@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizePath, renderTemplate, renderFilename, parseTemplate, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
+import { sanitizePath, renderTemplate, renderFilename, parseTemplate, templateHasToken, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
 
 describe('sanitizePath', () => {
   it('removes illegal filesystem characters', () => {
@@ -197,6 +197,45 @@ describe('renderTemplate', () => {
       expect(result).not.toContain('//');
     });
   });
+
+  // #1712 — the {edition} token renders the stored edition_label. Drive through the
+  // real renderTemplate/stripEmptyWrappers path (not a unit on the renderer internals).
+  describe('{edition} token (#1712)', () => {
+    it('renders the label when the token input is a non-empty string', () => {
+      const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' });
+      expect(result).toBe('Dark Matter (Full Cast)');
+    });
+
+    it('renders empty and strips the empty `( )` wrapper when the input is null', () => {
+      const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: null });
+      expect(result).toBe('Dark Matter');
+      // No leftover separators/brackets from the stripped empty token.
+      expect(result).not.toContain('(');
+      expect(result).not.toContain(')');
+    });
+
+    it('keeps the `( )` wrapper when the label is present', () => {
+      const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' });
+      expect(result).toBe('Dark Matter (Full Cast)');
+    });
+
+    it('a template with no {edition} renders byte-identically with or without an edition value', () => {
+      const withVal = renderTemplate('{author}/{series}/{title}', { ...sampleTokens, edition: 'Full Cast' });
+      const without = renderTemplate('{author}/{series}/{title}', sampleTokens);
+      expect(withVal).toBe(without);
+    });
+  });
+});
+
+describe('templateHasToken (#1712)', () => {
+  it('detects the {edition} token in folder and file templates', () => {
+    expect(templateHasToken('{title} ({edition})', 'edition')).toBe(true);
+    expect(templateHasToken('{author}/{title}', 'edition')).toBe(false);
+  });
+
+  it('detects a token used only as a conditional suffix', () => {
+    expect(templateHasToken('{title}{edition? (}{edition}{edition?)}', 'edition')).toBe(true);
+  });
 });
 
 describe('parseTemplate', () => {
@@ -358,6 +397,11 @@ describe('FOLDER_ALLOWED_TOKENS / FILE_ALLOWED_TOKENS', () => {
     expect(FILE_ALLOWED_TOKENS).toContain('trackNumber');
     expect(FILE_ALLOWED_TOKENS).toContain('trackTotal');
     expect(FILE_ALLOWED_TOKENS).toContain('partName');
+  });
+
+  it('includes {edition} in folder tokens, inherited by file tokens (#1712)', () => {
+    expect(FOLDER_ALLOWED_TOKENS).toContain('edition');
+    expect(FILE_ALLOWED_TOKENS).toContain('edition');
   });
 });
 

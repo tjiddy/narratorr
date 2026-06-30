@@ -27,9 +27,9 @@ vi.mock('@core/utils/index.js', () => ({
   renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
-  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition', 'trackNumber', 'trackTotal', 'partName'],
   NAMING_PRESETS: [
     { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
     { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
@@ -45,7 +45,7 @@ vi.mock('@core/utils/index.js', () => ({
     { label: 'Title', tokens: ['title', 'titleSort'] },
     { label: 'Series', tokens: ['series', 'seriesPosition'] },
     { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year'] },
+    { label: 'Metadata', tokens: ['year', 'edition'] },
   ],
   FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));

@@ -1006,6 +1006,54 @@ describe('ManualImportAdapter', () => {
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Jane Narrator.mp3`]);
       });
 
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + getById returns editionLabel: rendered filename includes the stored edition label (#1712 F2)', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
+        const settingsSvc = makeRenameSettingsService('{title} ({edition})');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
+            narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            editionLabel: 'Full Cast', status: 'importing', size: 100_000, genres: [],
+          }),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (Full Cast).mp3`]);
+      });
+
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + null editionLabel: renders no stray brackets (#1712 F2)', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
+        const settingsSvc = makeRenameSettingsService('{title} ({edition})');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
+            narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            editionLabel: null, status: 'importing', size: 100_000, genres: [],
+          }),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
+      });
+
       it('mode=copy + fileFormat set + bookService.getById returns null narrators: rename proceeds using bookRow fallbacks', async () => {
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3']);

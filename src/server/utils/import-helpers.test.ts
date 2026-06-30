@@ -147,6 +147,27 @@ describe('buildTargetPath', () => {
       expect(result).toContain('The Way of Kings');
     });
   });
+
+  describe('{edition} token + mandatory suffix double-render rule (#1712)', () => {
+    it('template lacking {edition}: appends the mandatory " (label)" collision suffix (unchanged)', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'Dark Matter' }, 'Blake Crouch', undefined, 'Full Cast');
+      expect(result).toBe('/audiobooks/Blake Crouch/Dark Matter (Full Cast)');
+    });
+
+    it('template containing {edition}: renders the label in place and does NOT double it with the suffix', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', { title: 'Dark Matter' }, 'Blake Crouch', undefined, 'Full Cast');
+      expect(result).toBe('/audiobooks/Blake Crouch/Dark Matter (Full Cast)');
+      // Exactly one occurrence of the label — not "(Full Cast) (Full Cast)".
+      expect(result.match(/Full Cast/g)).toHaveLength(1);
+    });
+
+    it('null editionLabel: neither the token nor the suffix emits a label (single-edition path unchanged)', () => {
+      const withToken = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', { title: 'Dark Matter' }, 'Blake Crouch', undefined, null);
+      expect(withToken).toBe('/audiobooks/Blake Crouch/Dark Matter');
+      const withoutToken = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'Dark Matter' }, 'Blake Crouch', undefined, null);
+      expect(withoutToken).toBe('/audiobooks/Blake Crouch/Dark Matter');
+    });
+  });
 });
 
 describe('getPathSize', () => {

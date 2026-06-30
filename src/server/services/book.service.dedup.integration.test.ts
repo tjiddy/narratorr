@@ -66,6 +66,7 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     const res = await service.findDuplicate({ title: 'Different Title', asin: 'b003p2wo5e' });
     expect(res.verdict).toBe('same-recording');
     expect(res.book?.id).toBe(id);
+    expect(res.hasIncumbent).toBe(true);
   });
 
   it('Tehanu under a different ASIN, same narrator → same-recording (owned)', async () => {
@@ -75,15 +76,18 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
     expect(res.verdict).toBe('same-recording');
     expect(res.book?.id).toBe(id);
+    expect(res.hasIncumbent).toBe(true);
   });
 
-  it('full-cast vs single narrator → different-recording (keep-both)', async () => {
+  it('full-cast vs single narrator → different-recording (keep-both), hasIncumbent true', async () => {
     await seed({ title: "Harry Potter", author: 'J.K. Rowling', narrators: ['Jim Dale'], asin: 'B0JIMDALE' });
     const res = await service.findDuplicate({
       title: "Harry Potter", authors: [{ name: 'J.K. Rowling' }], narrators: ['Stephen Fry'], asin: 'B0FRY',
     });
     expect(res.verdict).toBe('different-recording');
     expect(res.book).toBeNull();
+    // An incumbent existed (an owned title) but resolved different → a NEW recording of an owned title.
+    expect(res.hasIncumbent).toBe(true);
   });
 
   it('title+author match but no narrator signal → review', async () => {
@@ -91,12 +95,15 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     const res = await service.findDuplicate({ title: 'Mistborn', authors: [{ name: 'Brandon Sanderson' }] });
     expect(res.verdict).toBe('review');
     expect(res.book?.id).toBe(id);
+    expect(res.hasIncumbent).toBe(true);
   });
 
-  it('no incumbent in scope → different-recording (new), book null', async () => {
+  it('no incumbent in scope → different-recording (new), book null, hasIncumbent false', async () => {
     const res = await service.findDuplicate({ title: 'Brand New', authors: [{ name: 'Nobody' }], narrators: ['X'] });
     expect(res.verdict).toBe('different-recording');
     expect(res.book).toBeNull();
+    // No incumbent at all → a genuinely new book; the import-review badge stays absent.
+    expect(res.hasIncumbent).toBe(false);
   });
 
   describe('multi-incumbent precedence (order-independent)', () => {
@@ -119,6 +126,8 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       });
       expect(res.verdict).toBe('different-recording');
       expect(res.book).toBeNull();
+      // Two owned recordings existed, neither matched → new recording of an owned title.
+      expect(res.hasIncumbent).toBe(true);
     });
   });
 

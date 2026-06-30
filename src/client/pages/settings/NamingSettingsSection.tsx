@@ -19,6 +19,7 @@ const SAMPLE_TOKENS = {
   title: 'The Way of Kings', titleSort: toSortTitle('The Way of Kings'),
   series: 'The Stormlight Archive', seriesPosition: 1, year: '2010',
   narrator: 'Michael Kramer, Kate Reading', narratorLastFirst: toLastFirst('Michael Kramer, Kate Reading'),
+  edition: 'Full Cast',
 };
 const SAMPLE_TOKENS_NO_SERIES = {
   author: 'Andy Weir', authorLastFirst: toLastFirst('Andy Weir'),

@@ -35,12 +35,15 @@ export interface MatchResult {
    * (which carries the author/asin a no-author filename lacks). The client merge
    * propagates these onto `row.book` so the badge lights up and the row fails closed. */
   isDuplicate?: boolean;
-  existingBookId?: number;
-  duplicateReason?: DuplicateReason;
+  existingBookId?: number; duplicateReason?: DuplicateReason;
   /** Display-only recording-review warning (#1711): the matched recording may be a
    * DIFFERENT recording of a book you own but narrators could not be compared. Not
    * a hard duplicate — the row still flows; the client surfaces it on `row.book`. */
   reviewReason?: string;
+  /** Recording-identity verdict for a library hit (#1712), set by `applyLibraryDuplicate`.
+   * Drives the three-way import-review badge; absent for a genuinely new book. Mirrored on
+   * the shared `discoveredBookSchema` + client `MatchResult`. */
+  recordingVerdict?: 'same-recording' | 'different-recording' | 'review';
 }
 
 export interface MatchJobStatus {

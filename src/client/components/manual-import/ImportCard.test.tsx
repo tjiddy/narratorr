@@ -330,16 +330,16 @@ describe('ImportCard', () => {
   // ===========================================================================
   describe('duplicate rows (isDuplicate: true)', () => {
     const dupRow = makeRow({
-      book: makeBook({ isDuplicate: true, existingBookId: 42 }),
+      book: makeBook({ isDuplicate: true, existingBookId: 42, duplicateReason: 'slug' }),
       selected: false,
     });
 
-    it('shows "Already in library" badge when book.isDuplicate is true', () => {
+    it('shows "Already owned" badge for a scan-time DB duplicate (isDuplicate + slug reason)', () => {
       render(<ImportCard {...defaultProps} row={dupRow} />);
-      expect(screen.getByText('Already in library')).toBeInTheDocument();
+      expect(screen.getByText('Already owned')).toBeInTheDocument();
     });
 
-    it('renders "Already in library" badge with muted variant and no icon', () => {
+    it('renders "Already owned" badge with muted variant and no icon', () => {
       render(<ImportCard {...defaultProps} row={dupRow} />);
       const badge = screen.getByTestId('badge');
       expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
@@ -385,8 +385,63 @@ describe('ImportCard', () => {
     it('non-duplicate rows are unaffected by isDuplicate: false', () => {
       const normalRow = makeRow({ book: makeBook({ isDuplicate: false }) });
       render(<ImportCard {...defaultProps} row={normalRow} />);
-      expect(screen.queryByText('Already in library')).not.toBeInTheDocument();
+      expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /Edit metadata/i })).toBeInTheDocument();
+    });
+  });
+
+  // ===========================================================================
+  // #1712 — three-way recording-review badge ladder
+  // ===========================================================================
+  describe('recording-verdict badge ladder (#1712)', () => {
+    it('recordingVerdict same-recording → "Already owned"', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'slug', recordingVerdict: 'same-recording' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      expect(screen.getByText('Already owned')).toBeInTheDocument();
+    });
+
+    it('recordingVerdict different-recording → "New version of an owned title" and the row stays selectable', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: false, recordingVerdict: 'different-recording' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      expect(screen.getByText('New version of an owned title')).toBeInTheDocument();
+      // Not a hard duplicate — checkbox is present (deliberate new copy).
+      expect(screen.getByRole('button', { name: /select|deselect/i })).toBeInTheDocument();
+    });
+
+    it('recordingVerdict review → "Possible duplicate (review)"', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: false, recordingVerdict: 'review' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      expect(screen.getByText('Possible duplicate (review)')).toBeInTheDocument();
+    });
+
+    it('scan-time path duplicate (no verdict) → "Already owned" via the fallback rung', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'path' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      expect(screen.getByText('Already owned')).toBeInTheDocument();
+    });
+
+    it('genuinely new book (no flags) → no ownership badge, confidence badge shown', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: false }), matchResult: makeMatchResult({ confidence: 'high' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
+      expect(screen.queryByText('New version of an owned title')).not.toBeInTheDocument();
+      expect(screen.getByText('Matched')).toBeInTheDocument();
+    });
+
+    it('a non-duplicate row carrying ONLY reviewReason renders the tooltip indicator but NOT the review badge', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: false, reviewReason: 'Additional non-book content possibly merged' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      // The absorbed-content tooltip indicator still renders…
+      expect(screen.getByTestId('review-reason-indicator')).toBeInTheDocument();
+      // …but no "Possible duplicate (review)" badge (reviewReason is not a ladder rung).
+      expect(screen.queryByText('Possible duplicate (review)')).not.toBeInTheDocument();
+    });
+
+    it('a recording-review row renders BOTH the badge and the absorbed-content tooltip when both are set', () => {
+      const row = makeRow({ book: makeBook({ isDuplicate: false, recordingVerdict: 'review', reviewReason: 'Possible different recording of a book you already own' }) });
+      render(<ImportCard {...defaultProps} row={row} />);
+      expect(screen.getByText('Possible duplicate (review)')).toBeInTheDocument();
+      expect(screen.getByTestId('review-reason-indicator')).toBeInTheDocument();
     });
   });
 
@@ -499,20 +554,20 @@ describe('ImportCard — lockDuplicates prop (#133)', () => {
     expect(screen.getByRole('button', { name: /deselect/i })).toBeInTheDocument();
   });
 
-  it('lockDuplicates=true + path-duplicate (duplicateReason=path): no checkbox, no edit button, Already in library badge', () => {
+  it('lockDuplicates=true + path-duplicate (duplicateReason=path): no checkbox, no edit button, Already owned badge', () => {
     const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'path' }) });
     render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
     expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
-    expect(screen.getByText('Already in library')).toBeInTheDocument();
+    expect(screen.getByText('Already owned')).toBeInTheDocument();
   });
 
-  it('lockDuplicates=true + slug-duplicate (duplicateReason=slug): no checkbox, edit button shown, Already in library badge', () => {
+  it('lockDuplicates=true + slug-duplicate (duplicateReason=slug): no checkbox, edit button shown, Already owned badge', () => {
     const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'slug' }) });
     render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
     expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
-    expect(screen.getByText('Already in library')).toBeInTheDocument();
+    expect(screen.getByText('Already owned')).toBeInTheDocument();
   });
 
   it('lockDuplicates=true + non-duplicate: normal card with checkbox and edit button', () => {
@@ -538,13 +593,13 @@ describe('ImportCard — relativePath prop (#133)', () => {
   });
 
   describe('within-scan duplicates (#342)', () => {
-    it('within-scan duplicate shows Duplicate in scan badge instead of Already in library', () => {
+    it('within-scan duplicate shows Duplicate in scan badge instead of Already owned', () => {
       const row = makeRow({
         book: makeBook({ isDuplicate: true, duplicateReason: 'within-scan' as 'path' | 'slug' }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
       expect(screen.getByText('Duplicate in scan')).toBeInTheDocument();
-      expect(screen.queryByText('Already in library')).not.toBeInTheDocument();
+      expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
     });
 
     it('within-scan duplicate has checkbox shown (selectable) when lockDuplicates is true', () => {

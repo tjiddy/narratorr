@@ -315,7 +315,7 @@ describe('MatchJobService', () => {
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'same-recording', book: { id: 421, title: 'Tehanu' } });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'same-recording', book: { id: 421, title: 'Tehanu' }, hasIncumbent: true });
 
       const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
       await waitForJob(service, id);
@@ -324,6 +324,7 @@ describe('MatchJobService', () => {
       expect(result.isDuplicate).toBe(true);
       expect(result.existingBookId).toBe(421);
       expect(result.duplicateReason).toBe('slug');
+      expect(result.recordingVerdict).toBe('same-recording');
       // findDuplicate is keyed off the MATCHED metadata, not the (author-less) candidate.
       expect(bookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Tehanu', authors: meta.authors, asin: 'B01G9EPERE' }));
     });
@@ -332,7 +333,7 @@ describe('MatchJobService', () => {
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'review', book: { id: 77, title: 'Tehanu' } });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'review', book: { id: 77, title: 'Tehanu' }, hasIncumbent: true });
 
       const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
       await waitForJob(service, id);
@@ -341,13 +342,14 @@ describe('MatchJobService', () => {
       expect(result.isDuplicate).toBeUndefined();
       expect(result.reviewReason).toBeDefined();
       expect(result.existingBookId).toBe(77);
+      expect(result.recordingVerdict).toBe('review');
     });
 
-    it('post-match: a different-recording verdict carries no duplicate or review fields (#1711 keep-both)', async () => {
+    it('post-match: a different-recording WITH an incumbent → recordingVerdict, no isDuplicate (#1712 keep-both, new version of owned title)', async () => {
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: true });
 
       const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
       await waitForJob(service, id);
@@ -355,12 +357,13 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0]!;
       expect(result.isDuplicate).toBeUndefined();
       expect(result.reviewReason).toBeUndefined();
+      expect(result.recordingVerdict).toBe('different-recording');
     });
 
-    it('post-match: a resolved match with no library duplicate carries no duplicate fields (#1662)', async () => {
+    it('post-match: a different-recording with NO incumbent (brand-new book) is left unflagged (#1712)', async () => {
       const meta = makeBookMetadata({ providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
@@ -368,6 +371,7 @@ describe('MatchJobService', () => {
       const result = service.getJob(id)!.results[0]!;
       expect(result.isDuplicate).toBeUndefined();
       expect(result.existingBookId).toBeUndefined();
+      expect(result.recordingVerdict).toBeUndefined();
     });
 
     it('returns medium confidence for multiple results without duration data', async () => {

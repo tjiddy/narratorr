@@ -147,7 +147,7 @@ export class ImportService {
       ]);
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
-      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
+      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions, book.editionLabel);
       // Same-path re-import: targetPath IS the user's existing book folder, so the
       // commit must back-up-and-rollback rather than destroy, and failure cleanup
       // must never blanket-rm it. First import / move-path: targetPath is disposable.
