@@ -128,6 +128,34 @@ describe('deriveEditionLabel (#1711)', () => {
     // raw branch is reached and the prefix survives in the returned label.
     expect(deriveEditionLabel(['Narrator: Jim Dale'])).toBe('Narrator: Jim Dale');
   });
+
+  // (#1760) A packed one-element narrator string (the native-tag scan shape) must be
+  // tokenized on [,;&] before the placeholder check, mirroring the equality path's
+  // `recordingNarratorTokens`. Otherwise the whole packed string normalizes to a
+  // non-placeholder and leaks a label like 'Full Cast, Jim Dale' to the edition folder.
+  it('tokenizes a packed real+placeholder entry and picks the first signal token (all delimiters)', () => {
+    expect(deriveEditionLabel(['Full Cast, Jim Dale'])).toBe('Jim Dale');
+    expect(deriveEditionLabel(['Full Cast; Jim Dale'])).toBe('Jim Dale');
+    expect(deriveEditionLabel(['Full Cast & Jim Dale'])).toBe('Jim Dale');
+  });
+
+  it('tokenizes a packed placeholder-after-real entry and picks the first signal token', () => {
+    expect(deriveEditionLabel(['Jim Dale, Full Cast'])).toBe('Jim Dale');
+    expect(deriveEditionLabel(['Jim Dale & Full Cast'])).toBe('Jim Dale');
+  });
+
+  it('picks the first signal token (raw, trimmed) from a packed two-real entry', () => {
+    expect(deriveEditionLabel(['Kate Reading, Michael Kramer'])).toBe('Kate Reading');
+  });
+
+  it('falls through to the production form when a packed entry is all placeholders', () => {
+    expect(deriveEditionLabel(['Full Cast, Various'], 'full_cast')).toBe('Full Cast');
+  });
+
+  it('returns null for a packed all-placeholder entry with no/unknown production type', () => {
+    expect(deriveEditionLabel(['Full Cast, Various'])).toBeNull();
+    expect(deriveEditionLabel(['Full Cast, Various'], 'unknown')).toBeNull();
+  });
 });
 
 // ── Resolver ────────────────────────────────────────────────────────────

@@ -168,10 +168,15 @@ const PRODUCTION_FORM_LABELS: Record<string, string> = {
  * disposition rather than overwriting or guessing.
  */
 export function deriveEditionLabel(narrators: string[], productionType?: string | null): string | null {
+  // Tokenize each entry on [,;&] before the placeholder check (#1760), mirroring
+  // `recordingNarratorTokens` — a packed `['Full Cast, Jim Dale']` (native-tag scan
+  // shape) must yield `Jim Dale`, not leak the whole packed string as the label.
   for (const raw of narrators) {
-    const normalized = normalizeNarrator(raw);
-    if (normalized.length > 0 && !NARRATOR_PLACEHOLDERS.has(normalized)) {
-      return raw.trim();
+    for (const part of tokenizeNarrators(raw)) {
+      const normalized = normalizeNarrator(part);
+      if (normalized.length > 0 && !NARRATOR_PLACEHOLDERS.has(normalized)) {
+        return part.trim();
+      }
     }
   }
   if (productionType && productionType !== 'unknown') {
