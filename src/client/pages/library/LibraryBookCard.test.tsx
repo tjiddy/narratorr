@@ -464,6 +464,12 @@ describe('LibraryBookCard', () => {
       expect(screen.queryByText('The Stormlight Archive #1')).not.toBeInTheDocument();
     });
 
+    it('hides edition label when collapsedCount > 0 (#1742)', () => {
+      const book = createMockLibraryBook({ editionLabel: 'Full Cast' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
+      expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
+    });
+
     it('still renders cover image and total book count badge when collapsedCount > 0', () => {
       renderWithProviders(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
       expect(screen.getByRole('img')).toBeInTheDocument();
