@@ -286,6 +286,46 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     expect(mockBookService.findDuplicate).toHaveBeenNthCalledWith(2, expect.objectContaining({ title: 'Meta Asin', authors: [{ name: 'Author' }], asin: 'B0METADATA' }));
   });
 
+  // #1728 F1 — confirm-time forwarding of the matched production form. The
+  // classifyConfirmItem dedup must pass the normalized metadata.formatType into
+  // findDuplicate so an abridged-vs-unabridged item with no usable duration is HELD
+  // before copy (review → no create, no enqueue), not silently let through. Deleting
+  // the productionType spread would make the veto inert on this path.
+  it('forwards normalized metadata.formatType as productionType to findDuplicate and holds a review verdict (#1728 F1)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'review', book: { id: 88, title: 'Maybe Owned' } });
+
+    const result = await confirmImport(
+      [{ path: '/a/format', title: 'Format Item', authorName: 'Author', metadata: { title: 'Format Item', authors: [{ name: 'Author' }], formatType: 'Unabridged' } }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    // F1 — the normalized production form reaches the resolver.
+    expect(mockBookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
+    // Held for review: not accepted, no placeholder created, nothing enqueued.
+    expect(result.accepted).toBe(0);
+    expect(result.heldReview).toEqual([
+      { path: '/a/format', title: 'Format Item', reason: 'recording-review-required', existingBookId: 88 },
+    ]);
+    expect(mockBookService.create).not.toHaveBeenCalled();
+    expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('confirm-time dedup omits productionType when the matched metadata has no formatType (#1728 F1 unchanged)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'different-recording', book: null });
+
+    await confirmImport(
+      [{ path: '/a/noformat', title: 'No Format', authorName: 'Author', metadata: { title: 'No Format', authors: [{ name: 'Author' }] } }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(mockBookService.findDuplicate).toHaveBeenCalledTimes(1);
+    expect(mockBookService.findDuplicate.mock.calls[0]![0]).not.toHaveProperty('productionType');
+  });
+
   it('forceImport item bypasses the dedup check entirely and still imports (#1662)', async () => {
     mockBookService.findDuplicate.mockResolvedValue({ verdict: 'same-recording', book: { id: 5, title: 'Owned' } });
     mockBookService.create.mockResolvedValueOnce({ id: 7, title: 'Owned', status: 'importing' });
@@ -661,6 +701,73 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(files).toContain('cover.jpg');
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+});
+
+// #1728 — production-type veto at the copy-time fence. An occupied target owned by
+// the SAME narrator but a DIFFERENT, known production form (abridged vs unabridged)
+// with no corroborating duration must be HELD (OwnedRecordingError, never
+// overwritten), not silently staged-swapped as same-recording. The candidate's
+// production form is threaded from the accepted metadata via buildRecordingCandidate.
+describe('copyToLibrary — production-type veto on occupied target (#1728)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  // Owner: same narrator, no ASIN (so the ASIN short-circuit cannot fire), no
+  // duration (so the veto branch is reached), production form `abridged`.
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({
+        findPathOwners: vi.fn().mockResolvedValue([
+          { id: 1, title: 'Title', authors: [{ name: 'Author' }], narrators: [{ name: 'Jim Dale' }], asin: null, duration: null, productionType: 'abridged' },
+        ]),
+      }),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  beforeEach(async () => {
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1728-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('holds an abridged-vs-unabridged occupied target for review instead of staged-swapping it', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+
+    // Candidate: same narrator, unabridged (vs owner abridged), no duration.
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Jim Dale'] };
+    const meta = { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], formatType: 'Unabridged' };
+
+    await expect(copyToLibrary(item, meta, 'copy', buildDeps())).rejects.toMatchObject({
+      code: 'OWNED_RECORDING',
+      reason: 'recording-review',
+    });
+    // The occupied target is untouched — the old edition's audio is still there,
+    // and no staging siblings were left behind.
+    expect((await readdir(target)).filter((f) => f.endsWith('.m4b'))).toEqual(['old.m4b']);
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });

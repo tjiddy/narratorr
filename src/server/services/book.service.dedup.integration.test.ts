@@ -47,6 +47,7 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     asin?: string;
     duration?: number;
     path?: string;
+    productionType?: 'unabridged' | 'abridged';
   }): Promise<number> {
     const book = await service.create({
       title: opts.title,
@@ -54,6 +55,7 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       ...(opts.narrators && { narrators: opts.narrators }),
       ...(opts.asin && { asin: opts.asin }),
       ...(opts.duration !== undefined && { duration: opts.duration }),
+      ...(opts.productionType && { productionType: opts.productionType }),
       status: 'imported',
     });
     if (opts.path) {
@@ -160,6 +162,32 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.verdict).toBe('review');
       expect(res.book?.id).toBe(id);
       expect(res.hasIncumbent).toBe(true);
+    });
+
+    // ─── Production-type veto over real hydrated rows (#1728) ───
+    it('equal narrators, no duration, known production-type mismatch → review + recordingReviewReason', async () => {
+      // Abridged incumbent vs unabridged candidate, same narrator, NO duration on
+      // either side: without the veto this collapses to same-recording (silent
+      // skip). The veto downgrades it to review and the machine reason surfaces on
+      // DuplicateResolution end-to-end.
+      const id = await seed({ title: 'Veto Book', author: 'Veto Author', narrators: ['Jim Dale'], productionType: 'abridged' });
+      const res = await service.findDuplicate({
+        title: 'Veto Book', authors: [{ name: 'Veto Author' }], narrators: ['Jim Dale'], productionType: 'unabridged',
+      });
+      expect(res.verdict).toBe('review');
+      expect(res.recordingReviewReason).toBe('production-type-mismatch');
+      expect(res.book?.id).toBe(id);
+      expect(res.hasIncumbent).toBe(true);
+    });
+
+    it('equal production type, no duration → same-recording (no veto, no reason)', async () => {
+      const id = await seed({ title: 'No Veto Book', author: 'Veto Author', narrators: ['Jim Dale'], productionType: 'unabridged' });
+      const res = await service.findDuplicate({
+        title: 'No Veto Book', authors: [{ name: 'Veto Author' }], narrators: ['Jim Dale'], productionType: 'unabridged',
+      });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.recordingReviewReason).toBeUndefined();
+      expect(res.book?.id).toBe(id);
     });
 
     it('author-less candidate with a whitespace-only ASIN still gathers the author-less title-only incumbent (#1729 F1)', async () => {

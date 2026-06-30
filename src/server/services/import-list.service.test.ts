@@ -964,6 +964,72 @@ describe('ImportListService', () => {
         expect(create.mock.calls[0]![0].productionType).toBeUndefined();
       });
 
+      // #1728 F1/F4 — the normalized production form is forwarded to findDuplicate
+      // (F1), and when the resolver holds the item for a production-type mismatch
+      // the machine reason rides the recording_review_skipped event JSON (F4), so
+      // the held downgrade is diagnosable instead of silent.
+      it('matched item forwards productionType to findDuplicate and surfaces recordingReviewReason in the held event (#1728 F1/F4)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B100', title: 'Held Title', authors: [{ name: 'Held Author' }],
+            narrators: ['Jim Dale'], formatType: 'Unabridged',
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Held Title', author: 'Held Author', asin: 'B100' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList({ name: 'Veto List' })]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({
+          verdict: 'review',
+          book: { id: 321, title: 'Owned Abridged' },
+          hasIncumbent: true,
+          recordingReviewReason: 'production-type-mismatch',
+        });
+        const create = vi.fn();
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), mockMetadata);
+        await service.syncDueLists();
+
+        // F1 — normalized production form reaches the resolver.
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
+        // F4 — held, not created; the event carries the machine reason.
+        expect(create).not.toHaveBeenCalled();
+        expect(eventInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'recording_review_skipped',
+            reason: expect.objectContaining({ recordingReviewReason: 'production-type-mismatch', existingBookId: 321 }),
+          }),
+        );
+      });
+
+      it('unmatched (raw) item passes NO productionType to findDuplicate — unchanged behavior (#1728 F1)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Raw Only', author: 'Raw Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
+        const create = vi.fn().mockResolvedValue(createdBook(14, 'Raw Only'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
+        await service.syncDueLists();
+
+        expect(findDuplicate).toHaveBeenCalledTimes(1);
+        expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('productionType');
+      });
+
       // #1119 AC test #1 — ASIN-identity: metadata author + title win at the
       // create payload (replaces the prior `ASIN-identity path skips §4 fuzzy
       // validation` test that blessed the chimera behavior).

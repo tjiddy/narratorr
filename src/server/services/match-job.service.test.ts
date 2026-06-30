@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, capConfidence, type MatchCandidate, type MatchResult } from './match-job.service.js';
+import { RECORDING_REVIEW_REASON } from './match-job.helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -343,6 +344,48 @@ describe('MatchJobService', () => {
       expect(result.reviewReason).toBeDefined();
       expect(result.existingBookId).toBe(77);
       expect(result.recordingVerdict).toBe('review');
+    });
+
+    // #1728 F2/F4 — the matched edition's formatType is normalized and passed to
+    // findDuplicate so an abridged-vs-unabridged best match with no usable duration
+    // classifies as review (not a silent same-recording). The user-facing
+    // `reviewReason` display text stays the human warning — never the machine
+    // `recordingReviewReason` literal.
+    it('post-match: normalizes bestMatch.formatType into findDuplicate; review keeps the human reviewReason text (#1728 F2)', async () => {
+      const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1', formatType: 'Abridged' });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+      (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'review', book: { id: 88, title: 'Tehanu' }, hasIncumbent: true, recordingReviewReason: 'production-type-mismatch' });
+
+      const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0]!;
+      // F2 — normalized production form reaches the resolver.
+      expect(bookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'abridged' }));
+      expect(result.recordingVerdict).toBe('review');
+      // Display string is the human warning, NOT the machine reason literal.
+      expect(result.reviewReason).toBe(RECORDING_REVIEW_REASON);
+      expect(result.reviewReason).not.toBe('production-type-mismatch');
+      // Observability AC (#1728): the held downgrade is diagnosable — the machine
+      // reason rides the post-match review log context (never the display string).
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ recordingReviewReason: 'production-type-mismatch', existingBookId: 88 }),
+        'Post-match recording review required',
+      );
+    });
+
+    it('post-match: a bestMatch with no formatType passes NO productionType to findDuplicate (#1728 F2 unchanged)', async () => {
+      const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
+      (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false });
+
+      const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
+      await waitForJob(service, id);
+
+      expect(bookService.findDuplicate).toHaveBeenCalledTimes(1);
+      expect((bookService.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toHaveProperty('productionType');
     });
 
     it('post-match: a different-recording WITH an incumbent → recordingVerdict, no isDuplicate (#1712 keep-both, new version of owned title)', async () => {

@@ -140,6 +140,10 @@ function buildRecordingCandidate(item: ImportConfirmItem, meta: BookMetadata | n
     narrators,
     asin: item.asin ?? meta?.asin ?? null,
     duration: meta?.duration ?? null,
+    // Production form (#1728) feeds the resolver's production-type veto on the
+    // occupied-target paths below. Absent formatType normalizes to `'unknown'`,
+    // which the veto treats as no signal — identical to null, no extra branch.
+    productionType: normalizeProductionType(meta?.formatType),
   };
 }
 
@@ -177,7 +181,7 @@ async function disambiguateTarget(
   }
   // The disambiguated folder is itself occupied — only a same-recording re-import may swap.
   const newOwners = await deps.bookService.findPathOwners(normalize(resolve(newTarget)));
-  if (newOwners.length === 1 && resolveRecordingIdentity(candidate, toLibraryRecording(newOwners[0]!)) === 'same-recording') {
+  if (newOwners.length === 1 && resolveRecordingIdentity(candidate, toLibraryRecording(newOwners[0]!)).verdict === 'same-recording') {
     return { targetPath: newTarget, editionLabel: discriminator, swap: true };
   }
   throw new OwnedRecordingError({
@@ -212,7 +216,7 @@ async function resolveOccupiedTarget(
 ): Promise<OccupiedResolution> {
   const owners = await deps.bookService.findPathOwners(normalize(resolve(baseTargetPath)));
   if (owners.length === 1) {
-    const verdict = resolveRecordingIdentity(candidate, toLibraryRecording(owners[0]!));
+    const { verdict } = resolveRecordingIdentity(candidate, toLibraryRecording(owners[0]!));
     if (verdict === 'same-recording') return { targetPath: baseTargetPath, swap: true };
     if (verdict === 'different-recording') {
       return disambiguateTarget(candidate, productionType, owners[0]!, deps, rebuild);
@@ -474,6 +478,9 @@ async function classifyConfirmItem(
     ...(dedupeAsin !== undefined && { asin: dedupeAsin }),
     ...(item.narrators !== undefined && { narrators: item.narrators }),
     ...(item.metadata?.duration !== undefined && { duration: item.metadata.duration }),
+    // Production form (#1728): pass the normalized matched format so an
+    // abridged-vs-unabridged confirm with no usable duration holds for review.
+    ...(item.metadata?.formatType ? { productionType: normalizeProductionType(item.metadata.formatType) } : {}),
   });
   if (resolution.verdict === 'same-recording') {
     log.debug({ title: item.title }, 'Skipping owned duplicate during import (same recording)');

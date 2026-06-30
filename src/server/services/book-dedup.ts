@@ -8,7 +8,7 @@
 
 import { eq, and, sql, notExists } from 'drizzle-orm';
 import { slugify } from '../../core/index.js';
-import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict } from '../../core/utils/recording-identity.js';
+import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording, type RecordingVerdict, type RecordingReviewReason } from '../../core/utils/recording-identity.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import { books, authors, bookAuthors } from '../../db/schema.js';
@@ -71,6 +71,11 @@ export interface DuplicateCandidate {
   asin?: string | undefined;
   narrators?: string[] | undefined;
   duration?: number | null | undefined;
+  /**
+   * Canonical production form (#1728). Forwarded to the resolver's
+   * production-type veto; callers that hold no production-form signal omit it.
+   */
+  productionType?: string | null | undefined;
 }
 
 export type DuplicateVerdict = RecordingVerdict;
@@ -93,6 +98,14 @@ export interface DuplicateResolution {
    * `verdict`/`book` are unaffected.
    */
   hasIncumbent: boolean;
+  /**
+   * Machine reason a `review` verdict was reached (#1728) — forwarded verbatim
+   * from the resolver result for the representative review incumbent. Populated
+   * only when `verdict === 'review'`. The single channel callers use to log/record
+   * *why* a review was held; no caller recomputes the production-type comparison.
+   * Distinct from the user-facing display string `reviewReason` (`match-job`).
+   */
+  recordingReviewReason?: RecordingReviewReason;
 }
 
 /** Adapt a candidate identity into the core resolver's plain-primitive shape. */
@@ -103,6 +116,7 @@ export function toRecordingCandidate(c: DuplicateCandidate): RecordingCandidate 
     narrators: c.narrators ?? [],
     asin: c.asin ?? null,
     duration: c.duration ?? null,
+    productionType: c.productionType ?? null,
   };
 }
 
@@ -114,6 +128,7 @@ export function toLibraryRecording(b: BookWithAuthor): LibraryRecording {
     narrators: b.narrators.map((n) => n.name),
     asin: b.asin ?? null,
     duration: b.duration ?? null,
+    productionType: b.productionType ?? null,
   };
 }
 
@@ -185,14 +200,18 @@ export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: Du
 
   const recordingCandidate = toRecordingCandidate(candidate);
   let reviewBook: BookWithAuthor | null = null;
+  let reviewReason: RecordingReviewReason | undefined;
   for (const id of ids) {
     const book = await getById(id);
     if (!book) continue;
-    const verdict = resolveRecordingIdentity(recordingCandidate, toLibraryRecording(book));
+    const { verdict, recordingReviewReason } = resolveRecordingIdentity(recordingCandidate, toLibraryRecording(book));
     if (verdict === 'same-recording') return { verdict: 'same-recording', book, hasIncumbent: true };
-    if (verdict === 'review' && !reviewBook) reviewBook = book;
+    if (verdict === 'review' && !reviewBook) {
+      reviewBook = book;
+      reviewReason = recordingReviewReason;
+    }
   }
-  if (reviewBook) return { verdict: 'review', book: reviewBook, hasIncumbent: true };
+  if (reviewBook) return { verdict: 'review', book: reviewBook, hasIncumbent: true, ...(reviewReason && { recordingReviewReason: reviewReason }) };
   // Incumbents existed but none matched → a different recording of an owned title.
   return { verdict: 'different-recording', book: null, hasIncumbent: true };
 }
