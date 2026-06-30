@@ -138,9 +138,11 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>
             <p className="text-xs text-white/70 truncate mt-0.5">{book.authors[0]?.name}</p>
-            {/* Edition label (#1712) — always visible so two same-title recordings render
-                as visually distinct tiles. Renders nothing when null/absent. */}
-            {book.editionLabel && (
+            {/* Edition label (#1712) — individual-book tiles only, so two same-title
+                recordings render as visually distinct tiles. Hidden on a collapsed series
+                tile (#1742): the label is per-recording and would mislabel the group.
+                Renders nothing when null/absent. */}
+            {!isCollapsed && book.editionLabel && (
               <p className="text-[11px] text-amber-300/80 truncate mt-0.5" data-testid="edition-label">{book.editionLabel}</p>
             )}
           </div>
