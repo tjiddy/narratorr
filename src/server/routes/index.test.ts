@@ -449,4 +449,40 @@ describe('createServices', () => {
     expect(resolved).toBe('/library/root');
     expect(settingsGet).toHaveBeenCalledWith('library');
   });
+
+  // #1736 (F2) — ImportQueueWorker receives the EventHistoryService as its 5th constructor argument
+  // so the forced-import-refused terminal disposition can record its durable `import_failed` event in
+  // production. Without this wiring the worker still finalizes the job + emits SSE but silently skips
+  // the durable history row, and the direct worker tests (which inject eventHistory) would not catch it.
+  it('injects the EventHistoryService instance into ImportQueueWorker as its 5th constructor arg', async () => {
+    const { SettingsService, EventHistoryService } = await import('../services/index.js');
+    const { ImportQueueWorker } = await import('../services/import-queue-worker.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us', path: '/library/root' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    // The worker's 5th arg must be the SAME EventHistoryService instance composed by createServices,
+    // not a fresh/other object — a removed or swapped arg would drop the durable refusal event.
+    const workerCalls = vi.mocked(ImportQueueWorker).mock.calls;
+    expect(workerCalls).toHaveLength(1);
+    const eventHistoryArg = workerCalls[0]![4];
+    const eventHistoryInstances = vi.mocked(EventHistoryService).mock.instances;
+    expect(eventHistoryInstances).toHaveLength(1);
+    expect(eventHistoryArg).toBe(eventHistoryInstances[0]);
+  });
 });
