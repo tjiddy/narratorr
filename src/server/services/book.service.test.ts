@@ -4,6 +4,7 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 
 import { BookService, CoverUploadError } from './book.service.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
+import type { ProductionType } from '../../shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
 import { authors, books, bookAuthors } from '../../db/schema.js';
@@ -608,6 +609,23 @@ describe('BookService', () => {
       expect(bookInsertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ productionType: 'unknown' }),
       );
+    });
+
+    // #1710 F3 — the write-boundary productionTypeSchema.parse() guards against a
+    // runtime-invalid value crossing the TS boundary (SQLite text-enums emit no DB
+    // CHECK). If the parse were replaced with a bare `data.productionType ?? 'unknown'`
+    // forward, this test fails: create() must reject and never submit the insert row.
+    it('rejects an invalid productionType before the books insert', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await expect(service.create({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        // Cast simulates an invalid value crossing the TypeScript boundary at runtime.
+        productionType: 'not-a-real-type' as ProductionType,
+      })).rejects.toThrow();
+
+      expect(bookInsertChain.values).not.toHaveBeenCalled();
     });
   });
 
