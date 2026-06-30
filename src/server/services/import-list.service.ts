@@ -6,6 +6,8 @@ import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js'
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/types.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
+import type { ProductionType } from '../../shared/schemas/book.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -330,6 +332,7 @@ export class ImportListService {
         duration: enriched.duration,
         publishedDate: enriched.publishedDate,
         genres: enriched.genres,
+        productionType: enriched.productionType,
         status: 'wanted',
         enrichmentStatus,
         importListId: list.id,
@@ -424,6 +427,10 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     // On the ASIN fast path `match.asin` echoes `item.asin`, so this is a no-op.
     asin: match.asin ?? item.asin,
     isbn: item.isbn ?? match.isbn,
+    // Recording production form (#1731). Gate on presence so a match without a
+    // formatType leaves the field unset (DB default 'unknown') rather than
+    // persisting an explicit 'unknown'. `buildRawEnriched` carries no signal.
+    productionType: match.formatType ? normalizeProductionType(match.formatType) : undefined,
   };
 }
 
@@ -447,4 +454,5 @@ interface EnrichedItem {
   asin?: string | undefined;
   isbn?: string | undefined;
   authorName?: string | undefined;
+  productionType?: ProductionType | undefined;
 }
