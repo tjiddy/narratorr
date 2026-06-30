@@ -411,7 +411,11 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       enqueueRetagRefresh(deps.connectorService, request.log, result);
 
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
-      return result;
+      // `refreshItem` is internal enqueue state (carries the absolute on-disk `libraryPath`) — strip it
+      // so the public response stays the counts/warnings shape the client `RetagResult` expects and the
+      // filesystem path never leaks to the API.
+      const { refreshItem: _refreshItem, ...response } = result;
+      return response;
     },
   );
 

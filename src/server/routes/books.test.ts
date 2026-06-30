@@ -1228,6 +1228,25 @@ describe('books routes', () => {
       expect(body.failed).toBe(0);
     });
 
+    // #1721 — `refreshItem` is server-only internal enqueue state (carries the absolute on-disk
+    // libraryPath). It must NOT serialize into the public retag response, so the happy-path API shape
+    // is unchanged and the filesystem path never leaks to the client.
+    it('does not expose the internal refreshItem (or its libraryPath) in the response', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [],
+        refreshItem: { bookId: 1, title: 'Book', authorName: 'A', libraryPath: '/abs/library/Author/Book' },
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).not.toHaveProperty('refreshItem');
+      expect(res.payload).not.toContain('/abs/library/Author/Book');
+      // Public shape is exactly counts + warnings.
+      expect(Object.keys(body).sort()).toEqual(['bookId', 'failed', 'skipped', 'tagged', 'warnings']);
+    });
+
     // #1707 — the per-book retag route fires a 'metadata' refresh only when ≥1 file was tagged.
     // #1721 — the refresh item now comes from RetagResult.refreshItem (built pre-tag-write), so the
     // route no longer reloads the book after the mutation; getById rejecting can't drop the refresh.
