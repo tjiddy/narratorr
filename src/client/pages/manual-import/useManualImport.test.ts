@@ -456,7 +456,7 @@ describe('useManualImport', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/library');
   });
 
-  it('warns when the server returns held-review items, and still navigates on success (#1711 F3)', async () => {
+  it('surfaces held-review items as recoverable state instead of navigating away (#1732)', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
     vi.mocked(api.confirmImport).mockResolvedValue({
       accepted: 1,
@@ -475,11 +475,125 @@ describe('useManualImport', () => {
 
     await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
 
-    // Held items are surfaced via a warning toast and not silently dropped...
-    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review — re-confirm from Library Import');
-    // ...and the existing success toast + navigation behavior is preserved.
+    // Held items populate recoverable state and are surfaced via a warning toast...
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
+    expect(result.current.state.heldReview[0]!.path).toBe('/audiobooks/Book A');
+    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
+    // ...the success toast for accepted books is retained...
     expect(toast.success).toHaveBeenCalledWith('1 book queued for import');
+    // ...and the user is NOT navigated away (the old dead-end behavior).
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('handleReconfirmHeld re-submits held rows with forceImport and the snapshot mode (#1732)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+    });
+
+    const { result } = renderHook(() => useManualImport(), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    act(() => { result.current.state.setMode('move'); });
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
+
+    await act(async () => { result.current.actions.handleReconfirmHeld(); });
+
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalledTimes(2); });
+    const [items, mode] = vi.mocked(api.confirmImport).mock.calls[1]!;
+    expect(items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: '/audiobooks/Book A', forceImport: true })]),
+    );
+    // Items carry no per-item mode key — mode is the call-level second argument.
+    expect(items[0]).not.toHaveProperty('mode');
+    expect(mode).toBe('move');
+  });
+
+  it('re-confirm uses the mode snapshotted at confirm time, not a later selector change (#1732)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+    });
+
+    const { result } = renderHook(() => useManualImport(), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    // Import with mode 'move', receive held rows...
+    act(() => { result.current.state.setMode('move'); });
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
+
+    // ...then flip the still-editable selector to 'copy' and re-confirm.
+    act(() => { result.current.state.setMode('copy'); });
+    await act(async () => { result.current.actions.handleReconfirmHeld(); });
+
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalledTimes(2); });
+    // The snapshot wins: re-confirm still uses 'move', not the live 'copy' selector.
+    expect(vi.mocked(api.confirmImport).mock.calls[1]![1]).toBe('move');
+  });
+
+  it('clears the held panel after a fully-accepted re-confirm (mixed success) (#1732)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport)
+      .mockResolvedValueOnce({
+        accepted: 0,
+        heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+      })
+      .mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+
+    const { result } = renderHook(() => useManualImport(), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
+
+    await act(async () => { result.current.actions.handleReconfirmHeld(); });
+
+    // The fresh (empty) heldReview from the re-confirm clears the panel.
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(0); });
     expect(mockNavigate).toHaveBeenCalledWith('/library');
+  });
+
+  it('clears held state when the user backs out of review (#1732)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+    });
+
+    const { result } = renderHook(() => useManualImport(), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
+
+    act(() => { result.current.actions.handleBack(); });
+
+    expect(result.current.state.heldReview).toHaveLength(0);
+    expect(result.current.state.step).toBe('path');
   });
 
   it('handleImport shows error toast on failure', async () => {

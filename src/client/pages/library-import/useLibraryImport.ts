@@ -2,11 +2,12 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type ImportConfirmItem, type MatchResult, type HeldReviewItem } from '@/lib/api';
+import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { matchesLibraryIdentity } from '../../../shared/dedup.js';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
+import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -16,26 +17,6 @@ export type Step = 'scanning' | 'review' | 'error';
 /** Returns true for DB-backed duplicates (path/slug), false for within-scan duplicates and non-duplicates. */
 function isDbDuplicate(book: DiscoveredBook): boolean {
   return book.isDuplicate && book.duplicateReason !== 'within-scan';
-}
-
-/**
- * Build the confirm payload for a row. `force` (or an existing duplicate flag)
- * sets `forceImport` so the server bypasses the recording-identity safety-net —
- * used both for user-selected duplicates and for re-confirming a held-review item.
- */
-function toConfirmItem(r: ImportRow, force: boolean): ImportConfirmItem {
-  return {
-    path: r.book.path,
-    title: r.edited.title,
-    ...(r.edited.author && { authorName: r.edited.author }),
-    ...(r.edited.series && { seriesName: r.edited.series }),
-    ...(r.edited.narrators?.length && { narrators: r.edited.narrators }),
-    ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
-    ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
-    ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
-    ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),
-    ...(force || r.book.isDuplicate ? { forceImport: true } : {}),
-  };
 }
 
 // eslint-disable-next-line max-lines-per-function -- orchestrates scan, match job, and slug-duplicate recheck
@@ -50,7 +31,11 @@ export function useLibraryImport() {
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   // Items the server held for recording review (#1711) — surfaced for re-confirm.
-  const [heldReview, setHeldReview] = useState<HeldReviewItem[]>([]);
+  // Library always registers with mode `undefined`, so the snapshot is unused here.
+  const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
+    rows,
+    confirm: (items) => registerMutation.mutate(items),
+  });
 
   // Settings query to get library path
   const { data: settings, isError: settingsError } = useQuery({
@@ -143,11 +128,11 @@ export function useLibraryImport() {
       // Partial success (#1711): some items were held for recording review — keep
       // the user on the page so they can re-confirm them, instead of navigating.
       if (result.heldReview.length > 0) {
-        setHeldReview(result.heldReview);
+        captureHeld(result.heldReview, undefined);
         toast.warning(`${result.heldReview.length} held for recording review`);
         return;
       }
-      setHeldReview([]);
+      clearHeld();
       navigate('/library');
     },
     onError: (error: Error) => {
@@ -221,24 +206,15 @@ export function useLibraryImport() {
     registerMutation.mutate(items);
   }, [rows, registerMutation]);
 
-  // Re-confirm every held-review item with forceImport, bypassing the server's
-  // recording-identity safety-net (#1711). Rebuilds from the current rows by path
-  // so user edits made before re-confirming are carried through.
-  const handleReconfirmHeld = useCallback(() => {
-    const heldPaths = new Set(heldReview.map(h => h.path));
-    const items = rows.filter(r => heldPaths.has(r.book.path)).map(r => toConfirmItem(r, true));
-    if (items.length > 0) registerMutation.mutate(items);
-  }, [heldReview, rows, registerMutation]);
-
   const handleRetry = useCallback(() => {
     const libraryPath = settings?.library.path ?? '';
     if (!libraryPath) return;
     setScanError(null);
     setEmptyResult(false);
-    setHeldReview([]);
+    clearHeld();
     prevMatchCountRef.current = 0;
     scanMutation.mutate(libraryPath);
-  }, [settings, scanMutation]);
+  }, [settings, scanMutation, clearHeld]);
 
   const handleRetryMatch = useCallback(() => {
     const candidates = rows

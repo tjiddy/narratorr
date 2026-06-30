@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
+import { HeldReviewPanel } from '@/components/held-review';
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -21,8 +22,8 @@ export function ManualImportPage() {
   const libraryPath = settings?.library?.path ?? '';
 
   const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
-  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress } = state;
-  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack } = actions;
+  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, heldReview } = state;
+  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, handleReconfirmHeld } = actions;
   const { scanMutation, importMutation } = mutations;
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
 
@@ -69,6 +70,14 @@ export function ManualImportPage() {
           folderHistory={folderHistory}
         />
       )}
+
+      {/* Held for recording review (#1711/#1732) — manual sources can't be recovered
+          from Library Import, so the recovery surface lives here too. */}
+      <HeldReviewPanel
+        heldReview={heldReview}
+        onReconfirm={handleReconfirmHeld}
+        isPending={importMutation.isPending}
+      />
 
       {/* Step 2: Review Cards */}
       {step === 'review' && (
