@@ -87,6 +87,24 @@ export const ENRICHMENT_STATUSES = ['pending', 'enriched', 'failed', 'skipped', 
 export const enrichmentStatusSchema = z.enum(ENRICHMENT_STATUSES);
 export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
 
+/**
+ * Recording production form (#1710, Multiple Narrations 1/3). Distinguishes the
+ * *form* of a recording (not its part-count — that's `contentDeliveryType`).
+ * `unabridged`/`abridged` are the only values import derives today, from Audible's
+ * `format_type` via `normalizeProductionType`; `full_cast`/`dramatized`/
+ * `graphic_audio` are reserved for stories 2/3 (and future providers/heuristics)
+ * to populate without a baseline churn. `unknown` is the default (e.g. all
+ * Audnexus imports, which carry no format field).
+ *
+ * Canonical tuple — `src/db/schema.ts` (the `books.production_type` column) and
+ * the `normalizeProductionType` helper both derive from this, mirroring the
+ * `BOOK_STATUSES` precedent. SQLite `text({ enum })` emits no DB CHECK, so the
+ * schema-alignment test (`schema-db-alignment.test.ts`) is the only drift guard.
+ */
+export const PRODUCTION_TYPES = ['unabridged', 'abridged', 'full_cast', 'dramatized', 'graphic_audio', 'unknown'] as const;
+export const productionTypeSchema = z.enum(PRODUCTION_TYPES);
+export type ProductionType = z.infer<typeof productionTypeSchema>;
+
 export const bookSortFieldSchema = z.enum(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);
 export type BookSortField = z.infer<typeof bookSortFieldSchema>;
 

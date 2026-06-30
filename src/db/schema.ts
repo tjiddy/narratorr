@@ -2,7 +2,7 @@ import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from
 import { sql } from 'drizzle-orm';
 import { CLIENT_STATUSES, PIPELINE_STAGES } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
-import { BOOK_STATUSES, ENRICHMENT_STATUSES } from '../shared/schemas/book';
+import { BOOK_STATUSES, ENRICHMENT_STATUSES, PRODUCTION_TYPES } from '../shared/schemas/book';
 import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
 import { INDEXER_TYPES } from '../shared/indexer-registry';
 import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
@@ -64,6 +64,14 @@ export const books = sqliteTable('books', {
   })
     .notNull()
     .default('pending'),
+  // Recording production form (#1710). Populated at manual-import/enrichment from
+  // metadata `formatType` via `normalizeProductionType`; defaults to `unknown`
+  // for every path that doesn't supply it. Additive, no behavior change in 1/3.
+  productionType: text('production_type', {
+    enum: PRODUCTION_TYPES,
+  })
+    .notNull()
+    .default('unknown'),
   // Persisted count of background-enrichment failure attempts. Incremented on
   // every `failed`/no-match transition through markFailedGuarded so the
   // candidate query can cap unresolvable rows (they rest as terminal `failed`,

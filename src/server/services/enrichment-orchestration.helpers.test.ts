@@ -633,4 +633,31 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBe(2);
     expect(payload.seriesAsin).toBe('B009NF6YPM');
   });
+
+  // #1710 — production_type populated from meta.formatType on this path only
+  it('populates productionType from meta.formatType (#1710)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], formatType: 'Unabridged' },
+      'importing',
+    );
+    expect(payload.productionType).toBe('unabridged');
+  });
+
+  it('defaults productionType to unknown when meta.formatType is absent (#1710)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }] },
+      'importing',
+    );
+    expect(payload.productionType).toBe('unknown');
+  });
+
+  it('defaults productionType to unknown when meta is null (#1710)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload({ path: '/x', title: 'T' }, null, 'importing');
+    expect(payload.productionType).toBe('unknown');
+  });
 });

@@ -3,6 +3,8 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
 import { BookService, CoverUploadError } from './book.service.js';
+import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
+import type { ProductionType } from '../../shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
 import { authors, books, bookAuthors } from '../../db/schema.js';
@@ -561,6 +563,69 @@ describe('BookService', () => {
 
       // Only one bookNarrators insert (not two) despite two narrator entries in payload
       expect(db.insert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // #1710 F2 — the full buildBookCreatePayload -> create -> books insert contract.
+  // Asserting the payload alone (enrichment-orchestration.helpers.test.ts) would not
+  // catch create() dropping productionType from .values(); these assert the insert.
+  describe('create() persists productionType into the books insert (#1710)', () => {
+    function setupCreateMocks() {
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))                                  // author found
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))    // getById book
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))         // getById authors
+        .mockReturnValueOnce(mockDbChain([]));                                           // getById narrators
+      const bookInsertChain = mockDbChain([{ id: 1 }]);
+      db.insert
+        .mockReturnValueOnce(bookInsertChain)   // book insert (first insert in create())
+        .mockReturnValueOnce(mockDbChain([]));  // bookAuthors insert
+      return bookInsertChain;
+    }
+
+    it('writes the derived production_type from meta.formatType', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await service.create(buildBookCreatePayload(
+        { path: '/x', title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], formatType: 'Unabridged' },
+        'importing',
+      ));
+
+      expect(bookInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ productionType: 'unabridged' }),
+      );
+    });
+
+    it('defaults to unknown when metadata carries no formatType', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await service.create(buildBookCreatePayload(
+        { path: '/x', title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
+        'importing',
+      ));
+
+      expect(bookInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ productionType: 'unknown' }),
+      );
+    });
+
+    // #1710 F3 — the write-boundary productionTypeSchema.parse() guards against a
+    // runtime-invalid value crossing the TS boundary (SQLite text-enums emit no DB
+    // CHECK). If the parse were replaced with a bare `data.productionType ?? 'unknown'`
+    // forward, this test fails: create() must reject and never submit the insert row.
+    it('rejects an invalid productionType before the books insert', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await expect(service.create({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        // Cast simulates an invalid value crossing the TypeScript boundary at runtime.
+        productionType: 'not-a-real-type' as ProductionType,
+      })).rejects.toThrow();
+
+      expect(bookInsertChain.values).not.toHaveBeenCalled();
     });
   });
 
