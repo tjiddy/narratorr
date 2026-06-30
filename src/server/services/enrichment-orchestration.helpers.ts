@@ -11,6 +11,7 @@ import type { BookMetadata } from '../../core/metadata/index.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { RateLimitError } from '../../core/index.js';
 import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -142,16 +143,20 @@ async function resolveAsinWriteback(
   primaryAsin: string | null | undefined,
   deps: Pick<EnrichmentDeps, 'log' | 'bookService'>,
 ): Promise<string | undefined> {
-  if (!resolvedAsin || resolvedAsin === primaryAsin) return undefined;
-  const collision = await deps.bookService.findAsinCollision(bookId, resolvedAsin);
+  // Canonicalize the resolved ASIN at this write boundary (#1733) and compare
+  // case-insensitively against the primary so a case-only "change" isn't written
+  // back. The returned value is the canonical form actually persisted.
+  const canonical = canonicalizeAsin(resolvedAsin);
+  if (!canonical || canonical === canonicalizeAsin(primaryAsin)) return undefined;
+  const collision = await deps.bookService.findAsinCollision(bookId, canonical);
   if (collision) {
     deps.log.warn(
-      { bookId, resolvedAsin, conflictBookId: collision.conflictBookId },
+      { bookId, resolvedAsin: canonical, conflictBookId: collision.conflictBookId },
       'Resolved ASIN collides with an existing book — keeping fetched fields, skipping ASIN writeback',
     );
     return undefined;
   }
-  return resolvedAsin;
+  return canonical;
 }
 
 async function applyEnrichmentData(

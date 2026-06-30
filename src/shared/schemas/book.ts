@@ -134,7 +134,10 @@ export const createBookBodySchema = z.object({
   description: z.string().optional(),
   publisher: z.string().optional(),
   coverUrl: z.string().optional(),
-  asin: z.string().optional(),
+  // `.trim()` to match `fixMatchRequestSchema` (#1733 schema parity) so service-
+  // layer ASIN canonicalization isn't the only line of defense against a padded
+  // value drifting the durable identity.
+  asin: z.string().trim().optional(),
   isbn: z.string().optional(),
   seriesName: z.string().optional(),
   seriesPosition: z.number().optional(),

@@ -111,7 +111,15 @@ export const books = sqliteTable('books', {
   index('idx_books_status').on(table.status),
   index('idx_books_path').on(table.path),
   index('idx_books_enrichment_status').on(table.enrichmentStatus),
-  uniqueIndex('idx_books_asin_unique').on(table.asin).where(sql`asin IS NOT NULL`),
+  // Case-insensitive durable ASIN identity (#1733). The unique index is on the
+  // `upper(asin)` EXPRESSION (not the raw column) so it matches the resolver's
+  // case-insensitive equality and the canonicalize-on-write boundary — a
+  // case-drifted duplicate ('b0..' vs a stored 'B0..') is rejected at the DB.
+  // The partial `WHERE asin IS NOT NULL` predicate is preserved so multiple
+  // null-ASIN rows still coexist ([[sqlite-null-unique-index]]). Hand-managed via
+  // drizzle/0003_* (drizzle-kit can't auto-generate the expression index + the
+  // data canonicalization/quarantine); keep this mirrored with that migration.
+  uniqueIndex('idx_books_asin_unique').on(sql`upper(${table.asin})`).where(sql`asin IS NOT NULL`),
 ]);
 
 export const bookAuthors = sqliteTable('book_authors', {

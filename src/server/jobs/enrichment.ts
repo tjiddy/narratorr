@@ -6,6 +6,7 @@ import { RateLimitError } from '../../core/index.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 
@@ -300,7 +301,10 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, bo
       // retrying the dead ASIN — but only after a collision check, since
       // `books.asin` is uniquely indexed. On collision we skip the ASIN write,
       // mark the row failed, and continue (never crash the batch).
-      const resolvedAsin = result.asin ?? null;
+      // Canonicalize the resolved ASIN at this write boundary (#1733). `capturedAsin`
+      // is read from the (canonical, post-migration) column, so a plain `!==` after
+      // canonicalization is a correct case-insensitive change check.
+      const resolvedAsin = canonicalizeAsin(result.asin);
       const asinChanged = resolvedAsin !== null && resolvedAsin !== capturedAsin;
 
       if (asinChanged) {
