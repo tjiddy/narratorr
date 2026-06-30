@@ -21,6 +21,17 @@
 import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './similarity.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
 import { slugify } from '../../shared/utils.js';
+import type { RecordingVerdict } from '../../shared/schemas/recording-verdict.js';
+
+/**
+ * 3-way recording-identity verdict (#1741). Canonical source is the shared
+ * `recordingVerdictValues` tuple (`src/shared/schemas/recording-verdict.ts`);
+ * core re-exports the derived type — the boundary forbids `src/shared` importing
+ * `src/core`, so the tuple lives in shared and core consumes it, not the reverse.
+ * Existing consumers (`book-dedup.ts`, `match-job.helpers.ts`) keep importing
+ * `RecordingVerdict` from here unchanged.
+ */
+export type { RecordingVerdict } from '../../shared/schemas/recording-verdict.js';
 
 /** Narrator-set comparison verdict. Duration is NOT an input — the resolver applies it separately. */
 export type NarratorEquality = 'equal' | 'not-equal' | 'no-signal';
@@ -115,9 +126,6 @@ export interface LibraryRecording {
   duration?: number | null;
   asin?: string | null;
 }
-
-/** 3-way recording-identity verdict. */
-export type RecordingVerdict = 'same-recording' | 'different-recording' | 'review';
 
 /** Human-readable labels for the production forms that can stand in as an edition discriminator. */
 const PRODUCTION_FORM_LABELS: Record<string, string> = {

@@ -3,7 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import type { DuplicateReason } from '../../shared/schemas.js';
+import type { DuplicateReason, RecordingVerdict } from '../../shared/schemas.js';
 import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { SettingsService } from './settings.service.js';
@@ -43,7 +43,7 @@ export interface MatchResult {
   /** Recording-identity verdict for a library hit (#1712), set by `applyLibraryDuplicate`.
    * Drives the three-way import-review badge; absent for a genuinely new book. Mirrored on
    * the shared `discoveredBookSchema` + client `MatchResult`. */
-  recordingVerdict?: 'same-recording' | 'different-recording' | 'review';
+  recordingVerdict?: RecordingVerdict;
 }
 
 export interface MatchJobStatus {
