@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
+import { books } from '../../db/schema.js';
 import { BookService, OwnedRecordingError } from './book.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 
@@ -165,6 +166,79 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       await seed({ title: 'NoAsin One', author: 'A' });
       const second = await service.create({ title: 'NoAsin Two', authors: [{ name: 'B' }] });
       expect(second.id).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── ASIN case-insensitivity at the write boundary + durable constraint (#1733) ───
+  describe('ASIN case-insensitivity (#1733)', () => {
+    it('create() rejects a case-drifted duplicate ASIN and inserts no second row', async () => {
+      const id = await seed({ title: 'First', author: 'A', asin: 'B003P2WO5E' });
+      await expect(
+        service.create({ title: 'Second', authors: [{ name: 'B' }], asin: 'b003p2wo5e' }),
+      ).rejects.toMatchObject({ name: 'OwnedRecordingError', existingBookId: id, reason: 'asin-owned' });
+      // No second owned row slipped through under the case-drifted ASIN.
+      const rows = await db.select({ id: books.id }).from(books);
+      expect(rows).toHaveLength(1);
+    });
+
+    it('create() canonicalizes a lowercase ASIN to UPPERCASE on persist', async () => {
+      const id = await seed({ title: 'Lower', author: 'A', asin: 'b003p2wo5e' });
+      expect((await service.getById(id))?.asin).toBe('B003P2WO5E');
+    });
+
+    it('update() canonicalizes a lowercase ASIN to UPPERCASE on persist (direct service call)', async () => {
+      const id = await seed({ title: 'ToUpdate', author: 'A' });
+      await service.update(id, { asin: 'b0newvalue' });
+      expect((await service.getById(id))?.asin).toBe('B0NEWVALUE');
+    });
+
+    it('fixMatch() canonicalizes a lowercase ASIN to UPPERCASE on persist', async () => {
+      const id = await seed({ title: 'Original', author: 'A', asin: 'B0ORIGINAL' });
+      await service.fixMatch(id, { title: 'Replaced', authors: [{ name: 'A' }], asin: 'b0replaced' });
+      expect((await service.getById(id))?.asin).toBe('B0REPLACED');
+    });
+
+    describe('findAsinCollision', () => {
+      it('finds a case-drifted incumbent', async () => {
+        const id = await seed({ title: 'Incumbent', author: 'A', asin: 'B003P2WO5E' });
+        expect(await service.findAsinCollision(-1, 'b003p2wo5e')).toMatchObject({ conflictBookId: id });
+      });
+
+      it('returns null when no row matches', async () => {
+        await seed({ title: 'Incumbent', author: 'A', asin: 'B003P2WO5E' });
+        expect(await service.findAsinCollision(-1, 'B0NONEXISTENT')).toBeNull();
+      });
+
+      it('excludes the source book itself (self-match is not a conflict)', async () => {
+        const id = await seed({ title: 'Self', author: 'A', asin: 'B0SELF' });
+        expect(await service.findAsinCollision(id, 'b0self')).toBeNull();
+      });
+
+      it('handles a null/empty argument without throwing', async () => {
+        await seed({ title: 'Incumbent', author: 'A', asin: 'B0SELF' });
+        expect(await service.findAsinCollision(-1, '')).toBeNull();
+        expect(await service.findAsinCollision(-1, '   ')).toBeNull();
+      });
+    });
+
+    describe('durable unique constraint', () => {
+      it('rejects a case-drifted duplicate inserted directly (bypassing the service guard)', async () => {
+        await db.insert(books).values({ publicId: 'bk_dur_1', title: 'A', asin: 'B003P2WO5E' });
+        // Drizzle wraps the SQLite error; the UNIQUE message lives under `.cause`.
+        const err = await db
+          .insert(books)
+          .values({ publicId: 'bk_dur_2', title: 'B', asin: 'b003p2wo5e' })
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(String((err as Error).cause ?? err)).toMatch(/UNIQUE constraint failed/);
+      });
+
+      it('tolerates multiple null-ASIN rows (partial index predicate preserved)', async () => {
+        await db.insert(books).values({ publicId: 'bk_null_1', title: 'A' });
+        await expect(
+          db.insert(books).values({ publicId: 'bk_null_2', title: 'B' }),
+        ).resolves.not.toThrow();
+      });
     });
   });
 });

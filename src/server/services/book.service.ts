@@ -15,6 +15,7 @@ import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
 import { productionTypeSchema, type BookStatus, type ProductionType } from '../../shared/schemas/book.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
 import { isUniqueViolation } from '../../shared/error-message.js';
 import {
   OwnedRecordingError,
@@ -71,7 +72,8 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
     description: r.description ?? null,
     publisher: r.publisher ?? null,
     coverUrl: r.coverUrl ?? null,
-    asin: r.asin ?? null,
+    // Canonicalize the replacement ASIN at this write boundary (#1733).
+    asin: canonicalizeAsin(r.asin),
     isbn: r.isbn ?? null,
     seriesName: r.seriesName ?? null,
     seriesPosition: r.seriesPosition ?? null,
@@ -280,6 +282,12 @@ export class BookService {
       }
     }
 
+    // Canonicalize at the create write boundary (#1733) so the stored value, the
+    // create-time race guard below, and the durable `upper(asin)` unique index
+    // all agree on a single (UPPERCASE) canonical form — otherwise a case-drifted
+    // ASIN slips two owned rows past both the guard and the constraint.
+    const canonicalAsin = canonicalizeAsin(enrichedAsin);
+
     let bookId: number;
     try {
       bookId = await this.db.transaction(async (tx) => {
@@ -292,7 +300,7 @@ export class BookService {
             description: data.description,
             publisher: data.publisher,
             coverUrl: data.coverUrl,
-            asin: enrichedAsin,
+            asin: canonicalAsin,
             isbn: data.isbn,
             seriesName: data.seriesName,
             seriesPosition: data.seriesPosition,
@@ -336,10 +344,10 @@ export class BookService {
       // so this is a deterministically-owned recording, not a candidate for
       // review: resolve the incumbent and throw a typed `OwnedRecordingError`
       // so each caller fail-closes (409 / owned skip, never enqueue).
-      if (enrichedAsin && isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
+      if (canonicalAsin && isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
         // sourceBookId sentinel (-1): the new row rolled back, so there is no
         // self-row to exclude — any match is the incumbent.
-        const collision = await this.findAsinCollision(-1, enrichedAsin);
+        const collision = await this.findAsinCollision(-1, canonicalAsin);
         if (collision) {
           throw new OwnedRecordingError({ existingBookId: collision.conflictBookId, title: collision.conflictTitle, reason: 'asin-owned' });
         }
@@ -354,6 +362,14 @@ export class BookService {
 
   async update(id: number, data: { [K in keyof NewBook]?: NewBook[K] | undefined } & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
     const { narrators: narratorNames, authors: authorList, ...bookData } = data;
+
+    // Canonicalize the ASIN at this service-internal write boundary (#1733). The
+    // HTTP `updateBookBodySchema` is `.strict()` and carries no `asin` key, so
+    // this only fires for internal callers (enrichment writeback, Fix Match
+    // prep, tests) — but they must store the same canonical form as `create`.
+    if ('asin' in bookData) {
+      bookData.asin = canonicalizeAsin(bookData.asin as string | null | undefined);
+    }
 
     const updated = await this.db.transaction(async (tx) => {
       const result = await tx
@@ -395,10 +411,17 @@ export class BookService {
    * Excludes the source book itself (a self-match is not a conflict).
    */
   async findAsinCollision(sourceBookId: number, asin: string): Promise<{ conflictBookId: number; conflictTitle: string } | null> {
+    // Case-insensitive collision check (#1733): canonicalize the argument and
+    // compare against `upper(books.asin)` so a case-drifted incumbent is found
+    // (this was the codebase's only case-sensitive ASIN comparison). Matching on
+    // the `upper(asin)` expression also lets the query use the new expression
+    // unique index. A null/empty argument canonicalizes to null → no collision.
+    const canonical = canonicalizeAsin(asin);
+    if (!canonical) return null;
     const rows = await this.db
       .select({ id: books.id, title: books.title })
       .from(books)
-      .where(eq(books.asin, asin))
+      .where(eq(sql`upper(${books.asin})`, canonical))
       .limit(2);
     for (const r of rows) {
       if (r.id !== sourceBookId) return { conflictBookId: r.id, conflictTitle: r.title };
