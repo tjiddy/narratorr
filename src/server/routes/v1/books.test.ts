@@ -116,7 +116,7 @@ describe('v1 books routes', () => {
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (bookListService.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
     (bookService.getById as Mock).mockResolvedValue(null);
-    (bookService.findDuplicate as Mock).mockResolvedValue(null);
+    (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
     (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'ok', book: metaBook() });
     (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false });
@@ -389,7 +389,7 @@ describe('v1 books routes', () => {
     });
 
     it('409: an existing ASIN returns book_exists + existingId, no create/search', async () => {
-      (bookService.findDuplicate as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_existing0000000000' }));
+      (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: hydratedRow({ publicId: 'bk_existing0000000000' }) });
 
       const res = await post({ asin: ASIN });
 
@@ -398,7 +398,7 @@ describe('v1 books routes', () => {
       expect(body.error.code).toBe('book_exists');
       expect(typeof body.error.message).toBe('string');
       expect(body.existingId).toBe('bk_existing0000000000');
-      expect(bookService.findDuplicate as Mock).toHaveBeenCalledWith('', undefined, ASIN);
+      expect(bookService.findDuplicate as Mock).toHaveBeenCalledWith(expect.objectContaining({ title: '', asin: ASIN }));
       expect(bookService.create as Mock).not.toHaveBeenCalled();
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
@@ -414,7 +414,7 @@ describe('v1 books routes', () => {
       expect(first.json().id).toBe('bk_created00000000000');
 
       // Lost-response retry: the same ASIN now finds the created row → 409, no second create.
-      (bookService.findDuplicate as Mock).mockResolvedValueOnce(created);
+      (bookService.findDuplicate as Mock).mockResolvedValueOnce({ verdict: 'same-recording', book: created });
       const second = await post({ asin: ASIN });
 
       expect(second.statusCode).toBe(409);
@@ -475,7 +475,7 @@ describe('v1 books routes', () => {
 
     it('409 still precedes the reject gate even when reject-words are configured (#1545)', async () => {
       (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, rejectWords: 'kings' });
-      (bookService.findDuplicate as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_existing0000000000' }));
+      (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: hydratedRow({ publicId: 'bk_existing0000000000' }) });
 
       const res = await post({ asin: ASIN });
 

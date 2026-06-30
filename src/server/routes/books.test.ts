@@ -414,7 +414,7 @@ describe('books routes', () => {
 
   describe('POST /api/books', () => {
     it('creates book with title only (no authors field) and returns 201 (#246)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, authors: [] });
 
       const res = await app.inject({
@@ -431,7 +431,7 @@ describe('books routes', () => {
     });
 
     it('creates book with empty authors array and returns 201 (#246)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, authors: [] });
 
       const res = await app.inject({
@@ -444,7 +444,7 @@ describe('books routes', () => {
     });
 
     it('returns 409 when authorless duplicate exists (#246)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
 
       const res = await app.inject({
         method: 'POST',
@@ -457,7 +457,7 @@ describe('books routes', () => {
 
     it('returns 201 when authorless add and only authored matches exist (#253)', async () => {
       // findDuplicate returns null because authored "Shogun" is excluded by notExists
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, title: 'Shogun', authors: [] });
 
       const res = await app.inject({
@@ -467,12 +467,12 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.book.findDuplicate).toHaveBeenCalledWith('Shogun', [], undefined);
+      expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Shogun', authors: [] }));
       expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Shogun', authors: [] }));
     });
 
     it('creates book and returns 201', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -486,7 +486,7 @@ describe('books routes', () => {
     });
 
     it('creates book with full metadata and returns 201', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({
         ...mockBook,
         asin: 'B003P2WO5E',
@@ -522,7 +522,7 @@ describe('books routes', () => {
     });
 
     it('returns 409 when duplicate found', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
 
       const res = await app.inject({
         method: 'POST',
@@ -546,7 +546,7 @@ describe('books routes', () => {
     });
 
     it('triggers search when searchImmediately is true and status is wanted', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       mockStreamingSearch([
@@ -570,7 +570,7 @@ describe('books routes', () => {
     });
 
     it('fire-and-forget search excludes results matching reject words', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue({
         grabFloor: 0, minSeeders: 0, protocolPreference: 'none',
@@ -598,7 +598,7 @@ describe('books routes', () => {
     });
 
     it('fire-and-forget search skips grab when no results match required words', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue({
         grabFloor: 0, minSeeders: 0, protocolPreference: 'none',
@@ -623,7 +623,7 @@ describe('books routes', () => {
 
     // ===== #386 — fire-and-forget search reads metadata.languages =====
     it('fire-and-forget search reads metadata settings for language filtering', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
@@ -650,7 +650,7 @@ describe('books routes', () => {
     });
 
     it('fire-and-forget search filters out results with non-matching language', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
@@ -681,7 +681,7 @@ describe('books routes', () => {
 
     // #406 — fire-and-forget search filters blacklisted releases via blacklistService
     it('fire-and-forget search filters blacklisted releases by infoHash', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({
@@ -710,7 +710,7 @@ describe('books routes', () => {
     });
 
     it('does not trigger search when searchImmediately is false', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -724,7 +724,7 @@ describe('books routes', () => {
     });
 
     it('does not trigger search when searchImmediately is not provided', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -738,7 +738,7 @@ describe('books routes', () => {
     });
 
     it('search trigger failure does not fail book creation', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       (services.indexerSearch.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
@@ -757,7 +757,7 @@ describe('books routes', () => {
 
     it('does not trigger search when book status is not wanted', async () => {
       const importedBook = { ...mockBook, status: 'imported' };
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(importedBook);
 
       const res = await app.inject({
@@ -773,7 +773,7 @@ describe('books routes', () => {
     // #439 — fire-and-forget search respects searchPriority narrator-accuracy mode
     it('fire-and-forget search grabs narrator-matched release when searchPriority is accuracy', async () => {
       const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
@@ -803,7 +803,7 @@ describe('books routes', () => {
     });
 
     it('passes providerId to service for ASIN enrichment', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
 
       const res = await app.inject({
@@ -2107,7 +2107,7 @@ describe('books routes', () => {
 
   describe('error paths', () => {
     it('POST /api/books returns 500 when service.create throws', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockRejectedValue(new Error('DB insert failed'));
 
       const res = await app.inject({
@@ -2430,7 +2430,7 @@ describe('POST /api/books — array payload schema (#71)', () => {
       authors: [createMockDbAuthor()],
       narrators: [],
     };
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
 
     const res = await app.inject({
@@ -2451,7 +2451,7 @@ describe('POST /api/books — array payload schema (#71)', () => {
   });
 
   it('accepts authors: [] (empty array) with 201 (#246)', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (services.book.create as Mock).mockResolvedValue(mockBook);
 
     const res = await app.inject({
@@ -2491,7 +2491,7 @@ describe('POST /api/books — array payload schema (#71)', () => {
       authors: [createMockDbAuthor()],
       narrators: [],
     };
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (services.book.create as Mock).mockResolvedValue(bookNoNarrators);
 
     const res = await app.inject({
@@ -2792,7 +2792,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
   // #341 — book_added event on POST /api/books
   describe('book_added event on create', () => {
     it('records book_added event with source=manual after successful create', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       const createdBook = { ...mockBook, id: 42, title: 'Test Book' };
       (services.book.create as Mock).mockResolvedValue(createdBook);
 
@@ -2814,7 +2814,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('includes comma-joined authorName for multi-author books', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       const multiAuthorBook = {
         ...mockBook,
         id: 43,
@@ -2841,7 +2841,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('does NOT record book_added event when 409 duplicate is returned', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
 
       const res = await app.inject({
         method: 'POST',
@@ -2854,7 +2854,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('book creation succeeds even if eventHistory.create() rejects (fire-and-forget)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, id: 44 });
       (services.eventHistory.create as Mock).mockRejectedValue(new Error('DB write failed'));
 
@@ -3522,7 +3522,7 @@ describe('#1071 series routes', () => {
   });
 
   it('POST /api/books no longer enqueues an async series refresh (#1133 — lazy via GET)', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: 'The Band', seriesPosition: 1, status: 'wanted' };
     (services.book.create as Mock).mockResolvedValueOnce(created);
     const refresh = vi.fn();

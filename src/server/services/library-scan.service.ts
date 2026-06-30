@@ -287,7 +287,7 @@ export class LibraryScanService {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Possible title+author match — deferring recording verdict to match job');
           discoveries.push(buildDiscoveredBook(
             folder.path, parsed, folder.audioFileCount, folder.totalSize,
-            { isDuplicate: false, reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT },
+            { isDuplicate: false, existingBookId: existingTitleAuthorMap.get(key), reviewReason: reviewReason ?? SCAN_RECORDING_REVIEW_HINT },
           ));
           continue;
         }
