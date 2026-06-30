@@ -10,6 +10,7 @@
  */
 
 import { slugify } from './utils.js';
+import { canonicalizeAsin } from './asin.js';
 
 /**
  * Canonical trailing series/volume marker regex. Catches comma- AND
@@ -76,10 +77,15 @@ function resolveAuthorSlug(id: DedupIdentity): string | null {
 }
 
 /**
- * The single ordered library-identity predicate (#1662). Returns true when
- * `candidate` is the same library book as `entry`:
+ * The single ordered library-identity predicate (#1662) — the canonical
+ * bibliographic-scope contract. Returns true when `candidate` is the same library
+ * book as `entry`:
  *
- *   1. ASIN — case-insensitive (aligns with `findLibraryStatusByAsins`).
+ *   1. ASIN — canonical form (`canonicalizeAsin`: trim + UPPERCASE → null on
+ *      blank, #1733). One canonical ASIN contract shared with the resolver
+ *      (`resolveRecordingIdentity`) and the gather predicate (`gatherIncumbentIds`),
+ *      so a padded/case-drifted `' b01abc '` still scopes to a stored `'B01ABC'`
+ *      and a whitespace-only ASIN folds to "no ASIN" and falls through (#1726).
  *   2. normalized title + position-0 author slug — `normalizeTitleForDedup`
  *      equal AND author slugs equal. The subtitle/parenthetical/series stripping
  *      is applied ONLY here, gated by a matching author slug, to bound the blast
@@ -89,10 +95,15 @@ function resolveAuthorSlug(id: DedupIdentity): string | null {
  *      so an authored book is never matched via the author-less branch).
  *
  * An ASIN miss falls through to (2); an author mismatch in (2) is NOT a match.
+ * `resolveRecordingIdentity`'s scope gate delegates here so the resolver and this
+ * predicate cannot drift on bibliographic scope (#1726).
  */
 export function matchesLibraryIdentity(candidate: DedupIdentity, entry: DedupIdentity): boolean {
-  // (1) ASIN — case-insensitive.
-  if (candidate.asin && entry.asin && candidate.asin.toLowerCase() === entry.asin.toLowerCase()) {
+  // (1) ASIN — canonical form (trim + UPPERCASE → null on blank), one contract
+  // shared with the resolver and gather sites (#1726).
+  const candidateAsin = canonicalizeAsin(candidate.asin);
+  const entryAsin = canonicalizeAsin(entry.asin);
+  if (candidateAsin && entryAsin && candidateAsin === entryAsin) {
     return true;
   }
 

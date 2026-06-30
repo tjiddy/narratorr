@@ -5,6 +5,9 @@ import { join } from 'path';
 import { createDb, runMigrations, type Db } from '../../db/index.js';
 import { books } from '../../db/schema.js';
 import { BookService, OwnedRecordingError } from './book.service.js';
+import { matchesLibraryIdentity, type DedupIdentity } from '../../shared/dedup.js';
+import { slugify } from '../../core/index.js';
+import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording } from '../../core/utils/recording-identity.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 // DB-backed coverage for the three-way, multi-incumbent `findDuplicate`, the
@@ -197,14 +200,37 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       // and gathers the author-less incumbent. Reverting the guard to `!candidate.asin`
       // would treat '   ' as present, SKIP branch (3), gather nothing, and report
       // `hasIncumbent: false` — so the hasIncumbent assertion is the load-bearing pin.
-      await seed({ title: 'Author Less Title' }); // no author, no ASIN
+      const id = await seed({ title: 'Author Less Title' }); // no author, no ASIN
       const res = await service.findDuplicate({ title: 'Author Less Title', asin: '   ' });
       // Incumbent WAS gathered via the author-less title-only branch.
       expect(res.hasIncumbent).toBe(true);
-      // An author-less candidate never passes the resolver's author scope (#1722),
-      // so the gathered incumbent resolves to different-recording, book null.
+      // #1726: the exact-title author-less pair now ENTERS the resolver scope (the
+      // #1722 over-correction is reversed). With no narrator signal on either side the
+      // verdict comes from the narrator stage → review, NOT the scope-gate different-recording.
+      expect(res.verdict).toBe('review');
+      expect(res.recordingReviewReason).toBe('narrator-no-signal');
+      expect(res.book?.id).toBe(id);
+    });
+
+    it('author-less candidate, exact title, equal narrators → same-recording (owned) (#1726)', async () => {
+      // The bug fix end-to-end: an author-less candidate is gathered via the
+      // author-less title-only branch AND now passes the resolver scope gate, so an
+      // equal-narrator pair resolves to owned rather than importing as a new book.
+      const id = await seed({ title: 'Lonely Title', narrators: ['Solo Reader'] }); // no author
+      const res = await service.findDuplicate({ title: 'Lonely Title', narrators: ['Solo Reader'] });
+      expect(res.verdict).toBe('same-recording');
+      expect(res.book?.id).toBe(id);
+      expect(res.hasIncumbent).toBe(true);
+    });
+
+    it('author-less candidate vs an authored row of the same title → different-recording, not gathered (#1726)', async () => {
+      // The #253 notExists guard: an authored "Shogun" must not be gathered for an
+      // author-less "Shogun" candidate, and the one-sided pair is out of scope.
+      await seed({ title: 'Shared Title', author: 'Some Author', narrators: ['Reader'] });
+      const res = await service.findDuplicate({ title: 'Shared Title', narrators: ['Reader'] });
       expect(res.verdict).toBe('different-recording');
       expect(res.book).toBeNull();
+      expect(res.hasIncumbent).toBe(false);
     });
   });
 
@@ -230,6 +256,75 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.book).toBeNull();
       // Two owned recordings existed, neither matched → new recording of an owned title.
       expect(res.hasIncumbent).toBe(true);
+    });
+  });
+
+  // ─── Cross-home scope drift guard (#1726) ───
+  // The bibliographic-scope ladder (ASIN → normalized-title + position-0 author slug →
+  // author-less raw exact-title) lives in THREE homes: `matchesLibraryIdentity`
+  // (`src/shared/dedup.ts`), `resolveRecordingIdentity`'s scope gate
+  // (`src/core/utils/recording-identity.ts`), and the `gatherIncumbentIds` SQL predicate
+  // (`src/server/services/book-dedup.ts`, exercised here via `findDuplicate`). This table
+  // asserts all three agree on SCOPE MEMBERSHIP over one fixture set — NOT on the resolver's
+  // final narrator/duration verdict. The resolver probe uses EQUAL signal-bearing narrators
+  // and no duration/production signal, so "in scope" ⟺ `same-recording` and "out of scope"
+  // ⟺ `different-recording`. The gather probe reads `hasIncumbent` (gathered ⟺ in scope).
+  describe('three homes agree on bibliographic scope (#1726 drift guard)', () => {
+    const PROBE = ['Scope Probe'];
+
+    interface ScopeFixture {
+      name: string;
+      cand: { title: string; author?: string; asin?: string };
+      inc: { title: string; author?: string; asin?: string };
+      inScope: boolean;
+    }
+
+    const fixtures: ScopeFixture[] = [
+      { name: 'author-less exact-title', cand: { title: 'Earthsea' }, inc: { title: 'Earthsea' }, inScope: true },
+      { name: 'author-less subtitle drift', cand: { title: 'Earthsea (Unabridged)' }, inc: { title: 'Earthsea' }, inScope: false },
+      { name: 'one-sided author-less vs authored', cand: { title: 'Earthsea' }, inc: { title: 'Earthsea', author: 'Ursula K. Le Guin' }, inScope: false },
+      { name: 'authored normalized-title + slug match', cand: { title: 'Mistborn: The Final Empire', author: 'Brandon Sanderson' }, inc: { title: 'Mistborn', author: 'Brandon Sanderson' }, inScope: true },
+      { name: 'authored distinct title', cand: { title: 'Warbreaker', author: 'Brandon Sanderson' }, inc: { title: 'Elantris', author: 'Brandon Sanderson' }, inScope: false },
+      { name: 'padded/case-drifted ASIN (only ASIN can match)', cand: { title: 'Cand Title', author: 'Cand Author', asin: ' b0scope01 ' }, inc: { title: 'Inc Title', author: 'Inc Author', asin: 'B0SCOPE01' }, inScope: true },
+      { name: 'whitespace-only ASIN folds to null, author-less exact-title carries the match', cand: { title: 'Blank Probe', asin: '   ' }, inc: { title: 'Blank Probe' }, inScope: true },
+      { name: 'whitespace-only ASIN folds to null, distinct author-less titles', cand: { title: 'Blank A', asin: '   ' }, inc: { title: 'Blank B' }, inScope: false },
+    ];
+
+    const toDedup = (x: ScopeFixture['cand']): DedupIdentity => ({
+      title: x.title,
+      asin: x.asin ?? null,
+      ...(x.author ? { authorName: x.author } : { authorSlug: null }),
+    });
+    const toCandidate = (x: ScopeFixture['cand']): RecordingCandidate => ({
+      title: x.title,
+      authors: x.author ? [x.author] : [],
+      asin: x.asin ?? null,
+      narrators: PROBE,
+    });
+    const toLibrary = (x: ScopeFixture['inc']): LibraryRecording => ({
+      title: x.title,
+      primaryAuthorSlug: x.author ? slugify(x.author) : '',
+      asin: x.asin ?? null,
+      narrators: PROBE,
+    });
+
+    it.each(fixtures)('$name → in-scope: $inScope (all three homes)', async (f) => {
+      // (1) matchesLibraryIdentity — the canonical predicate.
+      expect(matchesLibraryIdentity(toDedup(f.cand), toDedup(f.inc))).toBe(f.inScope);
+
+      // (2) resolveRecordingIdentity scope gate — equal narrators, no duration.
+      expect(resolveRecordingIdentity(toCandidate(f.cand), toLibrary(f.inc)).verdict)
+        .toBe(f.inScope ? 'same-recording' : 'different-recording');
+
+      // (3) gatherIncumbentIds (via findDuplicate) — gathered ⟺ in scope.
+      await seed({ title: f.inc.title, ...(f.inc.author && { author: f.inc.author }), narrators: PROBE, ...(f.inc.asin && { asin: f.inc.asin }) });
+      const res = await service.findDuplicate({
+        title: f.cand.title,
+        ...(f.cand.author && { authors: [{ name: f.cand.author }] }),
+        narrators: PROBE,
+        ...(f.cand.asin && { asin: f.cand.asin }),
+      });
+      expect(res.hasIncumbent).toBe(f.inScope);
     });
   });
 
