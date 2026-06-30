@@ -231,6 +231,25 @@ describe('buildTargetPath', () => {
         const b = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, 'Stephen Fry');
         expect(a).not.toBe(b);
       });
+
+      it('suffix branch: an overlong discriminator behind a long title still survives non-empty (F1)', () => {
+        const longLabel = 'N'.repeat(255);
+        const result = buildTargetPath('/audiobooks', '{author}/{title}', longBook, 'Author', undefined, longLabel);
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        // The discriminator is never reduced to empty: the long title is sacrificed, the label remains.
+        expect(leaf).toContain('N');
+      });
+
+      it('token branch: discriminator survives when BOTH {title} and {titleSort} land in the leaf (F2)', () => {
+        // A legal template that renders two unbounded title contributions before {edition}; the
+        // per-contribution budgeting must still leave the in-place (Full Cast) intact.
+        const result = buildTargetPath('/audiobooks', '{author}/{title} - {titleSort} ({edition})', longBook, 'Author', undefined, 'Full Cast');
+        const leaf = norm(result).split('/').pop()!;
+        expect(leaf.length).toBeLessThanOrEqual(255);
+        expect(leaf).toContain('(Full Cast)');
+        expect(leaf.endsWith('(Full Cast)')).toBe(true);
+      });
     });
 
     describe('naming-options parity: token and suffix branches agree on the discriminator (F6)', () => {

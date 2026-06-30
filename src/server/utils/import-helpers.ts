@@ -70,28 +70,43 @@ export function extractYear(publishedDate: string | null | undefined): string | 
 /**
  * Cap the unbounded `{title}`/`{titleSort}` token values (#1739) so the in-place `{edition}`
  * discriminator in the folder leaf survives the segment-length cap instead of being dropped by
- * generic truncation. Probes the rendered leaf with a 1-char title stand-in to measure exactly how
- * many chars the rest of the discriminator-carrying leaf (wrapper + verbatim `{edition}` + literals)
- * consumes, then budgets the base title down to the remaining room. Only the token branch needs
- * this — the suffix branch budgets via `composeEditionSuffixLeaf`. Token-naming transforms only ever
- * shrink (or preserve) length, so capping the raw value before render keeps the rendered leaf ≤ limit.
+ * generic truncation. Only the token branch needs this — the suffix branch budgets via
+ * `composeEditionSuffixLeaf`. Token-naming transforms only ever shrink (or preserve) length, so
+ * capping the raw value before render keeps the rendered leaf ≤ limit.
+ *
+ * Two probes with different-length stand-ins (`X` vs `XX`) isolate (a) how many title contributions
+ * actually land in the discriminator-carrying leaf — `count` — and (b) the fixed (non-title) chars
+ * there. This handles a leaf that renders MORE than one title contribution, e.g.
+ * `{author}/{title} - {titleSort} ({edition})`: the room is split across the `count` contributions
+ * so their combined rendered length can't push `{edition}` past the cap (F2). A leaf with no title
+ * token (`count <= 0`) needs no budgeting.
  */
 function budgetTitleTokensForEdition(
   folderFormat: string,
   tokens: Record<string, string | number | undefined>,
   options: NamingOptions | undefined,
 ): void {
-  const probeTokens: Record<string, string | number | undefined> = { ...tokens };
-  if (typeof probeTokens.title === 'string') probeTokens.title = 'X';
-  if (typeof probeTokens.titleSort === 'string') probeTokens.titleSort = 'X';
-  const probeSegments = renderTemplate(folderFormat, probeTokens, options).split('/');
-  const probeLeaf = probeSegments[probeSegments.length - 1] ?? '';
-  const fixedLen = Math.max(0, probeLeaf.length - 1); // subtract the single-char title stand-in
-  const titleBudget = Math.max(1, PATH_SEGMENT_LIMIT - fixedLen);
-  for (const key of ['title', 'titleSort'] as const) {
+  const titleKeys = (['title', 'titleSort'] as const).filter((k) => typeof tokens[k] === 'string');
+  if (titleKeys.length === 0) return;
+
+  const leafLenWith = (standIn: string): number => {
+    const probe: Record<string, string | number | undefined> = { ...tokens };
+    for (const k of titleKeys) probe[k] = standIn;
+    const segments = renderTemplate(folderFormat, probe, options).split('/');
+    return (segments[segments.length - 1] ?? '').length;
+  };
+  // Each title contribution in the leaf grows by exactly 1 char going from `X` → `XX`, so the delta
+  // is the contribution count; the single-char-probe leaf minus that count is the fixed length.
+  const len1 = leafLenWith('X');
+  const count = leafLenWith('XX') - len1;
+  if (count <= 0) return;
+
+  const fixedLen = len1 - count;
+  const perTokenBudget = Math.max(1, Math.floor((PATH_SEGMENT_LIMIT - fixedLen) / count));
+  for (const key of titleKeys) {
     const value = tokens[key];
-    if (typeof value === 'string' && value.length > titleBudget) {
-      tokens[key] = value.slice(0, titleBudget).trim();
+    if (typeof value === 'string' && value.length > perTokenBudget) {
+      tokens[key] = value.slice(0, perTokenBudget).trim();
     }
   }
 }

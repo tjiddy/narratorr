@@ -446,6 +446,16 @@ describe('composeEditionSuffixLeaf (#1739)', () => {
   it('never ends in a reserved import-sibling suffix', () => {
     expect(composeEditionSuffixLeaf('Book', 'Full Cast').endsWith('.import-bak')).toBe(false);
   });
+
+  it('keeps a non-empty discriminator visible when discriminator + wrapper exceed the cap, sacrificing the base first (F1)', () => {
+    // A pathologically long discriminator behind a long base: base-first truncation must drop the
+    // base ENTIRELY and keep the discriminator non-empty, never bury it behind 255 chars of base.
+    const leaf = composeEditionSuffixLeaf('B'.repeat(PATH_SEGMENT_LIMIT), 'D'.repeat(PATH_SEGMENT_LIMIT));
+    expect(leaf.length).toBeLessThanOrEqual(PATH_SEGMENT_LIMIT);
+    expect(leaf).toContain('D');           // discriminator survives, non-empty
+    expect(leaf).not.toContain('B');        // base sacrificed first
+    expect(leaf.startsWith('(')).toBe(true);
+  });
 });
 
 describe('FOLDER_ALLOWED_TOKENS / FILE_ALLOWED_TOKENS', () => {

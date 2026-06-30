@@ -219,8 +219,13 @@ export function composeEditionSuffixLeaf(base: string, discriminator: string): s
   const budget = MAX_SEGMENT_LENGTH - suffix.length;
   let leaf: string;
   if (budget <= 0) {
-    // Discriminator + wrapper alone overflow the segment — keep the leaf non-empty, cap to the limit.
-    leaf = `${base}${suffix}`.slice(0, MAX_SEGMENT_LENGTH).trim();
+    // The discriminator + ` ()` wrapper alone exceed the segment limit. Base-first truncation (F7):
+    // sacrifice the base ENTIRELY before touching the discriminator, then truncate the discriminator
+    // itself only as far as the bare `()` wrapper requires — never to empty — so a pathologically
+    // long discriminator still stays visible rather than being buried behind base text.
+    const discBudget = Math.max(1, MAX_SEGMENT_LENGTH - 2); // reserve the bare "()" wrapper
+    const trimmedDisc = discriminator.length > discBudget ? discriminator.slice(0, discBudget).trim() : discriminator;
+    leaf = `(${trimmedDisc})`;
   } else {
     const trimmedBase = base.length > budget ? base.slice(0, budget).trim() : base;
     leaf = `${trimmedBase}${suffix}`;
