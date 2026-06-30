@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import type { BookService } from './book.service.js';
+import { BookService } from './book.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -13,9 +13,10 @@ import { OwnedRecordingError } from './book-dedup.js';
 import { ContentFailureError } from '../utils/import-helpers.js';
 import { MarkerPathConflictError } from '../utils/import-staging.js';
 import { mkdir, writeFile, readFile, readdir, rm, stat, symlink } from 'node:fs/promises';
-import { mkdtempSync, existsSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createDb, runMigrations } from '../../db/index.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
 // copyToLibrary returns the target POSIX-normalized (paths are stored in the DB and consumed
@@ -1614,5 +1615,171 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
     // No illegal-colon disambiguated sibling was created.
     expect((await readdir(join(libraryRoot, 'Author'))).some((n) => n.includes(':'))).toBe(false);
+  });
+
+  // The disambiguateTarget re-check (#1737): the FIRST findPathOwners call (base target)
+  // sees a different recording and disambiguates; the disambiguated folder is then itself
+  // occupied, so a SECOND findPathOwners call decides whether a same-recording re-import may
+  // swap or an uncertain collision must hold. `buildDeps` returns one fixed owner set, so
+  // these cases drive findPathOwners with a per-call sequence instead.
+  function buildDepsSeq(fpo: ReturnType<typeof vi.fn>): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({ findPathOwners: fpo }),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  it('disambiguated folder occupied by the SAME recording → staged swap into the (edition) folder (re-check, #1737)', async () => {
+    // The disambiguated "(Stephen Fry)" folder already holds an edition of the same recording.
+    const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
+    await mkdir(disambig, { recursive: true });
+    await writeFile(join(disambig, 'old.m4b'), Buffer.alloc(500, 9));
+
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0FRY' };
+    // call 1 (base target): a different recording (Jim Dale) → disambiguate to "(Stephen Fry)".
+    // call 2 (disambiguated target): the SAME recording (shared ASIN) → swap permitted.
+    const fpo = vi.fn()
+      .mockResolvedValueOnce([owner({ narrators: [{ name: 'Jim Dale' }], asin: 'B0JIM' })])
+      .mockResolvedValueOnce([owner({ id: 2, narrators: [{ name: 'Stephen Fry' }], asin: 'B0FRY' })]);
+
+    const result = await copyToLibrary(item, null, 'copy', buildDepsSeq(fpo));
+
+    expect(result.targetPath).toBe(toPosix(disambig));
+    // The staged swap replaced the disambiguated folder's audio with the new recording.
+    expect((await readdir(disambig)).sort()).toEqual(['new.mp3']);
+    // The base incumbent is never touched.
+    expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
+    expect(fpo).toHaveBeenCalledTimes(2);
+  });
+
+  it('disambiguated folder occupied by a DIFFERENT recording → throws recording-review-disambiguated-collision (re-check, #1737)', async () => {
+    const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
+    await mkdir(disambig, { recursive: true });
+    await writeFile(join(disambig, 'other.m4b'), Buffer.alloc(500, 9));
+
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0FRY' };
+    // call 1 (base): different recording → disambiguate. call 2 (disambiguated): ALSO a different
+    // recording (different narrator, no shared ASIN) → no swap, never overwrite.
+    const fpo = vi.fn()
+      .mockResolvedValueOnce([owner({ narrators: [{ name: 'Jim Dale' }], asin: 'B0JIM' })])
+      .mockResolvedValueOnce([owner({ id: 3, narrators: [{ name: 'Andrew Smith' }], asin: 'B0OTHER' })]);
+
+    await expect(copyToLibrary(item, null, 'copy', buildDepsSeq(fpo)))
+      .rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review-disambiguated-collision' });
+    // Neither the base incumbent nor the occupied disambiguated folder was overwritten.
+    expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
+    expect((await readdir(disambig)).sort()).toEqual(['other.m4b']);
+    expect(fpo).toHaveBeenCalledTimes(2);
+  });
+
+  it('disc-group: different recording on an occupied target disambiguates into an (edition) folder, never overwriting (#1737)', async () => {
+    // Distinct from the same-recording disc-group swap (AC5, #1287 block): here the occupied
+    // base target is a DIFFERENT recording, so copyDiscGroupToLibrary must keep-both — flatten
+    // both discs into the disambiguated folder and leave the incumbent intact.
+    const downloads = join(baseDir, 'downloads');
+    const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
+    const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
+    await mkdir(disc1, { recursive: true });
+    await mkdir(disc2, { recursive: true });
+    await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
+    await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
+
+    // item.path is the lowest-disc member; reconstructDiscGroup expands it to both members.
+    const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
+    const result = await copyToLibrary(discItem, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
+
+    const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
+    expect(result.editionLabel).toBe('Stephen Fry');
+    expect(result.targetPath).toBe(toPosix(disambig));
+    // Both discs flattened into the disambiguated folder, never into the incumbent's.
+    expect((await readdir(disambig)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
+    expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
+  });
+});
+
+// AC: a NON-MOCKED findPathOwners must resolve a real `books` row through the fence call site.
+// All other fence suites inject findPathOwners as a mock, so the actual eq(books.path, …) query
+// is never exercised end-to-end. Here `bookService` is a REAL BookService over a real libSQL DB
+// (prior art: book.service.dedup.integration.test.ts). This is a POSIX/Linux happy-path test —
+// CI is Linux, where normalize(resolve(target)) is forward-slash and matches the stored POSIX
+// path. The Windows separator divergence at the call site is a separate `type/defect` (#1737),
+// NOT asserted here.
+describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB, #1737)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+  let dbDir: string;
+  let db: Db;
+  let bookService: BookService;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService, // REAL service — findPathOwners runs the actual eq(books.path, …) DB query.
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  beforeEach(async () => {
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1737-realdb-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'incumbent.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    dbDir = mkdtempSync(join(tmpdir(), 'narratorr-1737-db-'));
+    const dbFile = join(dbDir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+    bookService = new BookService(db, createMockLogger());
+  });
+
+  afterEach(async () => {
+    db.$client.close();
+    await rm(baseDir, { recursive: true, force: true });
+    try {
+      rmSync(dbDir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep handles on Windows — best effort.
+    }
+  });
+
+  it('resolves the real owner row stored at the POSIX target path and routes the same recording through a staged swap', async () => {
+    // Seed a real `books` row whose `path` is the POSIX string buildTargetPath stores. The fence
+    // queries findPathOwners(normalize(resolve(target))); on Linux/CI that resolves to the same
+    // forward-slash absolute path, so the un-mocked eq(books.path, …) lookup must return this row.
+    const seeded = await bookService.create({ title: 'Title', authors: [{ name: 'Author' }], asin: 'B0SAME', status: 'imported' });
+    await bookService.update(seeded.id, { path: toPosix(target) });
+
+    // Same recording (shared ASIN) → swap. Had the lookup MISSED the row (0 owners), the
+    // candidate's narrator would have disambiguated into a new "(…)" folder instead — so a
+    // base-path result proves the real query matched the stored POSIX path through the fence.
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0SAME' };
+    const result = await copyToLibrary(item, null, 'copy', buildDeps());
+
+    expect(result.targetPath).toBe(toPosix(target));
+    expect(result.editionLabel).toBeUndefined();
+    // The staged swap replaced the incumbent audio in the base folder — no disambiguated sibling.
+    expect((await readdir(target)).sort()).toEqual(['new.mp3']);
+    expect(await pathExists(join(libraryRoot, 'Author', 'Title (Stephen Fry)'))).toBe(false);
   });
 });
