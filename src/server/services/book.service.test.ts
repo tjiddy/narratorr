@@ -394,6 +394,51 @@ describe('BookService', () => {
     });
   });
 
+  // #1727 — parity with create()'s write-boundary productionTypeSchema.parse().
+  // update() must validate a present productionType before the transaction (SQLite
+  // text-enums emit no DB CHECK), but — unlike create() — must NOT default-fill an
+  // absent key to 'unknown': a partial update leaves the existing value untouched.
+  describe('update() validates productionType at the write boundary (#1727)', () => {
+    it('rejects an invalid productionType before the books update', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await expect(service.update(1, {
+        // Cast simulates an invalid value crossing the TypeScript boundary at runtime.
+        productionType: 'not-a-real-type' as ProductionType,
+      })).rejects.toThrow();
+
+      // Parse fires outside the transaction, so neither the tx nor the .set() runs.
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(updateChain.set).not.toHaveBeenCalled();
+    });
+
+    it('persists a valid productionType through to .set()', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, { productionType: 'full_cast' });
+
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ productionType: 'full_cast' }),
+      );
+    });
+
+    it('does not write or default-fill productionType when the key is absent', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, { title: 'New Title' });
+
+      // Absent key → existing value preserved; no 'unknown' default-fill (≠ create()).
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).not.toHaveProperty('productionType');
+    });
+  });
+
   describe('update() junction table CRUD', () => {
     it('deletes old bookNarrators rows and re-inserts with updated positions on update', async () => {
       db.update.mockReturnValue(mockDbChain([mockBook]));

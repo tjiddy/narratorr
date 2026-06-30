@@ -371,6 +371,16 @@ export class BookService {
       bookData.asin = canonicalizeAsin(bookData.asin as string | null | undefined);
     }
 
+    // Validate the production_type enum at this write boundary, parity with
+    // create() (drizzle-sqlite-text-enum-no-db-check: SQLite text-enums emit no
+    // DB CHECK). Gate on key *presence*, not truthiness — a partial update that
+    // omits productionType must leave the existing value untouched, so unlike
+    // create() there is no `?? 'unknown'` default-fill. A present-but-invalid
+    // value parses to a throw, rejecting before the transaction/write.
+    if ('productionType' in bookData) {
+      bookData.productionType = productionTypeSchema.parse(bookData.productionType);
+    }
+
     const updated = await this.db.transaction(async (tx) => {
       const result = await tx
         .update(books)
