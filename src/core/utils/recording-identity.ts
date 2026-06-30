@@ -18,7 +18,7 @@
  * is wired to this yet — it merges with zero behavior change.
  */
 
-import { normalizeNarrator, NARRATOR_PLACEHOLDERS } from './similarity.js';
+import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './similarity.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
 import { slugify } from '../../shared/utils.js';
 
@@ -34,14 +34,33 @@ export type NarratorEquality = 'equal' | 'not-equal' | 'no-signal';
  */
 const DURATION_TOLERANCE = 0.15;
 
-/** Normalized, signal-carrying narrator tokens: normalize each → drop empties and placeholders. */
-function recordingNarratorTokens(narrators: string[]): Set<string> {
-  const tokens = new Set<string>();
+/** A narrator side split into usable signal tokens plus whether any placeholder was seen. */
+interface NarratorTokens {
+  signal: Set<string>;
+  hasPlaceholder: boolean;
+}
+
+/**
+ * Split each raw entry on `[,;&]` before normalizing (#1725), so a packed
+ * `['Kate Reading, Michael Kramer']` — the one-element shape native-tag scans
+ * deliver — counts as two people, not one token, and lines up with the
+ * one-name-per-row library side. Mirrors `fileNarratorTokens` (`similarity.ts`):
+ * split → normalize → filter. Tracks placeholder presence separately so the
+ * comparison layer can distinguish a one-sided placeholder from real signal
+ * instead of silently dropping it.
+ */
+function recordingNarratorTokens(narrators: string[]): NarratorTokens {
+  const signal = new Set<string>();
+  let hasPlaceholder = false;
   for (const raw of narrators) {
-    const normalized = normalizeNarrator(raw);
-    if (normalized.length > 0 && !NARRATOR_PLACEHOLDERS.has(normalized)) tokens.add(normalized);
+    for (const part of tokenizeNarrators(raw)) {
+      const normalized = normalizeNarrator(part);
+      if (normalized.length === 0) continue;
+      if (NARRATOR_PLACEHOLDERS.has(normalized)) hasPlaceholder = true;
+      else signal.add(normalized);
+    }
   }
-  return tokens;
+  return { signal, hasPlaceholder };
 }
 
 /** True when every member of `a` is in `b`. */
@@ -65,8 +84,15 @@ function isSubset(a: Set<string>, b: Set<string>): boolean {
  * placeholder filtering — it does NOT call `compareNarratorSignals`.
  */
 export function compareRecordingNarrators(a: string[], b: string[]): NarratorEquality {
-  const setA = recordingNarratorTokens(a);
-  const setB = recordingNarratorTokens(b);
+  const { signal: setA, hasPlaceholder: placeholderA } = recordingNarratorTokens(a);
+  const { signal: setB, hasPlaceholder: placeholderB } = recordingNarratorTokens(b);
+  // A placeholder present on only ONE side (e.g. a full-cast edition that also
+  // credits its lead, `['Full Cast', 'Jim Dale']` vs `['Jim Dale']`) carries no
+  // comparable signal — dropping it and comparing the survivors would falsely
+  // equate it with a solo incumbent and silently overwrite. Evaluated BEFORE the
+  // size-0 guard so a one-sided placeholder can never collapse to the survivor
+  // set (#1725). Symmetric placeholders fall through and compare survivors as before.
+  if (placeholderA !== placeholderB) return 'no-signal';
   if (setA.size === 0 || setB.size === 0) return 'no-signal';
   if (setA.size === setB.size && isSubset(setA, setB)) return 'equal';
   return 'not-equal';
