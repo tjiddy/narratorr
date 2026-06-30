@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
+import { HeldReviewPanel } from '@/components/held-review';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { PageHeader } from '@/components/PageHeader.js';
 import { makeRelativePath } from '@/lib/pathUtils.js';
@@ -145,32 +146,11 @@ export function LibraryImportPage() {
       {/* Held for recording review (#1711) — items the server could not confirm as
           the same vs a different recording of a book you own. Not imported; re-confirm
           to keep both recordings. */}
-      {heldReview.length > 0 && (
-        <div className="glass-card rounded-xl p-4 flex flex-col gap-3 animate-fade-in-up" data-testid="held-review-panel">
-          <div className="flex items-center gap-2">
-            <AlertCircleIcon className="w-5 h-5 text-amber-400" />
-            <p className="text-sm font-medium">
-              {heldReview.length} item{heldReview.length !== 1 ? 's' : ''} held for recording review
-            </p>
-          </div>
-          <ul className="text-sm text-muted-foreground list-disc pl-8 space-y-0.5">
-            {heldReview.map((h) => (
-              <li key={h.path}>{h.title}</li>
-            ))}
-          </ul>
-          <p className="text-xs text-muted-foreground">
-            These may be a different recording of a book you already own. Re-confirm to import them as separate recordings.
-          </p>
-          <button
-            type="button"
-            onClick={handleReconfirmHeld}
-            disabled={registerMutation.isPending}
-            className="self-start px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring disabled:opacity-50"
-          >
-            {registerMutation.isPending ? 'Importing...' : 'Re-confirm and import'}
-          </button>
-        </div>
-      )}
+      <HeldReviewPanel
+        heldReview={heldReview}
+        onReconfirm={handleReconfirmHeld}
+        isPending={registerMutation.isPending}
+      />
 
       {/* Review list */}
       {step === 'review' && !scanError && !emptyResult && (
