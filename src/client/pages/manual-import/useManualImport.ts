@@ -6,6 +6,7 @@ import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
+import { useHeldReview } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -29,6 +30,13 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
+
+  // Held-review recovery (#1732). Re-confirm uses the mode snapshotted at the
+  // original confirm attempt, not the still-editable `mode` selector.
+  const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
+    rows,
+    confirm: (items, confirmMode) => importMutation.mutate({ items, mode: confirmMode }),
+  });
 
   // Merge match results into rows state (single source of truth)
   const prevMatchCountRef = useRef(0);
@@ -80,6 +88,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       setRows(newRows);
       setScanError(null);
       setStep('review');
+      // A new scan supersedes any held rows from a prior directory (#1732) — clear
+      // them so the panel never renders stale titles whose paths are gone.
+      clearHeld();
 
       // Start matching only for non-duplicate books
       const candidates = result.discoveries
@@ -100,15 +111,25 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   });
 
   const importMutation = useMutation({
-    mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items, mode),
-    onSuccess: (result) => {
+    // The mode is carried in the mutation variables so the held-review snapshot
+    // captures the value in effect at *this* confirm attempt (#1732), not a later
+    // selector change.
+    mutationFn: ({ items, mode: confirmMode }: { items: ImportConfirmItem[]; mode: ImportMode | undefined }) =>
+      api.confirmImport(items, confirmMode),
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       toast.success(`${result.accepted} book${result.accepted !== 1 ? 's' : ''} queued for import`);
-      // Surface items the server held for recording review (#1711) so they are not
-      // silently dropped — re-confirm them from the Library Import page.
+      // Partial success (#1711/#1732): some items were held for recording review.
+      // Keep the user on the page with a recovery panel instead of navigating away
+      // (the old "re-confirm from Library Import" path was a dead end — manual
+      // sources live outside the library root Library Import scans). Snapshot the
+      // confirm-attempt mode so a held Move never silently re-confirms as Copy.
       if (result.heldReview.length > 0) {
-        toast.warning(`${result.heldReview.length} held for recording review — re-confirm from Library Import`);
+        captureHeld(result.heldReview, variables.mode);
+        toast.warning(`${result.heldReview.length} held for recording review`);
+        return;
       }
+      clearHeld();
       navigate('/library');
     },
     onError: (error: Error) => {
@@ -158,8 +179,8 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       // Duplicate rows that user explicitly selected require force-import to bypass safety net
       ...(r.book.isDuplicate ? { forceImport: true } : {}),
     }));
-    importMutation.mutate(items);
-  }, [rows, importMutation]);
+    importMutation.mutate({ items, mode });
+  }, [rows, importMutation, mode]);
 
   const handleBack = useCallback(() => {
     if (step === 'review') {
@@ -167,10 +188,12 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       prevMatchCountRef.current = 0;
       setStep('path');
       setRows([]);
+      // Drop held rows so backing out of review can't leave a stale panel (#1732).
+      clearHeld();
     } else {
       navigate('/library');
     }
-  }, [step, cancelMatching, navigate]);
+  }, [step, cancelMatching, navigate, clearHeld]);
 
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
@@ -197,6 +220,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       setEditIndex,
       isMatching,
       progress,
+      heldReview,
     },
     actions: {
       handleScan,
@@ -205,6 +229,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       handleEdit,
       handleImport,
       handleBack,
+      handleReconfirmHeld,
     },
     mutations: {
       scanMutation,
