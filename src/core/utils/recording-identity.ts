@@ -22,7 +22,7 @@ import { normalizeNarrator, tokenizeNarrators, NARRATOR_PLACEHOLDERS } from './s
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import { slugify } from '../../shared/utils.js';
-import type { RecordingVerdict } from '../../shared/schemas/recording-verdict.js';
+import type { RecordingVerdict, RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
 
 /**
  * 3-way recording-identity verdict (#1741). Canonical source is the shared
@@ -32,7 +32,7 @@ import type { RecordingVerdict } from '../../shared/schemas/recording-verdict.js
  * Existing consumers (`book-dedup.ts`, `match-job.helpers.ts`) keep importing
  * `RecordingVerdict` from here unchanged.
  */
-export type { RecordingVerdict } from '../../shared/schemas/recording-verdict.js';
+export type { RecordingVerdict, RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
 
 /** Narrator-set comparison verdict. Duration is NOT an input — the resolver applies it separately. */
 export type NarratorEquality = 'equal' | 'not-equal' | 'no-signal';
@@ -117,6 +117,13 @@ export interface RecordingCandidate {
   narrators: string[];
   duration?: number | null;
   asin?: string | null;
+  /**
+   * Canonical production form (#1728), nullable like `deriveEditionLabel`'s param
+   * rather than the `ProductionType` union, to avoid coupling core to that enum.
+   * A veto toward `review` only — never a positive identity signal. `null`/
+   * `undefined`/`'unknown'` are all treated as "no production-type signal".
+   */
+  productionType?: string | null;
 }
 
 /** Plain-primitive library-recording shape. Callers precompute `primaryAuthorSlug`. */
@@ -126,6 +133,19 @@ export interface LibraryRecording {
   narrators: string[];
   duration?: number | null;
   asin?: string | null;
+  /** Canonical production form (#1728) — see `RecordingCandidate.productionType`. */
+  productionType?: string | null;
+}
+
+/**
+ * Resolver result (#1728). `recordingReviewReason` is the MACHINE reason a
+ * `review` verdict was reached; it is populated ONLY when `verdict === 'review'`
+ * and is pure data (core stays free of any server/logger import). Callers that
+ * only need the verdict read `.verdict`.
+ */
+export interface RecordingIdentityResult {
+  verdict: RecordingVerdict;
+  recordingReviewReason?: RecordingReviewReason;
 }
 
 /** Human-readable labels for the production forms that can stand in as an edition discriminator. */
@@ -167,17 +187,40 @@ function durationNoSignal(d: number | null | undefined): boolean {
 }
 
 /**
- * Duration corroborator — only ever runs on the equal-narrator branch. Narrator is
- * primary; duration can only DOWNGRADE an equal match to `review`, never flip it to
- * `different-recording` and never block on absence:
- *  - either side missing/zero → no-signal → `same-recording` on narrator equality alone.
- *  - both present, within the 15% band → `same-recording` (the Tehanu case).
- *  - both present, beyond the band → `review` (abridged-vs-unabridged ambiguity).
+ * True when both production forms carry a known, comparable, DIFFERENT signal —
+ * the veto condition (#1728). `null`/`undefined`/`'unknown'` is "no signal" on
+ * either side (mirrors how `durationNoSignal` treats missing duration), so a
+ * one-sided known value can never veto.
  */
-function corroborateWithDuration(candidate: number | null | undefined, library: number | null | undefined): RecordingVerdict {
-  if (durationNoSignal(candidate) || durationNoSignal(library)) return 'same-recording';
-  const distance = Math.abs(candidate! - library!) / library!;
-  return distance <= DURATION_TOLERANCE ? 'same-recording' : 'review';
+function productionTypesConflict(candidate: string | null | undefined, library: string | null | undefined): boolean {
+  if (!candidate || !library || candidate === 'unknown' || library === 'unknown') return false;
+  return candidate !== library;
+}
+
+/**
+ * Corroborate an equal-narrator match (#1710, #1728). Narrator is primary; this
+ * can only DOWNGRADE the equal match to `review`, never flip it to
+ * `different-recording`. Two corroborators, in priority order:
+ *
+ *  1. Duration (authoritative when present): both sides present + within the 15%
+ *     band → `same-recording` (the Tehanu case); beyond the band → `review`
+ *     (`duration-mismatch`). When duration corroborates, production form is
+ *     ignored — two unabridged readings whose `productionType` happens to differ
+ *     must not be forced to review when their durations agree.
+ *  2. Production-form veto (#1728): ONLY on the no-signal-duration branch (either
+ *     side missing/zero). When both forms are known and different (e.g. unabridged
+ *     vs abridged) → `review` (`production-type-mismatch`); otherwise the
+ *     equal-narrator match stands as `same-recording`.
+ */
+function corroborateWithDuration(candidate: RecordingCandidate, library: LibraryRecording): RecordingIdentityResult {
+  if (!durationNoSignal(candidate.duration) && !durationNoSignal(library.duration)) {
+    const distance = Math.abs(candidate.duration! - library.duration!) / library.duration!;
+    return distance <= DURATION_TOLERANCE ? { verdict: 'same-recording' } : { verdict: 'review', recordingReviewReason: 'duration-mismatch' };
+  }
+  if (productionTypesConflict(candidate.productionType, library.productionType)) {
+    return { verdict: 'review', recordingReviewReason: 'production-type-mismatch' };
+  }
+  return { verdict: 'same-recording' };
 }
 
 /**
@@ -195,7 +238,7 @@ function corroborateWithDuration(candidate: number | null | undefined, library: 
  *       equal → duration corroborator → `same-recording` or `review`.
  *  4. no title+author match → `different-recording` (new).
  */
-export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: LibraryRecording): RecordingVerdict {
+export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: LibraryRecording): RecordingIdentityResult {
   // (1) ASIN equal — the only ASIN-based conclusion. Both sides are reduced to the
   // shared canonical form (trim + UPPERCASE → null on blank, #1733) before compare,
   // so a padded/case-drifted pre-write candidate (`' B01ABC '`) still matches a
@@ -206,7 +249,7 @@ export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: L
   const candidateAsin = canonicalizeAsin(candidate.asin);
   const entryAsin = canonicalizeAsin(entry.asin);
   if (candidateAsin && entryAsin && candidateAsin === entryAsin) {
-    return 'same-recording';
+    return { verdict: 'same-recording' };
   }
 
   // (2) title + primary-author slug scope. A different ASIN falls through here.
@@ -216,12 +259,12 @@ export function resolveRecordingIdentity(candidate: RecordingCandidate, entry: L
   const titleMatch = normalizeTitleForDedup(candidate.title) === normalizeTitleForDedup(entry.title);
   if (!titleMatch || !candidateSlug || candidateSlug !== entry.primaryAuthorSlug) {
     // (4) no title+author match → different recording.
-    return 'different-recording';
+    return { verdict: 'different-recording' };
   }
 
   // (3) narrator predicate.
   const narratorVerdict = compareRecordingNarrators(candidate.narrators, entry.narrators);
-  if (narratorVerdict === 'not-equal') return 'different-recording';
-  if (narratorVerdict === 'no-signal') return 'review';
-  return corroborateWithDuration(candidate.duration, entry.duration);
+  if (narratorVerdict === 'not-equal') return { verdict: 'different-recording' };
+  if (narratorVerdict === 'no-signal') return { verdict: 'review', recordingReviewReason: 'narrator-no-signal' };
+  return corroborateWithDuration(candidate, entry);
 }

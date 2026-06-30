@@ -666,6 +666,73 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
   });
 });
 
+// #1728 — production-type veto at the copy-time fence. An occupied target owned by
+// the SAME narrator but a DIFFERENT, known production form (abridged vs unabridged)
+// with no corroborating duration must be HELD (OwnedRecordingError, never
+// overwritten), not silently staged-swapped as same-recording. The candidate's
+// production form is threaded from the accepted metadata via buildRecordingCandidate.
+describe('copyToLibrary — production-type veto on occupied target (#1728)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  // Owner: same narrator, no ASIN (so the ASIN short-circuit cannot fire), no
+  // duration (so the veto branch is reached), production form `abridged`.
+  function buildDeps(): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({
+        findPathOwners: vi.fn().mockResolvedValue([
+          { id: 1, title: 'Title', authors: [{ name: 'Author' }], narrators: [{ name: 'Jim Dale' }], asin: null, duration: null, productionType: 'abridged' },
+        ]),
+      }),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  beforeEach(async () => {
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1728-orch-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(libraryRoot, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('holds an abridged-vs-unabridged occupied target for review instead of staged-swapping it', async () => {
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
+
+    // Candidate: same narrator, unabridged (vs owner abridged), no duration.
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Jim Dale'] };
+    const meta = { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], formatType: 'Unabridged' };
+
+    await expect(copyToLibrary(item, meta, 'copy', buildDeps())).rejects.toMatchObject({
+      code: 'OWNED_RECORDING',
+      reason: 'recording-review',
+    });
+    // The occupied target is untouched — the old edition's audio is still there,
+    // and no staging siblings were left behind.
+    expect((await readdir(target)).filter((f) => f.endsWith('.m4b'))).toEqual(['old.m4b']);
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+});
+
 describe('copyToLibrary — interrupted-commit recovery before direct-copy (#1337)', () => {
   let baseDir: string;
   let libraryRoot: string;

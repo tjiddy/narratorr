@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { OwnedRecordingError, buildForcedImportRefusedReason, toLibraryRecording } from './book-dedup.js';
+import { OwnedRecordingError, buildForcedImportRefusedReason, toLibraryRecording, toRecordingCandidate } from './book-dedup.js';
 import type { BookWithAuthor } from './book.service.js';
 
 // Build a minimal `BookWithAuthor` row exercising only the fields `toLibraryRecording` reads.
@@ -9,6 +9,7 @@ function makeRow(overrides: {
   narrators?: { name: string }[];
   asin?: string | null;
   duration?: number | null;
+  productionType?: string | null;
 } = {}): BookWithAuthor {
   return {
     title: 'The Way of Kings',
@@ -16,6 +17,7 @@ function makeRow(overrides: {
     narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
     asin: 'B0041JKFJW',
     duration: 164940,
+    productionType: 'unabridged',
     ...overrides,
   } as unknown as BookWithAuthor;
 }
@@ -81,6 +83,7 @@ describe('toLibraryRecording (#1734 fence/DB-dedup drift guard)', () => {
       narrators: ['Michael Kramer', 'Kate Reading'],
       asin: 'B0041JKFJW',
       duration: 164940,
+      productionType: 'unabridged',
     });
   });
 
@@ -93,13 +96,32 @@ describe('toLibraryRecording (#1734 fence/DB-dedup drift guard)', () => {
     expect(toLibraryRecording(makeRow({ authors: [] })).primaryAuthorSlug).toBe('');
   });
 
-  it('maps every narrator to its name and nulls absent asin/duration', () => {
-    expect(toLibraryRecording(makeRow({ asin: null, duration: null }))).toEqual({
+  it('maps every narrator to its name and nulls absent asin/duration/productionType', () => {
+    expect(toLibraryRecording(makeRow({ asin: null, duration: null, productionType: null }))).toEqual({
       title: 'The Way of Kings',
       primaryAuthorSlug: 'brandon-sanderson',
       narrators: ['Michael Kramer', 'Kate Reading'],
       asin: null,
       duration: null,
+      productionType: null,
     });
+  });
+
+  // #1728 — the production form is the discriminator behind the resolver's veto;
+  // pin that `toLibraryRecording` carries it through so the veto is not inert.
+  it('carries productionType through from the owner row', () => {
+    expect(toLibraryRecording(makeRow({ productionType: 'abridged' })).productionType).toBe('abridged');
+  });
+});
+
+// #1728 — the candidate adapter must forward `productionType` so the resolver's
+// production-type veto can fire; an omitted value maps to null (no veto signal).
+describe('toRecordingCandidate (#1728 productionType plumbing)', () => {
+  it('forwards productionType from the candidate', () => {
+    expect(toRecordingCandidate({ title: 'T', productionType: 'unabridged' }).productionType).toBe('unabridged');
+  });
+
+  it('maps an absent productionType to null', () => {
+    expect(toRecordingCandidate({ title: 'T' }).productionType).toBeNull();
   });
 });

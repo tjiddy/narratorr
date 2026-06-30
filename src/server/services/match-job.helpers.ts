@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
 import type { MatchSource } from './tag-search-planner.js';
@@ -44,6 +45,10 @@ export async function applyLibraryDuplicate(
       ...(result.bestMatch.asin !== undefined && { asin: result.bestMatch.asin }),
       ...(result.bestMatch.narrators !== undefined && { narrators: result.bestMatch.narrators }),
       ...(result.bestMatch.duration !== undefined && { duration: result.bestMatch.duration }),
+      // Production form (#1728, F2): normalize the matched edition's formatType so
+      // an abridged-vs-unabridged best match with no usable duration classifies as
+      // review rather than a silent same-recording duplicate.
+      ...(result.bestMatch.formatType ? { productionType: normalizeProductionType(result.bestMatch.formatType) } : {}),
     });
     if (resolution.verdict === 'same-recording' && resolution.book) {
       log.debug(
@@ -54,9 +59,12 @@ export async function applyLibraryDuplicate(
     }
     if (resolution.verdict === 'review') {
       log.debug(
-        { path: result.path, existingBookId: resolution.book?.id, title: result.bestMatch.title },
-        'Post-match recording review required (narrators could not be compared)',
+        { path: result.path, existingBookId: resolution.book?.id, title: result.bestMatch.title, recordingReviewReason: resolution.recordingReviewReason },
+        'Post-match recording review required',
       );
+      // The user-facing `reviewReason` display text is intentionally left as the
+      // generic human warning (#1728): the machine reason rides the log context
+      // above, never into the display string.
       return {
         ...result,
         reviewReason: RECORDING_REVIEW_REASON,

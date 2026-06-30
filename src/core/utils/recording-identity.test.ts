@@ -5,6 +5,7 @@ import {
   deriveEditionLabel,
   type RecordingCandidate,
   type LibraryRecording,
+  type RecordingVerdict,
 } from './recording-identity.js';
 
 describe('compareRecordingNarrators (#1710)', () => {
@@ -139,9 +140,19 @@ function library(overrides: Partial<LibraryRecording> = {}): LibraryRecording {
   return { title: 'T', primaryAuthorSlug: 'author-one', narrators: [], ...overrides };
 }
 
+/**
+ * Verdict-only convenience (#1728). The resolver now returns
+ * `{ verdict, recordingReviewReason? }`; the many verdict-only assertions below
+ * read just the verdict through this helper. The reason-flow tests further down
+ * call `resolveRecordingIdentity` directly and assert on both fields.
+ */
+function verdictOf(c: RecordingCandidate, e: LibraryRecording): RecordingVerdict {
+  return resolveRecordingIdentity(c, e).verdict;
+}
+
 describe('resolveRecordingIdentity (#1710)', () => {
   it('ASIN-equal short-circuits to same-recording (case-insensitive)', () => {
-    const verdict = resolveRecordingIdentity(
+    const verdict = verdictOf(
       candidate({ asin: 'b01abc', narrators: ['X'] }),
       library({ asin: 'B01ABC', narrators: ['Y'] }), // narrators differ; ASIN wins
     );
@@ -149,7 +160,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
   });
 
   it('different ASIN does NOT short-circuit — defers to narrator (Tehanu)', () => {
-    const verdict = resolveRecordingIdentity(
+    const verdict = verdictOf(
       candidate({ asin: 'B-NEW', title: 'Tehanu', authors: ['Ursula K. Le Guin'], narrators: ['Jenny Sterlin'], duration: 36000 }),
       library({ asin: 'B-OLD', title: 'Tehanu', primaryAuthorSlug: 'ursula-k-le-guin', narrators: ['Jenny Sterlin'], duration: 36100 }),
     );
@@ -162,28 +173,28 @@ describe('resolveRecordingIdentity (#1710)', () => {
   // tests set the ASIN on both sides, leaving the single-sided fall-through unpinned.
   describe('single-sided ASIN falls through to the narrator path (#1729)', () => {
     it('candidate-only ASIN + matching title/author + equal narrators → same-recording (via narrator)', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ asin: 'B01ABC', narrators: ['Jim Dale'] }),
         library({ asin: null, narrators: ['Jim Dale'] }),
       )).toBe('same-recording');
     });
 
     it('candidate-only ASIN + matching title/author + not-equal narrators → different-recording (ASIN did not short-circuit)', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ asin: 'B01ABC', narrators: ['Jim Dale'] }),
         library({ asin: null, narrators: ['Kate Reading', 'Michael Kramer'] }),
       )).toBe('different-recording');
     });
 
     it('entry-only ASIN + matching title/author + equal narrators → same-recording (via narrator)', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ asin: null, narrators: ['Jim Dale'] }),
         library({ asin: 'B01ABC', narrators: ['Jim Dale'] }),
       )).toBe('same-recording');
     });
 
     it('entry-only ASIN + matching title/author + not-equal narrators → different-recording (ASIN did not short-circuit)', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ asin: null, narrators: ['Jim Dale'] }),
         library({ asin: 'B01ABC', narrators: ['Kate Reading', 'Michael Kramer'] }),
       )).toBe('different-recording');
@@ -199,14 +210,14 @@ describe('resolveRecordingIdentity (#1710)', () => {
   // same-recording — a non-canonicalizing resolver would fall through to
   // different-recording.
   it('whitespace-padded candidate ASIN canonicalizes and short-circuits → same-recording (#1729 gap b)', () => {
-    expect(resolveRecordingIdentity(
+    expect(verdictOf(
       candidate({ asin: ' B01ABC ', narrators: ['X'] }),
       library({ asin: 'B01ABC', narrators: ['Y'] }),
     )).toBe('same-recording');
   });
 
   it('crux: HP single narrator vs full-cast superset → different-recording', () => {
-    const verdict = resolveRecordingIdentity(
+    const verdict = verdictOf(
       candidate({ title: "Harry Potter and the Sorcerer's Stone", authors: ['J. K. Rowling'], narrators: ['Jim Dale', 'Extra Cast Member'] }),
       library({ title: "Harry Potter and the Sorcerer's Stone", primaryAuthorSlug: 'j-k-rowling', narrators: ['Jim Dale'] }),
     );
@@ -214,7 +225,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
   });
 
   it('no-signal narrator (placeholder / unknown) → review', () => {
-    const verdict = resolveRecordingIdentity(
+    const verdict = verdictOf(
       candidate({ narrators: ['Multiple Readers'] }),
       library({ narrators: ['Jim Dale'] }),
     );
@@ -222,7 +233,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
   });
 
   it('not-equal/superset under matching title+author → different-recording', () => {
-    const verdict = resolveRecordingIdentity(
+    const verdict = verdictOf(
       candidate({ narrators: ['Kate Reading', 'Michael Kramer'] }),
       library({ narrators: ['Kate Reading'] }),
     );
@@ -230,12 +241,12 @@ describe('resolveRecordingIdentity (#1710)', () => {
   });
 
   it('no title+author match → different-recording (new book)', () => {
-    expect(resolveRecordingIdentity(
+    expect(verdictOf(
       candidate({ title: 'Wholly Different', narrators: ['X'] }),
       library({ title: 'Original', narrators: ['X'] }),
     )).toBe('different-recording');
     // matching title but different author slug also falls through to different-recording
-    expect(resolveRecordingIdentity(
+    expect(verdictOf(
       candidate({ authors: ['Someone Else'], narrators: ['X'] }),
       library({ primaryAuthorSlug: 'author-one', narrators: ['X'] }),
     )).toBe('different-recording');
@@ -244,21 +255,21 @@ describe('resolveRecordingIdentity (#1710)', () => {
   describe('author-less records never pass the author scope (#1722)', () => {
     it('both author-less with normalize-equal titles → different-recording (equal narrators)', () => {
       // Equal narrators would resolve same-recording if the empty-slug pair passed the scope.
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ title: 'The Stranger', authors: [], narrators: ['X'] }),
         library({ title: 'The Stranger', primaryAuthorSlug: '', narrators: ['X'] }),
       )).toBe('different-recording');
     });
 
     it('author-less candidate vs authored entry → different-recording', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ title: 'The Stranger', authors: [], narrators: ['X'] }),
         library({ title: 'The Stranger', primaryAuthorSlug: 'author-one', narrators: ['X'] }),
       )).toBe('different-recording');
     });
 
     it('authored candidate vs author-less entry → different-recording', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ title: 'The Stranger', authors: ['Author One'], narrators: ['X'] }),
         library({ title: 'The Stranger', primaryAuthorSlug: '', narrators: ['X'] }),
       )).toBe('different-recording');
@@ -267,7 +278,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
 
   describe('title-normalization drift scopes to the same incumbent', () => {
     it('colon subtitle (Mistborn: The Final Empire vs Mistborn)', () => {
-      const verdict = resolveRecordingIdentity(
+      const verdict = verdictOf(
         candidate({ title: 'Mistborn: The Final Empire', narrators: ['Michael Kramer'] }),
         library({ title: 'Mistborn', narrators: ['Michael Kramer'] }),
       );
@@ -275,7 +286,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
     });
 
     it('trailing parenthetical (Dune (Unabridged) vs Dune)', () => {
-      const verdict = resolveRecordingIdentity(
+      const verdict = verdictOf(
         candidate({ title: 'Dune (Unabridged)', narrators: ['Scott Brick'] }),
         library({ title: 'Dune', narrators: ['Scott Brick'] }),
       );
@@ -283,7 +294,7 @@ describe('resolveRecordingIdentity (#1710)', () => {
     });
 
     it('series-marker drift (Foo, Book 1 vs Foo)', () => {
-      const verdict = resolveRecordingIdentity(
+      const verdict = verdictOf(
         candidate({ title: 'Foo, Book 1', narrators: ['Scott Brick'] }),
         library({ title: 'Foo', narrators: ['Scott Brick'] }),
       );
@@ -293,14 +304,14 @@ describe('resolveRecordingIdentity (#1710)', () => {
 
   describe('packed + one-sided-placeholder narrator shapes (#1725)', () => {
     it('comma-packed candidate vs split library, absent duration → same-recording', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ narrators: ['Kate Reading, Michael Kramer'] }),
         library({ narrators: ['Kate Reading', 'Michael Kramer'] }),
       )).toBe('same-recording');
     });
 
     it('comma-packed candidate vs split library, close duration → same-recording', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ narrators: ['Kate Reading, Michael Kramer'], duration: 36000 }),
         library({ narrators: ['Kate Reading', 'Michael Kramer'], duration: 39000 }),
       )).toBe('same-recording');
@@ -310,14 +321,14 @@ describe('resolveRecordingIdentity (#1710)', () => {
       // Before the tokenize fix, the packed candidate had set size 1 vs the split
       // library set size 2 → not-equal → different-recording. It must now match.
       expect(compareRecordingNarrators(['Kate Reading, Michael Kramer'], ['Kate Reading', 'Michael Kramer'])).toBe('equal');
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ narrators: ['Kate Reading, Michael Kramer'] }),
         library({ narrators: ['Kate Reading', 'Michael Kramer'] }),
       )).toBe('same-recording');
     });
 
     it('lead-plus-fullcast candidate vs lead library → review, NOT same-recording (Bug-2 guard)', () => {
-      expect(resolveRecordingIdentity(
+      expect(verdictOf(
         candidate({ narrators: ['Full Cast', 'Jim Dale'] }),
         library({ narrators: ['Jim Dale'] }),
       )).toBe('review');
@@ -329,26 +340,26 @@ describe('resolveRecordingIdentity (#1710)', () => {
     const eqLib = { narrators: ['Jim Dale'] };
 
     it('missing duration on either side → same-recording', () => {
-      expect(resolveRecordingIdentity(candidate(eq), library(eqLib))).toBe('same-recording');
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 36000 }), library(eqLib))).toBe('same-recording');
-      expect(resolveRecordingIdentity(candidate(eq), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+      expect(verdictOf(candidate(eq), library(eqLib))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 36000 }), library(eqLib))).toBe('same-recording');
+      expect(verdictOf(candidate(eq), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
     });
 
     it('zero duration → same-recording', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 0 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 0 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
     });
 
     it('close duration (within 15%) → same-recording', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 36000 }), library({ ...eqLib, duration: 39000 }))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 36000 }), library({ ...eqLib, duration: 39000 }))).toBe('same-recording');
     });
 
     it('far-apart duration (beyond 15%) → review', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 18000 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+      expect(verdictOf(candidate({ ...eq, duration: 18000 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
     });
 
     it('duration never yields different-recording for equal narrators', () => {
       for (const d of [0, 1, 18000, 36000, 100000]) {
-        const verdict = resolveRecordingIdentity(candidate({ ...eq, duration: d }), library({ ...eqLib, duration: 36000 }));
+        const verdict = verdictOf(candidate({ ...eq, duration: d }), library({ ...eqLib, duration: 36000 }));
         expect(verdict).not.toBe('different-recording');
       }
     });
@@ -359,19 +370,114 @@ describe('resolveRecordingIdentity (#1710)', () => {
     // the shorter-candidate and longer-candidate sides of the band. Library 36000,
     // band edge Δ = 36000 * 0.15 = 5400 → 30600 (short) / 41400 (long).
     it('exact 15% boundary on the shorter-candidate side → same-recording (inclusive)', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 30600 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 30600 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
     });
 
     it('one tick beyond 15% on the shorter-candidate side → review', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 30599 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+      expect(verdictOf(candidate({ ...eq, duration: 30599 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
     });
 
     it('exact 15% boundary on the longer-candidate side → same-recording (inclusive)', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 41400 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
+      expect(verdictOf(candidate({ ...eq, duration: 41400 }), library({ ...eqLib, duration: 36000 }))).toBe('same-recording');
     });
 
     it('one tick beyond 15% on the longer-candidate side → review', () => {
-      expect(resolveRecordingIdentity(candidate({ ...eq, duration: 41401 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+      expect(verdictOf(candidate({ ...eq, duration: 41401 }), library({ ...eqLib, duration: 36000 }))).toBe('review');
+    });
+  });
+
+  // (#1728) Production-type veto toward the SAFE review disposition — only on the
+  // equal-narrator + no-corroborating-duration branch. `production_type` never
+  // becomes a positive identity signal; a known-mismatch only downgrades an
+  // otherwise-`same-recording` to `review`. Asserts on BOTH the verdict and the
+  // machine `recordingReviewReason`.
+  describe('production-type veto on the no-signal-duration branch', () => {
+    const eq = { narrators: ['Jim Dale'] };
+    const eqLib = { narrators: ['Jim Dale'] };
+
+    it('known mismatch (unabridged vs abridged) + missing duration → review / production-type-mismatch', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, productionType: 'unabridged' }),
+        library({ ...eqLib, productionType: 'abridged' }),
+      )).toEqual({ verdict: 'review', recordingReviewReason: 'production-type-mismatch' });
+    });
+
+    it('known mismatch + zero duration on one side → review / production-type-mismatch', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, duration: 0, productionType: 'unabridged' }),
+        library({ ...eqLib, duration: 36000, productionType: 'abridged' }),
+      )).toEqual({ verdict: 'review', recordingReviewReason: 'production-type-mismatch' });
+    });
+
+    it('other known, different pair (unabridged vs full_cast) + no duration → review / production-type-mismatch', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, productionType: 'unabridged' }),
+        library({ ...eqLib, productionType: 'full_cast' }),
+      )).toEqual({ verdict: 'review', recordingReviewReason: 'production-type-mismatch' });
+    });
+
+    it('both unknown + no duration → same-recording (no signal, no veto)', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, productionType: 'unknown' }),
+        library({ ...eqLib, productionType: 'unknown' }),
+      )).toEqual({ verdict: 'same-recording' });
+    });
+
+    it('same known type + no duration → same-recording', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, productionType: 'unabridged' }),
+        library({ ...eqLib, productionType: 'unabridged' }),
+      )).toEqual({ verdict: 'same-recording' });
+    });
+
+    it('one side absent (null/omitted) cannot veto → same-recording', () => {
+      // Candidate has a known value, library omits it entirely (per the eopt
+      // fixture-builder learning: OMIT the key, do not pass `undefined`).
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, productionType: 'abridged' }),
+        library(eqLib),
+      )).toEqual({ verdict: 'same-recording' });
+      // Explicit null on the other side is equally no-signal.
+      expect(resolveRecordingIdentity(
+        candidate(eq),
+        library({ ...eqLib, productionType: null }),
+      )).toEqual({ verdict: 'same-recording' });
+    });
+
+    it('duration stays authoritative — corroborating duration ignores a production-type mismatch', () => {
+      // Both durations within band → same-recording even though forms differ.
+      expect(resolveRecordingIdentity(
+        candidate({ ...eq, duration: 36000, productionType: 'unabridged' }),
+        library({ ...eqLib, duration: 39000, productionType: 'abridged' }),
+      )).toEqual({ verdict: 'same-recording' });
+    });
+  });
+
+  // (#1728) Reason-flow contract: every `review` path carries its machine reason.
+  describe('recordingReviewReason is populated for each review path', () => {
+    it('duration beyond band → duration-mismatch', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Jim Dale'], duration: 18000 }),
+        library({ narrators: ['Jim Dale'], duration: 36000 }),
+      )).toEqual({ verdict: 'review', recordingReviewReason: 'duration-mismatch' });
+    });
+
+    it('no-signal narrator → narrator-no-signal', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Multiple Readers'] }),
+        library({ narrators: ['Jim Dale'] }),
+      )).toEqual({ verdict: 'review', recordingReviewReason: 'narrator-no-signal' });
+    });
+
+    it('non-review verdicts carry no reason', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Jim Dale'] }),
+        library({ narrators: ['Jim Dale'] }),
+      )).toEqual({ verdict: 'same-recording' });
+      expect(resolveRecordingIdentity(
+        candidate({ narrators: ['Kate Reading', 'Michael Kramer'] }),
+        library({ narrators: ['Kate Reading'] }),
+      )).toEqual({ verdict: 'different-recording' });
     });
   });
 });

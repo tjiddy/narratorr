@@ -17,6 +17,7 @@ import { importListSettingsSchemas, type ImportListSettings } from '../../shared
 import type { ImportListRow } from './types.js';
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { AppSettings } from '../../shared/schemas.js';
+import type { RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
 
 type QualitySettings = AppSettings['quality'];
 
@@ -323,6 +324,11 @@ export class ImportListService {
       ...(enriched.asin !== undefined && { asin: enriched.asin }),
       ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
       ...(enriched.duration != null && { duration: enriched.duration }),
+      // Production form (#1728, F1): `enriched.productionType` is already
+      // normalized upstream (`buildMatchedEnriched`). Pass it so an
+      // abridged-vs-unabridged item with no duration holds for review instead of
+      // silently skipping as same-recording.
+      ...(enriched.productionType !== undefined && { productionType: enriched.productionType }),
     });
   }
 
@@ -336,9 +342,14 @@ export class ImportListService {
    * the incumbent's book history. `bookTitle` is `notNull`, so it carries the
    * candidate title; `existingBookId` is the incumbent the candidate matched.
    */
-  private async recordReviewSkip(enriched: EnrichedItem, list: ImportListRow, existingBookId: number | null): Promise<void> {
+  private async recordReviewSkip(
+    enriched: EnrichedItem,
+    list: ImportListRow,
+    existingBookId: number | null,
+    recordingReviewReason: RecordingReviewReason | undefined,
+  ): Promise<void> {
     this.log.info(
-      { title: enriched.title, asin: enriched.asin, existingBookId },
+      { title: enriched.title, asin: enriched.asin, existingBookId, recordingReviewReason },
       'Import-list item needs recording review — recording held-review event',
     );
     await this.db.insert(bookEvents).values({
@@ -347,7 +358,9 @@ export class ImportListService {
       authorName: enriched.authorName ?? null,
       eventType: 'recording_review_skipped',
       source: 'import_list',
-      reason: { importListName: list.name, existingBookId },
+      // `reason` is unstructured JSON (no migration). The machine reason (#1728)
+      // makes the held downgrade diagnosable — e.g. `production-type-mismatch`.
+      reason: { importListName: list.name, existingBookId, ...(recordingReviewReason && { recordingReviewReason }) },
     });
   }
 
@@ -396,7 +409,7 @@ export class ImportListService {
       return 'skipped';
     }
     if (resolution.verdict === 'review') {
-      await this.recordReviewSkip(enriched, list, resolution.book?.id ?? null);
+      await this.recordReviewSkip(enriched, list, resolution.book?.id ?? null, resolution.recordingReviewReason);
       return 'held_review';
     }
 
