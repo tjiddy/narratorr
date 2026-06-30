@@ -65,6 +65,16 @@ export type DuplicateVerdict = RecordingVerdict;
 export interface DuplicateResolution {
   verdict: DuplicateVerdict;
   book: BookWithAuthor | null;
+  /**
+   * True iff ≥1 plausible incumbent was gathered in the bibliographic scope
+   * (#1712). Additive and orthogonal to `verdict`/`book`: it disambiguates the two
+   * `different-recording` cases — a genuinely NEW book (no incumbents,
+   * `hasIncumbent: false`) vs. a different recording of an OWNED title (incumbents
+   * existed but none resolved to same/review, `hasIncumbent: true`). `book` keeps
+   * its `different-recording ⇒ null` contract; consumers that read only
+   * `verdict`/`book` are unaffected.
+   */
+  hasIncumbent: boolean;
 }
 
 /** Adapt a candidate identity into the core resolver's plain-primitive shape. */
@@ -144,7 +154,8 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
  */
 export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: DuplicateCandidate): Promise<DuplicateResolution> {
   const ids = await gatherIncumbentIds(db, candidate);
-  if (ids.length === 0) return { verdict: 'different-recording', book: null };
+  // No incumbents at all → a genuinely new book (hasIncumbent: false).
+  if (ids.length === 0) return { verdict: 'different-recording', book: null, hasIncumbent: false };
 
   const recordingCandidate = toRecordingCandidate(candidate);
   let reviewBook: BookWithAuthor | null = null;
@@ -152,11 +163,12 @@ export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: Du
     const book = await getById(id);
     if (!book) continue;
     const verdict = resolveRecordingIdentity(recordingCandidate, toLibraryRecording(book));
-    if (verdict === 'same-recording') return { verdict: 'same-recording', book };
+    if (verdict === 'same-recording') return { verdict: 'same-recording', book, hasIncumbent: true };
     if (verdict === 'review' && !reviewBook) reviewBook = book;
   }
-  if (reviewBook) return { verdict: 'review', book: reviewBook };
-  return { verdict: 'different-recording', book: null };
+  if (reviewBook) return { verdict: 'review', book: reviewBook, hasIncumbent: true };
+  // Incumbents existed but none matched → a different recording of an owned title.
+  return { verdict: 'different-recording', book: null, hasIncumbent: true };
 }
 
 /**

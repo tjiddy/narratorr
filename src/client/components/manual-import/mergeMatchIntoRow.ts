@@ -40,7 +40,7 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
   // + the hooks' `isDbDuplicate`/`isDuplicate` checks see it (#1662 F8). A
   // non-duplicate `review` verdict (#1711) instead surfaces a display-only
   // `reviewReason` on the row — the row still flows (not hard-skipped).
-  const book = isPostMatchDuplicate
+  const baseBook = isPostMatchDuplicate
     ? {
         ...row.book,
         isDuplicate: true,
@@ -50,6 +50,12 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
     : match.reviewReason !== undefined
       ? { ...row.book, reviewReason: match.reviewReason }
       : row.book;
+  // Thread the recording verdict (#1712) onto the row regardless of branch — it
+  // co-occurs with `isDuplicate` (same-recording), with `reviewReason` (review), or
+  // stands alone (different-recording of an owned title). Drives the ImportCard ladder.
+  const book = match.recordingVerdict !== undefined
+    ? { ...baseBook, recordingVerdict: match.recordingVerdict }
+    : baseBook;
 
   // Auto-populate edited fields from the best match only when the user hasn't
   // already edited this row. A row counts as edited if the user committed a fix

@@ -60,6 +60,22 @@ describe('LibraryBookCard', () => {
       renderWithProviders(<LibraryBookCard {...defaultProps()} />);
       expect(screen.getByRole('link')).toBeInTheDocument();
     });
+
+    it('renders the edition label when present (#1712)', () => {
+      const book = createMockLibraryBook({ editionLabel: 'Full Cast' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('edition-label')).toHaveTextContent('Full Cast');
+    });
+
+    it('renders nothing for the edition label when null/absent (#1712)', () => {
+      const nullLabel = createMockLibraryBook({ editionLabel: null });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book: nullLabel })} />);
+      expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
+
+      // Absent key (factory omits it) behaves identically to null.
+      renderWithProviders(<LibraryBookCard {...defaultProps()} />);
+      expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
+    });
   });
 
   describe('cover image', () => {

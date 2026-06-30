@@ -50,7 +50,7 @@ vi.mock('@core/utils/index.js', () => ({
     { label: 'Title', tokens: ['title', 'titleSort'] },
     { label: 'Series', tokens: ['series', 'seriesPosition'] },
     { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year'] },
+    { label: 'Metadata', tokens: ['year', 'edition'] },
   ],
   FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
@@ -429,6 +429,8 @@ describe('NamingSettingsSection', () => {
       expect(screen.getByText('Series')).toBeInTheDocument();
       expect(screen.getByText('Narrator')).toBeInTheDocument();
       expect(screen.getByText('Metadata')).toBeInTheDocument();
+      // #1712 — {edition} is discoverable in the folder token picker.
+      expect(screen.getByText('{edition}')).toBeInTheDocument();
       // Should NOT show file-specific group
       expect(screen.queryByText('File-specific')).not.toBeInTheDocument();
     });

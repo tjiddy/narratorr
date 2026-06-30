@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { join, extname, basename, dirname } from 'node:path';
-import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { renderTemplate, templateHasToken, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 import {
   DISC_FOLDER_PATTERN, parseTitledDiscFolder, parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass,
@@ -83,6 +83,12 @@ function sanitizeEditionLabel(label: string | null | undefined): string | null {
  * sanitization) it is appended as ` (label)` to the rendered leaf folder. A
  * null/absent/empty label renders the EXACT same path as before — existing
  * single-recording books are never re-pathed.
+ *
+ * Double-render rule (#1712): the same `editionLabel` also feeds the optional
+ * `{edition}` naming token. If the active folder template already contains
+ * `{edition}` the token renders the label in place, so the mandatory collision
+ * suffix is suppressed to avoid rendering the label twice. When the template has
+ * no `{edition}`, the suffix stays a template-independent collision discriminator.
  */
 export function buildTargetPath(
   libraryPath: string,
@@ -111,11 +117,15 @@ export function buildTargetPath(
     narrator: primaryNarrator || undefined,
     narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
+    // Sourced from the stored edition_label column (never re-derived). Null/empty
+    // renders nothing via the EMPTY_TOKEN_SENTINEL + stripEmptyWrappers machinery.
+    edition: editionLabel ?? undefined,
   };
 
   let rendered = renderTemplate(folderFormat, tokens, options);
   const label = sanitizeEditionLabel(editionLabel);
-  if (label) {
+  // Suppress the mandatory suffix when the template renders the label itself via {edition}.
+  if (label && !templateHasToken(folderFormat, 'edition')) {
     const segments = rendered.split('/');
     segments[segments.length - 1] = `${segments[segments.length - 1]} (${label})`;
     rendered = segments.join('/');

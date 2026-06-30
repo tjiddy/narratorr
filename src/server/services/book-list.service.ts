@@ -272,7 +272,8 @@ export class BookListService {
         audioTotalSize: books.audioTotalSize, size: books.size, audioFileFormat: books.audioFileFormat,
         audioDuration: books.audioDuration, duration: books.duration, path: books.path,
         audioFileCount: books.audioFileCount, lastGrabGuid: books.lastGrabGuid,
-        lastGrabInfoHash: books.lastGrabInfoHash, createdAt: books.createdAt, updatedAt: books.updatedAt,
+        lastGrabInfoHash: books.lastGrabInfoHash, editionLabel: books.editionLabel,
+        createdAt: books.createdAt, updatedAt: books.updatedAt,
       })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
@@ -290,6 +291,7 @@ export class BookListService {
     audioTotalSize: number | null; size: number | null; audioFileFormat: string | null;
     audioDuration: number | null; duration: number | null; path: string | null;
     audioFileCount: number | null; lastGrabGuid: string | null; lastGrabInfoHash: string | null;
+    editionLabel: string | null;
     createdAt: Date; updatedAt: Date;
   }>): Promise<LibraryBookListItemRow[]> {
     const bookIds = rows.map((r) => r.id);
@@ -321,7 +323,8 @@ export class BookListService {
       audioTotalSize: r.audioTotalSize, size: r.size, audioFileFormat: r.audioFileFormat,
       audioDuration: r.audioDuration, duration: r.duration, path: r.path,
       audioFileCount: r.audioFileCount, lastGrabGuid: r.lastGrabGuid,
-      lastGrabInfoHash: r.lastGrabInfoHash, createdAt: r.createdAt, updatedAt: r.updatedAt,
+      lastGrabInfoHash: r.lastGrabInfoHash, editionLabel: r.editionLabel,
+      createdAt: r.createdAt, updatedAt: r.updatedAt,
     }));
   }
 

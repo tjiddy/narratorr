@@ -536,7 +536,7 @@ describe('BookListService', () => {
           seriesName: null, seriesPosition: null,
           audioTotalSize: null, size: null, audioFileFormat: null,
           audioDuration: null, duration: null, path: null, audioFileCount: null,
-          lastGrabGuid: null, lastGrabInfoHash: null,
+          lastGrabGuid: null, lastGrabInfoHash: null, editionLabel: 'Full Cast',
           createdAt: new Date('2024-01-01'), updatedAt: new Date('2024-01-01'),
         }]))
         .mockReturnValueOnce(mockDbChain([{ bookId: 1, name: 'Brandon Sanderson', position: 0 }]))
@@ -551,16 +551,36 @@ describe('BookListService', () => {
         'id', 'title', 'coverUrl', 'status', 'seriesName', 'seriesPosition',
         'authors', 'narrators',
         'audioTotalSize', 'size', 'audioFileFormat', 'audioDuration', 'duration',
-        'path', 'audioFileCount', 'lastGrabGuid', 'lastGrabInfoHash',
+        'path', 'audioFileCount', 'lastGrabGuid', 'lastGrabInfoHash', 'editionLabel',
         'createdAt', 'updatedAt',
       ]);
       for (const k of expectedKeys) expect(row).toHaveProperty(k);
+      // #1712 — editionLabel is selected + hydrated onto the slim DTO.
+      expect(row.editionLabel).toBe('Full Cast');
       // Trimmed keys absent
       const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
       for (const k of trimmedKeys) expect(row).not.toHaveProperty(k);
       // Author/narrator entries are name-only
       expect(row.authors).toEqual([{ name: 'Brandon Sanderson' }]);
       expect(row.narrators).toEqual([{ name: 'Michael Kramer' }]);
+    });
+
+    it('hydrates editionLabel as null when the column is null (#1712)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{
+          id: 1, title: 'Solo', coverUrl: null, status: 'wanted',
+          seriesName: null, seriesPosition: null,
+          audioTotalSize: null, size: null, audioFileFormat: null,
+          audioDuration: null, duration: null, path: null, audioFileCount: null,
+          lastGrabGuid: null, lastGrabInfoHash: null, editionLabel: null,
+          createdAt: new Date(), updatedAt: new Date(),
+        }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary();
+      expect(result.data[0]!.editionLabel).toBeNull();
     });
 
     it('returns empty data with total 0 when no books match', async () => {

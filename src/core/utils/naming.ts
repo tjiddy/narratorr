@@ -388,6 +388,17 @@ export function parseTemplate(
   return { tokens, errors, warnings };
 }
 
+/**
+ * True when `template` contains the given token (after suffix-first
+ * disambiguation). Used by the import/rename target builders to decide whether a
+ * user-supplied `{edition}` token already renders the edition label in place — in
+ * which case the mandatory collision suffix must NOT also be appended (#1712), or
+ * the label would render twice.
+ */
+export function templateHasToken(template: string, token: string): boolean {
+  return parseTemplate(template, FILE_ALLOWED_TOKENS).tokens.includes(token);
+}
+
 /** Token display groups for the naming token modal. */
 export interface TokenGroup {
   label: string;
@@ -399,7 +410,7 @@ export const FOLDER_TOKEN_GROUPS: readonly TokenGroup[] = [
   { label: 'Title', tokens: ['title', 'titleSort'] },
   { label: 'Series', tokens: ['series', 'seriesPosition'] },
   { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-  { label: 'Metadata', tokens: ['year'] },
+  { label: 'Metadata', tokens: ['year', 'edition'] },
 ];
 
 export const FILE_ONLY_TOKEN_GROUP: TokenGroup = {

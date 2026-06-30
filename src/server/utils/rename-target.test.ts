@@ -68,6 +68,40 @@ describe('computeFolderTarget', () => {
     );
     expect(lastFirst.targetPath).toBe('/library/Kramer, Michael/The Way of Kings');
   });
+
+  describe('{edition} suppression/append rule mirrors buildTargetPath (#1712)', () => {
+    it('template lacking {edition}: appends the mandatory " (label)" suffix from row.editionLabel', () => {
+      const result = computeFolderTarget(
+        row({ path: '/library/whatever', title: 'Dark Matter', editionLabel: 'Full Cast' }),
+        'Blake Crouch',
+        LIBRARY,
+        OPTS,
+      );
+      expect(result.targetPath).toBe('/library/Blake Crouch/Dark Matter (Full Cast)');
+    });
+
+    it('template containing {edition}: renders the label once, no doubled suffix', () => {
+      const result = computeFolderTarget(
+        row({ path: '/library/whatever', title: 'Dark Matter', editionLabel: 'Full Cast' }),
+        'Blake Crouch',
+        { path: '/library', folderFormat: '{author}/{title} ({edition})' },
+        OPTS,
+      );
+      expect(result.targetPath).toBe('/library/Blake Crouch/Dark Matter (Full Cast)');
+      expect(result.targetPath.match(/Full Cast/g)).toHaveLength(1);
+    });
+
+    it('null editionLabel: no label emitted (single-edition books never re-pathed)', () => {
+      const result = computeFolderTarget(
+        row({ path: '/library/Blake Crouch/Dark Matter', title: 'Dark Matter', editionLabel: null }),
+        'Blake Crouch',
+        LIBRARY,
+        OPTS,
+      );
+      expect(result.changed).toBe(false);
+      expect(result.targetPath).toBe('/library/Blake Crouch/Dark Matter');
+    });
+  });
 });
 
 describe('toLibraryRelative', () => {

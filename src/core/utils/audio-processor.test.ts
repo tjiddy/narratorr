@@ -495,6 +495,40 @@ describe('processAudioFiles', () => {
     }
   });
 
+  it('renders the {edition} token from bookTokens for merged output (#1712)', async () => {
+    setupMergeFiles([120, 120]);
+    mockSpawnSuccess();
+
+    const ctx: ProcessingContext = {
+      author: 'Blake Crouch',
+      title: 'Dark Matter',
+      fileFormat: '{title} ({edition})',
+      bookTokens: { edition: 'Full Cast' },
+    };
+    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outputFiles).toEqual([join('/lib/book', 'Dark Matter (Full Cast).m4b')]);
+    }
+  });
+
+  it('renders an empty {edition} (no stray brackets) when bookTokens.edition is null (#1712)', async () => {
+    setupMergeFiles([120, 120]);
+    mockSpawnSuccess();
+
+    const ctx: ProcessingContext = {
+      author: 'Blake Crouch',
+      title: 'Dark Matter',
+      fileFormat: '{title} ({edition})',
+      bookTokens: { edition: null },
+    };
+    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outputFiles).toEqual([join('/lib/book', 'Dark Matter.m4b')]);
+    }
+  });
+
   it('uses fileFormat template for converted output filenames', async () => {
     mockReaddir.mockResolvedValue([
       { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },

@@ -72,6 +72,7 @@ interface RenameEligibleRow {
   seriesName: string | null;
   seriesPosition: number | null;
   publishedDate: string | null;
+  editionLabel: string | null;
   authorName: string | null;
   narrators: Array<{ name: string }>;
 }
@@ -176,6 +177,7 @@ export class BulkOperationService {
         seriesName: books.seriesName,
         seriesPosition: books.seriesPosition,
         publishedDate: books.publishedDate,
+        editionLabel: books.editionLabel,
         authorName: authors.name,
       })
       .from(books)

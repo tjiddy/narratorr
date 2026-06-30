@@ -23,6 +23,7 @@ export const FOLDER_ALLOWED_TOKENS = [
   'series', 'seriesPosition',
   'year',
   'narrator', 'narratorLastFirst',
+  'edition',
 ] as const;
 
 /** File-specific tokens (trackNumber, trackTotal, partName) plus all folder tokens. */

@@ -81,6 +81,11 @@ describe('validateTokens', () => {
   it('returns true for plain text with no tokens', () => {
     expect(validateTokens('just text', FOLDER_ALLOWED_TOKENS)).toBe(true);
   });
+
+  it('accepts the {edition} token in folder and file templates (#1712)', () => {
+    expect(validateTokens('{author}/{title} ({edition})', FOLDER_ALLOWED_TOKENS)).toBe(true);
+    expect(validateTokens('{title} ({edition})', FILE_FORMAT_ALLOWED_TOKENS)).toBe(true);
+  });
 });
 
 describe('hasTitle — prefix conditional syntax', () => {
@@ -140,6 +145,14 @@ describe('error message constants', () => {
 
   it('exports folder token message', () => {
     expect(FOLDER_TOKEN_MSG).toContain('Unknown token in template');
+  });
+
+  it('lists {edition} in the allowed-token error copy, derived from the allow-list (#1712)', () => {
+    expect(FOLDER_TOKEN_MSG).toContain('{edition}');
+    // Derived, not hand-maintained — every allowed folder token appears.
+    for (const token of FOLDER_ALLOWED_TOKENS) {
+      expect(FOLDER_TOKEN_MSG).toContain(`{${token}}`);
+    }
   });
 
   it('exports file title message', () => {

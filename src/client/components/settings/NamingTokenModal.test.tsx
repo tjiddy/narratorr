@@ -17,14 +17,14 @@ vi.mock('@core/utils/index.js', () => ({
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   },
-  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition', 'trackNumber', 'trackTotal', 'partName'],
   FOLDER_TOKEN_GROUPS: [
     { label: 'Author', tokens: ['author', 'authorLastFirst'] },
     { label: 'Title', tokens: ['title', 'titleSort'] },
     { label: 'Series', tokens: ['series', 'seriesPosition'] },
     { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year'] },
+    { label: 'Metadata', tokens: ['year', 'edition'] },
   ],
   FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
@@ -55,7 +55,7 @@ describe('NamingTokenModal', () => {
       expect(screen.queryByText('{trackNumber}')).not.toBeInTheDocument();
     });
 
-    it('shows correct tokens per group — Author (2), Title (2), Series (2), Narrator (2), Metadata (1)', () => {
+    it('shows correct tokens per group — Author (2), Title (2), Series (2), Narrator (2), Metadata (2: year + edition)', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} />);
       expect(screen.getByText('{author}')).toBeInTheDocument();
       expect(screen.getByText('{authorLastFirst}')).toBeInTheDocument();
@@ -66,6 +66,8 @@ describe('NamingTokenModal', () => {
       expect(screen.getByText('{narrator}')).toBeInTheDocument();
       expect(screen.getByText('{narratorLastFirst}')).toBeInTheDocument();
       expect(screen.getByText('{year}')).toBeInTheDocument();
+      // #1712 — {edition} is discoverable in the Metadata group.
+      expect(screen.getByText('{edition}')).toBeInTheDocument();
     });
   });
 

@@ -273,6 +273,20 @@ describe('BulkOperationService — previewRenameEligible', () => {
     expect(result.mismatchedTotal).toBe(0);
   });
 
+  it('renders the {edition} folder token from the loaded editionLabel projection (#1712)', async () => {
+    const { service, db } = createService({
+      settingsOverrides: { library: { path: '/library', folderFormat: '{author}/{title} ({edition})', fileFormat: '' } },
+    });
+    db.select
+      .mockReturnValueOnce(mockDbChain([
+        bookRow({ id: 1, path: '/library/Blake Crouch/OldName', title: 'Dark Matter', authorName: 'Blake Crouch', editionLabel: 'Full Cast' }),
+      ]))
+      .mockReturnValueOnce(mockDbChain([]));
+    const result = await service.previewRenameEligible();
+    // The loaded edition_label feeds the {edition} token; no doubled suffix (template carries the token).
+    expect(result.items[0]?.to).toBe('Blake Crouch/Dark Matter (Full Cast)');
+  });
+
   it('preview mismatch decision agrees with the bulk job (shared-helper parity)', async () => {
     const renameService = makeRenameService();
     const { service, db } = createService({ renameService });

@@ -36,6 +36,13 @@ export const libraryBookListItemSchema = z.object({
 
   collapsedCount: z.number().optional(),
 
+  // Stored edition_label (#1712): distinguishes two recordings of the same title on
+  // the library card. `.nullable().optional()` (like `collapsedCount`) so existing
+  // list fixtures/factories that omit the key need no churn — absent and `null` are
+  // treated identically (render nothing). The server hydration emits `null` when the
+  // column is null.
+  editionLabel: z.string().nullable().optional(),
+
   createdAt: z.string(),
   updatedAt: z.string(),
 });
