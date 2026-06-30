@@ -697,6 +697,14 @@ describe('ImportListService', () => {
           expect.objectContaining({ source: 'import_list' }),
         );
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        // #1737 — assert the branch-specific info log at import-list.service.ts:306-307.
+        // This is what distinguishes the `review` skip from the `same-recording` skip
+        // (which logs at `debug` with a different message); without this assertion the
+        // test passes even if the review branch fell through to the same-recording log.
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Maybe Owned', asin: 'B_REVIEW' }),
+          expect.stringContaining('needs recording review — skipping'),
+        );
       });
     });
 
