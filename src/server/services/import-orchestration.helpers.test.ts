@@ -1440,3 +1440,81 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
 });
 
 
+
+describe('copyToLibrary — cross-row collision fence (#1711)', () => {
+  let baseDir: string;
+  let libraryRoot: string;
+  let source: string;
+  let target: string;
+
+  const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
+
+  function buildDeps(owners: unknown[]): ImportPipelineDeps {
+    return {
+      db: inject<Db>({}),
+      log: createMockLogger(),
+      bookService: inject<BookService>({ findPathOwners: vi.fn().mockResolvedValue(owners) }),
+      bookImportService: inject<BookImportService>({}),
+      settingsService: inject<SettingsService>(createMockSettingsService({
+        library: { path: libraryRoot, folderFormat: '{author}/{title}' },
+      })),
+      eventHistory: inject<EventHistoryService>({ create: vi.fn() }),
+      enrichmentDeps: {} as EnrichmentDeps,
+    };
+  }
+
+  const owner = (overrides: Record<string, unknown> = {}): unknown =>
+    ({ id: 1, title: 'Title', authors: [{ name: 'Author' }], narrators: [], asin: null, duration: null, ...overrides });
+
+  beforeEach(async () => {
+    baseDir = mkdtempSync(join(tmpdir(), 'narratorr-1711-fence-'));
+    libraryRoot = join(baseDir, 'library');
+    source = join(baseDir, 'downloads', 'release');
+    target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(source, { recursive: true });
+    await mkdir(target, { recursive: true });
+    // Incumbent audio occupies the computed target.
+    await writeFile(join(target, 'incumbent.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+  });
+
+  afterEach(async () => {
+    await rm(baseDir, { recursive: true, force: true });
+  });
+
+  it('different recording (1 owner) → copies into a disambiguated (edition) folder, incumbent untouched (keep-both)', async () => {
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
+    const result = await copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
+
+    expect(result.editionLabel).toBe('Stephen Fry');
+    expect(result.targetPath).toBe(toPosix(join(libraryRoot, 'Author', 'Title (Stephen Fry)')));
+    // Incumbent's audio is never touched.
+    expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
+    // New recording landed in the disambiguated folder.
+    expect(await readdir(result.targetPath)).toContain('new.mp3');
+  });
+
+  it('review verdict (1 owner, no narrator signal) → throws OwnedRecordingError, never overwrites', async () => {
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author' };
+    await expect(copyToLibrary(item, null, 'copy', buildDeps([owner()]))).rejects.toMatchObject({ name: 'OwnedRecordingError' });
+    // Incumbent audio is intact — the fence held rather than swapping.
+    expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
+  });
+
+  it('zero owners (orphan folder with audio) → disambiguates into a new folder, orphan untouched', async () => {
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
+    const result = await copyToLibrary(item, null, 'copy', buildDeps([]));
+
+    expect(result.editionLabel).toBe('Stephen Fry');
+    expect(result.targetPath).toBe(toPosix(join(libraryRoot, 'Author', 'Title (Stephen Fry)')));
+    expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
+  });
+
+  it('two owners (data anomaly) → throws OwnedRecordingError, never overwrites', async () => {
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
+    await expect(
+      copyToLibrary(item, null, 'copy', buildDeps([owner({ id: 1 }), owner({ id: 2, title: 'Other' })])),
+    ).rejects.toMatchObject({ name: 'OwnedRecordingError' });
+    expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
+  });
+});
