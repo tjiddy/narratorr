@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -528,5 +528,72 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     // The folder format input should now contain {year}
     const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
     expect(input.value).toContain('{year}');
+  });
+});
+
+describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/utils)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([]);
+    vi.mocked(api.getClients).mockResolvedValue([]);
+  });
+
+  it('auto-suffix branch: the Multiple editions row = With-series folder leaf + " (Full Cast)"', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    // Default folder template has no {edition}, so the row is the real suffix-branch composition —
+    // byte-identical to buildTargetPath's `composeEditionSuffixLeaf(leaf, sanitizeEditionDiscriminator('Full Cast'))`.
+    const row = await screen.findByTestId('preview-multi-edition');
+    expect(row.textContent).toBe('Brandon Sanderson/The Way of Kings (Full Cast)');
+  });
+
+  it('in-place branch: {edition} renders at its position with no double suffix; baseline row stays edition-free', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+    fireEvent.change(folderInput, { target: { value: '{author}/{title}/{edition}' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-multi-edition').textContent).toBe('Brandon Sanderson/The Way of Kings/Full Cast');
+    });
+    // Verbatim in-place render — the mandatory " (…)" suffix must NOT also be appended.
+    expect(screen.getByTestId('preview-multi-edition').textContent).not.toContain('(Full Cast)');
+    // Both folder baseline rows render edition-free: With-series consumes SAMPLE_TOKENS and
+    // Without-series consumes SAMPLE_TOKENS_NO_SERIES, neither of which carries an edition. Pin
+    // both so a fixture that later regains `edition` regresses the Without-series row loudly (F1).
+    expect(screen.getAllByTestId('preview-with-series')[0]!.textContent).not.toContain('Full Cast');
+    expect(screen.getAllByTestId('preview-without-series')[0]!.textContent).not.toContain('Full Cast');
+  });
+
+  it('baseline file rows stay edition-free even when the file format places {edition}', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { value: '{author} - {title} ({edition})' } });
+
+    await waitFor(() => {
+      expect((screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement).value).toBe('{author} - {title} ({edition})');
+    });
+    // File box previews are index 1 (With/Without series); Multi-file is file-only.
+    expect(screen.getAllByTestId('preview-with-series')[1]!.textContent).not.toContain('Full Cast');
+    expect(screen.getAllByTestId('preview-without-series')[1]!.textContent).not.toContain('Full Cast');
+    expect(screen.getByTestId('preview-multi-file').textContent).not.toContain('Full Cast');
+  });
+
+  it('row shape: one Multiple-editions row (folder), one Multi-file row (file), one folder-only note', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
+    expect(screen.getAllByTestId('preview-multi-file')).toHaveLength(1);
+    expect(screen.getAllByText(/kept side-by-side automatically/)).toHaveLength(1);
   });
 });

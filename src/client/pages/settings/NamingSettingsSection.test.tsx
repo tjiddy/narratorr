@@ -16,25 +16,25 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-vi.mock('@core/utils/index.js', () => ({
-  TOKEN_PATTERN_SOURCE: String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
-  renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
-    let result = template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate');
+// #1774 — spread the REAL barrel (importOriginal) so the newly-referenced helpers
+// (`templateHasToken`, `composeEditionSuffixLeaf`, `sanitizeEditionDiscriminator`) resolve to their
+// real implementations and the "Multiple editions" preview row matches production. Only the two
+// render fakes and the preset seam are overridden — the render fakes preserve the `[sep:…]`/`[case:…]`
+// tag assertions the existing tests depend on. See learning `vimock-barrel-replace-drops-named-exports`.
+vi.mock('@core/utils/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@core/utils/index.js')>()),
+  renderTemplate: (template: string, tokens: Record<string, unknown>, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate').replace('{edition}', (tokens?.edition as string) ?? '');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   },
-  renderFilename: vi.fn((template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
-    let result = template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings');
+  renderFilename: vi.fn((template: string, tokens: Record<string, unknown>, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{edition}', (tokens?.edition as string) ?? '').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   }),
-  toLastFirst: (name: string) => name,
-  toSortTitle: (title: string) => title,
-  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
   NAMING_PRESETS: [
     { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
     { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
@@ -45,14 +45,6 @@ vi.mock('@core/utils/index.js', () => ({
     if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
     return 'custom';
   },
-  FOLDER_TOKEN_GROUPS: [
-    { label: 'Author', tokens: ['author', 'authorLastFirst'] },
-    { label: 'Title', tokens: ['title', 'titleSort'] },
-    { label: 'Series', tokens: ['series', 'seriesPosition'] },
-    { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year', 'edition'] },
-  ],
-  FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
 
 const { api } = await import('@/lib/api');
@@ -1123,6 +1115,50 @@ describe('NamingSettingsSection', () => {
         const multiFileOptions = calls[2]?.[2] as { separator?: string; case?: string } | undefined;
         expect(multiFileOptions).toEqual(expect.objectContaining({ case: 'upper' }));
       });
+    });
+  });
+
+  describe('multiple-editions folder preview (#1774)', () => {
+    it('folder format field renders a "Multiple editions" row; file format does not', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Multiple editions')).toBeInTheDocument();
+      });
+      // Exactly one such row (folder only) — the file box does not gain it.
+      expect(screen.getAllByText('Multiple editions')).toHaveLength(1);
+      expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
+    });
+
+    it('folder box has no Multi-file row and file box has no Multiple-editions row (row-shape guard)', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-multi-edition')).toBeInTheDocument();
+      });
+      // Folder = With series / Without series / Multiple editions; File = With series / Without series / Multi-file.
+      expect(screen.getAllByTestId('preview-multi-file')).toHaveLength(1);
+      expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
+    });
+
+    it('auto-suffix branch: the row equals the With-series leaf + " (Full Cast)" via real core helpers', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-multi-edition')).toBeInTheDocument();
+      });
+      // composeEditionSuffixLeaf/sanitizeEditionDiscriminator are the REAL core primitives (importOriginal),
+      // so the leaf suffix matches production byte-for-byte rather than a hardcoded string.
+      expect(screen.getByTestId('preview-multi-edition').textContent).toBe('Brandon Sanderson/The Way of Kings (Full Cast)');
+    });
+
+    it('renders the folder-only auto-edition note exactly once', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText(/kept side-by-side automatically/)).toBeInTheDocument();
+      });
+      expect(screen.getAllByText(/kept side-by-side automatically/)).toHaveLength(1);
     });
   });
 
