@@ -447,6 +447,15 @@ describe('composeEditionSuffixLeaf (#1739)', () => {
     expect(composeEditionSuffixLeaf('Book', 'Full Cast').endsWith('.import-bak')).toBe(false);
   });
 
+  // #1774 — the settings "Multiple editions" preview row composes its suffix-branch leaf as
+  // `composeEditionSuffixLeaf(baseLeaf, sanitizeEditionDiscriminator(label))`. Pin that exact
+  // composition here (real core) so the preview can never diverge from the production suffix branch.
+  it('parity: composing a sanitized "Full Cast" onto the sample leaf matches the preview row (#1774)', () => {
+    const discriminator = sanitizeEditionDiscriminator('Full Cast');
+    expect(discriminator).toBe('Full Cast');
+    expect(composeEditionSuffixLeaf('The Way of Kings', discriminator!)).toBe('The Way of Kings (Full Cast)');
+  });
+
   it('keeps a non-empty discriminator visible when discriminator + wrapper exceed the cap, sacrificing the base first (F1)', () => {
     // A pathologically long discriminator behind a long base: base-first truncation must drop the
     // base ENTIRELY and keep the discriminator non-empty, never bury it behind 255 chars of base.
