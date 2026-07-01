@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c0868cc2-e2eb-4cf8-9cde-1d0a9a39b979",
+  "id": "0b728f5f-ab4a-49d1-9a41-b1634c375e3e",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -615,6 +615,21 @@
           "autoincrement": false,
           "default": "'pending'"
         },
+        "production_type": {
+          "name": "production_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unknown'"
+        },
+        "edition_label": {
+          "name": "edition_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "enrichment_attempts": {
           "name": "enrichment_attempts",
           "type": "integer",
@@ -777,7 +792,7 @@
         "idx_books_asin_unique": {
           "name": "idx_books_asin_unique",
           "columns": [
-            "asin"
+            "upper(\"asin\")"
           ],
           "isUnique": true,
           "where": "asin IS NOT NULL"
@@ -2305,6 +2320,14 @@
     "columns": {}
   },
   "internal": {
-    "indexes": {}
+    "indexes": {
+      "idx_books_asin_unique": {
+        "columns": {
+          "upper(\"asin\")": {
+            "isExpression": true
+          }
+        }
+      }
+    }
   }
 }

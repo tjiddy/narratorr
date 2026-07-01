@@ -1,1 +1,0 @@
-ALTER TABLE `books` ADD `production_type` text DEFAULT 'unknown' NOT NULL;
