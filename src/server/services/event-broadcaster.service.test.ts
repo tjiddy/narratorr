@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import { EventBroadcasterService, type SSEClient } from './event-broadcaster.service.js';
+import { EventBroadcasterService, HEARTBEAT_INTERVAL_MS, type SSEClient } from './event-broadcaster.service.js';
 
 function createMockClient(id: string): SSEClient {
   return {
@@ -140,6 +140,97 @@ describe('EventBroadcasterService', () => {
       });
 
       expect(c1.reply.raw.write).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // #1776 — periodic heartbeat keeps idle reverse proxies from cutting the stream.
+  describe('heartbeat', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      broadcaster.stop();
+      vi.useRealTimers();
+    });
+
+    it('writes a heartbeat frame to every connected client at the fixed interval', () => {
+      const c1 = createMockClient('c1');
+      const c2 = createMockClient('c2');
+      broadcaster.addClient(c1);
+      broadcaster.addClient(c2);
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+      expect(c1.reply.raw.write).toHaveBeenCalledWith(':hb\n\n');
+      expect(c2.reply.raw.write).toHaveBeenCalledWith(':hb\n\n');
+    });
+
+    it('fires periodically, not once (second interval sends another heartbeat)', () => {
+      const c1 = createMockClient('c1');
+      broadcaster.addClient(c1);
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+      const hbWrites = (c1.reply.raw.write as ReturnType<typeof vi.fn>).mock.calls
+        .filter((call) => call[0] === ':hb\n\n');
+      expect(hbWrites).toHaveLength(2);
+    });
+
+    it('unref()s the heartbeat timer so it never holds the process open', () => {
+      const unref = vi.fn();
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+        .mockReturnValue({ unref } as unknown as ReturnType<typeof setInterval>);
+
+      broadcaster.addClient(createMockClient('c1'));
+
+      expect(setIntervalSpy).toHaveBeenCalled();
+      expect(unref).toHaveBeenCalled();
+      setIntervalSpy.mockRestore();
+    });
+
+    it('does not start a second timer when more clients connect', () => {
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+
+      broadcaster.addClient(createMockClient('c1'));
+      broadcaster.addClient(createMockClient('c2'));
+
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      setIntervalSpy.mockRestore();
+    });
+
+    it('stops the heartbeat once the last client disconnects — no dangling writes', () => {
+      const c1 = createMockClient('c1');
+      broadcaster.addClient(c1);
+      broadcaster.removeClient(c1);
+      (c1.reply.raw.write as ReturnType<typeof vi.fn>).mockClear();
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+
+      expect(c1.reply.raw.write).not.toHaveBeenCalled();
+    });
+
+    it('stop() halts the heartbeat even while clients remain connected', () => {
+      const c1 = createMockClient('c1');
+      broadcaster.addClient(c1);
+
+      broadcaster.stop();
+      (c1.reply.raw.write as ReturnType<typeof vi.fn>).mockClear();
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+
+      expect(c1.reply.raw.write).not.toHaveBeenCalled();
+    });
+
+    it('prunes a client that fails on a heartbeat write', () => {
+      const c1 = createMockClient('c1');
+      (c1.reply.raw.write as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('broken pipe');
+      });
+      broadcaster.addClient(c1);
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+
+      expect(broadcaster.clientCount).toBe(0);
     });
   });
 });

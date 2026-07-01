@@ -11,13 +11,17 @@ import type { JobScheduler } from './jobs/index.js';
  *     alongside them — otherwise the import-maintenance cron / library-rescan can
  *     keep feeding the very queues being drained and they never reach quiescence
  *     (#1515).
- *  2. Stop the import queue worker — it finishes any in-flight import, which may
+ *  2. Stop the SSE heartbeat — a non-draining timer stop, so like the scheduler
+ *     it runs before the awaited drains: no heartbeat frame should be written to
+ *     connected clients while the process is tearing down (#1776). The timer is
+ *     already `unref()`'d so it can't block exit; this makes teardown explicit.
+ *  3. Stop the import queue worker — it finishes any in-flight import, which may
  *     enqueue connector refreshes on the way out.
- *  3. Drain the best-effort connector refresh queue — clears pending debounce/
+ *  4. Drain the best-effort connector refresh queue — clears pending debounce/
  *     deadline timers (warn-logging dropped batches) and awaits any in-flight
  *     flush. This MUST run before `app.close()` so a refresh that is mid-request
  *     or mid-retry isn't silently lost when the process tears down.
- *  4. Close the Fastify app LAST to release the port.
+ *  5. Close the Fastify app LAST to release the port.
  *
  * Extracted from the `index.ts` signal handler so the ordering contract (AC2 of
  * #1498, scheduler-first of #1515) is unit-testable without booting the server.
@@ -29,6 +33,7 @@ export async function gracefulShutdown(
 ): Promise<void> {
   app.log.info('Shutting down server…');
   jobScheduler.stopAll();
+  services.eventBroadcaster.stop();
   await services.importQueueWorker.stop();
   await services.connector.stop();
   await app.close();
