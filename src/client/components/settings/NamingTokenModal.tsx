@@ -79,6 +79,13 @@ export function NamingTokenModal({
                 </button>
               ))}
             </div>
+            {/* #1774 — {edition} is the only token with mandatory auto-behavior, so it gets the only
+                per-token descriptor; every other chip stays bare. */}
+            {group.tokens.includes('edition') && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Added automatically to the folder for multiple editions — place it to control where it appears; in filenames it renders only where you put it.
+              </p>
+            )}
           </div>
         ))}
 
