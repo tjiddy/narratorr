@@ -220,9 +220,17 @@ export async function resolveDuplicate(db: Db, getById: GetByIdFn, candidate: Du
  * Return EVERY library row whose stored `path` equals the given normalized path
  * (#1711) — the cardinality input for the occupied-target collision fence.
  * `books.path` is indexed but NOT unique, so callers branch on 0 / 1 / 2+.
+ *
+ * `books.path` is stored in POSIX form (`buildTargetPath` emits forward slashes so
+ * the library DB is portable across the Linux runtime and Windows dev boxes). Callers
+ * pass `normalize(resolve(...))`, which is backslash-separated on Windows — so the
+ * exact-match `eq` below would MISS the row there (0 owners → a same-recording
+ * re-import wrongly disambiguates into a new `(edition)` folder instead of a staged
+ * swap). POSIX-fold the key so the comparison is POSIX-vs-POSIX on every platform (#1752).
  */
 export async function findPathOwners(db: Db, getById: GetByIdFn, normalizedPath: string): Promise<BookWithAuthor[]> {
-  const rows = await db.select({ id: books.id }).from(books).where(eq(books.path, normalizedPath));
+  const posixPath = normalizedPath.split('\\').join('/');
+  const rows = await db.select({ id: books.id }).from(books).where(eq(books.path, posixPath));
   const owners: BookWithAuthor[] = [];
   for (const r of rows) {
     const book = await getById(r.id);

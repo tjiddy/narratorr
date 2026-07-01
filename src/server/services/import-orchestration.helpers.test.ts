@@ -1814,11 +1814,12 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
 // AC: a NON-MOCKED findPathOwners must resolve a real `books` row through the fence call site.
 // All other fence suites inject findPathOwners as a mock, so the actual eq(books.path, …) query
 // is never exercised end-to-end. Here `bookService` is a REAL BookService over a real libSQL DB
-// (prior art: book.service.dedup.integration.test.ts). This is a POSIX/Linux happy-path test —
-// CI is Linux, where normalize(resolve(target)) is forward-slash and matches the stored POSIX
-// path. The Windows separator divergence at the call site is a separate `type/defect` (#1737),
-// NOT asserted here.
-describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB, #1737)', () => {
+// (prior art: book.service.dedup.integration.test.ts). `findPathOwners` now POSIX-folds its key
+// (#1752), so this passes on BOTH Linux (CI) and Windows dev — where normalize(resolve(target))
+// is backslash-separated and previously missed the stored POSIX path (0 owners → wrong
+// disambiguation). The final `it` below pins that cross-platform fold with a literal-backslash
+// query, so it guards the fix on Linux CI too.
+describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB, #1737/#1752)', () => {
   let baseDir: string;
   let libraryRoot: string;
   let source: string;
@@ -1888,5 +1889,20 @@ describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB
     // The staged swap replaced the incumbent audio in the base folder — no disambiguated sibling.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(libraryRoot, 'Author', 'Title (Stephen Fry)'))).toBe(false);
+  });
+
+  // #1752 regression, platform-INDEPENDENT: findPathOwners must match a POSIX-stored `books.path`
+  // even when queried with a Windows backslash separator (the shape normalize(resolve(...)) yields
+  // on Windows). Uses literal strings so it exercises the POSIX fold on Linux CI too — remove the
+  // fold in findPathOwners and this goes red regardless of host OS.
+  it('findPathOwners folds a backslash query key to POSIX so it still matches the stored path (#1752)', async () => {
+    const seeded = await bookService.create({ title: 'Title', authors: [{ name: 'Author' }], asin: 'B0FOLD', status: 'imported' });
+    await bookService.update(seeded.id, { path: '/library/Author/Title' });
+
+    const owners = await bookService.findPathOwners('\\library\\Author\\Title');
+    expect(owners.map(o => o.id)).toEqual([seeded.id]);
+
+    // A genuinely different POSIX path still misses (the fold doesn't over-match).
+    expect(await bookService.findPathOwners('\\library\\Author\\Other')).toEqual([]);
   });
 });
