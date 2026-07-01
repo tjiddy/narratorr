@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { queryKeys } from '@/lib/queryKeys';
@@ -145,12 +145,25 @@ function asPayload<T extends SSEEventType>(data: SSEEventPayloads[SSEEventType])
  * `streamToken` is the short-lived, session-scoped token (#1453) passed as the
  * `?token=` query param — EventSource cannot set headers. A null token means
  * "not ready yet" and no connection is opened. `onStreamError` (optional) fires
- * on the EventSource `error` event so the caller can re-mint an expired token and
- * reconnect (the token changing re-runs this effect).
+ * on the EventSource `error` event so the caller can re-mint an expired token.
+ *
+ * Reconnect model (#1776): the connection effect is keyed on a `reconnectKey`
+ * generation, NOT on `streamToken`, so a routine 4-minute token refresh does not
+ * churn a healthy stream. The freshest token is held in a ref and read at open
+ * time. A token change only forces a reopen when there is no live stream yet
+ * (first connect) or the current stream has errored (post-remint recovery) — so
+ * a genuinely expired token still reaches the reopen path. The reconnect catch-up
+ * (`invalidateQueries()`) is gated on a ref-backed error flag that survives the
+ * effect rebuild, firing exactly once on the reopen and never on the first connect.
  */
 export function useEventSource(streamToken: string | null, onStreamError?: () => void) {
   const queryClient = useQueryClient();
   const esRef = useRef<EventSource | null>(null);
+  const hadErrorRef = useRef(false);
+  const tokenRef = useRef<string | null>(streamToken);
+  const onStreamErrorRef = useRef(onStreamError);
+  useEffect(() => { onStreamErrorRef.current = onStreamError; }, [onStreamError]);
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   const handleEvent = useCallback((type: SSEEventType, data: SSEEventPayloads[typeof type]) => {
     const rule = CACHE_INVALIDATION_MATRIX[type];
@@ -167,23 +180,34 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     dispatchToasts(type, data);
   }, [queryClient]);
 
+  // Opens the stream on the current `reconnectKey`, reading the freshest token
+  // from the ref. Declared before the token effect so that on mount `esRef` is
+  // populated by the time the token effect runs (avoids a spurious reopen).
   useEffect(() => {
-    if (!streamToken) return;
+    const token = tokenRef.current;
+    if (!token) return;
 
-    const url = `${URL_BASE}/api/events?token=${encodeURIComponent(streamToken)}`;
+    const url = `${URL_BASE}/api/events?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
 
     es.onopen = () => {
       setSseConnected(true);
+      if (hadErrorRef.current) {
+        // Reconnected after a drop — invalidate everything to catch up on any
+        // events missed while disconnected. Fires exactly once per reopen.
+        queryClient.invalidateQueries();
+        hadErrorRef.current = false;
+      }
     };
 
     es.onerror = () => {
       setSseConnected(false);
-      // Browser auto-reconnects with the same URL; if the token has expired that
-      // reconnect keeps failing, so ask the caller to re-mint (#1453). A fresh
-      // token changes the effect dependency and reopens the connection.
-      onStreamError?.();
+      hadErrorRef.current = true;
+      // Browser auto-reconnects the same instance; if the token has expired that
+      // reconnect keeps failing, so ask the caller to re-mint (#1453). The fresh
+      // token drives a reopen via the token effect above (which sees the error).
+      onStreamErrorRef.current?.();
     };
 
     // Listen for each event type — derived from schema (single source of truth)
@@ -197,30 +221,24 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
       });
     }
 
-    // On reconnect (detected via onopen after error), invalidate all queries
-    let hadError = false;
-    const origOnError = es.onerror;
-    es.onerror = (e) => {
-      hadError = true;
-      origOnError?.call(es, e);
-    };
-    const origOnOpen = es.onopen;
-    es.onopen = (e) => {
-      setSseConnected(true);
-      if (hadError) {
-        // Reconnected — invalidate everything to catch up
-        queryClient.invalidateQueries();
-        hadError = false;
-      }
-      origOnOpen?.call(es, e);
-    };
-
     return () => {
       setSseConnected(false);
       es.close();
       esRef.current = null;
     };
-  }, [streamToken, handleEvent, queryClient, onStreamError]);
+  }, [reconnectKey, handleEvent, queryClient]);
+
+  // Keep the freshest token in a ref and decide whether it warrants a reopen.
+  // Bump the generation only when there is no live stream (first connect after a
+  // null token) or the current one has errored — never on a healthy refresh,
+  // which would churn the connection. A genuinely expired token errors first,
+  // so the remint that follows still reaches this reopen path.
+  useEffect(() => {
+    tokenRef.current = streamToken;
+    if (streamToken && (esRef.current === null || hadErrorRef.current)) {
+      setReconnectKey((k) => k + 1);
+    }
+  }, [streamToken]);
 }
 
 function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
