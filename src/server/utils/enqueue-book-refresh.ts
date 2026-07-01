@@ -1,7 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { ConnectorReason } from '../../core/connectors/types.js';
 import type { ConnectorService } from '../services/connector.service.js';
-import type { BookService } from '../services/book.service.js';
 import type { RetagResult } from '../services/tagging.service.js';
 import { fireAndForget } from './fire-and-forget.js';
 
@@ -56,32 +55,4 @@ export function enqueueRetagRefresh(
   if (result.tagged > 0 && result.refreshItem) {
     enqueueBookRefresh(connectorService, log, 'metadata', result.refreshItem);
   }
-}
-
-/**
- * Load the book by id and {@link enqueueBookRefresh} for it — reserved for genuinely-optional
- * refreshes where only the bookId is in hand and the title/author must be re-read. Post-mutation
- * triggers that already hold the pre-mutation state (convert, re-tag) must NOT use this: a reload
- * failure here is a silent no-op, which would drop a refresh those paths can avoid. Best-effort: no
- * connector, a missing book, a book without a path, or a reload failure is a no-op (the load failure
- * must never be miscounted as an operation failure by the caller's progress accounting). When a
- * connector IS configured, a reload miss is logged at `debug` so a dropped refresh is diagnosable —
- * logging only `{ bookId, reason }` (never the caught error) keeps clear of `narratorr/no-raw-error-logging`.
- */
-export async function enqueueBookRefreshById(
-  connectorService: ConnectorService | undefined,
-  bookService: BookService,
-  log: FastifyBaseLogger,
-  reason: ConnectorReason,
-  bookId: number,
-): Promise<void> {
-  if (!connectorService) return;
-  const book = await bookService.getById(bookId).catch(() => null);
-  if (!book?.path) {
-    log.debug({ bookId, reason }, 'Connector refresh skipped: book reload missed or has no path');
-    return;
-  }
-  enqueueBookRefresh(connectorService, log, reason, {
-    bookId, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path,
-  });
 }
