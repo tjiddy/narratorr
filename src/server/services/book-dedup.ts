@@ -150,7 +150,9 @@ async function gatherIncumbentIds(db: Db, candidate: DuplicateCandidate): Promis
   const canonicalAsin = canonicalizeAsin(candidate.asin);
 
   // (1) ASIN — canonical compare against the stored upper(asin) (matches the durable
-  // upper(asin) unique index), ALL hits (aligns with findLibraryStatusByAsins).
+  // upper(asin) unique index), ALL hits. Same upper(asin) + canonicalizeAsin fold as
+  // findAsinCollision (the aligning sibling). findLibraryStatusByAsins is also
+  // case-insensitive but folds on lower(asin), so it is not the fold-direction precedent.
   if (canonicalAsin) {
     const byAsin = await db.select({ id: books.id }).from(books)
       .where(eq(sql`upper(${books.asin})`, canonicalAsin));
