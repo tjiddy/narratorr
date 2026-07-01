@@ -954,7 +954,7 @@ describe('BulkOperationService — convert batch', () => {
 
   // #1721 — the convert refresh is built from the already-loaded book + bookPath/bookTitle (held
   // from before the swap), not a fresh post-swap reload. So a transient post-swap getById failure
-  // can no longer drop it — the old path reloaded via enqueueBookRefreshById and would have dropped it.
+  // can no longer drop it — the old reload-by-id path re-read the book post-swap and would have dropped it.
   it("still enqueues the 'convert' refresh when a post-swap book reload would fail", async () => {
     setupConvertMocks();
     const notifyRefresh = vi.fn().mockResolvedValue(undefined);
