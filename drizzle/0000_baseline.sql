@@ -274,7 +274,6 @@ CREATE TABLE `series_members` (
 	`author_name` text,
 	`position` real,
 	`source` text DEFAULT 'hardcover' NOT NULL,
-	`last_seen_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
 	FOREIGN KEY (`series_id`) REFERENCES `series`(`id`) ON UPDATE no action ON DELETE cascade,
@@ -323,7 +322,6 @@ CREATE UNIQUE INDEX `idx_suggestions_asin_unique` ON `suggestions` (`asin`);--> 
 CREATE TABLE `unmatched_genres` (
 	`genre` text PRIMARY KEY NOT NULL,
 	`count` integer DEFAULT 1 NOT NULL,
-	`first_seen` integer DEFAULT (unixepoch()) NOT NULL,
 	`last_seen` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
