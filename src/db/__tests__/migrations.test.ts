@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,10 +94,10 @@ describe('drizzle baseline migration', () => {
 
     // The flattened baseline must fold in columns that shipped as ADD COLUMN
     // migrations before each re-flatten: subtitle/publisher (#1614),
-    // enrichment_attempts (#1630), production_type (#1717 story 1,
-    // drizzle/0001_melted_human_robot.sql) and edition_label (#1717 this story,
-    // drizzle/0002_futuristic_fat_cobra.sql). Pin their presence so a future
-    // re-flatten that drops any of them fails here. Both production_type (edition
+    // enrichment_attempts (#1630), production_type (#1710, story 1) and
+    // edition_label (#1711/#1712). Those incremental migrations were collapsed into
+    // the single 0000_baseline. Pin their presence so a future re-flatten that
+    // drops any of them fails here. Both production_type (edition
     // discriminator) and edition_label (persisted folder suffix) are load-bearing
     // for the keep-both edition-safe ingest path. These pins guard column
     // PRESENCE only, not enum-value integrity — production_type is a
@@ -144,7 +144,7 @@ describe('drizzle baseline migration', () => {
   });
 });
 
-describe('0003 ASIN case-insensitive migration (#1733)', () => {
+describe('baseline upper(asin) unique index (#1733, folded into the flattened baseline)', () => {
   let tmpDir: string;
 
   afterEach(() => {
@@ -155,79 +155,38 @@ describe('0003 ASIN case-insensitive migration (#1733)', () => {
     }
   });
 
-  // Read the production journal once so the test stays correct if the migration
-  // is renamed/re-flattened: the pre-0003 schema is built from the entries with
-  // idx < 3, and the 0003 SQL is located by the idx === 3 tag.
-  const journal = JSON.parse(readFileSync(join(PROD_DRIZZLE, 'meta', '_journal.json'), 'utf-8')) as {
-    entries: { idx: number; tag: string }[];
-  };
-
-  /** Build a migrations folder containing only the pre-0003 entries and apply it. */
-  async function applyPre0003(dbPath: string): Promise<void> {
-    const preFolder = join(tmpDir, 'pre-0003');
-    mkdirSync(join(preFolder, 'meta'), { recursive: true });
-    const preEntries = journal.entries.filter((e) => e.idx < 3);
-    for (const e of preEntries) {
-      copyFileSync(join(PROD_DRIZZLE, `${e.tag}.sql`), join(preFolder, `${e.tag}.sql`));
-    }
-    writeFileSync(join(preFolder, 'meta', '_journal.json'), JSON.stringify({ ...journal, entries: preEntries }));
-    const client = createClient({ url: `file:${dbPath}` });
-    try {
-      await migrate(drizzle(client), { migrationsFolder: preFolder });
-    } finally {
-      client.close();
-    }
-  }
-
-  it('completes on case-drifted fixture data: canonicalizes survivors, quarantines collisions, installs the upper(asin) unique index', async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-asin-mig-test-'));
+  // The #1733 data-migration (quarantine case-drifted duplicate ASINs, uppercase survivors) can no
+  // longer occur on a from-scratch baseline — there is no legacy data to fix — so its upgrade-
+  // transition test was dropped when 0003 was collapsed into 0000_baseline. What stays load-bearing
+  // is the STRUCTURAL guarantee that migration installed: the flattened baseline's
+  // `idx_books_asin_unique` is on `upper(asin)` (partial, WHERE asin IS NOT NULL), so case-drifted
+  // ASINs collide while NULLs still coexist. Pin that against the real baseline.
+  it('enforces case-insensitive ASIN uniqueness and still allows multiple NULLs', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-asin-idx-test-'));
     const dbPath = join(tmpDir, 'test.db');
 
-    await applyPre0003(dbPath);
-
     const client = createClient({ url: `file:${dbPath}` });
     try {
-      // (a) a normal lowercase ASIN row, and (b) two rows whose ASINs differ only
-      // by case. These coexist under the OLD case-sensitive index.
-      await client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_a', 'Normal', 'b0normal')");
-      await client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_b1', 'Dup Upper', 'B0DUP')");
-      await client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_b2', 'Dup Lower', 'b0dup')");
+      await migrate(drizzle(client), { migrationsFolder: PROD_DRIZZLE });
 
-      // Apply the 0003 migration statement-by-statement. It MUST complete.
-      const tag0003 = journal.entries.find((e) => e.idx === 3)!.tag;
-      const migrationSql = readFileSync(join(PROD_DRIZZLE, `${tag0003}.sql`), 'utf-8');
-      for (const stmt of migrationSql.split('--> statement-breakpoint')) {
-        const trimmed = stmt.trim();
-        if (trimmed) {
-          await expect(client.execute(trimmed)).resolves.toBeDefined();
-        }
-      }
-
-      const rows = await client.execute('SELECT public_id, asin FROM books ORDER BY id');
-      const byPublicId = new Map(rows.rows.map((r) => [r.public_id as string, r.asin as string | null]));
-      // (a) the normal row is uppercased.
-      expect(byPublicId.get('bk_a')).toBe('B0NORMAL');
-      // (b) the lower-id row keeps the uppercased ASIN; the higher-id row is quarantined to NULL.
-      expect(byPublicId.get('bk_b1')).toBe('B0DUP');
-      expect(byPublicId.get('bk_b2')).toBeNull();
-
-      // The new unique index exists and is on upper(asin).
+      // The unique index exists and is on upper(asin) — not the raw column.
       const idx = await client.execute(
         "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_books_asin_unique'",
       );
       expect((idx.rows[0]!.sql as string).toLowerCase()).toContain('upper');
 
-      // It rejects a fresh case-drifted duplicate of a surviving ASIN...
+      // A case-drifted duplicate of an existing ASIN is rejected...
+      await client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_a', 'Upper', 'B0ABC')");
       await expect(
-        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_c', 'Case Drift', 'b0normal')"),
+        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_b', 'Lower', 'b0abc')"),
       ).rejects.toThrow(/UNIQUE constraint failed/);
 
-      // ...while a freed (quarantined) ASIN value can be re-claimed, and NULL rows still coexist.
+      // ...while multiple NULL-ASIN rows still coexist (partial index on asin IS NOT NULL).
       await expect(
-        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_d', 'Null One', NULL)"),
+        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_c', 'Null One', NULL)"),
       ).resolves.toBeDefined();
       await expect(
-        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_e', 'Null Two', NULL)"),
+        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_d', 'Null Two', NULL)"),
       ).resolves.toBeDefined();
     } finally {
       client.close();
