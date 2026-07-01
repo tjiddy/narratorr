@@ -448,8 +448,12 @@ describe('useManualImport', () => {
 
     const [items, mode] = vi.mocked(api.confirmImport).mock.calls[0]!;
     expect(items).toHaveLength(2);
+    // Payload is built by the shared toConfirmItem builder (#1765): optional fields
+    // carry through and a non-duplicate row omits forceImport (force=false).
     expect(items[0]!.path).toBe('/audiobooks/Book A');
     expect(items[0]!.title).toBe('Book A');
+    expect(items[0]!.authorName).toBe('Author A');
+    expect(items[0]!.forceImport).toBeUndefined();
     expect(mode).toBe('copy');
 
     expect(toast.success).toHaveBeenCalledWith('2 books queued for import');

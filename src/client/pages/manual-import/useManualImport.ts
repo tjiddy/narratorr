@@ -6,7 +6,7 @@ import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
-import { useHeldReview } from '@/components/held-review';
+import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
@@ -165,20 +165,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   }, []);
 
   const handleImport = useCallback(() => {
-    const selected = rows.filter(r => r.selected);
-    const items: ImportConfirmItem[] = selected.map(r => ({
-      path: r.book.path,
-      title: r.edited.title,
-      ...(r.edited.author && { authorName: r.edited.author }),
-      ...(r.edited.series && { seriesName: r.edited.series }),
-      ...(r.edited.narrators?.length && { narrators: r.edited.narrators }),
-      ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
-      ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
-      ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
-      ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),
-      // Duplicate rows that user explicitly selected require force-import to bypass safety net
-      ...(r.book.isDuplicate ? { forceImport: true } : {}),
-    }));
+    // Shared canonical builder (#1732/#1765) — `forceImport` still derives from
+    // `r.book.isDuplicate` for user-selected duplicates (force=false here).
+    const items = rows.filter(r => r.selected).map(r => toConfirmItem(r, false));
     importMutation.mutate({ items, mode });
   }, [rows, importMutation, mode]);
 
