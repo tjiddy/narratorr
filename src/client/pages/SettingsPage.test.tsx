@@ -563,8 +563,11 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
     });
     // Verbatim in-place render — the mandatory " (…)" suffix must NOT also be appended.
     expect(screen.getByTestId('preview-multi-edition').textContent).not.toContain('(Full Cast)');
-    // Baseline With-series folder row renders edition-free (SAMPLE_TOKENS carries no edition).
+    // Both folder baseline rows render edition-free: With-series consumes SAMPLE_TOKENS and
+    // Without-series consumes SAMPLE_TOKENS_NO_SERIES, neither of which carries an edition. Pin
+    // both so a fixture that later regains `edition` regresses the Without-series row loudly (F1).
     expect(screen.getAllByTestId('preview-with-series')[0]!.textContent).not.toContain('Full Cast');
+    expect(screen.getAllByTestId('preview-without-series')[0]!.textContent).not.toContain('Full Cast');
   });
 
   it('baseline file rows stay edition-free even when the file format places {edition}', async () => {
