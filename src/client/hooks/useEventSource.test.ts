@@ -214,6 +214,42 @@ describe('useEventSource', () => {
       expect(MockEventSource.instances).toHaveLength(1); // no reopen
       expect(es1!.readyState).not.toBe(2);              // not closed
     });
+
+    // #1787 F1 — clearing the token to null (logout / revocation) must close the
+    // live stream, not leave it open on the revoked token until unmount.
+    it('closes the open stream when the token is cleared to null', () => {
+      const { wrapper } = createWrapper();
+
+      const { rerender } = renderHook(
+        ({ token }: { token: string | null }) => useEventSource(token),
+        { wrapper, initialProps: { token: 'token-1' as string | null } },
+      );
+
+      const es1 = MockEventSource.instances[0];
+      act(() => es1!.simulateOpen());        // readyState OPEN
+
+      act(() => rerender({ token: null }));  // token revoked
+
+      expect(es1!.readyState).toBe(2);                   // existing stream CLOSED
+      expect(MockEventSource.instances).toHaveLength(1); // no new stream opened
+    });
+
+    it('reconnects with a fresh token after a null gap (token cleared then re-minted)', () => {
+      const { wrapper } = createWrapper();
+
+      const { rerender } = renderHook(
+        ({ token }: { token: string | null }) => useEventSource(token),
+        { wrapper, initialProps: { token: 'token-1' as string | null } },
+      );
+
+      const es1 = MockEventSource.instances[0];
+      act(() => es1!.simulateOpen());
+      act(() => rerender({ token: null }));   // close
+      act(() => rerender({ token: 'token-3' })); // re-mint after the gap
+
+      expect(MockEventSource.instances).toHaveLength(2);
+      expect(MockEventSource.instances[1]!.url).toBe('/api/events?token=token-3');
+    });
   });
 
   describe('cache invalidation per event type', () => {

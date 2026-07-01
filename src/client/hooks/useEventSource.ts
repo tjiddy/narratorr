@@ -228,14 +228,21 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     };
   }, [reconnectKey, handleEvent, queryClient]);
 
-  // Keep the freshest token in a ref and decide whether it warrants a reopen.
-  // Bump the generation only when there is no live stream (first connect after a
-  // null token) or the current one has errored — never on a healthy refresh,
-  // which would churn the connection. A genuinely expired token errors first,
-  // so the remint that follows still reaches this reopen path.
+  // Keep the freshest token in a ref and decide whether it warrants a reconnect
+  // by bumping the generation (which re-runs the connection effect above).
+  //  - (Re)open when there is a token but no live stream (first connect after a
+  //    null token) or the current one has errored (post-remint recovery). Never
+  //    on a healthy refresh, which would churn the connection.
+  //  - Close when the token is cleared to null while a stream is still open
+  //    (e.g. logout / token revocation) — the connection effect re-runs, its
+  //    cleanup closes the old EventSource, and the null token short-circuits the
+  //    reopen, leaving no dangling connection on the revoked token.
   useEffect(() => {
     tokenRef.current = streamToken;
-    if (streamToken && (esRef.current === null || hadErrorRef.current)) {
+    const hasStream = esRef.current !== null;
+    const needsReopen = !!streamToken && (!hasStream || hadErrorRef.current);
+    const needsClose = !streamToken && hasStream;
+    if (needsReopen || needsClose) {
       setReconnectKey((k) => k + 1);
     }
   }, [streamToken]);
