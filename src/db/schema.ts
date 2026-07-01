@@ -117,8 +117,8 @@ export const books = sqliteTable('books', {
   // case-drifted duplicate ('b0..' vs a stored 'B0..') is rejected at the DB.
   // The partial `WHERE asin IS NOT NULL` predicate is preserved so multiple
   // null-ASIN rows still coexist ([[sqlite-null-unique-index]]). Hand-managed via
-  // drizzle/0003_* (drizzle-kit can't auto-generate the expression index + the
-  // data canonicalization/quarantine); keep this mirrored with that migration.
+  // drizzle/0000_baseline.sql (drizzle-kit can't auto-generate the expression index +
+  // the data canonicalization/quarantine); keep this mirrored with that migration.
   uniqueIndex('idx_books_asin_unique').on(sql`upper(${table.asin})`).where(sql`asin IS NOT NULL`),
 ]);
 
@@ -177,7 +177,6 @@ export const seriesMembers = sqliteTable('series_members', {
   authorName: text('author_name'),
   position: real('position'),
   source: text('source', { enum: ['hardcover', 'local'] }).notNull().default('hardcover'),
-  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [
@@ -404,9 +403,6 @@ export const blacklist = sqliteTable('blacklist', {
 export const unmatchedGenres = sqliteTable('unmatched_genres', {
   genre: text('genre').primaryKey(),
   count: integer('count').notNull().default(1),
-  firstSeen: integer('first_seen', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
   lastSeen: integer('last_seen', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

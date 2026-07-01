@@ -1914,14 +1914,6 @@
           "autoincrement": false,
           "default": "'hardcover'"
         },
-        "last_seen_at": {
-          "name": "last_seen_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(unixepoch())"
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -2240,14 +2232,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": 1
-        },
-        "first_seen": {
-          "name": "first_seen",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(unixepoch())"
         },
         "last_seen": {
           "name": "last_seen",

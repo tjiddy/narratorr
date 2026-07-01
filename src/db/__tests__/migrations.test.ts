@@ -108,6 +108,19 @@ describe('drizzle baseline migration', () => {
     expect(bookColumns.has('enrichment_attempts'), 'expected books.enrichment_attempts in the baseline schema').toBe(true);
     expect(bookColumns.has('production_type'), 'expected books.production_type in the baseline schema').toBe(true);
     expect(bookColumns.has('edition_label'), 'expected books.edition_label in the baseline schema').toBe(true);
+
+    // Write-only vestiges dropped before the v1.0.0 tag (#1780): series_members.last_seen_at
+    // (written only by its insert default, never read/updated — the name implied a stale-member
+    // prune input that never existed) and unmatched_genres.first_seen (write-only telemetry).
+    // These are PRESENCE/ABSENCE pins only — assert the dropped column is gone, anchored by a
+    // survivor column on the same table so a typo'd table name can't pass the absence check vacuously.
+    const seriesMemberColumns = await columnNames(dbPath, 'series_members');
+    expect(seriesMemberColumns.has('last_seen_at'), 'series_members.last_seen_at must not exist in the baseline schema').toBe(false);
+    expect(seriesMemberColumns.has('source'), 'expected survivor column series_members.source').toBe(true);
+
+    const unmatchedGenreColumns = await columnNames(dbPath, 'unmatched_genres');
+    expect(unmatchedGenreColumns.has('first_seen'), 'unmatched_genres.first_seen must not exist in the baseline schema').toBe(false);
+    expect(unmatchedGenreColumns.has('genre'), 'expected survivor column unmatched_genres.genre').toBe(true);
   });
 
   it('is idempotent — re-running the migrator is a no-op', async () => {
