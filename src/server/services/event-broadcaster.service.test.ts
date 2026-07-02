@@ -168,8 +168,8 @@ describe('EventBroadcasterService', () => {
 
       vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
 
-      expect(c1.reply.raw.write).toHaveBeenCalledWith(':hb\n\n');
-      expect(c2.reply.raw.write).toHaveBeenCalledWith(':hb\n\n');
+      expect(c1.reply.raw.write).toHaveBeenCalledWith('event: hb\ndata: {}\n\n');
+      expect(c2.reply.raw.write).toHaveBeenCalledWith('event: hb\ndata: {}\n\n');
     });
 
     it('fires periodically, not once (second interval sends another heartbeat)', () => {
@@ -180,7 +180,7 @@ describe('EventBroadcasterService', () => {
       vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
 
       const hbWrites = (c1.reply.raw.write as ReturnType<typeof vi.fn>).mock.calls
-        .filter((call) => call[0] === ':hb\n\n');
+        .filter((call) => call[0] === 'event: hb\ndata: {}\n\n');
       expect(hbWrites).toHaveLength(2);
     });
 
@@ -301,7 +301,7 @@ describe('EventBroadcasterService', () => {
       expect(stale.reply.raw.end).toHaveBeenCalledTimes(1);
       expect(fresh.reply.raw.end).not.toHaveBeenCalled();
       expect(broadcaster.clientCount).toBe(1);
-      expect(fresh.reply.raw.write).toHaveBeenCalledWith(':hb\n\n');
+      expect(fresh.reply.raw.write).toHaveBeenCalledWith('event: hb\ndata: {}\n\n');
     });
 
     it('does not end a client whose age is exactly at the cap (> not >=)', () => {
@@ -340,7 +340,7 @@ describe('EventBroadcasterService', () => {
 
       expect(otherStale.reply.raw.end).toHaveBeenCalledTimes(1);
       expect(broadcaster.clientCount).toBe(1);
-      expect(fresh.reply.raw.write).toHaveBeenCalledWith(':hb\n\n');
+      expect(fresh.reply.raw.write).toHaveBeenCalledWith('event: hb\ndata: {}\n\n');
     });
   });
 });

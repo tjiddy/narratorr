@@ -7,8 +7,8 @@ describe('sse-stream', () => {
     vi.useRealTimers();
   });
 
-  it('exports the canonical heartbeat frame literal', () => {
-    expect(SSE_HEARTBEAT_FRAME).toBe(':hb\n\n');
+  it('exports the canonical heartbeat frame literal (named `hb` event, #1798)', () => {
+    expect(SSE_HEARTBEAT_FRAME).toBe('event: hb\ndata: {}\n\n');
   });
 
   it('exports a heartbeat interval value', () => {

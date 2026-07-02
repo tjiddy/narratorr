@@ -1,20 +1,28 @@
 /**
  * Shared SSE wire helpers (#1799). The "long-lived SSE needs heartbeats" decision
- * lives here — a single source for the keepalive frame + cadence consumed by both
- * SSE surfaces: the multi-client event broadcaster (`event-broadcaster.service.ts`)
+ * lives here — a single source for the keepalive frame consumed by both SSE
+ * surfaces: the multi-client event broadcaster (`event-broadcaster.service.ts`)
  * and the per-request search stream (`routes/search-stream.ts`). Keeping the frame
- * literal and interval in one place stops the two surfaces from drifting apart.
+ * literal in one place stops the two surfaces from drifting apart.
+ *
+ * The cadence itself (#1798) now lives in `src/shared/sse-constants.ts` so the
+ * client liveness watchdog can derive its silence threshold from the same value
+ * without importing across the `src/server/**` layer boundary. It is re-exported
+ * below so this module's existing server consumers/tests keep importing it here.
  */
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '../../shared/sse-constants.js';
+
+export { HEARTBEAT_INTERVAL_MS };
 
 /**
- * Heartbeat cadence (#1776). Idle reverse proxies commonly cut a connection with
- * no traffic after ~60s; a sub-minute comment frame keeps the stream warm between
- * real events.
+ * The heartbeat wire frame (#1798). Promoted from the legacy `:hb` comment frame
+ * to a named `hb` event so the browser can observe it — a `:`-prefixed comment is
+ * invisible to EventSource, which left a deaf (half-open) stream undetectable on
+ * the client. A single named frame is shared by both SSE surfaces; the search
+ * stream registers no `hb` listener and EventSource ignores unmatched named
+ * events, so the promotion is harmless there. See {@link SSE_HEARTBEAT_EVENT}.
  */
-export const HEARTBEAT_INTERVAL_MS = 20_000;
-
-/** A `:`-prefixed line is an SSE comment — clients ignore it. Keepalive only. */
-export const SSE_HEARTBEAT_FRAME = ':hb\n\n';
+export const SSE_HEARTBEAT_FRAME = `event: ${SSE_HEARTBEAT_EVENT}\ndata: {}\n\n`;
 
 /**
  * Start a single-timer heartbeat that invokes `write` every

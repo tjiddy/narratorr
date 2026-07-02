@@ -15,6 +15,15 @@ import {
 import { setMergeProgress } from './useMergeProgress.js';
 import { handleSearchEvent } from './useSearchProgress.js';
 import { safeParseSseEvent } from '@/lib/sse/safe-parse-event';
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '../../shared/sse-constants.js';
+
+// Silence threshold for the liveness watchdog (#1798). A deaf (half-open) stream
+// delivers no frames at all — not even heartbeats — yet EventSource keeps
+// `readyState` OPEN and never fires `error`. If more than ~3 heartbeat intervals
+// pass with no frame of any kind, the stream is treated as dead and force-reopened.
+// Derived from the shared cadence (DRY) so tightening the heartbeat also tightens
+// detection without a second constant to keep in sync.
+const SSE_SILENCE_THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3;
 
 // ============================================================================
 // Reactive SSE connection state (F3)
@@ -160,6 +169,10 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
   const queryClient = useQueryClient();
   const esRef = useRef<EventSource | null>(null);
   const hadErrorRef = useRef(false);
+  // Wall-clock timestamp of the last frame received on the current stream (any
+  // event, including the `hb` heartbeat). The watchdog compares it against
+  // `Date.now()` to detect a silent stream (#1798).
+  const lastFrameAtRef = useRef(0);
   const tokenRef = useRef<string | null>(streamToken);
   const onStreamErrorRef = useRef(onStreamError);
   useEffect(() => { onStreamErrorRef.current = onStreamError; }, [onStreamError]);
@@ -190,8 +203,33 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     const url = `${URL_BASE}/api/events?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
+    // Seed liveness at open time so a slow first frame doesn't trip the watchdog
+    // before the stream has had a chance to deliver anything.
+    lastFrameAtRef.current = Date.now();
+
+    // Any frame — domain event or `hb` heartbeat — proves the stream is live.
+    const refreshLiveness = () => { lastFrameAtRef.current = Date.now(); };
+
+    // Proactively tear down and reopen a stream the browser still believes is
+    // OPEN (#1798). Guarded so a watchdog tick and an `online`/`visibilitychange`
+    // fire in the same frame can't double-bump the reconnect generation. Mirrors
+    // the `onerror` path: set the ref-backed error flag BEFORE closing so the
+    // reopen's `onopen` fires the single catch-up invalidation.
+    let reconnecting = false;
+    const forceReconnect = () => {
+      if (reconnecting) return;
+      reconnecting = true;
+      setSseConnected(false);
+      hadErrorRef.current = true;
+      es.close();
+      esRef.current = null;
+      setReconnectKey((k) => k + 1);
+    };
+
+    const isStale = () => Date.now() - lastFrameAtRef.current > SSE_SILENCE_THRESHOLD_MS;
 
     es.onopen = () => {
+      refreshLiveness();
       setSseConnected(true);
       if (hadErrorRef.current) {
         // Reconnected after a drop — invalidate everything to catch up on any
@@ -210,19 +248,48 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
       onStreamErrorRef.current?.();
     };
 
-    // Listen for each event type — derived from schema (single source of truth)
+    // Listen for each event type — derived from schema (single source of truth).
+    // Every domain listener refreshes liveness so any real traffic counts (AC #2).
     const eventTypes: SSEEventType[] = [...sseEventTypeSchema.options];
 
     for (const type of eventTypes) {
       es.addEventListener(type, (event: MessageEvent) => {
+        refreshLiveness();
         const parsed = safeParseSseEvent(type, event);
         if (parsed === null) return;
         handleEvent(type, parsed);
       });
     }
 
+    // The named heartbeat (#1798) is not a domain event — it carries no payload and
+    // is absent from `sseEventTypeSchema`, and EventSource routes named events by
+    // name (not to `onmessage`), so it needs its own listener. It exists purely to
+    // refresh liveness on an otherwise idle stream.
+    es.addEventListener(SSE_HEARTBEAT_EVENT, refreshLiveness);
+
+    // Watchdog: a deaf stream (NAT flush, proxy restart, laptop sleep/wake with no
+    // RST) delivers no frames while `readyState` stays OPEN and `onerror` never
+    // fires. Poll on the heartbeat cadence; once silence exceeds the threshold,
+    // force the reopen so the recovery + catch-up path runs (AC #1).
+    const watchdog = setInterval(() => {
+      if (isStale()) forceReconnect();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Cheap adjunct (#1798): a sleep/wake or network flap often surfaces as an
+    // `online` or `visibilitychange` before the watchdog's next tick — check
+    // liveness immediately so recovery isn't delayed by up to a full interval.
+    const onOnline = () => { if (isStale()) forceReconnect(); };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isStale()) forceReconnect();
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
     return () => {
       setSseConnected(false);
+      clearInterval(watchdog);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       es.close();
       esRef.current = null;
     };
