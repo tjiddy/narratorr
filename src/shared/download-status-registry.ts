@@ -124,10 +124,6 @@ export function getCompletedStatuses(): DownloadStatus[] {
  */
 const REPLACEABLE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused', 'checking', 'pending_review'];
 
-export function getReplaceableStatuses(): DownloadStatus[] {
-  return REPLACEABLE_STATUSES;
-}
-
 /**
  * Statuses that should be polled from external download clients.
  * Excludes internal pipeline statuses (checking, pending_review, importing)
@@ -159,11 +155,6 @@ export function deriveDisplayStatus(clientStatus: ClientStatus, pipelineStage: P
   return pipelineStage === 'idle' ? clientStatus : pipelineStage;
 }
 
-/** Tuple predicate: does the download display as in-progress (non-terminal)? */
-export function isInProgressState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
-  return isInProgressStatus(deriveDisplayStatus(clientStatus, pipelineStage));
-}
-
 /** Tuple predicate: does the download display as terminal (finished)? */
 export function isTerminalState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
   return isTerminalStatus(deriveDisplayStatus(clientStatus, pipelineStage));
@@ -171,15 +162,10 @@ export function isTerminalState(clientStatus: ClientStatus, pipelineStage: Pipel
 
 /**
  * Tuple predicate: can this download be replaced by a new grab?
- * Mirrors `getReplaceableStatuses()` over the tuple — preserves the load-bearing
- * invariant that an `importing` download (`pipelineStage === 'importing'`) is
- * NOT replaceable.
+ * Mirrors the `REPLACEABLE_STATUSES` set over the tuple — preserves the
+ * load-bearing invariant that an `importing` download
+ * (`pipelineStage === 'importing'`) is NOT replaceable.
  */
 export function isReplaceableState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
   return REPLACEABLE_STATUSES.includes(deriveDisplayStatus(clientStatus, pipelineStage));
-}
-
-/** Tuple predicate: should this download be polled from its external client? */
-export function isClientPolledState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
-  return CLIENT_POLLED_STATUSES.includes(deriveDisplayStatus(clientStatus, pipelineStage));
 }

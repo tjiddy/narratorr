@@ -13,7 +13,6 @@ import { connectorSettingsSchemas } from '../../shared/schemas/connector.js';
 
 const PREFIX = '$ENC$';
 const SENTINEL = '********';
-const REDACTED = '[REDACTED]';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM recommended
 const AUTH_TAG_LENGTH = 16;
@@ -316,18 +315,6 @@ export function maskFields(
     // Preserve empty string, null, and undefined — only mask non-empty values
     if (value === '' || value == null) continue;
     settings[field] = SENTINEL;
-  }
-  return settings;
-}
-
-export function redactSecrets(
-  entity: SecretEntity,
-  settings: Record<string, unknown>,
-): Record<string, unknown> {
-  const fields = getSecretFieldNames(entity);
-  for (const field of fields) {
-    if (!(field in settings)) continue;
-    settings[field] = REDACTED;
   }
   return settings;
 }
