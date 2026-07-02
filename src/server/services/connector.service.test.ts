@@ -280,7 +280,11 @@ describe('ConnectorService', () => {
         settings: { baseUrl: encrypt('http://saved.local', TEST_KEY), apiKey: encrypt('saved-key', TEST_KEY), libraryId: 'lib-1' },
       });
       db.select.mockReturnValue(mockDbChain([existing]));
-      vi.mocked(fetchWithTimeout).mockResolvedValue({
+      // No global clearMocks (vitest.config.ts) and the transport mock is
+      // module-level, so clear its call history per row — otherwise the second
+      // caller's toHaveBeenCalledWith could match the first row's stale call and
+      // a list-targets regression to ******** would slip through (#1781 F2).
+      vi.mocked(fetchWithTimeout).mockReset().mockResolvedValue({
         ok: true,
         json: async () => ({ libraries: [{ id: 'lib-1', name: 'Audiobooks' }] }),
       } as unknown as Response);
