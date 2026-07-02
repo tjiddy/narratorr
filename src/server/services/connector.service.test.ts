@@ -261,6 +261,46 @@ describe('ConnectorService', () => {
     });
   });
 
+  // ── config-path sentinel resolution (#1781 F1) ───────────────────────────────
+  // The resolve-only path in adapterForConfig backs BOTH public config callers
+  // (testConfig, listTargetsConfig). Exercise the REAL adapter-construction path
+  // (no adapterForConfig mock) with an `id` plus masked secrets, and assert the
+  // saved plaintext — not `********` or `$ENC$...` — reaches the transport. If the
+  // resolveSettings('connector', ...) delegation regressed back to `data.settings`,
+  // the adapter would fetch `********/api/libraries` with `Bearer ********`, so
+  // these exact URL + header assertions would fail.
+  describe('config-path sentinel resolution', () => {
+    it.each([
+      { caller: 'testConfig' as const },
+      { caller: 'listTargetsConfig' as const },
+    ])('$caller resolves ******** connector secrets against the saved row before building the adapter', async ({ caller }) => {
+      const service = new ConnectorService(db as never, log as never);
+      // getById(1) → decrypts these to http://saved.local + saved-key.
+      const existing = createMockDbConnector({
+        settings: { baseUrl: encrypt('http://saved.local', TEST_KEY), apiKey: encrypt('saved-key', TEST_KEY), libraryId: 'lib-1' },
+      });
+      db.select.mockReturnValue(mockDbChain([existing]));
+      vi.mocked(fetchWithTimeout).mockResolvedValue({
+        ok: true,
+        json: async () => ({ libraries: [{ id: 'lib-1', name: 'Audiobooks' }] }),
+      } as unknown as Response);
+
+      const data = { type: 'audiobookshelf', id: 1, settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' } };
+      const result = caller === 'testConfig'
+        ? await service.testConfig(data)
+        : await service.listTargetsConfig(data);
+
+      expect(result).toMatchObject({ success: true });
+      // Decrypted baseUrl → URL; decrypted apiKey → Authorization header. Neither
+      // the sentinel nor the ciphertext leaks through to the real request.
+      expect(fetchWithTimeout).toHaveBeenCalledWith(
+        'http://saved.local/api/libraries',
+        { headers: { Authorization: 'Bearer saved-key' } },
+        CONNECTOR_TIMEOUT_MS,
+      );
+    });
+  });
+
   // ── refresh queue: delegation + connector-specific resolver ──────────────────
   // The queue's own behavior (debounce/serialization/retry/timeout/drain/logging)
   // is exercised against ConnectorRefreshQueue directly in
