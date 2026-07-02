@@ -1,10 +1,69 @@
 import {
   isSentinel,
   resolveSentinelFields,
+  encryptFields,
   getSecretFieldNames,
+  getKey,
   SentinelOnNonSecretFieldError,
   type SecretEntity,
 } from './secret-codec.js';
+
+// ─── Service-side sentinel helpers (#844) ────────────────────────────────────
+//
+// The #844 invariant — sentinel placeholders for secret fields resolve only
+// against an entity's own secret-field allowlist, and a sentinel on a non-secret
+// key is rejected (`SentinelOnNonSecretFieldError`) — lives here, once, for the
+// service layer. Every entity service (connector, download-client, import-list,
+// indexer, notifier) and `settings.service` delegates to one of the two helpers
+// below rather than re-implementing the recipe inline.
+//
+// The two helpers are NOT interchangeable — they differ in the source of
+// `existing` and in whether encryption follows:
+//   • Persist path (`update`/`set`): `existing` is the RAW, still-encrypted row
+//     read via `db.select()`. `resolveAndEncryptSettings` resolves then encrypts;
+//     because `encryptFields` skips `$ENC$`-prefixed values, a sentinel that
+//     resolved to a stored secret keeps its exact stored bytes.
+//   • Test/config path (`testConfig`/`adapterForConfig`): `existing` is the
+//     DECRYPTED row from `getById`. `resolveSettings` resolves to real plaintext
+//     and does NOT encrypt — the adapter connection test needs live credentials.
+// Encrypting on the test path would hand the adapter ciphertext and break the
+// live test, so the split is deliberate; do not collapse the two.
+//
+// Both helpers own the clone (they spread `incoming` internally), so callers do
+// not need to pre-spread. `resolveSentinelFields`/`encryptFields` tolerate a
+// null/undefined `existing` (an absent secret resolves to `undefined`).
+
+/**
+ * Persist-path helper: resolve secret-field sentinels in `incoming` against the
+ * RAW (encrypted) `existing` settings, then encrypt. Returns a fresh object;
+ * `incoming` is not mutated. Throws `SentinelOnNonSecretFieldError` for a
+ * sentinel on a non-secret key.
+ */
+export function resolveAndEncryptSettings(
+  entity: SecretEntity,
+  incoming: Record<string, unknown>,
+  existing: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const settings = { ...incoming };
+  resolveSentinelFields(settings, existing, getSecretFieldNames(entity));
+  return encryptFields(entity, settings, getKey());
+}
+
+/**
+ * Test/config-path helper: resolve secret-field sentinels in `incoming` against
+ * the DECRYPTED `existing` settings and return the plaintext result WITHOUT
+ * encrypting. Returns a fresh object; `incoming` is not mutated. Throws
+ * `SentinelOnNonSecretFieldError` for a sentinel on a non-secret key.
+ */
+export function resolveSettings(
+  entity: SecretEntity,
+  incoming: Record<string, unknown>,
+  existing: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const settings = { ...incoming };
+  resolveSentinelFields(settings, existing, getSecretFieldNames(entity));
+  return settings;
+}
 
 export type SentinelResolution =
   | { ok: true; settings: Record<string, unknown> }

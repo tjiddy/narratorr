@@ -15,7 +15,8 @@ import { getErrorMessage } from '../utils/error-message.js';
 import type { z } from 'zod';
 import { connectorSettingsSchemas, connectorTargetsSettingsSchemas, type ConnectorSettings } from '../../shared/schemas/connector.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
+import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import {
   ConnectorRefreshQueue,
@@ -91,12 +92,8 @@ export class ConnectorService {
   async update(id: number, data: Partial<NewConnector>): Promise<ConnectorRow | null> {
     const toUpdate: Partial<NewConnector> = { ...data, updatedAt: new Date() };
     if (toUpdate.settings) {
-      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(connectors).where(eq(connectors.id, id)).limit(1);
-      // Resolve sentinels against RAW (encrypted) existing settings — encryptFields
-      // skips $ENC$-prefixed values, so unchanged secrets retain their stored bytes.
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('connector'));
-      toUpdate.settings = encryptFields('connector', settings, getKey());
+      toUpdate.settings = resolveAndEncryptSettings('connector', toUpdate.settings as Record<string, unknown>, existing[0]?.settings as Record<string, unknown> | undefined);
     }
     const result = await this.db.update(connectors).set(toUpdate).where(eq(connectors.id, id)).returning();
 
@@ -211,8 +208,7 @@ export class ConnectorService {
     if (data.id != null) {
       const existing = await this.getById(data.id);
       if (!existing) throw new Error('Connector not found');
-      resolvedSettings = { ...data.settings };
-      resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('connector'));
+      resolvedSettings = resolveSettings('connector', data.settings, existing.settings as Record<string, unknown> | undefined);
     }
     const fakeRow = { id: 0, name: '', type: data.type, enabled: true, settings: resolvedSettings, createdAt: new Date(), updatedAt: new Date() } as ConnectorRow;
     return this.createAdapter(fakeRow, schemas);
