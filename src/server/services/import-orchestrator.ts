@@ -17,7 +17,7 @@ import {
 } from '../utils/import-steps.js';
 import { writeOpfForImport } from '../utils/opf-writer.js';
 import type { BookService } from './book.service.js';
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';

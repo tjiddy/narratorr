@@ -149,6 +149,33 @@ ruleTester.run('no-raw-error-logging', rule, {
         log.warn({ error: 'plain string' }, 'msg');
       `,
     },
+
+    // ── `logger`-bound receiver (naming symmetry with `log`) ──────────────
+
+    // Canonical shape on a `logger`-named binding — already wrapped, must pass
+    {
+      code: `
+        try { foo(); } catch (err) {
+          logger.error({ error: serializeError(err) }, 'failed');
+        }
+      `,
+    },
+    // `logger` receiver with a non-catch MemberExpression value — must not flag
+    {
+      code: `
+        const result = doSomething();
+        logger.error({ error: result.error }, 'failed');
+      `,
+    },
+    // False-positive guard: `logger`-named receiver, non-catch first arg — the
+    // widening to `logger` must not broaden the trigger beyond catch-traced values
+    {
+      code: `
+        const logger = { warn(x){} };
+        const result = doSomething();
+        logger.warn(result, 'x');
+      `,
+    },
   ],
 
   invalid: [
@@ -652,6 +679,41 @@ try { foo(); } catch (error) {
 
 try { foo(); } catch (error) {
           log.warn({ error: serializeError(error.cause), ctx: 1 }, 'msg');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+
+    // ── `logger`-bound receiver (naming symmetry with `log`) ──────────────
+
+    // Bare catch binding on a `logger`-named identifier — `logger.error(err, …)`
+    {
+      code: `
+        try { foo(); } catch (err) {
+          logger.error(err, 'failed');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (err) {
+          logger.error({ error: serializeError(err) }, 'failed');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    // `this.logger.*` member receiver, object-key shorthand from catch binding
+    {
+      code: `
+        try { foo(); } catch (error) {
+          this.logger.warn({ error }, 'failed');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (error) {
+          this.logger.warn({ error: serializeError(error) }, 'failed');
         }
       `,
       errors: [{ messageId: 'rawError' }],

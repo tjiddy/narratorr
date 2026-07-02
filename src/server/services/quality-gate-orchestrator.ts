@@ -17,7 +17,7 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { RetrySearchDeps } from './retry-search.js';
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';

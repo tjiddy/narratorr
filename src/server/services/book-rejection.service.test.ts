@@ -16,7 +16,7 @@ import type { RetrySearchDeps } from './retry-search.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
-vi.mock('../utils/rejection-helpers.js', () => ({
+vi.mock('./rejection-helpers.js', () => ({
   blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -28,7 +28,7 @@ vi.mock('../config.js', () => ({
   config: { configPath: '/test-config' },
 }));
 
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 
 const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
