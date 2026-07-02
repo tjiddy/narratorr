@@ -296,6 +296,76 @@ describe('AudibleProvider', () => {
         expect((error as RateLimitError).retryAfterMs).toBe(60000);
       }
     });
+
+    // ── #1778 Null-intolerant contributor names ────────────────────────────
+    // Audible ships partial contributor records; a null `name` must not fail the
+    // whole raw-array parse (which throws before the per-product mapped loop).
+    it('parses null contributor names and degrades per product', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [
+              {
+                asin: 'B000000001',
+                title: 'First Book',
+                authors: [{ name: 'Valid Author', asin: 'A1' }],
+                narrators: [{ name: 'Valid Narrator' }],
+              },
+              {
+                // A null narrator name must not throw the whole parse; the null
+                // contributor is dropped, the valid one survives.
+                asin: 'B000000002',
+                title: 'Second Book',
+                authors: [{ name: null }, { name: 'Real Author' }],
+                narrators: [{ name: null }, { name: 'Real Narrator' }],
+              },
+              {
+                asin: 'B000000003',
+                title: 'Third Book',
+                authors: [{ name: 'Another Author' }],
+                narrators: [{ name: 'Another Narrator' }],
+              },
+            ],
+          });
+        }),
+      );
+
+      const { books, rawCount } = await provider.searchBooks('test');
+
+      expect(rawCount).toBe(3);
+      expect(books).toHaveLength(3);
+      const second = books.find((b) => b.asin === 'B000000002')!;
+      expect(second.authors).toEqual([{ name: 'Real Author' }]);
+      expect(second.narrators).toEqual(['Real Narrator']);
+      // Other products are unaffected.
+      const first = books.find((b) => b.asin === 'B000000001')!;
+      expect(first.authors).toEqual([{ name: 'Valid Author', asin: 'A1' }]);
+      expect(first.narrators).toEqual(['Valid Narrator']);
+    });
+
+    it('shrinks the contributor array rather than dropping the product when a whole entry is name-null', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [
+              {
+                asin: 'B000000004',
+                title: 'Nameless Narrator Book',
+                authors: [{ name: 'Kept Author' }],
+                narrators: [{ name: null }],
+              },
+            ],
+          });
+        }),
+      );
+
+      const { books } = await provider.searchBooks('test');
+
+      expect(books).toHaveLength(1);
+      expect(books[0]!.authors).toEqual([{ name: 'Kept Author' }]);
+      // Every narrator was name-null → the array is emptied and mapped to undefined.
+      expect(books[0]!.narrators).toBeUndefined();
+    });
   });
 
   describe('getBook', () => {
@@ -425,6 +495,28 @@ describe('AudibleProvider', () => {
       expect(book).not.toBeNull();
       expect(book!.title).toBe('Sunrise on the Reaping');
       expect(book!.authors).toEqual([{ name: 'Suzanne Collins' }]);
+    });
+
+    // ── #1778 Detail path shares audibleProductSchema + mapProduct ──────────
+    it('drops a null-named contributor on the detail path rather than throwing', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.json({
+            product: {
+              asin: 'B0D6PCZ98M',
+              title: 'Sunrise on the Reaping',
+              authors: [{ name: null }, { name: 'Suzanne Collins' }],
+              narrators: [{ name: null }],
+              language: 'english',
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B0D6PCZ98M');
+      expect(book).not.toBeNull();
+      expect(book!.authors).toEqual([{ name: 'Suzanne Collins' }]);
+      expect(book!.narrators).toBeUndefined();
     });
   });
 

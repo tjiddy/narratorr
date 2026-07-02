@@ -467,6 +467,36 @@ describe('SABnzbdClient', () => {
       expect(item!.downloadSpeed).toBeUndefined();
     });
 
+    // #1778 — kbpersec/storage are nullish; a null must parse and map like absence.
+    it('parses null kbpersec/storage and maps them identically to omitting them', async () => {
+      const withNullsSlot = { ...queueSlot, kbpersec: null, storage: null };
+      const { storage: _s, ...omittedSlot } = queueSlot; // storage & kbpersec absent
+
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const mode = new URL(request.url).searchParams.get('mode');
+          if (mode === 'queue') return HttpResponse.json({ queue: { slots: [withNullsSlot] } });
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+      const withNulls = await client.getDownload('SABnzbd_nzo_abc123');
+
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const mode = new URL(request.url).searchParams.get('mode');
+          if (mode === 'queue') return HttpResponse.json({ queue: { slots: [omittedSlot] } });
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+      const omitted = await client.getDownload('SABnzbd_nzo_abc123');
+
+      // addedAt is stamped with the current clock per call, so compare everything else.
+      const { addedAt: _a, ...withNullsRest } = withNulls!;
+      const { addedAt: _b, ...omittedRest } = omitted!;
+      expect(withNullsRest).toEqual(omittedRest);
+      expect(withNulls!.downloadSpeed).toBeUndefined();
+    });
+
     it('leaves downloadSpeed undefined for history-only items (no rate in history)', async () => {
       server.use(
         http.get(`${API_BASE}/api`, ({ request }) => {

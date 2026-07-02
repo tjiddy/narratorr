@@ -106,6 +106,24 @@ describe('PlexConnector', () => {
       expect(await makeConnector().listTargets()).toEqual([]);
     });
 
+    // #1778 — a null section title must parse and degrade to name = key (never
+    // dropped, never empty), with other sections unaffected and no throw.
+    it('coalesces a null section title to the section key without dropping it', async () => {
+      server.use(http.get(SECTIONS_URL, () => HttpResponse.json({
+        MediaContainer: {
+          Directory: [
+            { key: '1', title: null },
+            { key: '2', title: 'Podcasts' },
+          ],
+        },
+      })));
+      const targets = await makeConnector().listTargets();
+      expect(targets).toEqual([
+        { id: '1', name: '1' },
+        { id: '2', name: 'Podcasts' },
+      ]);
+    });
+
     it('throws ConnectorRequestError on a malformed/non-Zod body', async () => {
       server.use(http.get(SECTIONS_URL, () => HttpResponse.json({ wrong: 'shape' })));
       await expect(makeConnector().listTargets()).rejects.toBeInstanceOf(ConnectorRequestError);

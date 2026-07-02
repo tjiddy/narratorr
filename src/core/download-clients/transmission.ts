@@ -37,10 +37,7 @@ const TORRENT_FIELDS = [
 
 type TransmissionTorrent = z.infer<typeof transmissionTorrentSchema>;
 
-interface RpcResponse {
-  result: string;
-  arguments?: Record<string, unknown>;
-}
+type RpcResponse = z.infer<typeof transmissionRpcResponseSchema>;
 
 export class TransmissionClient implements DownloadClientAdapter {
   readonly type = 'transmission';
@@ -220,7 +217,7 @@ export class TransmissionClient implements DownloadClientAdapter {
             { cause: parsed.error },
           );
         }
-        const data = parsed.data as RpcResponse;
+        const data = parsed.data;
 
         if (data.result !== 'success') {
           throw new DownloadClientError(this.name, `RPC error: ${data.result}`);

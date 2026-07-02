@@ -152,12 +152,14 @@ describe('TransmissionClient', () => {
       expect(result.message).toContain('unexpected session-get response');
     });
 
-    it('returns failure when session-get version is null (z.string().optional() rejects null)', async () => {
+    // #1778 — version is `.nullish()`, so a null maps like an absent version:
+    // success with the fallback "Connected to Transmission" message.
+    it('returns success with fallback name when session-get version is null', async () => {
       server.use(rpcHandler('session-get', { version: null }));
 
       const result = await client.test();
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('unexpected session-get response');
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Connected to Transmission');
     });
 
     it('returns failure on connection error', async () => {
@@ -534,6 +536,22 @@ describe('TransmissionClient', () => {
       const result = await client.test();
       expect(result.success).toBe(false);
       expect(result.message).toContain('RPC error');
+    });
+
+    // #1778 — the RPC `arguments` wrapper is nullish; a null must parse and map
+    // like an absent wrapper (no torrents).
+    it('getAllDownloads treats a null arguments wrapper like an empty result', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return HttpResponse.json(
+            { result: 'success', arguments: null },
+            { headers: { 'X-Transmission-Session-Id': SESSION_ID } },
+          );
+        }),
+      );
+
+      const results = await client.getAllDownloads();
+      expect(results).toEqual([]);
     });
 
     it('getAllDownloads handles empty torrents array', async () => {

@@ -1188,6 +1188,26 @@ describe('NZBGetClient', () => {
       expect(item!.status).toBe('completed');
     });
 
+    // #1778 — post-proc fields are nullish; a null must parse and behave like absence.
+    it('does not degrade when ParStatus/UnpackStatus/MoveStatus/ScriptStatus are null', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{
+            ...historyItem,
+            Status: 'SUCCESS/ALL',
+            ParStatus: null,
+            UnpackStatus: null,
+            MoveStatus: null,
+            ScriptStatus: null,
+          }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+
     it('returns completed when SUCCESS with all post-processing SUCCESS/NONE', async () => {
       server.use(
         rpcHandler({

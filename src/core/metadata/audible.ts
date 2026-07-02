@@ -47,8 +47,8 @@ const audibleProductSchema = z.object({
   asin: z.string().nullish(),
   title: z.string().nullish(),
   subtitle: z.string().nullish(),
-  authors: z.array(z.object({ asin: z.string().nullish(), name: z.string() }).passthrough()).nullish(),
-  narrators: z.array(z.object({ name: z.string() }).passthrough()).nullish(),
+  authors: z.array(z.object({ asin: z.string().nullish(), name: z.string().nullish() }).passthrough()).nullish(),
+  narrators: z.array(z.object({ name: z.string().nullish() }).passthrough()).nullish(),
   publisher_name: z.string().nullish(),
   publisher_summary: z.string().nullish(),
   merchandising_summary: z.string().nullish(),
@@ -293,12 +293,18 @@ export class AudibleProvider implements MetadataSearchProvider {
 
 // eslint-disable-next-line complexity -- API response mapping with nullable field handling
 function mapProduct(product: AudibleProduct): Record<string, unknown> {
-  const authors = (product.authors ?? []).map((a) => ({
-    name: a.name,
-    asin: a.asin || undefined,
-  }));
+  // Drop contributors with a null/missing name — Audible ships partial records,
+  // and a nameless author/narrator can't map to a valid BookMetadata contributor.
+  const authors = (product.authors ?? [])
+    .filter((a): a is typeof a & { name: string } => a.name != null)
+    .map((a) => ({
+      name: a.name,
+      asin: a.asin || undefined,
+    }));
 
-  const narrators = (product.narrators ?? []).map((n) => n.name);
+  const narrators = (product.narrators ?? [])
+    .map((n) => n.name)
+    .filter((name): name is string => name != null);
 
   const series = (product.series ?? [])
     .filter((s) => s.title)
