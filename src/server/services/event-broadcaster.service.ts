@@ -29,11 +29,25 @@ export const MAX_STREAM_AGE_MS = 45 * 60 * 1_000;
 export class EventBroadcasterService {
   private clients = new Set<SSEClient>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // Latched by stop() so a client that reconnects during the graceful-shutdown
+  // drain window (after stop(), before app.close()) is ended on arrival instead
+  // of re-registered — otherwise its never-ended hijacked reply re-blocks
+  // app.close() and re-introduces the #1796 SIGKILL hang (#1813). Mirrors the
+  // `stopping` latch in ConnectorRefreshQueue / ImportQueueWorker.
+  private stopping = false;
 
   constructor(private log: FastifyBaseLogger) {}
 
   /** Add a connected SSE client. */
   addClient(client: SSEClient): void {
+    // Shutdown drain window: reject the late reconnect. End the incoming reply so
+    // the browser gets a closed stream and keeps retrying until the NEW process is
+    // up (#1787's catch-up covers the gap), and do NOT restart the heartbeat. See
+    // the `stopping` latch note above (#1813).
+    if (this.stopping) {
+      this.endAndPrune([client], 'shutdown-late');
+      return;
+    }
     this.clients.add(client);
     this.log.debug({ clientId: client.id, total: this.clients.size }, 'SSE client connected');
     this.startHeartbeat();
@@ -65,8 +79,13 @@ export class EventBroadcasterService {
    * so without this, `app.close()` blocks until every tab disconnects and the
    * deploy degrades to the SIGKILL timer. Browsers auto-reconnect to the new
    * process; #1787's catch-up handles the gap.
+   *
+   * Latches `stopping` so a client that reconnects during the post-stop() drain
+   * window is ended on arrival rather than re-registered (#1813) — see
+   * `addClient`. Idempotent: re-entry just re-ends an already-empty set.
    */
   stop(): void {
+    this.stopping = true;
     this.stopHeartbeat();
     this.endAndPrune([...this.clients], 'shutdown');
   }
