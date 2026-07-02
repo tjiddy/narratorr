@@ -10,6 +10,7 @@ import { XIcon, ArrowLeftIcon, BookOpenIcon } from '@/components/icons';
 import { Modal } from '@/components/Modal';
 import { MetadataSearchView } from '@/components/book/MetadataSearchView';
 import { resolveCoverUrl } from '@/lib/url-utils';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 
 type Step = 'search' | 'confirm';
 
@@ -21,7 +22,7 @@ interface BookFixMatchModalProps {
 
 function formatSeriesLabel(meta: BookMetadata | BookWithAuthor): string {
   const m = meta as { seriesName?: string | null; seriesPosition?: number | null; seriesPrimary?: { name?: string; position?: number | undefined }; series?: Array<{ name?: string; position?: number | undefined }> };
-  const primary = m.seriesPrimary ?? m.series?.[0];
+  const primary = pickPrimarySeries(m);
   if (primary?.name) {
     const pos = primary.position;
     return pos !== undefined && pos !== null ? `${primary.name} #${pos}` : primary.name;

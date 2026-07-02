@@ -18,6 +18,7 @@ import { Badge } from '@/components/Badge';
 import { Modal } from '@/components/Modal';
 import { MetadataResultList } from '@/components/book/MetadataResultList';
 import type { BookEditState } from './types.js';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 export type { BookEditState } from './types.js';
 
 interface BookEditModalProps {
@@ -63,7 +64,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
     }
     // Prefer the canonical primary-series ref over `series[0]` (#1088 / #1097) —
     // `series[0]` on Audible can be a broader universe entry rather than the real series.
-    const primary = meta.seriesPrimary ?? meta.series?.[0];
+    const primary = pickPrimarySeries(meta);
     setSeries(primary?.name ?? '');
     setNarrators(meta.narrators?.join(', ') ?? '');
     setSeriesPosition(primary?.position !== undefined ? String(primary.position) : '');

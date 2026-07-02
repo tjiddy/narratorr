@@ -2,6 +2,7 @@ import { formatDurationMinutes, formatYear } from '@/lib/format';
 import { bookStatusConfig } from '@/lib/status';
 import type { BookWithAuthor } from '@/lib/api';
 import { requireDefined } from '../../../shared/utils/assert.js';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 
 export interface MetadataBook {
   subtitle?: string | undefined;
@@ -23,7 +24,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const genres = libraryBook.genres ?? metadataBook?.genres;
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
   // on Audible can be a broader universe entry rather than the real book series.
-  const primaryMetaSeries = metadataBook?.seriesPrimary ?? metadataBook?.series?.[0];
+  const primaryMetaSeries = pickPrimarySeries(metadataBook);
   const seriesName = libraryBook.seriesName || primaryMetaSeries?.name;
   const seriesPosition = libraryBook.seriesPosition ?? primaryMetaSeries?.position;
   const duration = formatDurationMinutes(libraryBook.duration ?? metadataBook?.duration);

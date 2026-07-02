@@ -28,6 +28,7 @@ import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { ManualImportJobPayload } from './import-adapters/types.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 
 export interface ImportPipelineDeps {
@@ -249,7 +250,7 @@ export async function copyToLibrary(
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
   // on Audible can be a broader universe entry rather than the real book series.
   // When `meta` is null (no provider match accepted), fall back to item-derived values.
-  const metaPrimarySeries = meta?.seriesPrimary ?? meta?.series?.[0];
+  const metaPrimarySeries = pickPrimarySeries(meta);
   const targetBook = {
     title: item.title,
     seriesName: metaPrimarySeries?.name ?? item.seriesName ?? undefined,

@@ -7,6 +7,7 @@ import type { BookRouteDeps } from './books.js';
 import type { FixMatchReplacement } from '../services/book.service.js';
 import { refreshOpfForBook } from '../utils/opf-refresh.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 import { type z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -37,7 +38,7 @@ function copyOptional<T extends FixMatchReplacement, K extends keyof T>(target: 
 
 /** Project a `BookMetadata` into the partial-update payload BookService.fixMatch expects. */
 function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
-  const primarySeries = meta.seriesPrimary ?? meta.series?.[0];
+  const primarySeries = pickPrimarySeries(meta);
   const out: FixMatchReplacement = {
     title: meta.title,
     authors: meta.authors,
