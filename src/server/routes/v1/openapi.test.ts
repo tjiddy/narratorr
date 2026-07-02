@@ -90,6 +90,9 @@ async function buildApp(urlBase = ''): Promise<FastifyInstance> {
       indexerSearchService: indexerSearchService as never,
       downloadOrchestrator: downloadOrchestrator as never,
       downloadService: downloadService as never,
+      blacklistService: {} as never,
+      settingsService: {} as never,
+      indexerService: {} as never,
     }, db);
     await v1MetadataRoutes(scoped, { metadataService: metadataService as never, bookService: bookService as never });
     await v1SystemRoutes(scoped);
