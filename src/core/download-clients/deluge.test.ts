@@ -640,6 +640,38 @@ describe('DelugeClient', () => {
       expect(result!.downloadSpeed).toBeUndefined();
     });
 
+    // #1778 — nullish response fields must parse and map like absence.
+    it('parses null nullable fields and maps them identically to omitting them', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({
+          ...mockTorrentStatus,
+          download_rate: null,
+          hash: null,
+          label: null,
+        }),
+      }));
+      const withNulls = await client.getDownload('abc123def456');
+
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => mockTorrentStatus, // fields omitted
+      }));
+      const omitted = await client.getDownload('abc123def456');
+
+      expect(withNulls).toEqual(omitted);
+    });
+
+    it('coalesces download_rate:null to undefined without clobbering a real 0', async () => {
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => ({ ...mockTorrentStatus, download_rate: null }),
+      }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.downloadSpeed).toBeUndefined();
+    });
+
     it('requests download_rate in TORRENT_STATUS_KEYS', async () => {
       const capturedKeys: string[][] = [];
       server.use(rpcHandler({

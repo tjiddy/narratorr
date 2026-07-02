@@ -38,7 +38,7 @@ const plexSectionsResponseSchema = z.object({
   MediaContainer: z.object({
     Directory: z.array(z.object({
       key: z.string(),
-      title: z.string(),
+      title: z.string().nullish(),
     }).passthrough()).optional(),
   }).passthrough(),
 }).passthrough();
@@ -180,7 +180,7 @@ export class PlexConnector implements ConnectorAdapter {
     if (!parsed.success) {
       throw new ConnectorRequestError('Plex returned an unexpected /library/sections response', { retryable: false });
     }
-    return (parsed.data.MediaContainer.Directory ?? []).map((d) => ({ id: d.key, name: d.title }));
+    return (parsed.data.MediaContainer.Directory ?? []).map((d) => ({ id: d.key, name: d.title ?? d.key }));
   }
 
   /** Diagnostic test — never throws for expected failures; folds them into a field-scoped result. */

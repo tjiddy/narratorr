@@ -398,7 +398,7 @@ export class DelugeClient implements DownloadClientAdapter {
       seeders: t.num_seeds,
       leechers: t.num_peers,
       eta: t.eta > 0 && t.eta < ETA_UPPER_BOUND_SEC ? t.eta : undefined,
-      downloadSpeed: t.download_rate,
+      downloadSpeed: t.download_rate ?? undefined,
       addedAt: new Date(t.time_added * 1000),
     };
   }

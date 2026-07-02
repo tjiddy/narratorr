@@ -516,6 +516,39 @@ describe('QBittorrentClient', () => {
       const result = await client.getDownload('abc123');
       expect(result!.downloadSpeed).toBeUndefined();
     });
+
+    // #1778 — nullish response fields must parse and map like absence.
+    it('parses null nullable fields and maps them identically to omitting them', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([
+            { ...mockTorrent, dlspeed: null, content_path: null },
+          ]);
+        }),
+      );
+
+      const withNulls = await client.getDownload('abc123');
+
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([mockTorrent]); // dlspeed/content_path omitted
+        }),
+      );
+      const omitted = await client.getDownload('abc123');
+
+      expect(withNulls).toEqual(omitted);
+    });
+
+    it('coalesces dlspeed:null to undefined without clobbering a real 0', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, dlspeed: null }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.downloadSpeed).toBeUndefined();
+    });
   });
 
   describe('getAllDownloads', () => {
@@ -824,6 +857,21 @@ describe('QBittorrentClient', () => {
 
       const categories = await client.getCategories();
       expect(categories).toEqual([]);
+    });
+
+    // #1778 — inner name/savePath are nullish; a null must not fail the parse.
+    it('parses category entries with null inner name/savePath and returns the keys', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return HttpResponse.json({
+            audiobooks: { name: null, savePath: null },
+            music: { name: 'music', savePath: '/downloads/music' },
+          });
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual(['audiobooks', 'music']);
     });
 
     it('throws DownloadClientError with ZodError cause when API returns empty body', async () => {
