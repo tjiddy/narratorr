@@ -15,7 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LibraryPage } from './LibraryPage';
 import { createMockLibraryBook, createMockAuthor, createMockSettings } from '@/__tests__/factories';
 import type { BookListParams } from '@/lib/api';
-import { matchesStatusFilter, sortBooks } from './helpers';
+import { simulateStatusFilter, simulateServerSort } from '@/__tests__/library-server-sim';
 import type { StatusFilter, SortField, SortDirection } from './helpers';
 
 // Mock api — same pattern as LibraryPage.test.tsx but WITHOUT mocking useNavigate
@@ -72,10 +72,10 @@ function mockLibraryData() {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = [...mockBooks];
     if (params?.status) {
-      filtered = filtered.filter(b => matchesStatusFilter(b.status, params.status as StatusFilter));
+      filtered = filtered.filter(b => simulateStatusFilter(b.status, params.status as StatusFilter));
     }
     if (params?.sortField) {
-      filtered = sortBooks(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
+      filtered = simulateServerSort(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
     }
     return Promise.resolve({ data: filtered, total: filtered.length });
   });

@@ -97,7 +97,7 @@ const mockBooks = [
 ];
 
 import type { BookWithAuthor, LibraryBookListItem, BookListParams } from '@/lib/api';
-import { matchesStatusFilter, sortBooks } from './helpers';
+import { simulateStatusFilter, simulateServerSort } from '@/__tests__/library-server-sim';
 import type { StatusFilter, SortField, SortDirection } from './helpers';
 
 /** Helper: mock both getBooks and getBookStats consistently.
@@ -106,7 +106,7 @@ function mockLibraryData(books: LibraryBookListItem[]) {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = books;
     if (params?.status) {
-      filtered = filtered.filter(b => matchesStatusFilter(b.status, params.status as StatusFilter));
+      filtered = filtered.filter(b => simulateStatusFilter(b.status, params.status as StatusFilter));
     }
     if (params?.search) {
       const q = params.search.toLowerCase();
@@ -129,7 +129,7 @@ function mockLibraryData(books: LibraryBookListItem[]) {
       filtered = filtered.filter(b => b.narrators.some(n => n.name.toLowerCase() === q));
     }
     if (params?.sortField) {
-      filtered = sortBooks(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
+      filtered = simulateServerSort(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
     }
     return Promise.resolve({ data: filtered, total: filtered.length });
   });

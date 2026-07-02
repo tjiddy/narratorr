@@ -66,9 +66,6 @@ function isNumericFormatted(padSpec: string | undefined, raw: string | number | 
   return padSpec !== undefined && raw !== undefined && raw !== null && !isNaN(Number(raw));
 }
 
-/** Backward-compatible alias. */
-export const ALLOWED_TOKENS = FOLDER_ALLOWED_TOKENS;
-
 export type TokenName = (typeof FOLDER_ALLOWED_TOKENS)[number];
 export type FileTokenName = (typeof FILE_ALLOWED_TOKENS)[number];
 

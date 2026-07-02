@@ -25,7 +25,7 @@ import type { RecordingVerdict, RecordingReviewReason } from '../../shared/schem
 
 /**
  * 3-way recording-identity verdict (#1741). Canonical source is the shared
- * `recordingVerdictValues` tuple (`src/shared/schemas/recording-verdict.ts`);
+ * verdict tuple in `src/shared/schemas/recording-verdict.ts`;
  * core re-exports the derived type — the boundary forbids `src/shared` importing
  * `src/core`, so the tuple lives in shared and core consumes it, not the reverse.
  * Existing consumers (`book-dedup.ts`, `match-job.helpers.ts`) keep importing

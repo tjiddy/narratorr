@@ -40,7 +40,7 @@ export type BookLifecycle = BookStatus;
  * source of truth:
  *   1. server filter WHERE  — `TAB_STATUS_MAP` (`book-list.service.ts`)
  *   2. server counts        — `getStats` inline sums (`book-list.service.ts`)
- *   3. client dropdown      — `matchesStatusFilter` / `filterTabs` (`pages/library/helpers.ts`)
+ *   3. client dropdown      — `filterTabs` (`pages/library/helpers.ts`)
  *                             + `VALID_STATUS_FILTERS` (`pages/library/useLibraryFilters.ts`)
  *
  * Invariant (enforced in book.test.ts, the property `getStats` tests rely on):
@@ -51,7 +51,7 @@ export type BookLifecycle = BookStatus;
  * As of S2d (#1447) this IS the single source of truth: the three sites above all
  * derive their grouping from this map — server `getStats` per-bucket sums and
  * `buildListWhere` expansion (`book-list.service.ts`, the `TAB_STATUS_MAP`
- * successor), and the client dropdown (`matchesStatusFilter`/`filterTabs` +
+ * successor), and the client dropdown (`filterTabs` +
  * `VALID_STATUS_FILTERS`). The wire/route filter contract is the bucket-key
  * subset only — see `libraryStatusFilterSchema` below.
  */
