@@ -1,6 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { FastifyReply } from 'fastify';
 import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_FRAME } from '../utils/sse-stream.js';
+
+// Re-exported for existing consumers/tests that import the cadence from the
+// broadcaster; the single source of truth now lives in `utils/sse-stream.ts` (#1799).
+export { HEARTBEAT_INTERVAL_MS };
 
 export interface SSEClient {
   id: string;
@@ -8,14 +13,6 @@ export interface SSEClient {
   /** `Date.now()` at registration — drives the max-age sweep (#1796). */
   connectedAt: number;
 }
-
-/**
- * Heartbeat cadence (#1776). Idle reverse proxies commonly cut a connection with
- * no traffic after ~60s; a sub-minute comment frame keeps the stream warm between
- * real events. A `:`-prefixed line is an SSE comment — clients ignore it.
- */
-export const HEARTBEAT_INTERVAL_MS = 20_000;
-const HEARTBEAT_FRAME = ':hb\n\n';
 
 /**
  * Max stream lifetime (#1796). Post-#1787 the client never reopens a healthy
@@ -97,7 +94,7 @@ export class EventBroadcasterService {
     // sweepStaleClients / endAndPrune — an uncaught throw here has no caller (this
     // runs from the setInterval callback) and would crash the process (#1796).
     this.sweepStaleClients(Date.now());
-    this.writeToAll(HEARTBEAT_FRAME);
+    this.writeToAll(SSE_HEARTBEAT_FRAME);
     if (this.clients.size === 0) this.stopHeartbeat();
   }
 

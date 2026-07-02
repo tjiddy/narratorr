@@ -14,6 +14,7 @@ import type {
   IndexerCancelledEvent,
 } from '../../shared/schemas/search-stream.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { SSE_HEARTBEAT_FRAME, startHeartbeat, stopHeartbeat } from '../utils/sse-stream.js';
 
 
 function writeSSE(reply: FastifyReply, event: string, data: unknown): void {
@@ -70,8 +71,29 @@ export async function searchStreamRoutes(
       };
       writeSSE(reply, 'search-start', startEvent);
 
+      // Keep the stream warm while the search is in flight (#1799). A single slow
+      // FlareSolverr-routed indexer can idle the connection toward the ~60s proxy
+      // cutoff with no interim frames; the shared `:hb` comment frame prevents that.
+      let heartbeatTimer: NodeJS.Timeout | null = null;
+      const stopHeartbeatTimer = (): void => {
+        stopHeartbeat(heartbeatTimer);
+        heartbeatTimer = null;
+      };
+      heartbeatTimer = startHeartbeat(() => {
+        // Runs from a setInterval callback with no caller on the stack — a throw
+        // here (broken pipe / a tick after reply.raw.end()) would crash the
+        // process, so guard the write and self-stop on failure (mirrors the
+        // broadcaster's writeToAll pruning).
+        try {
+          reply.raw.write(SSE_HEARTBEAT_FRAME);
+        } catch {
+          stopHeartbeatTimer();
+        }
+      });
+
       // Register cleanup on client disconnect
       request.raw.on('close', () => {
+        stopHeartbeatTimer();
         sessionManager.cleanup(session.sessionId);
       });
 
@@ -107,6 +129,7 @@ export async function searchStreamRoutes(
           unsupportedResults: { count: 0, titles: [] },
         });
       } finally {
+        stopHeartbeatTimer();
         reply.raw.end();
         sessionManager.cleanup(session.sessionId);
       }
