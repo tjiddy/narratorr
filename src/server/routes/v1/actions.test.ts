@@ -187,6 +187,23 @@ describe('v1 action routes (search + grab)', () => {
       }
     });
 
+    it('serializes a release whose seeders is absent (post-fix adapter shape) as seeders: null, no 500', async () => {
+      // AC4: the torznab adapter now omits seeders entirely for a non-numeric
+      // attr (never emits NaN). The strict releaseV1Schema accepts the
+      // absent-then-nulled seeders; the v1 DTO has no leechers field.
+      const { seeders: _drop, ...noSeeders } = searchResult();
+      void _drop;
+      (indexerSearchService.searchAll as Mock).mockResolvedValue([noSeeders]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(1);
+      expect(body.data[0].seeders).toBeNull();
+      expect(body.data[0]).not.toHaveProperty('leechers');
+    });
+
     it('feeds the resolved book into the query and forwards { title, author } to searchAll', async () => {
       (indexerSearchService.searchAll as Mock).mockResolvedValue([]);
 

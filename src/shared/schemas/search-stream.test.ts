@@ -65,6 +65,38 @@ describe('searchResultSchema', () => {
     const result = searchResultSchema.safeParse({ title: 'Book', indexer: 'ABB', protocol: 'http' });
     expect(result.success).toBe(false);
   });
+
+  // AC5: the torznab adapter drops non-numeric seeders/leechers to absent
+  // rather than emitting NaN. Absent must pass the search-complete payload
+  // schema (both fields z.number().optional()); NaN must not.
+  it('accepts a result with seeders/leechers absent', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Book',
+      indexer: 'ABB',
+      protocol: 'torrent',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a NaN seeders (negative anchor for the adapter NaN guard)', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Book',
+      indexer: 'ABB',
+      protocol: 'torrent',
+      seeders: NaN,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a NaN leechers (negative anchor for the adapter NaN guard)', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Book',
+      indexer: 'ABB',
+      protocol: 'torrent',
+      leechers: NaN,
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('searchResponseSchema', () => {
