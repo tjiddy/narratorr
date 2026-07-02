@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { filterMultiPartUsenet, scoreResult } from '../../core/utils/index.js';
+import { scoreResult } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookWithAuthor } from '../services/book.service.js';
@@ -9,7 +9,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download-errors.js';
-import { buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from '../services/search-pipeline.js';
+import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from '../services/search-pipeline.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -154,32 +154,18 @@ export async function runRssJob(
     // fetches to the top-ranked candidates (#1315).
     await enrichUsenetLanguages(bookResults, log, lanAllowlist, { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
-    // Filter multi-part Usenet posts (after enrichment so nzbName is available)
-    const { filtered: afterMultipart, rejectedTitles: rssMultipartRejections } = filterMultiPartUsenet(bookResults);
-    for (const r of rssMultipartRejections) {
-      log.debug({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
-    }
-
-    // Apply filter pipeline to all items for this book, then pick best-ranked
+    // Multi-part filter + quality ranking (shared post-enrichment sub-chain, #1777).
+    // RSS-specific duration conversion (minutes → seconds) stays path-local.
     const duration = candidate.duration
       ? candidate.duration * 60
       : (candidate.audioDuration ?? undefined);
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
-    const rssInputCount = afterMultipart.length;
-    const { results: ranked } = filterAndRankResults(afterMultipart, duration, {
-      grabFloor: qualitySettings.grabFloor,
-      minSeeders: qualitySettings.minSeeders,
-      protocolPreference: qualitySettings.protocolPreference,
-      rejectWords: qualitySettings.rejectWords,
-      requiredWords: qualitySettings.requiredWords,
-      languages: metadataSettings.languages,
-      narratorPriority,
-      minDownloadSize: qualitySettings.minDownloadSize,
-      maxDownloadSize: qualitySettings.maxDownloadSize,
-    }, log);
-    if (ranked.length < rssInputCount) {
-      log.debug({ inputCount: rssInputCount, outputCount: ranked.length }, 'Quality gate filtering applied');
-    }
+    const { results: ranked } = applyMultiPartFilterAndRank(
+      bookResults,
+      duration,
+      buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
+      log,
+    );
 
     if (ranked.length === 0) {
       log.debug({ bookId, title: bookResults[0]!.title }, 'RSS match filtered out by quality pipeline');

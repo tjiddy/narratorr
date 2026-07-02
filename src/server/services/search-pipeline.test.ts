@@ -1,5 +1,5 @@
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
-import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults } from './search-pipeline.js';
+import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults, applyMultiPartFilterAndRank, buildSearchFilterOptions } from './search-pipeline.js';
 import type { SingleBookSearchResult } from './search-pipeline.js';
 import type { SettingsService } from './settings.service.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
@@ -3032,5 +3032,220 @@ describe('postProcessSearchResults — search-complete payload schema compatibil
     type TightSearchResponse = Omit<SearchResponsePayload, 'results'> & { results: TightenOptional<SearchResultPayload>[] };
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
       .branded.toEqualTypeOf<TightSearchResponse>();
+  });
+});
+
+// ===== #1777 — shared applyMultiPartFilterAndRank helper =====
+
+describe('applyMultiPartFilterAndRank (#1777)', () => {
+  const options = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
+
+  it('drops multi-part usenet posts, keeps valid usenet and pattern-matching torrents, and reports rejections', () => {
+    const multiPartUsenet = makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' });
+    const validUsenet = makeResult({ protocol: 'usenet', title: 'Book Complete', downloadUrl: 'http://nzb.test/valid' });
+    const multiPartTorrent = makeResult({ protocol: 'torrent', title: 'Book Part 2 of 5', downloadUrl: 'magnet:?xt=urn:btih:tor' });
+
+    const out = applyMultiPartFilterAndRank([multiPartUsenet, validUsenet, multiPartTorrent], 3600, options);
+
+    const survivingUrls = out.results.map((r) => r.downloadUrl);
+    expect(survivingUrls).toContain('http://nzb.test/valid');
+    expect(survivingUrls).toContain('magnet:?xt=urn:btih:tor');
+    expect(survivingUrls).not.toContain('http://nzb.test/multi');
+    expect(out.multipartRejections).toEqual([{ title: 'Book Part 2 of 5', matchedPattern: expect.any(String) }]);
+  });
+
+  it('emits one multi-part-detected debug log per dropped result', () => {
+    const log = createMockLogger();
+    const results = [
+      makeResult({ protocol: 'usenet', title: 'Book A Part 2 of 5', downloadUrl: 'http://nzb.test/a' }),
+      makeResult({ protocol: 'usenet', title: 'Book B (3/10)', downloadUrl: 'http://nzb.test/b' }),
+    ];
+
+    applyMultiPartFilterAndRank(results, 3600, options, log);
+
+    const multiPartLogs = vi.mocked(log.debug).mock.calls.filter(
+      ([payload]) => (payload as { reason?: string }).reason === 'multi-part-detected',
+    );
+    expect(multiPartLogs).toHaveLength(2);
+  });
+
+  it('passes durationUnknown straight through from filterAndRankResults for known and unknown durations', () => {
+    const input = [makeResult({ protocol: 'usenet', title: 'Book Complete', downloadUrl: 'http://nzb.test/1' })];
+
+    const known = applyMultiPartFilterAndRank(input, 3600, options);
+    const unknown = applyMultiPartFilterAndRank(input, undefined, options);
+
+    expect(known.durationUnknown).toBe(filterAndRankResults(input, 3600, options).durationUnknown);
+    expect(unknown.durationUnknown).toBe(filterAndRankResults(input, undefined, options).durationUnknown);
+    expect(known.durationUnknown).toBe(false);
+    expect(unknown.durationUnknown).toBe(true);
+  });
+});
+
+describe('buildSearchFilterOptions (#1777)', () => {
+  const quality = {
+    grabFloor: 5,
+    minSeeders: 2,
+    protocolPreference: 'usenet',
+    rejectWords: 'reject',
+    requiredWords: 'required',
+    minDownloadSize: 1,
+    maxDownloadSize: 9,
+  };
+
+  it('maps quality + metadata fields and omits narratorPriority when not provided', () => {
+    const opts = buildSearchFilterOptions(quality, { languages: ['english'] });
+    expect(opts).toEqual({
+      grabFloor: 5,
+      minSeeders: 2,
+      protocolPreference: 'usenet',
+      rejectWords: 'reject',
+      requiredWords: 'required',
+      languages: ['english'],
+      minDownloadSize: 1,
+      maxDownloadSize: 9,
+    });
+    expect(opts).not.toHaveProperty('narratorPriority');
+  });
+
+  it('includes narratorPriority when provided', () => {
+    const narratorPriority = { bookNarrators: ['Michael Kramer'] };
+    const opts = buildSearchFilterOptions(quality, { languages: [] }, { narratorPriority });
+    expect(opts.narratorPriority).toEqual(narratorPriority);
+  });
+
+  it('omits narratorPriority when explicitly passed undefined', () => {
+    const opts = buildSearchFilterOptions(quality, { languages: [] }, { narratorPriority: undefined });
+    expect(opts).not.toHaveProperty('narratorPriority');
+  });
+});
+
+describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-grab path', () => {
+  let indexerSearchService: IndexerSearchService;
+  let downloadService: DownloadOrchestrator;
+  let log: FastifyBaseLogger;
+  let blacklistService: BlacklistService;
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+    downloadService = {
+      grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
+    } as unknown as DownloadOrchestrator;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set<string>(),
+      }),
+    } as unknown as BlacklistService;
+    log = createMockLogger();
+  });
+
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+
+  it('does not grab a multi-part usenet post ranked ahead of a valid one — the valid candidate wins', async () => {
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([
+        makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' }),
+        makeResult({ protocol: 'usenet', title: 'Book Complete', downloadUrl: 'http://nzb.test/valid' }),
+      ]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Book Complete' });
+    expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'http://nzb.test/valid' }));
+    expect(downloadService.grab).not.toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'http://nzb.test/multi' }));
+  });
+
+  it('returns no_results when every usenet candidate is multi-part', async () => {
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' })]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+  });
+
+  it('still grabs a torrent whose title matches the multi-part pattern (protocol scoping)', async () => {
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'torrent', title: 'Book Part 2 of 5', downloadUrl: 'magnet:?xt=urn:btih:tor' })]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    expect(result).toEqual({ result: 'grabbed', title: 'Book Part 2 of 5' });
+    expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:tor' }));
+  });
+
+  it('rejects a usenet post whose multi-part marker only appears in the enrichment-populated nzbName (ordering guard)', async () => {
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.protocol === 'usenet') r.nzbName = 'Book (02 of 30).part02.rar';
+      }
+    });
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ protocol: 'usenet', title: 'Book Clean Title', downloadUrl: 'http://nzb.test/multi' })]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+  });
+
+  it('display and auto-grab agree on the surviving usenet subset for the same input (shared-helper parity)', async () => {
+    mockEnrichUsenet.mockReset();
+    const input = () => [
+      makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' }),
+      makeResult({ protocol: 'usenet', title: 'Book Complete', downloadUrl: 'http://nzb.test/valid' }),
+    ];
+
+    const settings533 = {
+      get: vi.fn().mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' });
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+        return Promise.resolve({});
+      }),
+    } as unknown as SettingsService;
+
+    const display = await postProcessSearchResults(input(), 3600, blacklistService, settings533, mockIndexer, log);
+
+    indexerSearchService = { searchAll: vi.fn().mockResolvedValue(input()) } as unknown as IndexerSearchService;
+    const grab = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    // Display drops the multi-part post; auto-grab picks the same surviving candidate.
+    expect(display.results.map((r) => r.downloadUrl)).toEqual(['http://nzb.test/valid']);
+    expect(grab).toEqual({ result: 'grabbed', title: 'Book Complete' });
+  });
+});
+
+describe('#1777 postProcessSearchResults — durationUnknown passthrough survives the refactor', () => {
+  function createSettings(): SettingsService {
+    return {
+      get: vi.fn().mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' });
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+        return Promise.resolve({});
+      }),
+    } as unknown as SettingsService;
+  }
+  function createBlacklist(): BlacklistService {
+    return { getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }) } as unknown as BlacklistService;
+  }
+
+  beforeEach(() => mockEnrichUsenet.mockReset());
+
+  it('returns durationUnknown: false for a known book duration', async () => {
+    const results = [makeResult({ protocol: 'usenet', title: 'A Book', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, 3600, createBlacklist(), createSettings(), mockIndexer, createMockLogger());
+    expect(output.durationUnknown).toBe(false);
+  });
+
+  it('returns durationUnknown: true for an unknown book duration', async () => {
+    const results = [makeResult({ protocol: 'usenet', title: 'A Book', downloadUrl: 'http://nzb.test/1' })];
+    const output = await postProcessSearchResults(results, undefined, createBlacklist(), createSettings(), mockIndexer, createMockLogger());
+    expect(output.durationUnknown).toBe(true);
   });
 });

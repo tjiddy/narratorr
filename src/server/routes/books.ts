@@ -30,7 +30,7 @@ export interface BookRouteDeps {
   metadataService: MetadataService;
   connectorService?: ConnectorService;
 }
-import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
+import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
 import {
@@ -187,7 +187,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       const result = await searchAndGrabForBook(book, {
         indexerSearchService: deps.indexerSearchService,
         downloadOrchestrator: deps.downloadOrchestrator,
-        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log: request.log,
         blacklistService: deps.blacklistService,
         indexerService: deps.indexerService,

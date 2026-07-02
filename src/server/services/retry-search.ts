@@ -7,7 +7,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
-import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults } from './search-pipeline.js';
+import { buildSearchQuery, buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -108,26 +108,17 @@ export async function retrySearch(
     // Auto-grab path: cap Phase-2 fetches to the top-ranked candidates (#1315).
     await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
-    // Quality filtering and ranking
+    // Multi-part filter + quality ranking (shared post-enrichment sub-chain, #1777).
     const qualitySettings = await settingsService.get('quality');
     const metadataSettings = await settingsService.get('metadata');
     const searchSettings = await settingsService.get('search');
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-    const retryInputCount = filteredResults.length;
-    const { results } = filterAndRankResults(filteredResults, book.duration ?? undefined, {
-      grabFloor: qualitySettings.grabFloor,
-      minSeeders: qualitySettings.minSeeders,
-      protocolPreference: qualitySettings.protocolPreference,
-      rejectWords: qualitySettings.rejectWords,
-      requiredWords: qualitySettings.requiredWords,
-      languages: metadataSettings.languages,
-      ...(narratorPriority !== undefined && { narratorPriority }),
-      minDownloadSize: qualitySettings.minDownloadSize,
-      maxDownloadSize: qualitySettings.maxDownloadSize,
-    }, log);
-    if (results.length < retryInputCount) {
-      log.debug({ inputCount: retryInputCount, outputCount: results.length }, 'Quality gate filtering applied');
-    }
+    const { results } = applyMultiPartFilterAndRank(
+      filteredResults,
+      book.duration ?? undefined,
+      buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
+      log,
+    );
 
     // Take best downloadable result
     const best = results.find((r) => r.downloadUrl);
