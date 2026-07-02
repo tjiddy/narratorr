@@ -17,7 +17,7 @@ export async function eventsRoutes(
     // Send initial keepalive comment (no backfill)
     reply.raw.write(':keepalive\n\n');
 
-    const client = { id: randomUUID(), reply };
+    const client = { id: randomUUID(), reply, connectedAt: Date.now() };
     broadcaster.addClient(client);
 
     request.raw.on('close', () => {

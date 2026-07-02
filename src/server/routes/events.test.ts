@@ -83,6 +83,38 @@ describe('GET /api/events', () => {
     expect(broadcaster.clientCount).toBe(0);
   });
 
+  it('stamps the registered client with connectedAt = Date.now() at registration (#1796)', async () => {
+    // connectedAt is stamped here in the route and is load-bearing: the
+    // EventBroadcasterService max-age sweep keys the bounded-stream-lifetime
+    // security boundary off it. Freeze the clock and capture the client actually
+    // handed to addClient so a wrong clock source, a placeholder, or a stale
+    // timestamp is caught at the registration site (service tests only see
+    // hand-built mock timestamps).
+    const { eventsRoutes } = await import('./events.js');
+
+    let routeHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null = null;
+    const mockApp = {
+      get: (_path: string, handler: (req: FastifyRequest, reply: FastifyReply) => Promise<void>) => {
+        routeHandler = handler;
+      },
+    };
+
+    await eventsRoutes(mockApp as never, broadcaster);
+
+    const NOW = 1_700_000_000_000;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const addClientSpy = vi.spyOn(broadcaster, 'addClient');
+
+    const { reply, request } = createMockReplyAndRequest();
+    await routeHandler!(request, reply);
+
+    expect(addClientSpy).toHaveBeenCalledTimes(1);
+    const registered = addClientSpy.mock.calls[0]![0];
+    expect(registered.connectedAt).toBe(NOW);
+
+    dateNowSpy.mockRestore();
+  });
+
   it('multiple clients receive same broadcast event', async () => {
     const { eventsRoutes } = await import('./events.js');
 

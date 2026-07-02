@@ -5,6 +5,8 @@ import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-ev
 export interface SSEClient {
   id: string;
   reply: FastifyReply;
+  /** `Date.now()` at registration — drives the max-age sweep (#1796). */
+  connectedAt: number;
 }
 
 /**
@@ -14,6 +16,18 @@ export interface SSEClient {
  */
 export const HEARTBEAT_INTERVAL_MS = 20_000;
 const HEARTBEAT_FRAME = ':hb\n\n';
+
+/**
+ * Max stream lifetime (#1796). Post-#1787 the client never reopens a healthy
+ * stream, so a stream token (5-min TTL, carried as `?token=`) replayed within its
+ * window would otherwise yield an event stream that survives token expiry, logout,
+ * password change, and secret rotation. Bounding lifetime forces the normal
+ * EventSource error → re-mint → reopen → catch-up path at a generous cap — still
+ * ~11x fewer reconnects than the old ~4-min re-mint cycle, so #1787's churn-
+ * reduction goal is preserved. Live `/api/events` auth stays connect-time-only;
+ * this is a lifetime bound, not per-event re-authentication.
+ */
+export const MAX_STREAM_AGE_MS = 45 * 60 * 1_000;
 
 export class EventBroadcasterService {
   private clients = new Set<SSEClient>();
@@ -46,9 +60,18 @@ export class EventBroadcasterService {
     this.writeToAll(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
-  /** Stop the heartbeat timer. Idempotent; call on shutdown to release the loop. */
+  /**
+   * Stop the heartbeat timer and END every connected client reply (#1796).
+   * Idempotent. Ending the hijacked replies is what lets graceful shutdown
+   * complete: Fastify's default `forceCloseConnections: 'idle'` never reaps a
+   * socket with an in-flight response, and a never-ended SSE reply is never idle —
+   * so without this, `app.close()` blocks until every tab disconnects and the
+   * deploy degrades to the SIGKILL timer. Browsers auto-reconnect to the new
+   * process; #1787's catch-up handles the gap.
+   */
   stop(): void {
     this.stopHeartbeat();
+    this.endAndPrune([...this.clients], 'shutdown');
   }
 
   /**
@@ -69,8 +92,40 @@ export class EventBroadcasterService {
   }
 
   private sendHeartbeat(): void {
+    // Sweep before writing so max-age clients are ended (not heartbeated) and the
+    // surviving fresh clients still get their frame. Any throw is caught inside
+    // sweepStaleClients / endAndPrune — an uncaught throw here has no caller (this
+    // runs from the setInterval callback) and would crash the process (#1796).
+    this.sweepStaleClients(Date.now());
     this.writeToAll(HEARTBEAT_FRAME);
     if (this.clients.size === 0) this.stopHeartbeat();
+  }
+
+  /** End and prune every client older than the max-age cap (#1796). */
+  private sweepStaleClients(now: number): void {
+    const stale = [...this.clients].filter((c) => now - c.connectedAt > MAX_STREAM_AGE_MS);
+    if (stale.length === 0) return;
+    this.endAndPrune(stale, 'max-age');
+  }
+
+  /**
+   * End a batch of client replies and remove them from the set. Shared by
+   * shutdown teardown and the max-age sweep (#1796) so the two paths cannot
+   * diverge. Failure-tolerant, mirroring `writeToAll`'s catch-then-prune: an
+   * `end()` that throws (broken pipe) on one client neither aborts the batch nor
+   * leaves that client behind — the client is pruned regardless and the loop
+   * continues. Safe to call from the heartbeat timer callback: no throw escapes.
+   */
+  private endAndPrune(clients: Iterable<SSEClient>, reason: string): void {
+    for (const client of clients) {
+      try {
+        client.reply.raw.end();
+      } catch {
+        // Broken pipe / already-destroyed socket — prune regardless below.
+      }
+      this.clients.delete(client);
+      this.log.debug({ clientId: client.id, reason }, 'SSE client ended');
+    }
   }
 
   /** Write a raw SSE frame to every client, pruning any that fail. */
