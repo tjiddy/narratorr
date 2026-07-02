@@ -339,8 +339,26 @@ export class BookListService {
         return [sql`CASE WHEN (SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1) IS NULL THEN 1 ELSE 0 END`, dir(sql`(SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1)`), dir(books.id)];
       case 'series':
         return [sql`CASE WHEN ${books.seriesName} IS NULL THEN 1 ELSE 0 END`, dir(books.seriesName), sql`CASE WHEN ${books.seriesName} IS NULL THEN 0 WHEN ${books.seriesPosition} IS NULL THEN 1 ELSE 0 END`, asc(sql`CASE WHEN ${books.seriesName} IS NOT NULL THEN ${books.seriesPosition} ELSE NULL END`), dir(books.id)];
-      case 'quality':
-        return [sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) = 0 THEN 1 ELSE 0 END`, dir(sql`CAST(COALESCE(${books.audioTotalSize}, ${books.size}) AS REAL) / CAST(COALESCE(${books.audioDuration}, ${books.duration}) AS REAL)`), dir(books.id)];
+      case 'quality': {
+        // Quality = MB/hr = size(bytes) / duration(seconds). The canonical unit
+        // contract lives in resolveBookQualityInputs() (src/core/utils/quality.ts):
+        // size prefers `audioTotalSize` then `size` (both bytes); duration prefers
+        // `audioDuration` (already seconds), else the `duration` column which is
+        // MINUTES and must be ×60. This SQL is a necessary re-expression of that
+        // helper (DRY-3 single-home rule) and mirrors it bit-for-bit in intent —
+        // the `WHEN … > 0` precedence also matches the helper's zero-as-absent
+        // semantics, so `audioDuration = 0` falls back to `duration * 60` here
+        // exactly as it does there (rather than the old COALESCE routing it to the
+        // unknown bucket). Editing units on one side without the other reintroduces
+        // the #1797/#1814 minutes-vs-seconds divergence.
+        const usableSize = sql`CASE WHEN ${books.audioTotalSize} > 0 THEN ${books.audioTotalSize} ELSE ${books.size} END`;
+        const usableDurationSeconds = sql`CASE WHEN ${books.audioDuration} > 0 THEN ${books.audioDuration} ELSE ${books.duration} * 60 END`;
+        return [
+          sql`CASE WHEN (${usableSize}) IS NULL OR (${usableSize}) <= 0 OR (${usableDurationSeconds}) IS NULL OR (${usableDurationSeconds}) <= 0 THEN 1 ELSE 0 END`,
+          dir(sql`CAST((${usableSize}) AS REAL) / CAST((${usableDurationSeconds}) AS REAL)`),
+          dir(books.id),
+        ];
+      }
       case 'size':
         return [sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL THEN 1 ELSE 0 END`, dir(sql`COALESCE(${books.audioTotalSize}, ${books.size})`), dir(books.id)];
       case 'format':
