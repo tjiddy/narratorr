@@ -189,6 +189,8 @@ describe('searchAndGrabForBook', () => {
     log = createMockLogger();
   });
 
+  // duration is MINUTES (3600 min = 60h), not seconds. Inert here: these tests
+  // use grabFloor 0 so the MB/h floor never rejects (#1797).
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
 
   it('returns grabbed result on happy path (search → filter → grab)', async () => {
@@ -3140,6 +3142,8 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     log = createMockLogger();
   });
 
+  // duration is MINUTES (3600 min = 60h), not seconds. Inert here: these tests
+  // use grabFloor 0 so the MB/h floor never rejects (#1797).
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
 
   it('does not grab a multi-part usenet post ranked ahead of a valid one — the valid candidate wins', async () => {
@@ -3195,29 +3199,71 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
 
-  it('display and auto-grab agree on the surviving usenet subset for the same input (shared-helper parity)', async () => {
+  // #1797 — unit-honest four-path parity. Both legs feed the SAME book row: the
+  // display leg gets seconds derived from the row (`duration * 60`, as the client
+  // does), the auto-grab leg gets the raw row and must resolve the same seconds
+  // internally. A non-zero `grabFloor` makes a duration-unit divergence fail:
+  // pre-fix the auto-grab leg saw raw minutes as seconds (60× MB/h) and kept the
+  // below-floor release while the display leg dropped it.
+  it('display and auto-grab reject the same below-floor release for the same book row (unit-honest parity)', async () => {
     mockEnrichUsenet.mockReset();
+    // 600 minutes = 10 hours. A 100MB release is 10 MB/h — below the 30 MB/h floor.
+    const parityBook = { id: 1, title: 'Test Book', duration: 600, authors: [{ name: 'Author' }] };
     const input = () => [
-      makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', downloadUrl: 'http://nzb.test/multi' }),
-      makeResult({ protocol: 'usenet', title: 'Book Complete', downloadUrl: 'http://nzb.test/valid' }),
+      makeResult({ protocol: 'usenet', title: 'Book Part 2 of 5', size: 100 * MB, downloadUrl: 'http://nzb.test/multi' }),
+      makeResult({ protocol: 'usenet', title: 'Book Complete', size: 100 * MB, downloadUrl: 'http://nzb.test/valid' }),
     ];
 
-    const settings533 = {
+    const settingsFloor = {
       get: vi.fn().mockImplementation((cat: string) => {
-        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' });
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 30, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 0, maxDownloadSize: 5, rejectWords: '', requiredWords: '' });
         if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
         return Promise.resolve({});
       }),
     } as unknown as SettingsService;
 
-    const display = await postProcessSearchResults(input(), 3600, blacklistService, settings533, mockIndexer, log);
+    // Display leg: client sends true seconds derived from the book row.
+    const display = await postProcessSearchResults(input(), parityBook.duration * 60, blacklistService, settingsFloor, mockIndexer, log);
 
     indexerSearchService = { searchAll: vi.fn().mockResolvedValue(input()) } as unknown as IndexerSearchService;
-    const grab = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
+    const grab = await searchAndGrabForBook(parityBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
 
-    // Display drops the multi-part post; auto-grab picks the same surviving candidate.
-    expect(display.results.map((r) => r.downloadUrl)).toEqual(['http://nzb.test/valid']);
-    expect(grab).toEqual({ result: 'grabbed', title: 'Book Complete' });
+    // Multi-part dropped on both legs; the remaining release is below the floor,
+    // so display keeps nothing and auto-grab rejects together (no divergence).
+    expect(display.results.map((r) => r.downloadUrl)).toEqual([]);
+    expect(grab).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+  });
+
+  // #1797 AC1 — auto-grab floor rejection pin. Red before the fix (raw minutes fed
+  // as seconds inflate MB/h 60× so the floor never rejects), green after.
+  it('does not auto-grab a below-floor release (duration is minutes, floor is seconds-based MB/h) (#1797 AC1)', async () => {
+    // 600 min = 10h; 100MB / 10h = 10 MB/h < 30 floor → reject.
+    const floorBook = { id: 1, title: 'Test Book', duration: 600, authors: [{ name: 'Author' }] };
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:below' })]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(floorBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
+  });
+
+  // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on the grab path.
+  // Red before the fix (raw `book.duration` used directly, audioDuration ignored).
+  it('resolves audioDuration (seconds) over duration on the auto-grab path (#1797 AC5)', async () => {
+    // audioDuration 36000s = 10h → 100MB / 10h = 10 MB/h < 30 → reject.
+    // duration 1 min would (wrongly) give a huge MB/h and pass; audioDuration must win.
+    const precedenceBook = { id: 1, title: 'Test Book', duration: 1, audioDuration: 36000, authors: [{ name: 'Author' }] };
+    indexerSearchService = {
+      searchAll: vi.fn().mockResolvedValue([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:prec' })]),
+    } as unknown as IndexerSearchService;
+
+    const result = await searchAndGrabForBook(precedenceBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
+
+    expect(result).toEqual({ result: 'no_results' });
+    expect(downloadService.grab).not.toHaveBeenCalled();
   });
 });
 

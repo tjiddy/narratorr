@@ -574,8 +574,8 @@ describe('searchAllWanted', () => {
   });
 
   it('filters results below grab floor (no grab attempted)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 36000 }];
-    // size=1000 bytes, duration=36000s → very low MB/hr, should be filtered out
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 600 }];
+    // size=1000 bytes, duration=600 min (10h) → very low MB/hr, should be filtered out
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
     const settings = createMockSettingsService({ quality: { grabFloor: 100, minSeeders: 0, protocolPreference: 'none' } });
     const bookList = createMockBookListService(wantedBooks);
@@ -590,7 +590,7 @@ describe('searchAllWanted', () => {
   });
 
   it('grabFloor=0 disables quality filtering (all results eligible)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 36000 }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 600 }];
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
     const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' } });
     const bookList = createMockBookListService(wantedBooks);
@@ -904,7 +904,7 @@ describe('runSearchJob — narrator priority wiring (#439)', () => {
     size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9,
   };
   const wantedBooks = [
-    { id: 1, title: 'Book One', duration: 36000, authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
+    { id: 1, title: 'Book One', duration: 600, authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
   ];
 
   it('accuracy mode grabs narrator-matched release over higher-quality non-match', async () => {
@@ -936,7 +936,7 @@ describe('searchAllWanted — narrator priority wiring (#439)', () => {
   const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
   const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
   const wantedBooks = [
-    { id: 1, title: 'Book One', duration: 36000, authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
+    { id: 1, title: 'Book One', duration: 600, authors: [{ name: 'Author' }], narrators: [{ name: 'Kevin R. Free' }] },
   ];
 
   it('accuracy mode grabs narrator-matched release in searchAllWanted', async () => {

@@ -146,6 +146,49 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('no_candidates');
   });
 
+  // #1797 AC1 — retry floor rejection. book.duration is MINUTES; the quality floor
+  // is a seconds-based MB/h. Red before the fix (raw minutes fed as seconds inflate
+  // MB/h 60× so the below-floor release is wrongly grabbed), green after.
+  it('does not grab a below-floor release on retry (duration is minutes) (#1797 AC1)', async () => {
+    const HUNDRED_MB = 100 * 1024 * 1024;
+    const deps = createDeps({
+      // 600 min = 10h; 100MB / 10h = 10 MB/h < 30 floor → reject.
+      bookService: inject<BookService>({
+        getById: vi.fn().mockResolvedValue({ ...mockBook, duration: 600 }),
+      }),
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, size: HUNDRED_MB }]),
+      }),
+      settingsService: createMockSettingsService({ quality: { grabFloor: 30, minSeeders: 0 } }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+  });
+
+  // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on retry.
+  it('resolves audioDuration (seconds) over duration on the retry path (#1797 AC5)', async () => {
+    const HUNDRED_MB = 100 * 1024 * 1024;
+    const deps = createDeps({
+      // audioDuration 36000s = 10h → 100MB / 10h = 10 MB/h < 30 → reject.
+      // duration 1 min (or its *60 = 60s) would pass; audioDuration must win.
+      bookService: inject<BookService>({
+        getById: vi.fn().mockResolvedValue({ ...mockBook, duration: 1, audioDuration: 36000 }),
+      }),
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([{ ...mockSearchResult, size: HUNDRED_MB }]),
+      }),
+      settingsService: createMockSettingsService({ quality: { grabFloor: 30, minSeeders: 0 } }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+  });
+
   it('excludes newly blacklisted hash from retry search results', async () => {
     const blacklistedHash = 'abc123';
     const goodResult = { ...mockSearchResult, infoHash: 'def456', downloadUrl: 'magnet:?xt=urn:btih:def456' };
@@ -657,7 +700,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
     const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
     const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
     const bookWithNarrators: BookWithAuthor = {
-      ...createMockDbBook({ duration: 36000 }),
+      ...createMockDbBook({ duration: 600 }),
       authors: [createMockDbAuthor()],
       narrators: [{ id: 1, publicId: 'nr_test000000000000000', name: 'Kevin R. Free', slug: 'kevin-r-free', createdAt: new Date() }],
     };

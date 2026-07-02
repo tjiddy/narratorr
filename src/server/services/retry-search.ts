@@ -8,6 +8,7 @@ import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import { buildSearchQuery, buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
+import { resolveBookQualityInputs } from '../../core/utils/index.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -113,9 +114,12 @@ export async function retrySearch(
     const metadataSettings = await settingsService.get('metadata');
     const searchSettings = await settingsService.get('search');
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
+    // book.duration is MINUTES; normalize to seconds before the seconds-based
+    // quality chain (audioDuration ?? duration*60) or the MB/hr floor is inert (#1797).
+    const { durationSeconds } = resolveBookQualityInputs(book);
     const { results } = applyMultiPartFilterAndRank(
       filteredResults,
-      book.duration ?? undefined,
+      durationSeconds ?? undefined,
       buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
       log,
     );

@@ -20,7 +20,7 @@ export interface ImmediateSearchDeps {
 
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 export function triggerImmediateSearch(
-  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
+  book: { id: number; title: string; duration?: number | null; audioDuration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   deps: ImmediateSearchDeps,
   log: FastifyBaseLogger,
 ) {

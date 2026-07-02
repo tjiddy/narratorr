@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { scoreResult } from '../../core/utils/index.js';
+import { scoreResult, resolveBookQualityInputs } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookWithAuthor } from '../services/book.service.js';
@@ -155,14 +155,13 @@ export async function runRssJob(
     await enrichUsenetLanguages(bookResults, log, lanAllowlist, { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
     // Multi-part filter + quality ranking (shared post-enrichment sub-chain, #1777).
-    // RSS-specific duration conversion (minutes → seconds) stays path-local.
-    const duration = candidate.duration
-      ? candidate.duration * 60
-      : (candidate.audioDuration ?? undefined);
+    // Normalize the minutes-backed duration to seconds via the canonical helper so
+    // the precedence (audioDuration ?? duration*60) matches every other path (#1797).
+    const { durationSeconds } = resolveBookQualityInputs(candidate);
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
     const { results: ranked } = applyMultiPartFilterAndRank(
       bookResults,
-      duration,
+      durationSeconds ?? undefined,
       buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
       log,
     );
