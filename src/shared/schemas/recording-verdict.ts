@@ -32,6 +32,6 @@ export type RecordingVerdict = (typeof RECORDING_VERDICT_VALUES)[number];
 //                                known and different (e.g. unabridged vs abridged).
 // ============================================================================
 
-export const recordingReviewReasonValues = ['narrator-no-signal', 'duration-mismatch', 'production-type-mismatch'] as const;
-export const recordingReviewReasonSchema = z.enum(recordingReviewReasonValues);
-export type RecordingReviewReason = (typeof recordingReviewReasonValues)[number];
+const RECORDING_REVIEW_REASON_VALUES = ['narrator-no-signal', 'duration-mismatch', 'production-type-mismatch'] as const;
+export const recordingReviewReasonSchema = z.enum(RECORDING_REVIEW_REASON_VALUES);
+export type RecordingReviewReason = (typeof RECORDING_REVIEW_REASON_VALUES)[number];

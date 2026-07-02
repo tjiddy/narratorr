@@ -262,7 +262,7 @@ export function buildSearchFilterOptions(
  * Shared post-enrichment `multipart → rank` sub-chain, the single owner of the
  * step that display and RSS applied but auto-grab and retry historically dropped
  * (#1777). Runs {@link filterMultiPartUsenet} → emits one `multi-part-detected`
- * debug log per drop → runs {@link filterAndRankResults} → emits the quality-gate
+ * info log per drop → runs {@link filterAndRankResults} → emits the quality-gate
  * debug log when the count shrinks, and returns the ranked results plus the
  * multipart rejections. `durationUnknown` is passed straight through from
  * {@link filterAndRankResults} so the display path can keep exposing it on the
