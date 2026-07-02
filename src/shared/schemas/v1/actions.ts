@@ -130,7 +130,13 @@ export const releaseV1Schema = z
 
 export type ReleaseV1 = z.infer<typeof releaseV1Schema>;
 
-/** The v1 search list response: `{ data: ReleaseV1[], total }`, strict. */
+/**
+ * The v1 search list response: `{ data: ReleaseV1[], total }`, strict. `data` is
+ * FILTERED — it matches the display post-processing gates (blacklist, Usenet
+ * language enrichment, multi-part filter, quality ranking) the UI/SSE path
+ * applies, so blacklisted and multi-part releases are absent; `total` is the
+ * filtered count (#1800).
+ */
 export const releaseV1ListResponseSchema = v1ListResponseSchema(releaseV1Schema);
 
 // ----------------------------------------------------------------------------
