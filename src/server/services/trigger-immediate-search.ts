@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { searchAndGrabForBook, buildNarratorPriority } from './search-pipeline.js';
+import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from './search-pipeline.js';
 import type { IndexerSearchService, SettingsService, IndexerService } from './index.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
@@ -30,7 +30,7 @@ export function triggerImmediateSearch(
       await searchAndGrabForBook(book, {
         indexerSearchService: deps.indexerSearchService,
         downloadOrchestrator: deps.downloadOrchestrator,
-        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log,
         blacklistService: deps.blacklistService,
         indexerService: deps.indexerService,

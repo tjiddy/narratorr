@@ -8,7 +8,7 @@ import type { RetryBudget } from '../services/retry-budget.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
-import { buildNarratorPriority, searchAndGrabForBook } from '../services/search-pipeline.js';
+import { buildNarratorPriority, buildSearchFilterOptions, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -66,7 +66,7 @@ export async function runSearchJob(
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
       const result = await searchAndGrabForBook(book, {
         indexerSearchService, downloadOrchestrator,
-        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log, blacklistService, indexerService, eventHistory, broadcaster,
       });
       searched++;
@@ -120,7 +120,7 @@ export async function searchAllWanted(
       const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
       const result = await searchAndGrabForBook(book, {
         indexerSearchService, downloadOrchestrator,
-        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log, blacklistService, indexerService, eventHistory, broadcaster,
       });
       searched++;

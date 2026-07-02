@@ -787,3 +787,97 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     });
   });
 });
+
+// ===== #1777 — multi-part usenet filter now applies on the retry path =====
+
+describe('retrySearch — multi-part usenet filter (#1777)', () => {
+  const multiPartUsenet = {
+    title: 'The Way of Kings Part 2 of 5',
+    protocol: 'usenet' as const,
+    downloadUrl: 'http://nzb.test/multi',
+    guid: 'multi-guid',
+    size: 500000000,
+    indexer: 'TestIndexer',
+  };
+  const validUsenet = {
+    title: 'The Way of Kings Complete Edition',
+    protocol: 'usenet' as const,
+    downloadUrl: 'http://nzb.test/valid',
+    guid: 'valid-guid',
+    size: 500000000,
+    indexer: 'TestIndexer',
+  };
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('does not grab a multi-part usenet post ranked ahead of a valid one — the valid candidate wins', async () => {
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        // Multi-part listed first so it would win ranking if it survived the filter.
+        searchAll: vi.fn().mockResolvedValue([multiPartUsenet, validUsenet]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'http://nzb.test/valid' }),
+    );
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'http://nzb.test/multi' }),
+    );
+  });
+
+  it('returns no_candidates when every usenet candidate is multi-part', async () => {
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([multiPartUsenet]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+  });
+
+  it('still grabs a torrent whose title matches the multi-part pattern (protocol scoping)', async () => {
+    const multiPartTorrent = { ...multiPartUsenet, protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:multi', seeders: 10 };
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([multiPartTorrent]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:multi' }),
+    );
+  });
+
+  it('rejects a usenet post whose multi-part marker only appears in the enrichment-populated nzbName (ordering guard)', async () => {
+    // Raw title is clean; enrichment populates nzbName with a multi-part marker.
+    // The filter must run AFTER enrichment for this to be caught.
+    mockEnrichUsenet.mockImplementation(async (results) => {
+      for (const r of results) {
+        if (r.downloadUrl === 'http://nzb.test/multi') r.nzbName = 'The Way of Kings (02 of 30).part02.rar';
+      }
+    });
+    const cleanTitleMultiPart = { ...multiPartUsenet, title: 'The Way of Kings' };
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAll: vi.fn().mockResolvedValue([cleanTitleMultiPart]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+    expect(deps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+  });
+});
