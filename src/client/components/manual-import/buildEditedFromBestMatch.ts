@@ -1,5 +1,6 @@
 import type { BookMetadata } from '@/lib/api';
 import type { BookEditState } from './types.js';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 
 /**
  * Maps an Audnexus best-match result onto a BookEditState row, falling back to
@@ -10,7 +11,7 @@ import type { BookEditState } from './types.js';
 export function buildEditedFromBestMatch(bestMatch: BookMetadata, fallback: BookEditState): BookEditState {
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
   // on Audible can be a broader universe entry rather than the real book series.
-  const primary = bestMatch.seriesPrimary ?? bestMatch.series?.[0];
+  const primary = pickPrimarySeries(bestMatch);
   const mergedSeriesPosition = primary?.position ?? fallback.seriesPosition;
   return {
     title: bestMatch.title,

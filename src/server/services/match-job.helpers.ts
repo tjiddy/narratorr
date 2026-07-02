@@ -9,6 +9,7 @@ import type { Confidence, MatchCandidate, MatchResult } from './match-job.servic
 import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 /** User-facing reason surfaced on a post-match recording-review row (#1711). */
 export const RECORDING_REVIEW_REASON =
@@ -292,7 +293,7 @@ const TAG_AUTHOR_WEIGHT = 0.4;
  */
 export function tagTitleScore(input: string, result: BookMetadata): number {
   const title = cleanTagTitle(result.title ?? '');
-  const primary = result.seriesPrimary ?? result.series?.[0];
+  const primary = pickPrimarySeries(result);
   const seriesName = cleanTagTitle(primary?.name ?? '');
   const seriesPos = primary?.position;
   const candidates: string[] = [title];

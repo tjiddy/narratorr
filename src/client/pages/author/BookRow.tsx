@@ -3,6 +3,7 @@ import { formatDurationMinutes } from '@/lib/format';
 import { resolveUrl } from '@/lib/url-utils';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { BookOpenIcon, CheckIcon } from '@/components/icons';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 
 export function BookRow({
   book,
@@ -17,7 +18,7 @@ export function BookRow({
 }) {
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
   // on Audible can be a broader universe entry rather than the real book series.
-  const seriesPos = (book.seriesPrimary ?? book.series?.[0])?.position;
+  const seriesPos = pickPrimarySeries(book)?.position;
   const duration = formatDurationMinutes(book.duration);
   const narratorNames = book.narrators?.join(', ');
 

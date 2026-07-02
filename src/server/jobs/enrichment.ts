@@ -9,6 +9,7 @@ import { isUniqueViolation } from '../../shared/error-message.js';
 import { canonicalizeAsin } from '../../shared/asin.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 
 const BATCH_LIMIT = 5;
@@ -185,7 +186,7 @@ function fillSeriesFields(
   },
 ): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
-  const primary = result.seriesPrimary ?? result.series?.[0];
+  const primary = pickPrimarySeries(result);
   if (!primary) return updates;
   if (primary.name && !book.seriesName) updates.seriesName = primary.name;
   if (primary.position != null && book.seriesPosition == null) updates.seriesPosition = primary.position;

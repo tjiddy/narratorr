@@ -19,6 +19,7 @@ import type { ImportListRow } from './types.js';
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { AppSettings } from '../../shared/schemas.js';
 import type { RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 type QualitySettings = AppSettings['quality'];
 
@@ -467,7 +468,7 @@ function buildRawEnriched(item: ImportListItem): EnrichedItem {
 }
 
 function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): EnrichedItem {
-  const primarySeries = match.seriesPrimary ?? match.series?.[0];
+  const primarySeries = pickPrimarySeries(match);
   return {
     title: match.title,
     authorName: match.authors[0]?.name,

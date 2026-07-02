@@ -9,6 +9,7 @@ import { mapBookMetadataToPayload, findLibraryMatch } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 import {
   BookOpenIcon,
   HeadphonesIcon,
@@ -30,7 +31,7 @@ export function SearchBookCard({
   const authorNames = book.authors.map((a) => a.name).join(', ');
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
   // on Audible can be a broader universe entry rather than the real book series.
-  const seriesInfo = book.seriesPrimary ?? book.series?.[0];
+  const seriesInfo = pickPrimarySeries(book);
   const libraryMatch = findLibraryMatch(book, libraryBooks);
   const inLibraryBookId = libraryMatch?.id ?? justAddedBookId;
 

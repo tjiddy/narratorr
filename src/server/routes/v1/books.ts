@@ -30,6 +30,7 @@ import {
   toBookV1,
 } from '../../../shared/schemas/v1/books.js';
 import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1BooksRouteDeps {
@@ -77,7 +78,7 @@ function copyOptional<K extends keyof CreateBookInput>(
  * `books.asin`, breaking the find-by-ASIN retry-safety guarantee.
  */
 function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): CreateBookInput {
-  const primarySeries = meta.seriesPrimary ?? meta.series?.[0];
+  const primarySeries = pickPrimarySeries(meta);
   const out: CreateBookInput = {
     title: meta.title,
     authors: meta.authors,
