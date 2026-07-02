@@ -3056,7 +3056,19 @@ describe('applyMultiPartFilterAndRank (#1777)', () => {
     expect(out.multipartRejections).toEqual([{ title: 'Book Part 2 of 5', matchedPattern: expect.any(String) }]);
   });
 
-  it('emits one multi-part-detected debug log per dropped result', () => {
+  it('retains a series-titled usenet release (Book 1 of 14) — the #1801 false-positive class survives on all four paths', () => {
+    const seriesTitled = makeResult({ protocol: 'usenet', title: 'The Eye of the World Book 1 of 14', downloadUrl: 'http://nzb.test/series' });
+    const genuine = makeResult({ protocol: 'usenet', title: 'The Eye of the World Part 2 of 5', downloadUrl: 'http://nzb.test/part' });
+
+    const out = applyMultiPartFilterAndRank([seriesTitled, genuine], 3600, options);
+
+    const survivingUrls = out.results.map((r) => r.downloadUrl);
+    expect(survivingUrls).toContain('http://nzb.test/series');
+    expect(survivingUrls).not.toContain('http://nzb.test/part');
+    expect(out.multipartRejections).toEqual([{ title: 'The Eye of the World Part 2 of 5', matchedPattern: expect.any(String) }]);
+  });
+
+  it('emits one multi-part-detected info log per dropped result with title + matchedPattern', () => {
     const log = createMockLogger();
     const results = [
       makeResult({ protocol: 'usenet', title: 'Book A Part 2 of 5', downloadUrl: 'http://nzb.test/a' }),
@@ -3065,10 +3077,11 @@ describe('applyMultiPartFilterAndRank (#1777)', () => {
 
     applyMultiPartFilterAndRank(results, 3600, options, log);
 
-    const multiPartLogs = vi.mocked(log.debug).mock.calls.filter(
+    const multiPartLogs = vi.mocked(log.info).mock.calls.filter(
       ([payload]) => (payload as { reason?: string }).reason === 'multi-part-detected',
     );
     expect(multiPartLogs).toHaveLength(2);
+    expect(multiPartLogs[0]![0]).toMatchObject({ title: expect.any(String), matchedPattern: expect.any(String) });
   });
 
   it('passes durationUnknown straight through from filterAndRankResults for known and unknown durations', () => {

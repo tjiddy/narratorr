@@ -1201,7 +1201,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
       await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-      expect(log.debug).toHaveBeenCalledWith(
+      expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({
           reason: 'multi-part-detected',
           matchedPattern: expect.any(String),
