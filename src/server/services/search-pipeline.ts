@@ -293,7 +293,9 @@ export function applyMultiPartFilterAndRank(
 } {
   const { filtered, rejectedTitles } = filterMultiPartUsenet(results);
   for (const r of rejectedTitles) {
-    log?.debug({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
+    // info (not debug): a multi-part rejection can silently make a wanted book
+    // unobtainable on all four paths, so keep forensics visible without debug logging.
+    log?.info({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
   }
 
   const inputCount = filtered.length;

@@ -460,4 +460,36 @@ describe('isMultiPartUsenetPost', () => {
     const result = isMultiPartUsenetPost('Book "5" of "10"');
     expect(result.pattern).toContain('"');
   });
+
+  describe('series-position word skip (tightened unquoted pattern)', () => {
+    it.each([
+      'The Eye of the World Book 1 of 14',
+      'Wheel of Time Volume 2 of 7',
+      'Series Vol. 3 of 9',
+      'Series Vol 3 of 9',
+      'Series #1 of 14',
+      // Case-insensitive variants
+      'The Eye of the World book 1 of 14',
+      'The Eye of the World BOOK 1 of 14',
+      'Wheel of Time VOLUME 2 of 7',
+    ])('does not treat series-position "%s" as multi-part', (title) => {
+      expect(isMultiPartUsenetPost(title)).toEqual({ match: false });
+    });
+
+    it('still matches bare "Part 2 of 5" (part is NOT a series-position skip word)', () => {
+      const result = isMultiPartUsenetPost('Book Part 2 of 5');
+      expect(result).toMatchObject({ match: true, part: 2, total: 5 });
+    });
+
+    it('skips "Book 3 of 12" but still matches a standalone "3 of 12" without a series word', () => {
+      expect(isMultiPartUsenetPost('Some Series Book 3 of 12')).toEqual({ match: false });
+      expect(isMultiPartUsenetPost('Some Series 3 of 12')).toMatchObject({ match: true, part: 3, total: 12 });
+    });
+
+    it('still rejects when a genuine quoted signal accompanies a series-position match', () => {
+      const result = isMultiPartUsenetPost('Series Book 1 of 14 "05" of "14"');
+      expect(result).toMatchObject({ match: true, part: 5, total: 14 });
+      expect(result.pattern).toContain('"');
+    });
+  });
 });
