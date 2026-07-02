@@ -818,7 +818,7 @@ describe('books routes', () => {
 
     // #439 — fire-and-forget search respects searchPriority narrator-accuracy mode
     it('fire-and-forget search grabs narrator-matched release when searchPriority is accuracy', async () => {
-      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
+      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 600 };
       (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
@@ -2046,7 +2046,7 @@ describe('books routes', () => {
 
     // #439 — per-book search respects searchPriority narrator-accuracy mode
     it('per-book search grabs narrator-matched release when searchPriority is accuracy', async () => {
-      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
+      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 600 };
       (services.book.getById as Mock).mockResolvedValue(bookWithNarrators);
       const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
       const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);

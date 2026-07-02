@@ -171,6 +171,53 @@ describe('runRssJob', () => {
     );
   });
 
+  // #1797 AC1 — RSS floor rejection (regression guard). RSS already converted
+  // minutes→seconds locally, so this stays green across the fix; it pins that the
+  // shared `resolveBookQualityInputs` path keeps the same decision.
+  it('filters out a below-floor RSS candidate (10h book, 100MB release, 30 MB/h floor) (#1797 AC1)', async () => {
+    const HUNDRED_MB = 100 * 1024 * 1024;
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')]; // duration: 600 min = 10h
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { size: HUNDRED_MB })];
+    const settings = createMockSettingsService({ rss: { enabled: true }, quality: { grabFloor: 30, minSeeders: 0 } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on RSS. Red
+  // before the fix: RSS used a path-local `duration * 60 ?? audioDuration`
+  // (duration-first) precedence, so a tiny duration passed the floor and grabbed.
+  it('resolves audioDuration (seconds) over duration on the RSS path (#1797 AC5)', async () => {
+    const HUNDRED_MB = 100 * 1024 * 1024;
+    // audioDuration 36000s = 10h → 100MB / 10h = 10 MB/h < 30 → reject.
+    // duration 1 min (*60 = 60s) would (wrongly) pass; audioDuration must win.
+    const wantedBooks = [{
+      id: 1,
+      title: 'The Way of Kings',
+      author: { name: 'Brandon Sanderson' },
+      status: 'wanted' as const,
+      duration: 1,
+      audioDuration: 36000,
+    }];
+    const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { size: HUNDRED_MB })];
+    const settings = createMockSettingsService({ rss: { enabled: true }, quality: { grabFloor: 30, minSeeders: 0 } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
   it('forwards isFreeleech=true from matched RSS result to grab call (#1156 F2)', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { isFreeleech: true })];

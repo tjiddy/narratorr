@@ -65,8 +65,12 @@ export function compareQuality(
 }
 
 /**
- * Resolve a book's quality-relevant size and duration from its fields,
- * applying the defined precedence: audioTotalSize ?? size, audioDuration ?? duration * 60.
+ * Resolve a book's quality-relevant size and duration from its fields, applying
+ * the defined precedence. Size: `audioTotalSize` then `size`. Duration: prefer
+ * `audioDuration` (already seconds); otherwise convert the minutes-backed
+ * `duration` column to seconds. This is the single home for that minutes→seconds
+ * conversion — every automated grab path (immediate search, retry, RSS) and the
+ * display path funnels through here so the quality chain only ever sees seconds.
  */
 export function resolveBookQualityInputs(book: {
   size?: number | null;
