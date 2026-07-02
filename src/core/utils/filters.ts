@@ -51,7 +51,7 @@ export function filterByLanguage<T extends { language?: string | undefined }>(
  * Filters multi-part Usenet posts from search results.
  * Uses nzbName || rawTitle || title fallback (|| not ?? — empty strings fall through).
  * Returns both the filtered results and the per-title rejections (title + matched
- * pattern source) so callers can emit a diagnostic debug log per drop.
+ * pattern source) so callers can emit a diagnostic info log per drop.
  */
 export function filterMultiPartUsenet(results: SearchResult[]): { filtered: SearchResult[]; rejectedTitles: Array<{ title: string; matchedPattern: string }> } {
   const rejectedTitles: Array<{ title: string; matchedPattern: string }> = [];

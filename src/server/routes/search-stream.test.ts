@@ -368,7 +368,7 @@ describe('searchStreamRoutes', () => {
     });
   });
 
-  // #1799 — keep the stream warm with `:hb` frames while the search is in flight
+  // #1799 — keep the stream warm with named `hb` heartbeat frames while the search is in flight
   // so a slow indexer doesn't idle the connection into a reverse-proxy cut.
   describe('in-flight heartbeat', () => {
     // Fake only the interval timers so real setTimeout(0) can still flush the
@@ -396,7 +396,7 @@ describe('searchStreamRoutes', () => {
     // Real setTimeout(0) — flushes pending microtasks so the handler reaches its await.
     const flush = () => new Promise((r) => setTimeout(r, 0));
 
-    it('emits `:hb` frames on the shared cadence while searchAllStreaming is in flight, then stops on completion', async () => {
+    it('emits `hb` heartbeat frames on the shared cadence while searchAllStreaming is in flight, then stops on completion', async () => {
       const search = deferredSearch();
       const { reply, request, write } = createMockReplyAndRequest();
       const handlerPromise = streamHandler!(request, reply);
