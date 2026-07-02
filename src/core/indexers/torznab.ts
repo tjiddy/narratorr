@@ -194,8 +194,11 @@ export class TorznabIndexer implements IndexerAdapter {
       const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
       const finalSize = size || undefined;
       const finalGrabs = grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined;
-      const seeders = attrs.seeders != null ? Number(attrs.seeders) : undefined;
-      const leechers = attrs.leechers != null ? Number(attrs.leechers) : undefined;
+      const seedersNum = attrs.seeders != null ? Number(attrs.seeders) : undefined;
+      const leechersNum = attrs.leechers != null ? Number(attrs.leechers) : undefined;
+      const seeders = seedersNum != null && !Number.isNaN(seedersNum) ? seedersNum : undefined;
+      const leechers =
+        leechersNum != null && !Number.isNaN(leechersNum) ? leechersNum : undefined;
       const language = normalizeLanguage(attrs.language);
 
       results.push({
