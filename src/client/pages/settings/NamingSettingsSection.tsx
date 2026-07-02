@@ -87,6 +87,7 @@ interface FormatFieldProps {
   previewNoSeries: string;
   previewMultiFile?: string | undefined;
   previewMultiEdition?: string | undefined;
+  previewFileEdition?: { hasToken: boolean; rendered: string } | undefined;
   previewSuffix?: string | undefined;
   previewSuffixMultiFile?: string | undefined;
   previewNote?: ReactNode;
@@ -102,7 +103,7 @@ interface FormatFieldProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewFileEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (
     <div>
@@ -192,6 +193,16 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
               </span>
             </div>
           )}
+          {previewFileEdition !== undefined && (
+            <div className="flex items-baseline gap-3">
+              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">With edition</span>
+              <span data-testid="preview-file-edition" className="text-sm font-mono break-all">
+                {previewFileEdition.hasToken
+                  ? <>{previewFileEdition.rendered}{previewSuffix}</>
+                  : <span className="text-muted-foreground italic">Add {'{edition}'} to include the edition label in filenames</span>}
+              </span>
+            </div>
+          )}
         </div>
       )}
       {previewNote}
@@ -254,6 +265,19 @@ export function NamingSettingsSection() {
   const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
+  // "With edition" file row (#1819): {edition} is file-supported but never appears in the baseline
+  // rows (they render edition-free). Unlike the folder row there is NO automatic-append branch to
+  // mirror — files get no side-by-side discriminator. So only render the sample when the template
+  // actually places {edition}; otherwise the row would be byte-identical to With-series and read as
+  // a bug. When absent, the row teaches the capability with a muted hint instead. `templateHasToken`
+  // detects {edition} inside conditional wrappers (e.g. `{ (?edition?)}`), so gating on it is safe.
+  const filePreviewEdition = useMemo((): { hasToken: boolean; rendered: string } => {
+    const hasToken = !!fileFormat && templateHasToken(fileFormat, 'edition');
+    return {
+      hasToken,
+      rendered: hasToken ? renderFilename(fileFormat!, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions) : '',
+    };
+  }, [fileFormat, namingOptions]);
 
   const hasTitleToken = folderFormat ? hasTitle(folderFormat) : true;
   const hasAuthorToken = folderFormat ? hasAuthor(folderFormat) : true;
@@ -330,7 +354,7 @@ export function NamingSettingsSection() {
 
         <FormatField
           id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
-          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
+          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewFileEdition={filePreviewEdition} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
           onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}

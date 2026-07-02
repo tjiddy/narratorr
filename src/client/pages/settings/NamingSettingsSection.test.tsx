@@ -1162,6 +1162,70 @@ describe('NamingSettingsSection', () => {
     });
   });
 
+  describe('with-edition file preview (#1819)', () => {
+    async function setupFileFormat(fileFormat: string) {
+      const settings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat, namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(settings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue(fileFormat);
+      });
+    }
+
+    it('file field renders a "With edition" row; folder field does not', async () => {
+      await setupFileFormat('{author} - {title}');
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-file-edition')).toBeInTheDocument();
+      });
+      // Exactly one such row (file only) — the folder box does not gain it.
+      expect(screen.getAllByText('With edition')).toHaveLength(1);
+      expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
+    });
+
+    it('row-shape guard: exactly one file edition row and one folder multiple-editions row', async () => {
+      await setupFileFormat('{author} - {title}');
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-file-edition')).toBeInTheDocument();
+      });
+      expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
+      expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
+    });
+
+    it('no {edition} token: shows the capability hint, not a With-series duplicate (AC2)', async () => {
+      await setupFileFormat('{author} - {title}');
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-file-edition')).toBeInTheDocument();
+      });
+      const row = screen.getByTestId('preview-file-edition');
+      expect(row.textContent).toMatch(/Add \{edition\} to include the edition label in filenames/);
+      // Must NOT byte-duplicate the With-series file row.
+      const withSeriesFile = screen.getAllByTestId('preview-with-series')[1]!;
+      expect(row.textContent).not.toBe(withSeriesFile.textContent);
+    });
+
+    it('bare {edition} token: renders the sample edition label with the .m4b suffix', async () => {
+      await setupFileFormat('{author} - {title} ({edition})');
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-file-edition')).toBeInTheDocument();
+      });
+      const row = screen.getByTestId('preview-file-edition');
+      expect(row.textContent).toContain('Full Cast');
+      expect(row.textContent).toContain('.m4b');
+      expect(row.textContent).not.toMatch(/Add \{edition\}/);
+    });
+
+    it('reuses SAMPLE_EDITION (same "Full Cast" label as the folder multiple-editions row, AC5)', async () => {
+      await setupFileFormat('{author} - {title} ({edition})');
+      await waitFor(() => {
+        expect(screen.getByTestId('preview-file-edition')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('preview-file-edition').textContent).toContain('Full Cast');
+      expect(screen.getByTestId('preview-multi-edition').textContent).toContain('Full Cast');
+    });
+  });
+
   describe('atomic deletion — prefix conditional tokens', () => {
     it('Backspace at end of { - pt?trackNumber:00} deletes entire token', async () => {
       const plexSettings = createMockSettings({

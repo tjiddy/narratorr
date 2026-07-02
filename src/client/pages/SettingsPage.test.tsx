@@ -597,3 +597,72 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
     expect(screen.getAllByText(/kept side-by-side automatically/)).toHaveLength(1);
   });
 });
+
+describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([]);
+    vi.mocked(api.getClients).mockResolvedValue([]);
+  });
+
+  it('conditional {edition} form renders the full sample filename including the .m4b suffix (AC1)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    // The conditional `{ (?edition?)}` wrapper is exactly what the naive section-test mock cannot
+    // exercise — the real renderFilename must produce the parenthesized label in place. Pin the whole
+    // string so a renderer regression is loud.
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { value: '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe(
+        'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).m4b',
+      );
+    });
+  });
+
+  it('row live-updates as the file format is edited (real renderer)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    // Default template has no {edition} → the capability hint is shown, not a render.
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
+    });
+    // Adding {edition} flips the same row to a live sample render.
+    fireEvent.change(fileInput, { target: { value: '{title}{ (?edition?)}' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
+    });
+    // Editing again re-renders.
+    fireEvent.change(fileInput, { target: { value: '{author} - {title}{ (?edition?)}' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('Brandon Sanderson - The Way of Kings (Full Cast).m4b');
+    });
+  });
+
+  it('no {edition} token: file edition row shows the capability affordance, not a With-series duplicate (AC2)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const row = await screen.findByTestId('preview-file-edition');
+    expect(row.textContent).toMatch(/Add \{edition\} to include the edition label in filenames/);
+    // The default file format is `{author} - {title}` → With-series file row is index 1.
+    const withSeriesFile = screen.getAllByTestId('preview-with-series')[1]!;
+    expect(row.textContent).not.toBe(withSeriesFile.textContent);
+  });
+
+  it('row shape: exactly one file edition row (file) and one multiple-editions row (folder)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
+    expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
+  });
+});
