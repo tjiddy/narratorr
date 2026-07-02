@@ -13,7 +13,8 @@ import {
 import { DEFAULT_REJECT_WORDS } from '../../shared/schemas/settings/quality.js';
 import { normalizeLanguage } from '../../core/utils/language-codes.js';
 import { CANONICAL_LANGUAGES } from '../../shared/language-constants.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { decryptFields, getKey } from '../utils/secret-codec.js';
+import { resolveAndEncryptSettings } from '../utils/sentinel-resolver.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -112,10 +113,8 @@ export class SettingsService {
     // Handle sentinel passthrough and encryption for secret categories
     const entity = SECRET_CATEGORIES[key];
     if (entity && dbValue && typeof dbValue === 'object') {
-      const incoming = { ...(dbValue as Record<string, unknown>) };
       const existing = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
-      resolveSentinelFields(incoming, (existing[0]?.value ?? {}) as Record<string, unknown>, getSecretFieldNames(entity));
-      dbValue = encryptFields(entity, incoming, getKey());
+      dbValue = resolveAndEncryptSettings(entity, dbValue as Record<string, unknown>, existing[0]?.value as Record<string, unknown> | undefined);
     }
 
     await this.db

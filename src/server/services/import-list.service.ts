@@ -9,7 +9,8 @@ import type { BookMetadata } from '../../core/metadata/types.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import type { ProductionType } from '../../shared/schemas/book.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
+import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
@@ -99,10 +100,8 @@ export class ImportListService {
   async update(id: number, data: Partial<NewImportList>): Promise<ImportListRow | null> {
     const toUpdate = { ...data };
     if (toUpdate.settings) {
-      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(importLists).where(eq(importLists.id, id)).limit(1);
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('importList'));
-      toUpdate.settings = encryptFields('importList', settings, getKey());
+      toUpdate.settings = resolveAndEncryptSettings('importList', toUpdate.settings as Record<string, unknown>, existing[0]?.settings as Record<string, unknown> | undefined);
     }
     const result = await this.db
       .update(importLists)
@@ -134,8 +133,7 @@ export class ImportListService {
         if (!existing) {
           return { success: false, message: 'Import list not found' };
         }
-        resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('importList'));
+        resolvedSettings = resolveSettings('importList', data.settings, existing.settings as Record<string, unknown> | undefined);
       }
 
       const parsed = parseSettingsForType(data.type, resolvedSettings);

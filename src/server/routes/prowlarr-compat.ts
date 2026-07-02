@@ -173,7 +173,7 @@ export function fromReadarrFields(fields: ReadonlyArray<{ name: string; value?: 
  *  CRUD path applies the same masking via secretEntity in registerCrudRoutes;
  *  this function preserves that invariant for the Prowlarr-compat surface.
  *  Sentinel passthrough on PUT/POST is handled by IndexerService.update via
- *  resolveSentinelFields. */
+ *  resolveAndEncryptSettings. */
 export function toReadarrFields(settings: Record<string, unknown>): ReadarrField[] {
   const masked = maskFields('indexer', { ...settings });
   const fields: ReadarrField[] = [];
