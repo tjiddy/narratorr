@@ -278,6 +278,50 @@ describe('EventBroadcasterService', () => {
     });
   });
 
+  // #1813 — a client that reconnects during the graceful-shutdown drain window
+  // (after stop() but before app.close()) must NOT re-register a never-ended
+  // hijacked reply, which would re-block app.close() and re-introduce the #1796
+  // deploy-dies-by-SIGKILL hang. Once stop() has run, addClient() ends the incoming
+  // reply immediately instead of registering it and never restarts the heartbeat.
+  describe('addClient after stop() (drain-window reconnect)', () => {
+    it('ends the late client immediately, does not register it, and clientCount stays 0', () => {
+      broadcaster.stop();
+
+      const late = createMockClient('late');
+      broadcaster.addClient(late);
+
+      expect(late.reply.raw.end).toHaveBeenCalledTimes(1);
+      expect(broadcaster.clientCount).toBe(0);
+    });
+
+    it('does not restart the heartbeat timer for a late client', () => {
+      vi.useFakeTimers();
+      try {
+        broadcaster.stop();
+
+        const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+        broadcaster.addClient(createMockClient('late'));
+
+        expect(setIntervalSpy).not.toHaveBeenCalled();
+        setIntervalSpy.mockRestore();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a late client whose end() throws is still not registered and does not crash the shutdown path', () => {
+      broadcaster.stop();
+
+      const late = createMockClient('late');
+      (late.reply.raw.end as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error('broken pipe');
+      });
+
+      expect(() => broadcaster.addClient(late)).not.toThrow();
+      expect(broadcaster.clientCount).toBe(0);
+    });
+  });
+
   // #1796 — bound stream lifetime server-side: the heartbeat tick ends streams
   // older than the max-age cap so a replayed stream token cannot outlive its window.
   describe('max-age sweep', () => {
