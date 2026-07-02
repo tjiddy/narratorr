@@ -88,8 +88,6 @@ export const previewImportListSchema = z.object({
   settings: z.record(z.string(), z.unknown()),
 }).superRefine(validateSettingsPerType);
 
-export type CreateImportListInput = z.infer<typeof createImportListSchema>;
-export type UpdateImportListInput = z.infer<typeof updateImportListSchema>;
 export type PreviewImportListInput = z.infer<typeof previewImportListSchema>;
 
 // ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──

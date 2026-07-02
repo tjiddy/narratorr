@@ -9,9 +9,9 @@ import { z } from 'zod';
 // `download-protocol.ts` PROTOCOLS / protocolSchema / DownloadProtocol shape.
 // ============================================================================
 
-export const recordingVerdictValues = ['same-recording', 'different-recording', 'review'] as const;
-export const recordingVerdictSchema = z.enum(recordingVerdictValues);
-export type RecordingVerdict = (typeof recordingVerdictValues)[number];
+const RECORDING_VERDICT_VALUES = ['same-recording', 'different-recording', 'review'] as const;
+export const recordingVerdictSchema = z.enum(RECORDING_VERDICT_VALUES);
+export type RecordingVerdict = (typeof RECORDING_VERDICT_VALUES)[number];
 
 // ============================================================================
 // Recording-review reason — the MACHINE reason a `review` verdict was reached

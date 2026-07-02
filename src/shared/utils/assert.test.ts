@@ -1,29 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstOrThrow, requireDefined } from './assert.js';
-
-describe('firstOrThrow', () => {
-  it('returns the first element of a populated array', () => {
-    expect(firstOrThrow([1, 2, 3], 'msg')).toBe(1);
-  });
-
-  it('throws with the supplied message when the array is empty', () => {
-    expect(() => firstOrThrow([], 'expected ≥1 row from blacklist insert')).toThrow(
-      'expected ≥1 row from blacklist insert',
-    );
-  });
-
-  it('returns a single-element value (truthy)', () => {
-    expect(firstOrThrow(['a'], 'msg')).toBe('a');
-  });
-
-  it('returns 0 (falsy but defined)', () => {
-    expect(firstOrThrow([0], 'msg')).toBe(0);
-  });
-
-  it('throws when the first slot holds undefined (defensive: hole at index 0)', () => {
-    expect(() => firstOrThrow([undefined as unknown as string], 'hole at 0')).toThrow('hole at 0');
-  });
-});
+import { requireDefined } from './assert.js';
 
 describe('requireDefined', () => {
   it('returns 0 (falsy but defined)', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizePath, renderTemplate, renderFilename, parseTemplate, templateHasToken, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT } from './naming.js';
+import { sanitizePath, renderTemplate, renderFilename, parseTemplate, templateHasToken, toLastFirst, toSortTitle, toNamingOptions, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT } from './naming.js';
 
 describe('sanitizePath', () => {
   it('removes illegal filesystem characters', () => {
@@ -280,11 +280,11 @@ describe('parseTemplate', () => {
   });
 
   it('recognizes all allowed tokens', () => {
-    const template = ALLOWED_TOKENS.map((t) => `{${t}}`).join('/');
+    const template = FOLDER_ALLOWED_TOKENS.map((t) => `{${t}}`).join('/');
     const result = parseTemplate(template);
     expect(result.errors).toEqual([]);
     expect(result.warnings).toEqual([]);
-    expect(result.tokens.sort()).toEqual([...ALLOWED_TOKENS].sort());
+    expect(result.tokens.sort()).toEqual([...FOLDER_ALLOWED_TOKENS].sort());
   });
 
   it('accepts {titleSort} as valid title token', () => {
@@ -468,10 +468,6 @@ describe('composeEditionSuffixLeaf (#1739)', () => {
 });
 
 describe('FOLDER_ALLOWED_TOKENS / FILE_ALLOWED_TOKENS', () => {
-  it('FOLDER_ALLOWED_TOKENS matches ALLOWED_TOKENS', () => {
-    expect([...FOLDER_ALLOWED_TOKENS]).toEqual([...ALLOWED_TOKENS]);
-  });
-
   it('FILE_ALLOWED_TOKENS includes folder tokens plus file-specific tokens', () => {
     for (const token of FOLDER_ALLOWED_TOKENS) {
       expect(FILE_ALLOWED_TOKENS).toContain(token);

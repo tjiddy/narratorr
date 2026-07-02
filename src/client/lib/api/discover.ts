@@ -1,7 +1,7 @@
 import type { SuggestionRowResponse } from '../../../shared/schemas/discovery.js';
 import { fetchApi } from './client.js';
 
-/** @deprecated Use SuggestionRowResponse directly — alias preserved for existing consumers. */
+/** Client-facing alias for the discovery suggestion row wire shape. */
 export type SuggestionRow = SuggestionRowResponse;
 
 export interface MarkAddedResult {
