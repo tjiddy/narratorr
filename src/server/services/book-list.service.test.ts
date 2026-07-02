@@ -527,6 +527,75 @@ describe('BookListService', () => {
     });
   });
 
+  // #1814 — the flat quality-sort SQL must express the same unit contract as
+  // resolveBookQualityInputs (src/core/utils/quality.ts): audioDuration is
+  // already seconds, but the fallback `duration` column is MINUTES and must be
+  // ×60 before it divides bytes. Pre-fix the divisor was
+  // `COALESCE(audio_duration, duration)` (raw minutes → 60×-inflated MB/hr for
+  // unprobed rows). The mocked DB does not ORDER BY, so we pin the *generated*
+  // SQL, not returned row order (see Implementation Notes on the spec).
+  describe('quality sort unit contract — generated SQL (#1814)', () => {
+    /** Compile a captured orderBy clause to a normalized (lowercased, unquoted) SQL string. */
+    function normalizedClauseSql(clause: unknown): string {
+      return compileWhere(clause).sql.toLowerCase().replace(/"/g, '');
+    }
+
+    async function captureQualityOrderBy() {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+      await service.getAll(undefined, undefined, { sortField: 'quality', sortDirection: 'asc' });
+      const args = (dataChain.orderBy as Mock).mock.calls[0]!;
+      // args[0] = null/zero-bucket guard, args[1] = ratio direction clause, args[2] = id tiebreaker.
+      return { guard: normalizedClauseSql(args[0]), ratio: normalizedClauseSql(args[1]) };
+    }
+
+    it('ratio divisor converts the minutes fallback to seconds (duration * 60)', async () => {
+      const { ratio } = await captureQualityOrderBy();
+      // Full helper parity: prefer audio_duration when > 0, else duration (minutes) × 60.
+      expect(ratio).toContain('case when books.audio_duration > 0');
+      expect(ratio).toContain('books.duration * 60');
+      // The raw-minutes divisor (#1797/#1814 defect) is gone.
+      expect(ratio).not.toContain('coalesce');
+    });
+
+    it('ratio numerator uses positive-value size precedence with the ELSE size fallback (audio_total_size > 0 else size)', async () => {
+      // F1 (spec review + PR review): full parity must pin size-zero semantics AND
+      // the `ELSE size` fallback, matching resolveBookQualityInputs (audioTotalSize
+      // when > 0, else size). Assert the WHOLE CASE expression — asserting only the
+      // `WHEN ... > 0` prefix would still pass if `ELSE books.size` were deleted or
+      // changed to a null/zero literal, silently mis-sorting fully-unprobed rows.
+      const { ratio } = await captureQualityOrderBy();
+      expect(ratio).toContain('case when books.audio_total_size > 0 then books.audio_total_size else books.size end');
+    });
+
+    it('null/zero bucket guard mirrors the same seconds-converted unit contract', async () => {
+      const { guard } = await captureQualityOrderBy();
+      // The guard must use the same size/duration expressions as the divisor so
+      // the flat SQL and resolveBookQualityInputs agree on which rows are "unknown".
+      // Assert the full CASE expressions (not just the `WHEN ... > 0` prefixes) so
+      // deleting either `ELSE` fallback fails the test.
+      expect(guard).toContain('case when books.audio_duration > 0 then books.audio_duration else books.duration * 60 end');
+      expect(guard).toContain('case when books.audio_total_size > 0 then books.audio_total_size else books.size end');
+      expect(guard).not.toContain('coalesce');
+    });
+
+    it('audio_duration = 0 falls back to duration * 60 in SQL (zero-semantics parity)', async () => {
+      // resolveBookQualityInputs treats audioDuration=0 as absent and falls back
+      // to duration*60. The pre-fix `COALESCE(audio_duration, duration) = 0` guard
+      // instead routed such rows to the unknown bucket. The `WHEN audio_duration > 0`
+      // form closes that divergence: a 0 value takes the ELSE (duration * 60) branch.
+      const { guard, ratio } = await captureQualityOrderBy();
+      expect(ratio).toContain('when books.audio_duration > 0 then books.audio_duration else books.duration * 60');
+      // The old `COALESCE(audio_duration, duration) = 0` equality bucket (which
+      // wrongly caught valid audioDuration=0/duration>0 rows) is gone; the guard
+      // now uses the same parity expression and a `<= 0` check on the fallback.
+      expect(guard).not.toContain('coalesce');
+      expect(guard).toContain('else books.duration * 60 end) <= 0');
+    });
+  });
+
   describe('getAllForLibrary (#1132)', () => {
     it('returns { data, total } envelope with the slim DTO shape', async () => {
       db.select
@@ -890,6 +959,31 @@ describe('BookListService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([
           makeRow({ id: 1, seriesName: null, audioTotalSize: 360 * 1024 * 1024, audioDuration: 0, duration: 600 }),
+          makeRow({ id: 2, seriesName: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAllForLibrary(undefined, undefined, {
+        collapse: true, sortField: 'quality', sortDirection: 'asc',
+      });
+      expect(result.data).toHaveLength(2);
+      expect(result.data[0]!.id).toBe(1);
+      expect(result.data[1]!.id).toBe(2);
+    });
+
+    it('quality sort: fully unprobed row (size + minutes duration, no audioDuration) sorts by seconds-converted MB/hr (#1814)', async () => {
+      // The collapse path orders rows in JS via resolveBookQualityInputs, so row
+      // order is meaningful here (unlike the mocked flat path). Book 1 is fully
+      // unprobed — only `size` and the minutes-backed `duration`, no audioTotalSize
+      // or audioDuration — with a genuinely LOWER MB/hr; it must land below the
+      // probed Book 2. If the minutes→seconds ×60 conversion were dropped, Book 1's
+      // MB/hr would inflate 60× and it would wrongly sort above Book 2.
+      // Book 1: 360 MB / (600 min → 36000 s) ≈ 10 MB/hr (low)
+      // Book 2: 100 MB / 3600 s ≈ 28 MB/hr (higher)
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeRow({ id: 1, seriesName: null, size: 360 * 1024 * 1024, duration: 600 }),
           makeRow({ id: 2, seriesName: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
         ]))
         .mockReturnValueOnce(mockDbChain([]))
