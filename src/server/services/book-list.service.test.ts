@@ -560,20 +560,24 @@ describe('BookListService', () => {
       expect(ratio).not.toContain('coalesce');
     });
 
-    it('ratio numerator uses positive-value size precedence (audio_total_size > 0 else size)', async () => {
-      // F1 (spec review): full parity must pin size-zero semantics too, matching
-      // resolveBookQualityInputs (audioTotalSize when > 0, else size).
+    it('ratio numerator uses positive-value size precedence with the ELSE size fallback (audio_total_size > 0 else size)', async () => {
+      // F1 (spec review + PR review): full parity must pin size-zero semantics AND
+      // the `ELSE size` fallback, matching resolveBookQualityInputs (audioTotalSize
+      // when > 0, else size). Assert the WHOLE CASE expression — asserting only the
+      // `WHEN ... > 0` prefix would still pass if `ELSE books.size` were deleted or
+      // changed to a null/zero literal, silently mis-sorting fully-unprobed rows.
       const { ratio } = await captureQualityOrderBy();
-      expect(ratio).toContain('case when books.audio_total_size > 0');
+      expect(ratio).toContain('case when books.audio_total_size > 0 then books.audio_total_size else books.size end');
     });
 
     it('null/zero bucket guard mirrors the same seconds-converted unit contract', async () => {
       const { guard } = await captureQualityOrderBy();
       // The guard must use the same size/duration expressions as the divisor so
       // the flat SQL and resolveBookQualityInputs agree on which rows are "unknown".
-      expect(guard).toContain('case when books.audio_duration > 0');
-      expect(guard).toContain('books.duration * 60');
-      expect(guard).toContain('case when books.audio_total_size > 0');
+      // Assert the full CASE expressions (not just the `WHEN ... > 0` prefixes) so
+      // deleting either `ELSE` fallback fails the test.
+      expect(guard).toContain('case when books.audio_duration > 0 then books.audio_duration else books.duration * 60 end');
+      expect(guard).toContain('case when books.audio_total_size > 0 then books.audio_total_size else books.size end');
       expect(guard).not.toContain('coalesce');
     });
 
