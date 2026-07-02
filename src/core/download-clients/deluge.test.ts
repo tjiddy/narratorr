@@ -672,6 +672,40 @@ describe('DelugeClient', () => {
       expect(result!.downloadSpeed).toBeUndefined();
     });
 
+    // #1778 F1 — the RPC envelope `id` is nullish (schemas.ts:125). Deluge can
+    // return `id: null`; the envelope must parse (not throw) and map identically
+    // to a numeric-id envelope. rpcHandler hardcodes a numeric id, so this needs
+    // a bespoke handler that forces `id: null` at the envelope level.
+    it('accepts an RPC envelope with id:null and maps like a numeric-id envelope', async () => {
+      const nullIdHandler = http.post(`${BASE_URL}/json`, async ({ request }) => {
+        const body = await request.json() as { method: string };
+        if (body.method === 'auth.login') {
+          return HttpResponse.json(
+            { id: null, result: true, error: null },
+            { headers: { 'Set-Cookie': `${SESSION_COOKIE}; Path=/; HttpOnly` } },
+          );
+        }
+        if (body.method === 'web.connected') {
+          return HttpResponse.json({ id: null, result: true, error: null });
+        }
+        if (body.method === 'core.get_torrent_status') {
+          return HttpResponse.json({ id: null, result: mockTorrentStatus, error: null });
+        }
+        return HttpResponse.json({ id: null, result: null, error: null });
+      });
+      server.use(nullIdHandler);
+      const withNullId = await client.getDownload('abc123def456');
+
+      server.use(rpcHandler({
+        'auth.login': () => true,
+        'core.get_torrent_status': () => mockTorrentStatus,
+      }));
+      const withNumericId = await client.getDownload('abc123def456');
+
+      expect(withNullId).not.toBeNull();
+      expect(withNullId).toEqual(withNumericId);
+    });
+
     it('requests download_rate in TORRENT_STATUS_KEYS', async () => {
       const capturedKeys: string[][] = [];
       server.use(rpcHandler({
