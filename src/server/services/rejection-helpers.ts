@@ -1,9 +1,9 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { BlacklistService } from '../services/blacklist.service.js';
-import type { SettingsService } from '../services/settings.service.js';
-import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
+import type { BlacklistService } from './blacklist.service.js';
+import type { SettingsService } from './settings.service.js';
+import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import type { BlacklistReason } from '../../shared/schemas/blacklist.js';
-import { serializeError } from './serialize-error.js';
+import { serializeError } from '../utils/serialize-error.js';
 
 
 export interface BlacklistIdentifiers {

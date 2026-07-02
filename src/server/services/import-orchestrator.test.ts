@@ -13,7 +13,7 @@ import { createMockLogger, createMockSettingsService, inject } from '../__tests_
 import { ContentFailureError } from '../utils/import-helpers.js';
 
 // Mock rejection-helpers for blacklist dispatch testing
-vi.mock('../utils/rejection-helpers.js', () => ({
+vi.mock('./rejection-helpers.js', () => ({
   blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -24,7 +24,7 @@ vi.mock('../utils/enqueue-auto-import.js', () => ({
 
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 
 // Mock import-steps — passthrough isContentFailure to real implementation, spy on the rest
 vi.mock('../utils/import-steps.js', async (importOriginal) => {

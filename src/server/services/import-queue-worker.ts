@@ -17,7 +17,7 @@ import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { OwnedRecordingError } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { finalizeForcedImportRefusal } from '../utils/import-refused.js';
+import { finalizeForcedImportRefusal } from './import-refused.js';
 
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;

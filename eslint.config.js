@@ -145,6 +145,24 @@ export default tseslint.config(
       }],
     },
   },
+  {
+    // Utils are generic, layer-agnostic helpers — they must not import service
+    // VALUES (that's a layer inversion; the coupled logic belongs in services/).
+    // `import type` from services/ is allowed: ~10 utils reference service types
+    // for signatures without depending on their runtime, which is legitimate.
+    // Production-only: test files legitimately reach into services/.
+    files: ['**/src/server/utils/**/*.ts'],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['**/services/**', '**/services/*'],
+          allowTypeImports: true,
+          message: 'utils/ must not import service values — move service-coupled logic into services/ (import type is allowed).',
+        }],
+      }],
+    },
+  },
 
   // Custom rules for all files
   {
