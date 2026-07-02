@@ -15,7 +15,7 @@ import * as searchPipeline from '../services/search-pipeline.js';
 import { fetchSseEvents } from '../__tests__/sse-helpers.js';
 import { HEARTBEAT_INTERVAL_MS } from '../utils/sse-stream.js';
 
-const HB_FRAME = ':hb\n\n';
+const HB_FRAME = 'event: hb\ndata: {}\n\n';
 
 const EMPTY_POST_PROCESS_RESULT = {
   results: [],

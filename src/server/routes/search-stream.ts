@@ -73,7 +73,10 @@ export async function searchStreamRoutes(
 
       // Keep the stream warm while the search is in flight (#1799). A single slow
       // FlareSolverr-routed indexer can idle the connection toward the ~60s proxy
-      // cutoff with no interim frames; the shared `:hb` comment frame prevents that.
+      // cutoff with no interim frames; the shared heartbeat frame prevents that.
+      // The frame is a named `hb` event (#1798) which this stream has no client-side
+      // listener for — EventSource ignores unmatched named events, so it stays a
+      // pure keepalive here while doubling as the broadcaster's liveness signal.
       let heartbeatTimer: NodeJS.Timeout | null = null;
       const stopHeartbeatTimer = (): void => {
         stopHeartbeat(heartbeatTimer);

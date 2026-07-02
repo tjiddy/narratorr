@@ -13,6 +13,7 @@ import {
   type SSEEventType,
   sseEventTypeSchema,
 } from '../../shared/schemas.js';
+import { HEARTBEAT_INTERVAL_MS } from '../../shared/sse-constants.js';
 
 vi.mock('./useSearchProgress', () => ({
   handleSearchEvent: vi.fn(),
@@ -1629,7 +1630,11 @@ describe('#514 useEventSource type safety', () => {
     const registeredTypes = [...(es as unknown as { listeners: Map<string, unknown[]> }).listeners.keys()];
     const schemaOptions = [...sseEventTypeSchema.options];
 
-    expect(registeredTypes.sort()).toEqual(schemaOptions.sort());
+    // The `hb` liveness heartbeat (#1798) is a deliberate non-domain listener —
+    // absent from the schema — so exclude it before comparing domain coverage.
+    const domainTypes = registeredTypes.filter((t) => t !== 'hb');
+    expect(domainTypes.sort()).toEqual(schemaOptions.sort());
+    expect(registeredTypes).toContain('hb');
   });
 });
 
@@ -2040,5 +2045,205 @@ describe('#722 SSE_PARSERS registry completeness', () => {
   it('SSE_PARSERS keys cover every sseEventTypeSchema option (compile-time enforced via SSEParserMap)', async () => {
     const { SSE_PARSERS } = await import('@/lib/sse/safe-parse-event');
     expect(Object.keys(SSE_PARSERS).sort()).toEqual([...sseEventTypeSchema.options].sort());
+  });
+});
+
+// ============================================================================
+// #1798 — SSE liveness watchdog: named heartbeat + client-side silence detection
+// ============================================================================
+//
+// A deaf (half-open) stream delivers no frames while `readyState` stays OPEN and
+// `error` never fires. The watchdog polls on the heartbeat cadence and, once
+// silence exceeds ~3 heartbeat intervals, force-reopens the stream so the
+// existing recovery + catch-up path runs. Fake ONLY the interval timers + Date
+// (never setTimeout — that deadlocks TanStack Query; vitest-faketimers-react-query).
+describe('#1798 SSE liveness watchdog', () => {
+  const THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const arglessInvalidations = (spy: ReturnType<typeof vi.spyOn>) =>
+    spy.mock.calls.filter((c: unknown[]) => c.length === 0);
+
+  it('does not churn a healthy stream — a frame each interval keeps liveness fresh (AC #2)', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0]!;
+    act(() => es.simulateOpen());
+
+    // A heartbeat arrives every interval, then the watchdog ticks — never stale.
+    for (let i = 0; i < 5; i++) {
+      act(() => {
+        es.simulateEvent('hb', {});
+        vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      });
+    }
+
+    expect(MockEventSource.instances).toHaveLength(1); // no reopen
+    expect(es.readyState).not.toBe(2);                 // not closed
+    expect(arglessInvalidations(invalidateSpy)).toHaveLength(0);
+  });
+
+  it('closes and reopens a silent stream, firing the catch-up exactly once on reopen (AC #1)', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es1 = MockEventSource.instances[0]!;
+    act(() => es1.simulateOpen());                     // healthy connect — no catch-up
+    expect(arglessInvalidations(invalidateSpy)).toHaveLength(0);
+
+    // No frames for > threshold — watchdog trips.
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 4));
+
+    expect(es1.readyState).toBe(2);                    // proactively closed
+    expect(MockEventSource.instances).toHaveLength(2); // reopened
+
+    const es2 = MockEventSource.instances[1]!;
+    expect(arglessInvalidations(invalidateSpy)).toHaveLength(0); // not until reopen
+    act(() => es2.simulateOpen());
+    expect(arglessInvalidations(invalidateSpy)).toHaveLength(1); // exactly one catch-up
+  });
+
+  it('flips sseConnected false during the outage window, back true after reopen (AC #4)', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const connected = renderHook(() => useSSEConnected(), { wrapper });
+    const es1 = MockEventSource.instances[0]!;
+
+    act(() => es1.simulateOpen());
+    expect(connected.result.current).toBe(true);
+
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 4));
+    expect(connected.result.current).toBe(false);      // polling fallbacks re-engage
+
+    const es2 = MockEventSource.instances[1]!;
+    act(() => es2.simulateOpen());
+    expect(connected.result.current).toBe(true);        // reopen succeeded
+  });
+
+  it('a named `hb` event refreshes liveness — resetting it prevents the watchdog firing (AC #2)', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0]!;
+    act(() => es.simulateOpen());
+
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s — under threshold
+    act(() => es.simulateEvent('hb', {}));                        // liveness reset
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s more, but reset
+
+    // Total 80s > threshold, yet no single silence gap exceeded it.
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(es.readyState).not.toBe(2);
+  });
+
+  // F1 — every received frame refreshes liveness, not just `hb`. Deletion-proof:
+  // if the `refreshLiveness()` call in the domain-event listener were removed, the
+  // domain event below would not reset the silence timer and the watchdog would
+  // close/reopen the stream at the 80s tick, failing this test.
+  it('a domain SSE event refreshes liveness just like a heartbeat (AC #2)', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0]!;
+    act(() => es.simulateOpen());
+
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s — under threshold
+    // A normal schema event (not `hb`) must count as liveness for an active stream.
+    act(() => es.simulateEvent('download_status_change', {
+      download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed',
+    }));
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s more, but reset
+
+    // Total 80s > threshold, yet the domain event reset the silence timer.
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(es.readyState).not.toBe(2);
+  });
+
+  it('reopens a stale stream on a window "online" event before the next watchdog tick', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es1 = MockEventSource.instances[0]!;
+    act(() => es1.simulateOpen());
+
+    // Cross the threshold in a gap between watchdog ticks (checks land at 20/40/60s;
+    // at exactly 60s it is not yet stale, so no tick reconnects before 80s).
+    act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1));
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    act(() => window.dispatchEvent(new Event('online')));
+    expect(MockEventSource.instances).toHaveLength(2);  // online forced the reopen
+  });
+
+  it('reopens a stale stream on visibilitychange when the document is visible', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es1 = MockEventSource.instances[0]!;
+    act(() => es1.simulateOpen());
+
+    act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1));
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+
+    expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  // F2 — the visibilitychange handler only reconnects when the tab is visible.
+  // Deletion-proof: if the `visibilityState === 'visible'` guard were removed or
+  // inverted, a stale hidden tab would reconnect here and this test would fail.
+  it('does not reconnect a stale stream on visibilitychange while the tab is hidden', () => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es1 = MockEventSource.instances[0]!;
+      act(() => es1.simulateOpen());
+
+      act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1)); // stale, in a gap between ticks
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(MockEventSource.instances).toHaveLength(1);   // hidden → no reconnect
+      expect(es1.readyState).not.toBe(2);
+    } finally {
+      // Remove the own-property override so the jsdom prototype getter is restored.
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+
+  it('does not churn a healthy stream on "online"/"visibilitychange"', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es1 = MockEventSource.instances[0]!;
+    act(() => es1.simulateOpen());                      // fresh liveness, nothing elapsed
+
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(es1.readyState).not.toBe(2);
+  });
+
+  it('tears down the watchdog + online/visibility listeners on unmount (no leak) (AC #6)', () => {
+    const winRemove = vi.spyOn(window, 'removeEventListener');
+    const docRemove = vi.spyOn(document, 'removeEventListener');
+    const { wrapper } = createWrapper();
+    const { unmount } = renderHook(() => useEventSource('key'), { wrapper });
+    act(() => MockEventSource.instances[0]!.simulateOpen());
+
+    unmount();
+
+    expect(winRemove).toHaveBeenCalledWith('online', expect.any(Function));
+    expect(docRemove).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
+
+    // The watchdog interval is cleared — advancing past the threshold opens no new
+    // stream (a leaked timer would fire on the now-closed stream and reconnect).
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 5));
+    expect(MockEventSource.instances).toHaveLength(1);
   });
 });
