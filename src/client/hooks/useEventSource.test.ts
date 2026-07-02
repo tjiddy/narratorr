@@ -2142,6 +2142,28 @@ describe('#1798 SSE liveness watchdog', () => {
     expect(es.readyState).not.toBe(2);
   });
 
+  // F1 — every received frame refreshes liveness, not just `hb`. Deletion-proof:
+  // if the `refreshLiveness()` call in the domain-event listener were removed, the
+  // domain event below would not reset the silence timer and the watchdog would
+  // close/reopen the stream at the 80s tick, failing this test.
+  it('a domain SSE event refreshes liveness just like a heartbeat (AC #2)', () => {
+    const { wrapper } = createWrapper();
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0]!;
+    act(() => es.simulateOpen());
+
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s — under threshold
+    // A normal schema event (not `hb`) must count as liveness for an active stream.
+    act(() => es.simulateEvent('download_status_change', {
+      download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed',
+    }));
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s more, but reset
+
+    // Total 80s > threshold, yet the domain event reset the silence timer.
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(es.readyState).not.toBe(2);
+  });
+
   it('reopens a stale stream on a window "online" event before the next watchdog tick', () => {
     const { wrapper } = createWrapper();
     renderHook(() => useEventSource('key'), { wrapper });
@@ -2167,6 +2189,29 @@ describe('#1798 SSE liveness watchdog', () => {
     act(() => document.dispatchEvent(new Event('visibilitychange')));
 
     expect(MockEventSource.instances).toHaveLength(2);
+  });
+
+  // F2 — the visibilitychange handler only reconnects when the tab is visible.
+  // Deletion-proof: if the `visibilityState === 'visible'` guard were removed or
+  // inverted, a stale hidden tab would reconnect here and this test would fail.
+  it('does not reconnect a stale stream on visibilitychange while the tab is hidden', () => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es1 = MockEventSource.instances[0]!;
+      act(() => es1.simulateOpen());
+
+      act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1)); // stale, in a gap between ticks
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(MockEventSource.instances).toHaveLength(1);   // hidden → no reconnect
+      expect(es1.readyState).not.toBe(2);
+    } finally {
+      // Remove the own-property override so the jsdom prototype getter is restored.
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
   });
 
   it('does not churn a healthy stream on "online"/"visibilitychange"', () => {
