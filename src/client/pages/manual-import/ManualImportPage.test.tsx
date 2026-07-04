@@ -581,7 +581,7 @@ describe('ManualImportPage', () => {
 
   describe('import execution', () => {
     it('calls confirmImport with selected rows and copy mode', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -600,7 +600,7 @@ describe('ManualImportPage', () => {
     });
 
     it('sends move mode when user switches to Move', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -618,7 +618,7 @@ describe('ManualImportPage', () => {
     });
 
     it('passes metadata through from match (no redundant provider lookups)', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const bestMatch = {
         title: 'Book Title',
@@ -651,6 +651,7 @@ describe('ManualImportPage', () => {
       mockConfirmImport.mockResolvedValueOnce({
         accepted: 0,
         heldReview: [{ path: '/media/audiobooks/Author/Book Title', title: 'Book Title', reason: 'recording-review-required' }],
+        skipped: [], failed: [],
       });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
@@ -677,6 +678,7 @@ describe('ManualImportPage', () => {
       mockConfirmImport.mockResolvedValueOnce({
         accepted: 0,
         heldReview: [{ path: '/media/audiobooks/Author/Book Title', title: 'Book Title', reason: 'recording-review-required' }],
+        skipped: [], failed: [],
       });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
@@ -685,7 +687,7 @@ describe('ManualImportPage', () => {
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
       const panel = await screen.findByTestId('held-review-panel');
 
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       await userEvent.click(within(panel).getByRole('button', { name: /re-confirm and import/i }));
 
       await waitFor(() => {

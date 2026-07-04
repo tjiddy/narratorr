@@ -1,8 +1,8 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
-export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
-import type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem } from '../../../shared/schemas/library-scan.js';
+export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem, ImportResult, ImportSkippedItem, ImportFailedItem } from '../../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, DuplicateReason, ImportMode, ImportResult } from '../../../shared/schemas/library-scan.js';
 import type { RecordingVerdict } from '../../../shared/schemas/recording-verdict.js';
 
 export interface ImportConfirmItem {
@@ -22,12 +22,6 @@ export interface ImportConfirmItem {
 export interface ScanResult {
   discoveries: DiscoveredBook[];
   totalFolders: number;
-}
-
-export interface ImportResult {
-  accepted: number;
-  /** Items held back for recording review (#1711) — not enqueued; re-confirm with forceImport. */
-  heldReview: HeldReviewItem[];
 }
 
 export interface RescanResult {

@@ -243,6 +243,7 @@ describe('LibraryScanService', () => {
     findDuplicate: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   let mockMetadataService: {
     searchBooks: ReturnType<typeof vi.fn>;
@@ -281,6 +282,7 @@ describe('LibraryScanService', () => {
         authors: (data.authors ?? []).map((a, i) => ({ id: i + 1, name: a.name })),
       })),
       update: vi.fn().mockResolvedValue({ id: 1, title: 'Test', authors: [], narrators: [] }),
+      delete: vi.fn().mockResolvedValue(true),
     };
     mockMetadataService = {
       searchBooks: vi.fn().mockResolvedValue([]),
@@ -491,7 +493,7 @@ describe('LibraryScanService', () => {
         { path: '/audiobooks/Author/Title', title: 'Test', authorName: 'Author' },
       ], 'copy');
 
-      expect(result).toEqual({ accepted: 1, heldReview: [] });
+      expect(result).toEqual({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       expect(mockBookImportService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
         type: 'manual',
@@ -510,7 +512,7 @@ describe('LibraryScanService', () => {
         { path: '/a/c', title: 'Book B' },
       ]);
 
-      expect(result).toEqual({ accepted: 2, heldReview: [] });
+      expect(result).toEqual({ accepted: 2, heldReview: [], skipped: [], failed: [] });
       expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
     });
 
@@ -521,7 +523,13 @@ describe('LibraryScanService', () => {
         { path: '/a/b', title: 'Dup', authorName: 'Author' },
       ]);
 
-      expect(result).toEqual({ accepted: 0, heldReview: [] });
+      // #1822: the duplicate is now reported in the skipped bucket, not silently dropped.
+      expect(result).toEqual({
+        accepted: 0,
+        heldReview: [],
+        skipped: [{ path: '/a/b', title: 'Dup', reason: 'already-in-library', existingBookId: 1, existingTitle: 'Dup' }],
+        failed: [],
+      });
       expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
     });
 

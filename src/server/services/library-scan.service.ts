@@ -22,7 +22,7 @@ import type { ConnectorImportItem } from '../../core/connectors/index.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { parseFolderStructure } from '../utils/folder-parsing.js';
 import { normalizeTitleForDedup } from '../../shared/dedup.js';
-import type { DiscoveredBook, HeldReviewItem } from '../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, ImportResult } from '../../shared/schemas/library-scan.js';
 import { WireOnce } from './wire-helpers.js';
 
 
@@ -332,7 +332,7 @@ export class LibraryScanService {
     };
   }
 
-  async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{ accepted: number; heldReview: HeldReviewItem[] }> {
+  async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<ImportResult> {
     const { nudgeImportWorker } = this.wired.require();
     return confirmImportHelper(items, this.importDeps, mode, nudgeImportWorker);
   }

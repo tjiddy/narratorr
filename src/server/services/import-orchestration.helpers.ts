@@ -8,7 +8,7 @@ import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
-import type { HeldReviewItem } from '../../shared/schemas/library-scan.js';
+import type { HeldReviewItem, ImportResult, ImportSkippedItem, ImportFailedItem } from '../../shared/schemas/library-scan.js';
 import { resolveRecordingIdentity, deriveEditionLabel, type RecordingCandidate } from '../../core/utils/recording-identity.js';
 import { sanitizeEditionDiscriminator } from '../../core/utils/naming.js';
 import { normalizeProductionType } from '../../core/metadata/production-type.js';
@@ -20,14 +20,13 @@ import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscG
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { deleteManagedBookFiles } from '../utils/delete-managed-files.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { buildBookCreatePayload, type EnrichmentDeps } from './enrichment-orchestration.helpers.js';
+import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
+import { processConfirmItem } from './import-confirm-item.helpers.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
-import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { ManualImportJobPayload } from './import-adapters/types.js';
 import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 
@@ -448,134 +447,38 @@ async function copyDiscGroupToLibrary(
   return { targetPath, ...(editionLabel !== undefined && { editionLabel }) };
 }
 
-/** The matched ASIN to dedupe on (#1662): the top-level field, else the metadata's. */
-function resolveDedupeAsin(item: ImportConfirmItem): string | undefined {
-  return item.asin ?? item.metadata?.asin;
-}
-
-/**
- * Pre-copy recording-identity classification for a confirm item (#1711). Threads
- * candidate narrators + matched ASIN + duration into the three-way `findDuplicate`:
- *  - `same-recording` → `'skip'` (owned, plain not-accepted skip — NOT held).
- *  - `review`/no-signal → a `HeldReviewItem` (not copied, not enqueued).
- *  - `different-recording` (or `forceImport`) → `'proceed'`.
- */
-async function classifyConfirmItem(
-  item: ImportConfirmItem,
-  bookService: BookService,
-  log: FastifyBaseLogger,
-): Promise<'skip' | 'proceed' | HeldReviewItem> {
-  // Force contract (#1736), confirm-time half: `forceImport` means "bypass the confirm-time
-  // BIBLIOGRAPHIC dedup (skip/hold) and proceed to copy". It does NOT promise an overwrite — the
-  // copy-time on-disk collision fence in `resolveOccupiedTarget` is independent and still fails
-  // closed for an occupied target (never overwrites). The two agree: force gets you past confirm,
-  // but an ambiguous on-disk target is refused LOUDLY via the worker's refused terminal disposition
-  // (a structured `forced-import-refused` failure + placeholder cleanup), not silently swapped.
-  if (item.forceImport) return 'proceed';
-  const dedupeAsin = resolveDedupeAsin(item);
-  const resolution = await bookService.findDuplicate({
-    title: item.title,
-    ...(item.authorName ? { authors: [{ name: item.authorName }] } : {}),
-    ...(dedupeAsin !== undefined && { asin: dedupeAsin }),
-    ...(item.narrators !== undefined && { narrators: item.narrators }),
-    ...(item.metadata?.duration !== undefined && { duration: item.metadata.duration }),
-    // Production form (#1728): pass the normalized matched format so an
-    // abridged-vs-unabridged confirm with no usable duration holds for review.
-    ...(item.metadata?.formatType ? { productionType: normalizeProductionType(item.metadata.formatType) } : {}),
-  });
-  if (resolution.verdict === 'same-recording') {
-    log.debug({ title: item.title }, 'Skipping owned duplicate during import (same recording)');
-    return 'skip';
-  }
-  if (resolution.verdict === 'review') {
-    log.info({ title: item.title, existingBookId: resolution.book?.id }, 'Holding import item for recording review');
-    return {
-      path: item.path,
-      title: item.title,
-      reason: 'recording-review-required',
-      ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
-    };
-  }
-  return 'proceed';
-}
-
 export async function confirmImport(
   items: ImportConfirmItem[],
   deps: ImportPipelineDeps,
   mode?: ImportMode,
   nudgeWorker?: () => void,
-): Promise<{ accepted: number; heldReview: HeldReviewItem[] }> {
-  const { log, bookService, bookImportService, eventHistory } = deps;
+): Promise<ImportResult> {
+  const { log } = deps;
 
   log.info({ count: items.length, mode: mode ?? 'pointer' }, 'Accepting library import');
 
-  const accepted: Array<{ bookId: number; item: ImportConfirmItem }> = [];
+  let acceptedCount = 0;
   const heldReview: HeldReviewItem[] = [];
+  const skipped: ImportSkippedItem[] = [];
+  const failed: ImportFailedItem[] = [];
 
+  // Each item resolves to exactly one bucket (#1822) — a no-op import (all refused or
+  // errored) is a reported disposition, never a silent drop hidden behind a green toast.
   for (const item of items) {
-    try {
-      const classification = await classifyConfirmItem(item, bookService, log);
-      if (classification === 'skip') continue;
-      if (classification !== 'proceed') {
-        heldReview.push(classification);
-        continue;
-      }
-
-      log.debug(
-        {
-          title: item.title,
-          author: item.authorName,
-          hasMetadata: !!item.metadata,
-          asin: item.asin || item.metadata?.asin,
-        },
-        'Creating import placeholder',
-      );
-
-      const book = await bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
-
-      // Build the persisted payload — mode omitted for pointer mode
-      const payload: ManualImportJobPayload = { ...item };
-      if (mode) {
-        payload.mode = mode;
-      }
-
-      const enqueued = await bookImportService.enqueue({
-        bookId: book.id,
-        type: 'manual',
-        metadata: JSON.stringify(payload),
-      });
-
-      if ('error' in enqueued) {
-        // Rare: the placeholder bookId already has an active job. Skip this
-        // item from `accepted` so the caller's count reflects reality.
-        log.warn({ bookId: book.id, title: item.title }, 'Manual import skipped — active job already exists for book');
-        continue;
-      }
-
-      eventHistory.create({
-        bookId: book.id,
-        ...snapshotBookForEvent(book),
-        eventType: 'book_added',
-        source: 'manual',
-      }).catch(err => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
-
-      accepted.push({ bookId: book.id, item });
-    } catch (error: unknown) {
-      // Same-ASIN create-time race (#1711): the recording is already owned — a
-      // plain not-accepted skip (NOT held, NOT enqueued), never a hard failure.
-      if (error instanceof OwnedRecordingError) {
-        log.debug({ title: item.title, existingBookId: error.existingBookId }, 'Skipping owned duplicate during import (ASIN race)');
-        continue;
-      }
-      log.error({ error: serializeError(error), title: item.title }, 'Failed to create placeholder for import');
+    const outcome = await processConfirmItem(item, deps, mode);
+    switch (outcome.kind) {
+      case 'accepted': acceptedCount++; break;
+      case 'held': heldReview.push(outcome.held); break;
+      case 'skipped': skipped.push(outcome.skipped); break;
+      case 'failed': failed.push(outcome.failed); break;
     }
   }
 
-  log.info({ accepted: accepted.length, held: heldReview.length }, 'Import jobs created, nudging worker');
+  log.info({ accepted: acceptedCount, held: heldReview.length, skipped: skipped.length, failed: failed.length }, 'Import jobs created, nudging worker');
 
-  if (accepted.length > 0 && nudgeWorker) {
+  if (acceptedCount > 0 && nudgeWorker) {
     nudgeWorker();
   }
 
-  return { accepted: accepted.length, heldReview };
+  return { accepted: acceptedCount, heldReview, skipped, failed };
 }

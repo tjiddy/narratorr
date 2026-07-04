@@ -60,7 +60,7 @@ function createMockLogger(): FastifyBaseLogger {
 
 describe('confirmImport — import_jobs creation (#635)', () => {
   let deps: ImportPipelineDeps;
-  let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+  let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> };
   let mockBookImportService: { enqueue: ReturnType<typeof vi.fn> };
   let mockEventHistory: { create: ReturnType<typeof vi.fn> };
   let insertValues: ReturnType<typeof vi.fn>;
@@ -87,6 +87,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       create: vi.fn().mockImplementation(async (data: { title: string }) => ({
         id: 1, title: data.title, status: 'importing',
       })),
+      delete: vi.fn().mockResolvedValue(true),
     };
     let nextJobId = 100;
     mockBookImportService = {
@@ -126,7 +127,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    expect(result).toEqual({ accepted: 1, heldReview: [] });
+    expect(result).toEqual({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     expect(mockBookService.create).toHaveBeenCalledTimes(1);
     expect(mockBookImportService.enqueue).toHaveBeenCalledWith(expect.objectContaining({
       bookId: 42,
@@ -206,7 +207,14 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    expect(result).toEqual({ accepted: 0, heldReview: [] });
+    // #1822: the owned same-recording duplicate is now reported as a skip carrying the
+    // incumbent's id/title (previously discarded), not a silent drop.
+    expect(result).toEqual({
+      accepted: 0,
+      heldReview: [],
+      skipped: [{ path: '/a/b', title: 'Dup', reason: 'already-in-library', existingBookId: 99, existingTitle: 'Dup' }],
+      failed: [],
+    });
     expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
   });
 
@@ -266,7 +274,14 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     expect(result.accepted).toBe(1);
     expect(result.heldReview).toHaveLength(1);
     expect(result.heldReview[0]!.path).toBe('/a/held');
+    // #1822: the owned item lands in the skipped bucket carrying the incumbent.
+    expect(result.skipped).toEqual([
+      { path: '/a/owned', title: 'Owned', reason: 'already-in-library', existingBookId: 1, existingTitle: 'Owned' },
+    ]);
+    expect(result.failed).toEqual([]);
     expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(1);
+    // Conservation invariant (#1822): every confirmed item lands in exactly one bucket.
+    expect(result.accepted + result.heldReview.length + result.skipped.length + result.failed.length).toBe(3);
   });
 
   it('forwards the matched ASIN to findDuplicate, falling back to metadata.asin (#1662)', async () => {
@@ -338,7 +353,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     );
 
     expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
-    expect(result).toEqual({ accepted: 1, heldReview: [] });
+    expect(result).toEqual({ accepted: 1, heldReview: [], skipped: [], failed: [] });
   });
 
   // #1723 F8 — create-time ASIN race: bookService.create throws OwnedRecordingError
@@ -357,8 +372,14 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    // Absent from `accepted`, not held, no enqueue, no worker nudge.
-    expect(result).toEqual({ accepted: 0, heldReview: [] });
+    // #1822: reported as a skip (already-in-library) carrying the incumbent's id/title
+    // from the error — NOT a failure. Not accepted, not held, no enqueue, no nudge.
+    expect(result).toEqual({
+      accepted: 0,
+      heldReview: [],
+      skipped: [{ path: '/a/race', title: 'Owned Race', reason: 'already-in-library', existingBookId: 77, existingTitle: 'Owned Race' }],
+      failed: [],
+    });
     expect(mockBookImportService.enqueue).not.toHaveBeenCalled();
     expect(nudgeWorker).not.toHaveBeenCalled();
     // It is a quiet skip, not a hard failure — the error path is not taken.
@@ -388,6 +409,54 @@ describe('confirmImport — import_jobs creation (#635)', () => {
     );
   });
 
+  it('a generic create-time throw reports a user-facing failure — never the raw error/DB string (#1822)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'different-recording', book: null });
+    mockBookService.create.mockRejectedValueOnce(new TypeError('UNIQUE constraint failed: books.asin'));
+
+    const result = await confirmImport(
+      [{ path: '/fail', title: 'FailBook' }],
+      deps,
+      undefined,
+      nudgeWorker,
+    );
+
+    expect(result).toEqual({
+      accepted: 0,
+      heldReview: [],
+      skipped: [],
+      failed: [{ path: '/fail', title: 'FailBook', message: 'Import failed — see server logs for details.' }],
+    });
+    // The user-facing message must NOT leak the raw error / DB constraint text.
+    expect(result.failed[0]!.message).not.toContain('UNIQUE constraint');
+    expect(result.failed[0]!.message).not.toContain('books.asin');
+    // The create threw, so no placeholder exists to clean up.
+    expect(mockBookService.delete).not.toHaveBeenCalled();
+    expect(nudgeWorker).not.toHaveBeenCalled();
+  });
+
+  it('a post-create enqueue throw reports a failure AND deletes the orphaned placeholder (#1822)', async () => {
+    mockBookService.findDuplicate.mockResolvedValueOnce({ verdict: 'different-recording', book: null });
+    mockBookService.create.mockResolvedValueOnce({ id: 61, title: 'Orphan', status: 'importing' });
+    // A non-`active-job-exists` throw after the placeholder was created.
+    mockBookImportService.enqueue.mockRejectedValueOnce(new Error('enqueue exploded'));
+
+    const result = await confirmImport(
+      [{ path: '/orphan', title: 'Orphan' }],
+      deps,
+      'copy',
+      nudgeWorker,
+    );
+
+    expect(result.accepted).toBe(0);
+    expect(result.failed).toEqual([
+      { path: '/orphan', title: 'Orphan', message: 'Import failed — see server logs for details.' },
+    ]);
+    // The placeholder created before the throw is deleted — no orphaned `importing` row.
+    expect(mockBookService.delete).toHaveBeenCalledWith(61);
+    // Conservation invariant holds for the single-item batch.
+    expect(result.accepted + result.heldReview.length + result.skipped.length + result.failed.length).toBe(1);
+  });
+
   it('creates multiple import_jobs rows for multiple items', async () => {
     mockBookService.create
       .mockResolvedValueOnce({ id: 1, title: 'Book1', status: 'importing' })
@@ -403,7 +472,7 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    expect(result).toEqual({ accepted: 2, heldReview: [] });
+    expect(result).toEqual({ accepted: 2, heldReview: [], skipped: [], failed: [] });
     expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
     expect(nudgeWorker).toHaveBeenCalledTimes(1); // Nudge once, not per item
   });
@@ -426,8 +495,15 @@ describe('confirmImport — import_jobs creation (#635)', () => {
       nudgeWorker,
     );
 
-    // Only the non-conflict item is counted
-    expect(result).toEqual({ accepted: 1, heldReview: [] });
+    // #1822: the conflict item is reported as an already-importing skip (not a silent
+    // drop), and its orphaned placeholder is deleted so no `importing` row is stranded.
+    expect(result).toEqual({
+      accepted: 1,
+      heldReview: [],
+      skipped: [{ path: '/b', title: 'BookB', reason: 'already-importing' }],
+      failed: [],
+    });
+    expect(mockBookService.delete).toHaveBeenCalledWith(51);
     expect(mockBookImportService.enqueue).toHaveBeenCalledTimes(2);
     // Conflict surfaced as warn log including the title
     expect(deps.log.warn).toHaveBeenCalledWith(

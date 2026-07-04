@@ -140,7 +140,7 @@ describe('library-scan routes', () => {
   describe('POST /api/library/import/confirm', () => {
     it('returns import results', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 3, heldReview: [] });
+        .mockResolvedValue({ accepted: 3, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -181,7 +181,7 @@ describe('library-scan routes', () => {
 
     it('passes mode to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -201,7 +201,7 @@ describe('library-scan routes', () => {
 
     it('forwards narrators and seriesPosition to the service (#1028)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -226,7 +226,7 @@ describe('library-scan routes', () => {
 
     it('round-trips seriesPosition: 0 from request body to service (#1028)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -627,7 +627,7 @@ describe('library-scan routes', () => {
   describe('POST /api/library/import/confirm — forceImport field', () => {
     it('accepts items with forceImport: true and passes them to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -646,7 +646,7 @@ describe('library-scan routes', () => {
 
     it('accepts items without forceImport field (field is optional)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',

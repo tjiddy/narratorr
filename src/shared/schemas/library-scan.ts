@@ -81,13 +81,52 @@ export const heldReviewItemSchema = z.object({
 export type HeldReviewItem = z.infer<typeof heldReviewItemSchema>;
 
 /**
- * The confirm/import result (#1711). `accepted` counts enqueued imports;
- * `heldReview` carries the review-verdict items (empty array when nothing held).
- * Route status stays 200 — held items are a partial-success outcome, not errors.
+ * A confirm/import item that was NOT accepted because it is already accounted for
+ * (#1822). `already-in-library` = the recording is already owned (same-recording
+ * dedup or an ASIN-race create collision); `already-importing` = an active import
+ * job already exists for the incumbent. Reported to the UI so a no-op import is
+ * surfaced as an amber "already in your library" outcome, not a green success.
+ * `path` is the item identity (equals `importConfirmItemSchema.path`).
+ */
+export const importSkipReasonSchema = z.enum(['already-in-library', 'already-importing']);
+export type ImportSkipReason = z.infer<typeof importSkipReasonSchema>;
+
+export const importSkippedItemSchema = z.object({
+  path: z.string(),
+  title: z.string(),
+  reason: importSkipReasonSchema,
+  existingBookId: z.number().optional(),
+  existingTitle: z.string().optional(),
+});
+export type ImportSkippedItem = z.infer<typeof importSkippedItemSchema>;
+
+/**
+ * A confirm/import item that hard-failed at confirm time (#1822) — e.g. a DB error
+ * creating the placeholder. `message` is user-facing text (never a raw error/DB
+ * constraint dump); the precise error is in the server logs. Surfaced to the UI as
+ * a red failure so the user is not told a failed import succeeded.
+ */
+export const importFailedItemSchema = z.object({
+  path: z.string(),
+  title: z.string(),
+  message: z.string(),
+});
+export type ImportFailedItem = z.infer<typeof importFailedItemSchema>;
+
+/**
+ * The confirm/import result (#1711, #1822). `accepted` counts enqueued imports;
+ * `heldReview` carries the review-verdict items; `skipped` carries the
+ * already-owned/already-importing no-ops; `failed` carries confirm-time hard
+ * failures (all empty arrays when nothing of that kind occurred). The invariant
+ * `accepted + heldReview + skipped + failed === items.length` holds — every
+ * confirmed item lands in exactly one bucket. Route status stays 200: a partial
+ * (or entirely non-accepted) outcome is a reported disposition, not an HTTP error.
  */
 export const importResultSchema = z.object({
   accepted: z.number(),
   heldReview: z.array(heldReviewItemSchema),
+  skipped: z.array(importSkippedItemSchema),
+  failed: z.array(importFailedItemSchema),
 });
 export type ImportResult = z.infer<typeof importResultSchema>;
 

@@ -532,7 +532,7 @@ describe('LibraryImportPage (#133)', () => {
     it('edited metadata persists through import confirm call', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [] });
+      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
         results: [{ path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Match Title', authors: [{ name: 'Match Author' }], asin: 'ASIN1', coverUrl: 'http://cover.jpg' }, alternatives: [] }],
@@ -616,6 +616,7 @@ describe('LibraryImportPage (#133)', () => {
       mockApi.confirmImport!.mockResolvedValueOnce({
         accepted: 0,
         heldReview: [{ path: '/audiobooks/A/B1', title: 'Held Book', reason: 'recording-review-required', existingBookId: 7 }],
+        skipped: [], failed: [],
       });
 
       renderWithProviders(<LibraryImportPage />);
@@ -633,7 +634,7 @@ describe('LibraryImportPage (#133)', () => {
       const reconfirmBtn = within(panel).getByRole('button', { name: /re-confirm and import/i });
 
       // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
-      mockApi.confirmImport!.mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      mockApi.confirmImport!.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       await user.click(reconfirmBtn);
 
       await waitFor(() => {
@@ -838,7 +839,7 @@ describe('LibraryImportPage (#133)', () => {
     });
 
     it('Import button enabled after poll resolves with completed job', async () => {
-      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [] });
+      mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       // Completed match job — return a high-confidence result so the row is no longer pending.
       mockApi.getMatchJob!.mockResolvedValue({
         id: 'job-1', status: 'completed', total: 1, matched: 1,
