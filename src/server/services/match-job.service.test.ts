@@ -654,6 +654,74 @@ describe('MatchJobService', () => {
     });
   });
 
+  // #1821 — single-result filename path (uncapped): corroborate against runtime.
+  // A grossly-off duration demotes high → medium (Review); missing runtime or a
+  // within-tolerance runtime stays high. This is the exact path the Fablehaven
+  // mis-import travelled (a single wrong-book hit stamped high, never warned).
+  describe('#1821 single-result runtime corroboration (filename path)', () => {
+    it('Fablehaven repro — single 9h16m audio matched to a 13h27m record → medium + mismatch reason', async () => {
+      // 556min (9h16m) scanned vs 807min (13h27m) provider = 45% gap. No usable
+      // tags → tag pass skipped → filename-single branch. Before #1821 this was
+      // silently stamped high and written to the library as the wrong book.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 556 * 60, files: [] });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 807 }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // medium → the Review lane (mergeMatchIntoRow deselects a non-high row).
+      expect(result!.confidence).toBe('medium');
+      expect(result!.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
+    });
+
+    it('single result within runtime tolerance → high (no regression to correct matches)', async () => {
+      // 600min scanned vs 605min provider → under the strict 5% band → verified.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 600 * 60, files: [] });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 605 }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.confidence).toBe('high');
+      expect(result!.reason).toBeUndefined();
+    });
+
+    it('single result with NO scanned duration → high (uncapped path, absent data does not demote)', async () => {
+      // Audio scan yields no duration → nothing to disprove the single hit → high.
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 0, files: [] });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 807 }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.confidence).toBe('high');
+      expect(result!.reason).toBeUndefined();
+    });
+
+    it('single result with candidate missing provider duration → high (absent data does not demote)', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 556 * 60, files: [] });
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+      ]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.confidence).toBe('high');
+      expect(result!.reason).toBeUndefined();
+    });
+  });
+
   describe('search query construction', () => {
     it('uses "title author" query with structured options when author is provided', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -1701,6 +1769,10 @@ describe('MatchJobService', () => {
 
     describe('reason NOT populated for high/none confidence', () => {
       it('single result with high confidence → reason is undefined', async () => {
+        // No scanned duration → nothing to disprove the single hit, so #1821's
+        // runtime corroboration leaves it high (explicit null so this doesn't
+        // inherit a prior test's leaked scan-duration mock).
+        (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
         const meta = makeBookMetadata({ providerId: 'asin-123' });
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
         (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B123', duration: 600 });
@@ -3033,6 +3105,42 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBeUndefined();
         });
 
+        it('#1821 — single-result via ASIN kill-shot (high-cap) + duration MISMATCH → medium + duration-specific reason', async () => {
+          // Exact-ASIN single hit with a grossly-wrong runtime (556min scan vs
+          // 807min record — the Fablehaven numbers). maxConfidence='high' so the
+          // attempt cap does NOT clamp; the demotion comes from the helper itself.
+          // An ASIN copied from a sibling is not absolute truth — runtime warns.
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Anything', 'Anyone', { tagAsin: 'B07KILLSHT', totalDuration: 556 * 60 }),
+          );
+          vi.mocked(metadataService.getBook).mockResolvedValue(
+            makeBookMetadata({ title: 'Real Book Title', providerId: 'p1', asin: 'B07KILLSHT', duration: 807 }),
+          );
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('medium');
+          expect(result!.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
+        });
+
+        it('#1821 — single-result via ASIN kill-shot (high-cap) + NO scanned duration → high (absent data does not demote)', async () => {
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Anything', 'Anyone', { tagAsin: 'B07KILLSHT', totalDuration: 0 }),
+          );
+          vi.mocked(metadataService.getBook).mockResolvedValue(
+            makeBookMetadata({ title: 'Real Book Title', providerId: 'p1', asin: 'B07KILLSHT', duration: 807 }),
+          );
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
+        });
+
         it('#1266 AC3 — multi-result, duration verifies top result: cap bypassed, high with no reason', async () => {
           // Stripped attempt wins, multiple results, duration matches top.duration.
           // #1266 — duration verification corroborates the match, so the medium cap
@@ -3175,10 +3283,12 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBe(CAPPED_REASON);
         });
 
-        it('single-result + strip cap + duration MISMATCH → medium + capped reason', async () => {
-          // Scanned 600min vs candidate 900min → 50% off → not verified → cap
-          // applies. Single-result branch supplies the generic cap reason (the
-          // duration-mismatch text only originates from the multi-result path).
+        it('single-result + strip cap + duration MISMATCH → medium + duration-specific reason', async () => {
+          // Scanned 600min vs candidate 900min → 50% off → not verified. #1821 —
+          // the single-result branch now supplies the duration-specific mismatch
+          // reason (via resolveSingleResultConfidence), which survives the strip
+          // cap (applyAttemptCap preserves a supplied durationReason). More
+          // informative than the old generic CAPPED_REASON.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
           );
@@ -3194,7 +3304,7 @@ describe('MatchJobService', () => {
 
           const result = service.getJob(id)!.results[0];
           expect(result!.confidence).toBe('medium');
-          expect(result!.reason).toBe(CAPPED_REASON);
+          expect(result!.reason).toBe('Duration mismatch — scanned 10.0hrs vs expected 15.0hrs');
         });
 
         it('multi-result + strip cap + duration MISMATCH → medium + duration-mismatch reason', async () => {

@@ -25,6 +25,7 @@ import {
   rankResultsCleaned,
   rankResults,
   resolveConfidenceFromDuration,
+  resolveSingleResultConfidence,
   parsePublishedYear,
   tagTitleScore,
   type NarratorCapContext,
@@ -626,6 +627,64 @@ describe('isDurationVerified', () => {
   it('returns false outside relaxed band even when score >= combined gate', () => {
     // duration 720 vs 600 → distance 20% — over relaxed 15%
     expect(isDurationVerified(makeBook({ duration: 600 }), 720, 0.99)).toBe(false);
+  });
+});
+
+// ============================================================================
+// resolveSingleResultConfidence (#1821) — RAW single-result contract, no cap
+// ============================================================================
+
+describe('resolveSingleResultConfidence', () => {
+  it('both present + outside band → medium with mismatch reason', () => {
+    // scanned 556min (9h16m) vs candidate 807min (13h27m) = 45% off — the Fablehaven case
+    const result = resolveSingleResultConfidence(makeBook({ duration: 807 }), 556, 0.9);
+    expect(result.confidence).toBe('medium');
+    expect(result.reason).toBe('Duration mismatch — scanned 9.3hrs vs expected 13.4hrs');
+  });
+
+  it('both present + within band → high, no reason', () => {
+    // 605 vs 600 → under strict 5%
+    const result = resolveSingleResultConfidence(makeBook({ duration: 600 }), 605, 0.85);
+    expect(result.confidence).toBe('high');
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('scanned duration missing → high, no reason (absent data does not demote)', () => {
+    const result = resolveSingleResultConfidence(makeBook({ duration: 600 }), undefined, 0.9);
+    expect(result.confidence).toBe('high');
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('scanned duration zero → high, no reason', () => {
+    const result = resolveSingleResultConfidence(makeBook({ duration: 600 }), 0, 0.9);
+    expect(result.confidence).toBe('high');
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('candidate meta.duration missing → high, no reason', () => {
+    const result = resolveSingleResultConfidence(makeBook(), 600, 0.9);
+    expect(result.confidence).toBe('high');
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('candidate meta.duration zero → high, no reason', () => {
+    const result = resolveSingleResultConfidence(makeBook({ duration: 0 }), 600, 0.9);
+    expect(result.confidence).toBe('high');
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('boundary: 10% distance with score < gate → medium (strict band applies)', () => {
+    // 660 vs 600 = 10% — outside strict 5%, score below gate → not verified → demote
+    const result = resolveSingleResultConfidence(makeBook({ duration: 660 }), 600, 0.94);
+    expect(result.confidence).toBe('medium');
+    expect(result.reason).toBe('Duration mismatch — scanned 10.0hrs vs expected 11.0hrs');
+  });
+
+  it('boundary: 10% distance with score >= gate → high (relaxed 5%→15% band)', () => {
+    // 660 vs 600 = 10% — inside relaxed 15% once the score clears the 0.95 gate
+    const result = resolveSingleResultConfidence(makeBook({ duration: 660 }), 600, 0.96);
+    expect(result.confidence).toBe('high');
+    expect(result.reason).toBeUndefined();
   });
 });
 

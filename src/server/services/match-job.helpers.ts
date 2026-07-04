@@ -170,6 +170,34 @@ export function resolveConfidenceFromDuration(
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
 }
 
+/**
+ * Single-candidate RAW confidence (#1821): `high` unless the scanned runtime and
+ * the candidate runtime are BOTH present and disagree (then `medium`/Review with
+ * the same mismatch reason the multi-result path emits). Reuses the exact band in
+ * `isDurationVerified` — no new threshold. A MISSING runtime on either side stays
+ * `high` (absent data must not demote; only a positive disagreement warns).
+ *
+ * This is the RAW value. On the filename-single path it becomes the final
+ * `MatchResult.confidence` directly; on the tag-single path it is still subject to
+ * the pre-existing attempt cap, which can clamp a raw `high` to final `medium` for
+ * a `maxConfidence: 'medium'` attempt. The helper only ever demotes an otherwise-
+ * `high` single; it never raises a capped attempt's ceiling.
+ */
+export function resolveSingleResultConfidence(
+  meta: BookMetadata,
+  scannedDuration: number | undefined,
+  score: number,
+): DurationConfidenceResult {
+  const bothPresent = !!scannedDuration && scannedDuration > 0 && !!meta.duration && meta.duration > 0;
+  if (bothPresent && !isDurationVerified(meta, scannedDuration, score)) {
+    return {
+      confidence: 'medium',
+      reason: `Duration mismatch — scanned ${formatHours(scannedDuration)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
+    };
+  }
+  return { confidence: 'high' };
+}
+
 export interface TagQuery {
   title: string;
   author: string;
