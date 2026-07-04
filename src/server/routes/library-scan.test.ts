@@ -140,7 +140,7 @@ describe('library-scan routes', () => {
   describe('POST /api/library/import/confirm', () => {
     it('returns import results', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 3, heldReview: [] });
+        .mockResolvedValue({ accepted: 3, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -157,6 +157,37 @@ describe('library-scan routes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.accepted).toBe(3);
+    });
+
+    it('passes the widened skipped/failed arrays through the HTTP response un-stripped (#1822 F2)', async () => {
+      const skipped = [
+        { path: '/a/b', title: 'Owned', reason: 'already-in-library', existingBookId: 7, existingTitle: 'Owned' },
+        { path: '/a/c', title: 'Busy', reason: 'already-importing' },
+      ];
+      const failed = [{ path: '/a/d', title: 'Broken', message: 'Import failed - see server logs for details.' }];
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped, failed });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: {
+          books: [
+            { path: '/a/a', title: 'New' },
+            { path: '/a/b', title: 'Owned' },
+            { path: '/a/c', title: 'Busy' },
+            { path: '/a/d', title: 'Broken' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      // The confirm route validates the request body only (no response schema); assert the
+      // new buckets survive serialization so a future response-strip would fail loudly here.
+      expect(body.accepted).toBe(1);
+      expect(body.skipped).toEqual(skipped);
+      expect(body.failed).toEqual(failed);
     });
 
     it('returns 400 when books array is missing', async () => {
@@ -181,7 +212,7 @@ describe('library-scan routes', () => {
 
     it('passes mode to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -201,7 +232,7 @@ describe('library-scan routes', () => {
 
     it('forwards narrators and seriesPosition to the service (#1028)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -226,7 +257,7 @@ describe('library-scan routes', () => {
 
     it('round-trips seriesPosition: 0 from request body to service (#1028)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -627,7 +658,7 @@ describe('library-scan routes', () => {
   describe('POST /api/library/import/confirm — forceImport field', () => {
     it('accepts items with forceImport: true and passes them to confirmImport', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -646,7 +677,7 @@ describe('library-scan routes', () => {
 
     it('accepts items without forceImport field (field is optional)', async () => {
       (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
-        .mockResolvedValue({ accepted: 1, heldReview: [] });
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const res = await app.inject({
         method: 'POST',

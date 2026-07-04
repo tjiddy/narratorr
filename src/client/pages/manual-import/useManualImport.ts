@@ -10,6 +10,7 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
+import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
 
 export type Step = 'path' | 'review';
 
@@ -118,19 +119,36 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       api.confirmImport(items, confirmMode),
     onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      toast.success(`${result.accepted} book${result.accepted !== 1 ? 's' : ''} queued for import`);
-      // Partial success (#1711/#1732): some items were held for recording review.
-      // Keep the user on the page with a recovery panel instead of navigating away
-      // (the old "re-confirm from Library Import" path was a dead end — manual
-      // sources live outside the library root Library Import scans). Snapshot the
-      // confirm-attempt mode so a held Move never silently re-confirms as Copy.
+
+      // Held items (#1711/#1732): keep the user on the page with a recovery panel
+      // instead of navigating away (the old "re-confirm from Library Import" path was
+      // a dead end — manual sources live outside the library root Library Import
+      // scans). Snapshot the confirm-attempt mode so a held Move never silently
+      // re-confirms as Copy. Surfaced separately from the outcome toast below so a
+      // held + skipped/failed batch is never swallowed by an early return (#1822).
       if (result.heldReview.length > 0) {
         captureHeld(result.heldReview, variables.mode);
         toast.warning(`${result.heldReview.length} held for recording review`);
+      } else {
+        clearHeld();
+      }
+
+      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
+      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
+      // never a green "0 queued" lie.
+      const outcome = buildOutcomeToast(result, 'queued for import');
+      if (outcome) toast[outcome.severity](outcome.message);
+
+      // Navigate only when everything landed as accepted; otherwise stay and deselect
+      // the accepted rows so a re-submit can't re-send them (#1822).
+      if (isCleanImport(result)) {
+        navigate('/library');
         return;
       }
-      clearHeld();
-      navigate('/library');
+      const acceptedPaths = acceptedItemPaths(variables.items, result);
+      if (acceptedPaths.size > 0) {
+        setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
+      }
     },
     onError: (error: Error) => {
       toast.error(`Import failed: ${getErrorMessage(error)}`);

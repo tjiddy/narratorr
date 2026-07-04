@@ -377,7 +377,7 @@ describe('useManualImport', () => {
 
   it('select-all then import sends forceImport: true for duplicate rows (intended behavior per spec)', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 3, heldReview: [] });
+    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 3, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
     act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -428,7 +428,7 @@ describe('useManualImport', () => {
 
   it('handleImport sends selected rows to API and navigates on success', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 2, heldReview: [] });
+    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 2, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useManualImport(), {
       wrapper: createWrapper(),
@@ -465,6 +465,7 @@ describe('useManualImport', () => {
     vi.mocked(api.confirmImport).mockResolvedValue({
       accepted: 1,
       heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+      skipped: [], failed: [],
     });
 
     const { result } = renderHook(() => useManualImport(), {
@@ -483,8 +484,9 @@ describe('useManualImport', () => {
     await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
     expect(result.current.state.heldReview[0]!.path).toBe('/audiobooks/Book A');
     expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
-    // ...the success toast for accepted books is retained...
-    expect(toast.success).toHaveBeenCalledWith('1 book queued for import');
+    // ...a held outcome is no longer a green success (#1822): the accepted item queued
+    // but the batch is not fully clean, so no green toast fires...
+    expect(toast.success).not.toHaveBeenCalled();
     // ...and the user is NOT navigated away (the old dead-end behavior).
     expect(mockNavigate).not.toHaveBeenCalled();
   });
@@ -494,6 +496,7 @@ describe('useManualImport', () => {
     vi.mocked(api.confirmImport).mockResolvedValue({
       accepted: 0,
       heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+      skipped: [], failed: [],
     });
 
     const { result } = renderHook(() => useManualImport(), {
@@ -525,6 +528,7 @@ describe('useManualImport', () => {
     vi.mocked(api.confirmImport).mockResolvedValue({
       accepted: 0,
       heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+      skipped: [], failed: [],
     });
 
     const { result } = renderHook(() => useManualImport(), {
@@ -555,8 +559,9 @@ describe('useManualImport', () => {
       .mockResolvedValueOnce({
         accepted: 0,
         heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+        skipped: [], failed: [],
       })
-      .mockResolvedValueOnce({ accepted: 1, heldReview: [] });
+      .mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useManualImport(), {
       wrapper: createWrapper(),
@@ -581,6 +586,7 @@ describe('useManualImport', () => {
     vi.mocked(api.confirmImport).mockResolvedValue({
       accepted: 0,
       heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+      skipped: [], failed: [],
     });
 
     const { result } = renderHook(() => useManualImport(), {
@@ -598,6 +604,127 @@ describe('useManualImport', () => {
 
     expect(result.current.state.heldReview).toHaveLength(0);
     expect(result.current.state.step).toBe('path');
+  });
+
+  it('all-skipped batch shows amber (no green, no navigate) naming the reason (#1822)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [],
+      skipped: [
+        { path: '/audiobooks/Book A', title: 'Book A', reason: 'already-in-library', existingBookId: 3, existingTitle: 'Book A' },
+        { path: '/audiobooks/Book B', title: 'Book B', reason: 'already-in-library' },
+      ],
+      failed: [],
+    });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledWith('2 already in your library');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('single-skip batch names the incumbent title (#1822)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [],
+      skipped: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'already-in-library', existingBookId: 3, existingTitle: 'Fablehaven' }],
+      failed: [],
+    });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+    expect(toast.warning).toHaveBeenCalledWith("already in your library as 'Fablehaven'");
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('all-failed batch shows red (no green, no navigate) (#1822)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [],
+      skipped: [],
+      failed: [{ path: '/audiobooks/Book A', title: 'Book A', message: 'Import failed — see server logs for details.' }],
+    });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+    expect(toast.error).toHaveBeenCalledWith('1 failed');
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('held + failed batch surfaces the failure (regression pin for the early-return swallow) (#1822)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 0,
+      heldReview: [{ path: '/audiobooks/Book A', title: 'Book A', reason: 'recording-review-required' }],
+      skipped: [],
+      failed: [{ path: '/audiobooks/Book B', title: 'Book B', message: 'Import failed — see server logs for details.' }],
+    });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+    // Held is surfaced via its panel/warning AND the failure is still shown — not
+    // swallowed by an early return.
+    await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
+    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
+    expect(toast.error).toHaveBeenCalledWith('1 failed');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('partial success (accepted + skipped) stays on the page and deselects the accepted rows (#1822)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockResolvedValue({
+      accepted: 1,
+      heldReview: [],
+      skipped: [{ path: '/audiobooks/Book B', title: 'Book B', reason: 'already-in-library' }],
+      failed: [],
+    });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+    // Both rows start selected (non-duplicate).
+    expect(result.current.counts.selectedCount).toBe(2);
+
+    await act(async () => { result.current.actions.handleImport(); });
+    await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+    expect(toast.warning).toHaveBeenCalledWith('1 queued for import · 1 already in your library');
+    expect(mockNavigate).not.toHaveBeenCalled();
+    // The accepted row (Book A) is deselected so a re-submit can't re-send it; the
+    // skipped row (Book B) is left as-is.
+    const bookA = result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')!;
+    expect(bookA.selected).toBe(false);
   });
 
   it('handleImport shows error toast on failure', async () => {
@@ -675,7 +802,7 @@ describe('useManualImport', () => {
 
     it('handleImport after edit forwards metadata.narrators to ImportConfirmItem', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -702,7 +829,7 @@ describe('useManualImport', () => {
 
     it('handleImport after edit forwards coverUrl to ImportConfirmItem', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -763,7 +890,7 @@ describe('useManualImport', () => {
 
     it('handleImport forwards edited.narrators and seriesPosition (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -796,7 +923,7 @@ describe('useManualImport', () => {
         ],
         totalFolders: 1,
       });
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -835,7 +962,7 @@ describe('useManualImport', () => {
             },
           ],
         });
-        vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+        vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
         const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
         act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -858,7 +985,7 @@ describe('useManualImport', () => {
 
     it('handleImport forwards seriesPosition: 0 (regression guard against falsy drop) (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -884,7 +1011,7 @@ describe('useManualImport', () => {
 
     it('handleImport does not forward narrators when empty array (#1028)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -1171,7 +1298,7 @@ describe('useManualImport', () => {
 
     it('handleImport sends forceImport: true for selected duplicate rows', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
@@ -1191,7 +1318,7 @@ describe('useManualImport', () => {
 
     it('handleImport omits forceImport for non-duplicate selected rows', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [] });
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });

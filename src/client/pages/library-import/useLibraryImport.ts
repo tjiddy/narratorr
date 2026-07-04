@@ -11,6 +11,7 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
+import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
 
 export type Step = 'scanning' | 'review' | 'error';
 
@@ -122,18 +123,35 @@ export function useLibraryImport() {
 
   const registerMutation = useMutation({
     mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items, undefined),
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      toast.success(`${result.accepted} book${result.accepted !== 1 ? 's' : ''} registered`);
-      // Partial success (#1711): some items were held for recording review — keep
-      // the user on the page so they can re-confirm them, instead of navigating.
+
+      // Held items (#1711): keep the user on the page so they can re-confirm them,
+      // instead of navigating. Surfaced separately from the outcome toast below so a
+      // held + skipped/failed batch is never swallowed by an early return (#1822).
       if (result.heldReview.length > 0) {
         captureHeld(result.heldReview, undefined);
         toast.warning(`${result.heldReview.length} held for recording review`);
+      } else {
+        clearHeld();
+      }
+
+      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
+      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
+      // never a green "0 registered" lie.
+      const outcome = buildOutcomeToast(result, 'registered');
+      if (outcome) toast[outcome.severity](outcome.message);
+
+      // Navigate only when everything landed as accepted; otherwise stay and deselect
+      // the accepted rows so a re-submit can't re-send them (#1822).
+      if (isCleanImport(result)) {
+        navigate('/library');
         return;
       }
-      clearHeld();
-      navigate('/library');
+      const acceptedPaths = acceptedItemPaths(variables, result);
+      if (acceptedPaths.size > 0) {
+        setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
+      }
     },
     onError: (error: Error) => {
       toast.error(`Registration failed: ${getErrorMessage(error)}`);
