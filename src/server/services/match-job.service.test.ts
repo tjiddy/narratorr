@@ -3734,6 +3734,30 @@ describe('MatchJobService', () => {
       );
     });
 
+    it('#1652 (item 5) / #1821 (AC9): the filename-single branch logs durationVerified TRUE when the scanned runtime corroborates the edition', async () => {
+      // No tagTitle/tagAuthor → Pass 1 falls through; Pass 2 single result is the
+      // filename-derived high. #1821 wired the single-result branch to the scanned
+      // runtime: the edition's 443min matches the 443min scan → isDurationVerified
+      // === true, so the cap context carries durationVerified: true (not the old
+      // hardcoded false). The mismatching narrator then demotes high → medium. This
+      // is the true-case guard for AC9 — it FAILS if line ...service.ts:283 reverts
+      // capCtx.durationVerified to a hardcoded false.
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
+      );
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], duration: 443, asin: 'B002V1BVK4' }),
+      ]);
+
+      const result = await runSingle();
+      expect(result.confidence).toBe('medium');
+      expect(result.reason).toContain('Narrator mismatch');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ matchSource: 'filename-single', durationVerified: true }),
+        expect.stringContaining(CAP_LOG),
+      );
+    });
+
     it('#1652 (item 5): the filename duration-resolved multi-result branch logs matchSource "filename-duration-resolved" with durationVerified true', async () => {
       // No tagTitle/tagAuthor → Pass 1 falls through. Pass 2 returns MULTIPLE
       // results; the top edition's 443min runtime matches the 443min scan, so
