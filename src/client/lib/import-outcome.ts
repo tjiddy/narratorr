@@ -14,12 +14,27 @@ export function isCleanImport(result: ImportResult): boolean {
   return result.heldReview.length === 0 && result.skipped.length === 0 && result.failed.length === 0;
 }
 
-/** Human phrase for the skipped bucket — names the incumbent title when a single item carries one. */
+/**
+ * Human phrase for the skipped bucket, grouped by `reason` (#1822) so an
+ * `already-importing` conflict is named as such instead of being mislabelled as
+ * already-in-library. Names the incumbent title when a single owned item carries one.
+ * Mixed-reason batches join their sub-phrases (e.g. "1 already in your library · 1
+ * already being imported").
+ */
 export function importSkipSummary(skipped: ImportResult['skipped']): string {
-  if (skipped.length === 1 && skipped[0]!.existingTitle) {
-    return `already in your library as '${skipped[0]!.existingTitle}'`;
+  const owned = skipped.filter(s => s.reason === 'already-in-library');
+  const importing = skipped.filter(s => s.reason === 'already-importing');
+
+  const parts: string[] = [];
+  if (owned.length === 1 && owned[0]!.existingTitle) {
+    parts.push(`already in your library as '${owned[0]!.existingTitle}'`);
+  } else if (owned.length > 0) {
+    parts.push(`${owned.length} already in your library`);
   }
-  return `${skipped.length} already in your library`;
+  if (importing.length > 0) {
+    parts.push(`${importing.length} already being imported`);
+  }
+  return parts.join(' · ');
 }
 
 export interface OutcomeToast {

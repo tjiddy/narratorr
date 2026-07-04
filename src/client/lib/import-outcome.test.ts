@@ -19,12 +19,27 @@ describe('importSkipSummary (#1822)', () => {
       .toBe("already in your library as 'Fablehaven'");
   });
 
-  it('uses the count form for multiple skips or a single skip without a title', () => {
+  it('uses the count form for multiple owned skips or a single owned skip without a title', () => {
     expect(importSkipSummary([{ path: '/a', title: 'A', reason: 'already-in-library' }])).toBe('1 already in your library');
     expect(importSkipSummary([
       { path: '/a', title: 'A', reason: 'already-in-library' },
-      { path: '/b', title: 'B', reason: 'already-importing' },
+      { path: '/b', title: 'B', reason: 'already-in-library' },
     ])).toBe('2 already in your library');
+  });
+
+  it('names already-importing skips distinctly from already-in-library (#1822 F1)', () => {
+    expect(importSkipSummary([{ path: '/a', title: 'A', reason: 'already-importing' }])).toBe('1 already being imported');
+    expect(importSkipSummary([
+      { path: '/a', title: 'A', reason: 'already-importing' },
+      { path: '/b', title: 'B', reason: 'already-importing' },
+    ])).toBe('2 already being imported');
+  });
+
+  it('joins mixed-reason batches into per-reason sub-phrases (#1822 F1)', () => {
+    expect(importSkipSummary([
+      { path: '/a', title: 'A', reason: 'already-in-library' },
+      { path: '/b', title: 'B', reason: 'already-importing' },
+    ])).toBe('1 already in your library · 1 already being imported');
   });
 });
 
