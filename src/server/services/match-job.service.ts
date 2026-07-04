@@ -12,7 +12,7 @@ import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagTitleScore, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 
 
@@ -274,10 +274,13 @@ class MatchJob {
         }
 
         if (scored.length === 1) {
-          this.log.debug({ path: book.path, title: topScored.meta.title, score: topScored.score.toFixed(2) }, 'Single result — high confidence');
-          resolved = { path: book.path, confidence: 'high', bestMatch: topScored.meta, alternatives: [] };
-          // No duration check fires on the single-result filename branch.
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: false };
+          // #1821 — corroborate the single result against the scanned runtime: a
+          // grossly-off duration demotes high → medium (Review); a MISSING runtime
+          // stays high (absent data does not demote). `durationVerified` is derived
+          // independently (a missing-runtime single is high-but-unverified, NOT
+          // disproven) — never inferred from the resolved confidence.
+          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, duration, topScored.score) };
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, duration, topScored.score) };
         } else {
           // Multiple results — use duration to determine confidence (not to override winner)
           const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
@@ -357,7 +360,12 @@ class MatchJob {
       capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason);
 
     const single = scored.length === 1;
-    const { confidence, reason } = single ? { confidence: 'high' as Confidence } : resolveConfidenceFromDuration(scored, duration);
+    // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
+    // the scanned runtime. The raw value still flows through the attempt `cap()`
+    // below: a mismatch → raw `medium` survives (durationVerified false, so
+    // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
+    // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
+    const { confidence, reason } = single ? resolveSingleResultConfidence(top.meta, duration, top.score) : resolveConfidenceFromDuration(scored, duration);
     const result: MatchResult = { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
