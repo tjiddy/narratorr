@@ -194,4 +194,29 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
     // filtered state from default (which would show all books).
     expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
   });
+
+  it('restores keyed fixture ordering for title:asc from URL params (id=2 before id=1)', async () => {
+    // Unfiltered route so both books render — makes the keyed `(sortField,
+    // sortDirection)` fixture order observable. `buildOrderBy` strips the
+    // leading article ("The Way of Kings" → "Way of Kings"), so "Project Hail
+    // Mary" sorts ahead of it under title:asc; MOCK_BOOKS_ORDER encodes that as
+    // [2, 1]. Removing the applyServerOrder call would leave input order
+    // (id=1 first) and fail this assertion.
+    renderWithRoutes('/library?sortField=title&sortDirection=asc');
+
+    await waitFor(() => {
+      expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Confirm the restored params reached the API boundary.
+    expect(vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0]).toMatchObject({
+      sortField: 'title',
+      sortDirection: 'asc',
+    });
+
+    const cards = screen.getAllByRole('link').filter(el => el.getAttribute('tabindex') === '0');
+    const titles = cards.map(card => card.querySelector('h3')?.textContent);
+    expect(titles).toEqual(['Project Hail Mary', 'The Way of Kings']);
+  });
 });
