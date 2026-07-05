@@ -1,10 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, configure } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsLayout } from '@/pages/settings';
+
+// Flake-proofing (not masking a bug): each test here renders the FULL SettingsLayout, and every
+// naming/edition preview is a synchronous useMemo in NamingSettingsSection — the DOM is correct the
+// instant the render is scheduled (a single test passes in ~270ms). Under full-suite CPU
+// saturation, though, 26 back-to-back heavy renders can push an initial getSettings→mount→waitFor
+// chain past RTL's 1000ms default poll budget, starving a waitFor whose target has, in fact,
+// already rendered. Both ceilings must rise together: raising the poll budget alone would collide
+// with the 5000ms per-test default (the wait would outlive the test). A genuine render regression
+// still fails fast — well inside 4s per assertion — so the extra headroom only ever spends
+// wall-clock on real load, never on the happy path.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 20000 });
 
 // Mock api
 vi.mock('@/lib/api', () => ({
