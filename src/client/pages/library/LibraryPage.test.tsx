@@ -97,11 +97,45 @@ const mockBooks = [
 ];
 
 import type { BookWithAuthor, LibraryBookListItem, BookListParams } from '@/lib/api';
-import { simulateStatusFilter, simulateServerSort } from '@/__tests__/library-server-sim';
-import type { StatusFilter, SortField, SortDirection } from './helpers';
+import { simulateStatusFilter } from '@/__tests__/library-server-sim';
+import type { StatusFilter } from './helpers';
 
-/** Helper: mock both getBooks and getBookStats consistently.
- * getBooks filters/sorts by params to simulate server-side behavior. */
+// Hand-authored server order for `mockBooks`, keyed by `${sortField}:${sortDirection}`.
+// Values are book ids in the order `BookListService.buildOrderBy`
+// (src/server/services/book-list.service.ts) produces for these four books —
+// the tests assert against this fixed order instead of re-deriving the server's
+// comparator. `createdAt` desc is the app default (useLibraryFilters); `title`
+// asc strips the leading article ("The Way of Kings" → "Way of Kings"), matching
+// the server contract covered in book-list.service.test.ts. Sort modes the grid
+// coerces to `createdAt` desc (quality/size/format/narrator/series) fall through
+// to the default below, so no key ever resolves to undefined.
+const MOCK_BOOKS_ORDER: Record<string, number[]> = {
+  'createdAt:desc': [4, 3, 2, 1],
+  'createdAt:asc': [1, 2, 3, 4],
+  'title:asc': [2, 3, 1, 4],
+  'title:desc': [4, 1, 3, 2],
+};
+const DEFAULT_ORDER_KEY = 'createdAt:desc';
+
+/** Look up the pre-ordered server order for a sort key and reorder `books` to match.
+ * Books not covered by the fixture keep their input order at the end (order-preserving,
+ * so it composes with the retained status/search filters). Returns a fresh array. */
+function applyServerOrder(
+  books: LibraryBookListItem[],
+  sortField?: string,
+  sortDirection?: string,
+): LibraryBookListItem[] {
+  const key = `${sortField ?? 'createdAt'}:${sortDirection ?? 'desc'}`;
+  const idOrder = MOCK_BOOKS_ORDER[key] ?? MOCK_BOOKS_ORDER[DEFAULT_ORDER_KEY]!;
+  const byId = new Map(books.map(b => [b.id, b]));
+  const ordered = idOrder.map(id => byId.get(id)).filter((b): b is LibraryBookListItem => b !== undefined);
+  const covered = new Set(idOrder);
+  return [...ordered, ...books.filter(b => !covered.has(b.id))];
+}
+
+/** Helper: mock both listLibraryBooks and getBookStats consistently.
+ * listLibraryBooks filters by params and returns each sort mode in the
+ * hand-authored server order (via applyServerOrder), a fresh array per call. */
 function mockLibraryData(books: LibraryBookListItem[]) {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = books;
@@ -128,9 +162,7 @@ function mockLibraryData(books: LibraryBookListItem[]) {
       const q = params.narrator.toLowerCase();
       filtered = filtered.filter(b => b.narrators.some(n => n.name.toLowerCase() === q));
     }
-    if (params?.sortField) {
-      filtered = simulateServerSort(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
-    }
+    filtered = applyServerOrder(filtered, params?.sortField, params?.sortDirection);
     return Promise.resolve({ data: filtered, total: filtered.length });
   });
   const counts = { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
