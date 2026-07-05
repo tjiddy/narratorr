@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Dirent, Stats } from 'node:fs';
 import { join, extname } from 'node:path';
 import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
@@ -28,8 +28,9 @@ import { writeOpfForImport } from '../../utils/opf-writer.js';
 // Exception (#1740): the edition-threading test ("uses the FRESH copy-result label") narrowly
 // `vi.spyOn`s the pipeline `copyToLibrary` to return a non-empty `editionLabel` — the only place
 // that label is derived is the occupied-target disambiguation path, which is impractical to fake
-// faithfully here. The spy is scoped to that single test and `mockRestore`d immediately after, so
-// every other test keeps the real pipeline copier running against the lower mocks.
+// faithfully here. These spies are restored by the suite-level `afterEach(vi.restoreAllMocks)` —
+// failure-safe even if an awaited `process()` rejects — so every other test keeps the real pipeline
+// copier running against the lower mocks.
 
 vi.mock('../enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
@@ -228,6 +229,16 @@ describe('ManualImportAdapter', () => {
     };
 
     adapter = new ManualImportAdapter(deps);
+  });
+
+  // Un-install any `vi.spyOn` spies (e.g. the temporary importOrchestration.copyToLibrary
+  // spies below) after every test — including when an awaited `adapter.process(...)` rejects
+  // before a manual restore would run — so a stubbed copier can never leak into a later test.
+  // Complements beforeEach's `clearAllMocks()` (which resets call state but does not restore
+  // spies) and leaves the module-level import-steps `vi.mock` factory and `vi.fn()` doubles
+  // untouched — `restoreAllMocks()` only reverts `vi.spyOn` spies.
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('process', () => {
@@ -1002,11 +1013,10 @@ describe('ManualImportAdapter', () => {
       it('mode=copy + forceImport + copyToLibrary throws OwnedRecordingError: rethrows typed error, skips generic failure side effects', async () => {
         const { safeEmit } = await import('../../utils/safe-emit.js');
         const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
-        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
+        vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
 
         const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy', forceImport: true }) });
         await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
-        copySpy.mockRestore();
 
         // No generic `book_status_change → failed` SSE (the placeholder is deleted by the worker, not reverted).
         expect(vi.mocked(safeEmit)).not.toHaveBeenCalledWith(
@@ -1025,12 +1035,11 @@ describe('ManualImportAdapter', () => {
       it('mode=copy WITHOUT forceImport + copyToLibrary throws OwnedRecordingError: keeps the generic failure side effects', async () => {
         const { safeEmit } = await import('../../utils/safe-emit.js');
         const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
-        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
+        vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
 
         // makeJob()'s default payload has no `forceImport`.
         const job = makeJob();
         await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
-        copySpy.mockRestore();
 
         // Generic failure path retained: book reverted to failed + opaque import_failed event recorded.
         expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
@@ -1043,11 +1052,10 @@ describe('ManualImportAdapter', () => {
 
       it('mode=copy + copyToLibrary throws a non-Owned error: keeps the generic failure side effects', async () => {
         const { safeEmit } = await import('../../utils/safe-emit.js');
-        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(new Error('disk full'));
+        vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(new Error('disk full'));
 
         const job = makeJob();
         await expect(adapter.process(job, ctx)).rejects.toThrow('disk full');
-        copySpy.mockRestore();
 
         expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
           expect.anything(), 'book_status_change',
@@ -1087,7 +1095,7 @@ describe('ManualImportAdapter', () => {
         // editionLabel while `getById` returns a DIFFERENT (null) value, proving precedence.
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3']);
-        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary')
+        vi.spyOn(importOrchestration, 'copyToLibrary')
           .mockResolvedValue({ targetPath: TARGET_PATH, editionLabel: 'Full Cast' });
         const settingsSvc = makeRenameSettingsService('{title} ({edition})');
         deps.settingsService = inject<SettingsService>(settingsSvc);
@@ -1104,7 +1112,6 @@ describe('ManualImportAdapter', () => {
 
         const job = makeJob();
         await adapter.process(job, ctx);
-        copySpy.mockRestore();
 
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
