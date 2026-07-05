@@ -334,8 +334,6 @@ describe('v1 books routes', () => {
         isbn: '9780765326355',
         seriesName: 'Stormlight',
         seriesPosition: 1,
-        seriesAsin: 'B0SERIES000',
-        seriesProvider: 'audible',
         duration: 2734,
         publishedDate: '2010-08-31',
         genres: ['Fantasy'],
@@ -344,8 +342,8 @@ describe('v1 books routes', () => {
     });
 
     it('falls back to series[0] for series name/position when seriesPrimary is absent (F2)', async () => {
-      // No seriesPrimary, but a series array → primarySeries = series[0]; seriesAsin
-      // is sourced ONLY from seriesPrimary, so it must be absent in the fallback case.
+      // No seriesPrimary, but a series array → primarySeries = series[0]. seriesAsin
+      // was removed as a dead field (#1716), so it is never on the payload.
       (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
         kind: 'ok',
         book: metaBook({ seriesPrimary: undefined, series: [{ name: 'Mistborn', position: 3 }] }),
@@ -373,12 +371,11 @@ describe('v1 books routes', () => {
         title: 'Bare',
         authors: [{ name: 'Solo' }],
         asin: ASIN, // provider omitted asin → requested ASIN fallback
-        seriesProvider: 'audible',
       });
       // Unsupplied optional fields must be ABSENT, not present-as-undefined.
       // productionType included: a record with no formatType must NOT write an
       // explicit 'unknown' (defect vector — absent input stays unset, #1731).
-      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'seriesAsin', 'providerId', 'productionType']) {
+      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'providerId', 'productionType']) {
         expect(payload).not.toHaveProperty(key);
       }
     });

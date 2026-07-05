@@ -381,7 +381,6 @@ export class ImportListService {
         isbn: enriched.isbn,
         seriesName: enriched.seriesName,
         seriesPosition: enriched.seriesPosition,
-        seriesAsin: enriched.seriesAsin,
         duration: enriched.duration,
         publishedDate: enriched.publishedDate,
         genres: enriched.genres,
@@ -478,7 +477,6 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     publisher: match.publisher,
     seriesName: primarySeries?.name,
     seriesPosition: primarySeries?.position,
-    seriesAsin: primarySeries?.asin,
     narrators: match.narrators,
     duration: match.duration,
     publishedDate: match.publishedDate,
@@ -508,7 +506,6 @@ interface EnrichedItem {
   publisher?: string | undefined;
   seriesName?: string | undefined;
   seriesPosition?: number | undefined;
-  seriesAsin?: string | undefined;
   narrators?: string[] | undefined;
   duration?: number | undefined;
   publishedDate?: string | undefined;

@@ -3667,7 +3667,6 @@ describe('#1071 series routes', () => {
         title: 'New Title',
         seriesName: 'New Series',
         seriesPosition: 2,
-        seriesAsin: 'SERIES_NEW',
         genres: ['Fantasy'],
         isbn: '9781111111111',
       }));

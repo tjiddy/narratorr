@@ -59,10 +59,8 @@ export interface FixMatchReplacement {
   publishedDate?: string | undefined;
   seriesName?: string | undefined;
   seriesPosition?: number | undefined;
-  seriesAsin?: string | undefined;
   genres?: string[] | undefined;
   isbn?: string | undefined;
-  seriesProvider?: string | undefined;
 }
 
 function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof books.$inferInsert> {
@@ -257,8 +255,6 @@ export class BookService {
     isbn?: string | undefined;
     seriesName?: string | undefined;
     seriesPosition?: number | undefined;
-    seriesAsin?: string | undefined;
-    seriesProvider?: string | undefined;
     duration?: number | undefined;
     publishedDate?: string | undefined;
     genres?: string[] | undefined;

@@ -887,7 +887,6 @@ describe('ImportListService', () => {
           publisher: 'Audnexus Publisher',
           seriesName: 'Real Series',
           seriesPosition: 3,
-          seriesAsin: 'SER1',
           duration: 36000,
           publishedDate: '2020-01-01',
           genres: ['Fantasy'],
@@ -1556,7 +1555,6 @@ describe('ImportListService', () => {
           asin: 'B_MATCH',
           seriesName: 'The Stormlight Archive',
           seriesPosition: 1,
-          seriesAsin: 'SA',
           coverUrl: 'http://match.com/cover.jpg',
         }));
       });
@@ -1663,7 +1661,7 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
-          seriesName: 'Real Series', seriesPosition: 2, seriesAsin: 'PRIM',
+          seriesName: 'Real Series', seriesPosition: 2,
         }));
       });
     });

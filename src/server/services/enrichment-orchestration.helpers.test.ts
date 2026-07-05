@@ -601,46 +601,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBeUndefined();
   });
 
-  it('extracts meta.series[0].asin onto seriesAsin (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1, asin: 'B09168SRZK' }] },
-      'importing',
-    );
-    expect(payload.seriesAsin).toBe('B09168SRZK');
-  });
-
-  it('seriesAsin is undefined when meta is null (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      null,
-      'importing',
-    );
-    expect(payload.seriesAsin).toBeUndefined();
-  });
-
-  it('seriesAsin is undefined when meta.series is empty (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      { title: 'T', authors: [{ name: 'A' }], series: [] },
-      'importing',
-    );
-    expect(payload.seriesAsin).toBeUndefined();
-  });
-
-  it('seriesAsin is undefined when meta.series[0].asin is missing (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }] },
-      'importing',
-    );
-    expect(payload.seriesAsin).toBeUndefined();
-  });
-
   // #1097 — canonical primary-series preference over series[0]
   it('prefers seriesPrimary over series[0] when both are present (#1097)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
@@ -659,7 +619,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     );
     expect(payload.seriesName).toBe('The Stormlight Archive');
     expect(payload.seriesPosition).toBe(2);
-    expect(payload.seriesAsin).toBe('B009NF6YPM');
   });
 
   // #1710 — production_type populated from meta.formatType on this path only
