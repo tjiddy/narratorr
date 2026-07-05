@@ -15,8 +15,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LibraryPage } from './LibraryPage';
 import { createMockLibraryBook, createMockAuthor, createMockSettings } from '@/__tests__/factories';
 import type { BookListParams } from '@/lib/api';
-import { simulateStatusFilter, simulateServerSort } from '@/__tests__/library-server-sim';
-import type { StatusFilter, SortField, SortDirection } from './helpers';
+import { simulateStatusFilter } from '@/__tests__/library-server-sim';
+import type { StatusFilter } from './helpers';
 
 // Mock api — same pattern as LibraryPage.test.tsx but WITHOUT mocking useNavigate
 vi.mock('@/lib/api', async () => {
@@ -68,15 +68,36 @@ const mockBooks = [
   }),
 ];
 
+// Hand-authored server order for this suite's `mockBooks`, keyed by
+// `${sortField}:${sortDirection}` — book ids in the order `buildOrderBy`
+// (src/server/services/book-list.service.ts) produces. `title` asc strips the
+// leading article ("The Way of Kings" → "Way of Kings"), so "Project Hail Mary"
+// sorts first. Unmapped keys fall through to the `createdAt` desc default, so no
+// key resolves to undefined.
+const MOCK_BOOKS_ORDER: Record<string, number[]> = {
+  'createdAt:desc': [2, 1],
+  'createdAt:asc': [1, 2],
+  'title:asc': [2, 1],
+  'title:desc': [1, 2],
+};
+const DEFAULT_ORDER_KEY = 'createdAt:desc';
+
+function applyServerOrder(books: typeof mockBooks, sortField?: string, sortDirection?: string): typeof mockBooks {
+  const key = `${sortField ?? 'createdAt'}:${sortDirection ?? 'desc'}`;
+  const idOrder = MOCK_BOOKS_ORDER[key] ?? MOCK_BOOKS_ORDER[DEFAULT_ORDER_KEY]!;
+  const byId = new Map(books.map(b => [b.id, b]));
+  const ordered = idOrder.map(id => byId.get(id)).filter((b): b is typeof mockBooks[number] => b !== undefined);
+  const covered = new Set(idOrder);
+  return [...ordered, ...books.filter(b => !covered.has(b.id))];
+}
+
 function mockLibraryData() {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = [...mockBooks];
     if (params?.status) {
       filtered = filtered.filter(b => simulateStatusFilter(b.status, params.status as StatusFilter));
     }
-    if (params?.sortField) {
-      filtered = simulateServerSort(filtered, params.sortField as SortField, (params.sortDirection ?? 'desc') as SortDirection);
-    }
+    filtered = applyServerOrder(filtered, params?.sortField, params?.sortDirection);
     return Promise.resolve({ data: filtered, total: filtered.length });
   });
   vi.mocked(api.getBookStats).mockResolvedValue({
