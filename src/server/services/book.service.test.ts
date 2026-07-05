@@ -640,8 +640,9 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
 
+      const bookInsertChain = mockDbChain([{ id: 1 }]);
       db.insert
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))    // book insert
+        .mockReturnValueOnce(bookInsertChain)              // book insert
         .mockReturnValueOnce(mockDbChain([]))              // bookAuthors
         .mockReturnValueOnce(mockDbChain([mockNarrator]))  // narrator insert
         .mockReturnValueOnce(mockDbChain([]));             // bookNarrators
@@ -659,6 +660,12 @@ describe('BookService', () => {
       });
 
       expect(result.title).toBe('The Way of Kings');
+      // #1716 — series metadata no longer carries seriesAsin/seriesProvider, but
+      // the Series-card path is intact: scalar name/position still reach the
+      // books insert and drive the series-link upsert.
+      expect(bookInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ seriesName: 'The Stormlight Archive', seriesPosition: 1 }),
+      );
     });
 
     it('persists subtitle and publisher to the books insert (#1614)', async () => {

@@ -20,8 +20,6 @@ export function mapBookMetadataToPayload(
     asin: book.asin,
     seriesName: primary?.name,
     seriesPosition: primary?.position,
-    seriesAsin: primary?.asin,
-    ...(primary?.asin !== undefined && { seriesProvider: 'audible' }),
     duration: book.duration,
     genres: book.genres,
     providerId: book.providerId,

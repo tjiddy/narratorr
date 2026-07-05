@@ -107,8 +107,6 @@ describe('mapBookMetadataToPayload', () => {
     const payload = mapBookMetadataToPayload(book);
     expect(payload.seriesName).toBe('The Stormlight Archive');
     expect(payload.seriesPosition).toBe(1);
-    expect(payload.seriesAsin).toBe('B009NF6YPM');
-    expect(payload.seriesProvider).toBe('audible');
   });
 
   it('falls back to series[0] when seriesPrimary is absent (#1097)', () => {

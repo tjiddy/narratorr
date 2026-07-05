@@ -42,7 +42,6 @@ function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   const out: FixMatchReplacement = {
     title: meta.title,
     authors: meta.authors,
-    seriesProvider: 'audible',
   };
   copyOptional(out, 'asin', meta.asin);
   copyOptional(out, 'subtitle', meta.subtitle);
@@ -54,7 +53,6 @@ function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   copyOptional(out, 'publishedDate', meta.publishedDate);
   copyOptional(out, 'seriesName', primarySeries?.name);
   copyOptional(out, 'seriesPosition', primarySeries?.position);
-  copyOptional(out, 'seriesAsin', meta.seriesPrimary?.asin);
   copyOptional(out, 'genres', meta.genres);
   copyOptional(out, 'isbn', meta.isbn);
   return out;

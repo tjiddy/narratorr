@@ -87,28 +87,27 @@ describe('libraryStatusFilterSchema — bucket-only wire contract (#1447)', () =
   });
 });
 
-describe('createBookBodySchema — series ASIN (#1071)', () => {
-  it('accepts seriesAsin alongside scalar seriesName/seriesPosition', () => {
+describe('createBookBodySchema — series scalars (#1716)', () => {
+  it('accepts scalar seriesName/seriesPosition', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, seriesName: 'The Band', seriesPosition: 1 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.seriesName).toBe('The Band');
+      expect(result.data.seriesPosition).toBe(1);
+    }
+  });
+
+  // seriesAsin/seriesProvider were dead fields — never persisted (#1716). The
+  // strict schema now rejects them, which is why the client producers had to
+  // drop them in lockstep: a body still carrying them would 400.
+  it('rejects a body carrying the removed seriesAsin field (strict)', () => {
     const result = createBookBodySchema.safeParse({
       ...validBook,
       seriesName: 'The Band',
       seriesPosition: 1,
       seriesAsin: 'B07DHQY7DX',
-      seriesProvider: 'audible',
     });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.seriesAsin).toBe('B07DHQY7DX');
-      expect(result.data.seriesProvider).toBe('audible');
-    }
-  });
-
-  it('treats seriesAsin/seriesProvider as optional (back-compat)', () => {
-    const result = createBookBodySchema.safeParse({ ...validBook, seriesName: 'The Band', seriesPosition: 1 });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.seriesAsin).toBeUndefined();
-    }
+    expect(result.success).toBe(false);
   });
 });
 
