@@ -16,7 +16,7 @@ export const NAMING_PRESETS: readonly NamingPreset[] = [
     id: 'detailed',
     name: 'Detailed',
     folderFormat: '{author}/{series}/{seriesPosition:00? - }{title}',
-    fileFormat: '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}',
+    fileFormat: '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}',
   },
   {
     id: 'audiobookshelf',

@@ -566,6 +566,62 @@ describe('planFileRenames', () => {
     });
   });
 
+  describe('Detailed preset fileFormat with {edition} (#1829)', () => {
+    const DETAILED_FILE = '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}';
+    const OLD_DETAILED_FILE = '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}';
+    const seriesBook: RenameableBook = {
+      ...book,
+      title: 'The Way of Kings',
+      seriesName: 'The Stormlight Archive',
+      seriesPosition: 1,
+    };
+
+    it('multi-file with edition: parenthetical before the track ordinal', async () => {
+      await mockFiles(['a.mp3', 'b.mp3']);
+      const renames = await planFileRenames('/t', DETAILED_FILE, { ...seriesBook, editionLabel: 'Full Cast' }, 'Brandon Sanderson');
+      expect(renames.map(r => r.to)).toEqual([
+        'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast) - 001.mp3',
+        'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast) - 002.mp3',
+      ]);
+    });
+
+    it('single file with edition: no track ordinal, no trailing artifacts', async () => {
+      await mockFiles(['audiobook.mp3']);
+      const renames = await planFileRenames('/t', DETAILED_FILE, { ...seriesBook, editionLabel: 'Full Cast' }, 'Brandon Sanderson');
+      expect(renames).toEqual([
+        { from: 'audiobook.mp3', to: 'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).mp3' },
+      ]);
+    });
+
+    // No-edition parity: the new template must plan the exact same renames as the
+    // pre-#1829 template, across the conditional branches (no series / no position).
+    const parityBooks: [string, RenameableBook][] = [
+      ['full series metadata', seriesBook],
+      ['no series', { ...seriesBook, seriesName: null, seriesPosition: null }],
+      ['series without position', { ...seriesBook, seriesPosition: null }],
+    ];
+    for (const [label, parityBook] of parityBooks) {
+      it(`no edition (null): plans identical renames to the pre-edition template (${label})`, async () => {
+        await mockFiles(['a.mp3', 'b.mp3']);
+        const next = await planFileRenames('/t', DETAILED_FILE, { ...parityBook, editionLabel: null }, 'Brandon Sanderson');
+        await mockFiles(['a.mp3', 'b.mp3']);
+        const prev = await planFileRenames('/t', OLD_DETAILED_FILE, { ...parityBook, editionLabel: null }, 'Brandon Sanderson');
+        expect(next).toEqual(prev);
+      });
+    }
+
+    // planFileRenames passes editionLabel through un-normalized; the renderer treats
+    // '' as absent (EMPTY_TOKEN_SENTINEL), so an empty label must behave like null.
+    it('empty-string editionLabel behaves like null (parity with the pre-edition template)', async () => {
+      await mockFiles(['audiobook.mp3']);
+      const next = await planFileRenames('/t', DETAILED_FILE, { ...seriesBook, editionLabel: '' }, 'Brandon Sanderson');
+      await mockFiles(['audiobook.mp3']);
+      const prev = await planFileRenames('/t', OLD_DETAILED_FILE, { ...seriesBook, editionLabel: '' }, 'Brandon Sanderson');
+      expect(next).toEqual(prev);
+      expect(next[0]!.to).toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings.mp3');
+    });
+  });
+
   describe('ordering source', () => {
     it('does not import metadata/tag readers on the rename path (filenames only, no ID3)', async () => {
       const { readFile } = await import('node:fs/promises');

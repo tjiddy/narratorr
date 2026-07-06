@@ -20,7 +20,7 @@ describe('NAMING_PRESETS', () => {
     expect(preset).toBeDefined();
     expect(preset!.name).toBe('Detailed');
     expect(preset!.folderFormat).toBe('{author}/{series}/{seriesPosition:00? - }{title}');
-    expect(preset!.fileFormat).toBe('{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}');
+    expect(preset!.fileFormat).toBe('{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}');
   });
 
   it('contains Audiobookshelf preset with correct formats', () => {
@@ -101,16 +101,69 @@ describe('Plex preset with prefix conditional syntax', () => {
   });
 });
 
+describe('Detailed preset {edition} in fileFormat (#1829)', () => {
+  const DETAILED_FILE = NAMING_PRESETS.find(p => p.id === 'detailed')!.fileFormat;
+  const OLD_DETAILED_FILE = '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}';
+  const base = {
+    author: 'Brandon Sanderson', title: 'The Way of Kings',
+    series: 'The Stormlight Archive', seriesPosition: 1,
+  };
+
+  it('renders the edition parenthetical before the track ordinal (multi-file)', () => {
+    expect(renderFilename(DETAILED_FILE, { ...base, edition: 'Full Cast', trackNumber: 1, trackTotal: 12 }))
+      .toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast) - 001');
+  });
+
+  it('renders the edition parenthetical with no trailing artifacts (single file, no track tokens)', () => {
+    expect(renderFilename(DETAILED_FILE, { ...base, edition: 'Full Cast' }))
+      .toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast)');
+  });
+
+  // No-edition parity: BOTH template deltas ({ (?edition?)} and folding the track
+  // separator space into the conditional prefix) must be pure no-ops when no edition
+  // exists — byte-identical to the pre-#1829 template. The {series? - } and
+  // {seriesPosition:00? - } branches are where whitespace regressions hide.
+  const parityCases: [string, Record<string, string | number | undefined>][] = [
+    ['full metadata, multi-file', { ...base, trackNumber: 1, trackTotal: 12 }],
+    ['full metadata, single-file', { ...base }],
+    ['no series, multi-file', { author: base.author, title: base.title, trackNumber: 2, trackTotal: 3 }],
+    ['no seriesPosition, single-file', { author: base.author, title: base.title, series: base.series }],
+  ];
+  for (const [label, tokens] of parityCases) {
+    it(`renders byte-identical to the pre-edition template with no edition (${label})`, () => {
+      expect(renderFilename(DETAILED_FILE, tokens)).toBe(renderFilename(OLD_DETAILED_FILE, tokens));
+    });
+  }
+
+  it('treats an empty-string edition as absent (parity with the pre-edition template)', () => {
+    const tokens = { ...base, edition: '', trackNumber: 1, trackTotal: 12 };
+    expect(renderFilename(DETAILED_FILE, tokens)).toBe(renderFilename(OLD_DETAILED_FILE, tokens));
+  });
+
+  // F8: unlike the folder {edition} (verbatim), the file-side edition takes the
+  // separator transform like any other token — pin it so the behavior is explicit.
+  it('applies the separator transform to the file-side edition value (period separator)', () => {
+    expect(renderFilename(DETAILED_FILE, { ...base, edition: 'Full Cast', trackNumber: 1, trackTotal: 12 }, { separator: 'period' }))
+      .toBe('Brandon.Sanderson - The.Stormlight.Archive - 01 - The.Way.of.Kings (Full.Cast) - 001');
+  });
+});
+
 describe('detectPreset', () => {
   it('returns preset id when both fields match a defined preset', () => {
     expect(detectPreset('{author}/{title}', '{author} - {title}')).toBe('standard');
-    expect(detectPreset('{author}/{series}/{seriesPosition:00? - }{title}', '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}')).toBe('detailed');
+    expect(detectPreset('{author}/{series}/{seriesPosition:00? - }{title}', '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}')).toBe('detailed');
     expect(detectPreset('{author}/{series?/}{title}', '{title}')).toBe('audiobookshelf');
     expect(detectPreset('{authorLastFirst}/{titleSort}', '{authorLastFirst} - {titleSort}')).toBe('last-first');
   });
 
   it('returns "custom" when only folderFormat matches', () => {
     expect(detectPreset('{author}/{title}', '{title}')).toBe('custom');
+  });
+
+  // #1829 — saved templates from before the edition token was added to the Detailed
+  // fileFormat flip to Custom (cosmetic only; their rendering is unchanged, no migration).
+  it('detects the pre-edition Detailed fileFormat as "custom"', () => {
+    expect(detectPreset('{author}/{series}/{seriesPosition:00? - }{title}', '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}')).toBe('custom');
   });
 
   it('returns "custom" when only fileFormat matches', () => {
