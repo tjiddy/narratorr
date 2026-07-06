@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 /**
  * Phase 2 critical path #2 — exercises the full manual-import flow:
  *
- *   /library → "Import Files"
+ *   /library → Library Actions menu → "Import Files"
  *     → /import (path step)
  *     → enter sourcePath, click Scan
  *     → Review step: match completes with confidence 'none'
@@ -31,10 +31,13 @@ test.describe('Critical path: manual import', () => {
     const sourcePath = getE2ESourcePath();
 
     // ── Library: navigate to import page ─────────────────────────────────
-    await test.step('navigate to /library and click Import Files', async () => {
+    await test.step('navigate to /library and click Import Files via the Library Actions menu', async () => {
       await page.goto('/library');
-      await expect(page.getByRole('link', { name: /Import Files/i })).toBeVisible({ timeout: 10_000 });
-      await page.getByRole('link', { name: /Import Files/i }).click();
+      // The standalone Import Files link was folded into the Library Actions menu.
+      await expect(page.getByRole('button', { name: 'Library Actions' })).toBeVisible({ timeout: 10_000 });
+      await page.getByRole('button', { name: 'Library Actions' }).click();
+      await expect(page.getByRole('menuitem', { name: /Import Files/i })).toBeVisible();
+      await page.getByRole('menuitem', { name: /Import Files/i }).click();
       await expect(page).toHaveURL(/\/import$/);
     });
 
