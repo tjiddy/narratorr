@@ -92,6 +92,23 @@ async function errorHandlerPluginInner(app: FastifyInstance) {
       });
     }
 
+    // Genuine Fastify framework client errors (#1831) — e.g. FST_ERR_CTP_BODY_TOO_LARGE
+    // (413) when a confirm/match request exceeds the body limit on a direct, un-proxied
+    // deployment. The message is framework-generated (never an internal/stack leak), so
+    // it is safe to surface with an accurate status. Scoped strictly to `FST_`-coded 4xx:
+    // a blanket "has statusCode → pass through" would forward 5xx-coded framework errors
+    // and arbitrary thrown objects carrying a statusCode, defeating the no-leak mask below.
+    const fstError = error as { code?: string; statusCode?: number };
+    if (
+      fstError.code?.startsWith('FST_') &&
+      typeof fstError.statusCode === 'number' &&
+      fstError.statusCode >= 400 &&
+      fstError.statusCode < 500
+    ) {
+      request.log.warn({ code: fstError.code, statusCode: fstError.statusCode }, error.message);
+      return reply.status(fstError.statusCode).send({ error: error.message });
+    }
+
     // Untyped errors — 500 with generic message (no stack leak)
     request.log.error(error, error.message || 'Unhandled error');
     return reply.status(500).send({ error: 'Internal server error' });

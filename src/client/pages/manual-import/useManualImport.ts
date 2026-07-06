@@ -10,7 +10,8 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
-import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
+import { acceptedItemPaths, buildChunkedOutcomeToast, isChunkedCleanImport, confirmErrorMessage } from '@/lib/import-outcome.js';
+import { runChunkedConfirm } from '@/lib/confirm-chunk-runner.js';
 
 export type Step = 'path' | 'review';
 
@@ -31,6 +32,8 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  // Progress across the sequential chunked confirm run (#1831) — drives "Registering X of Y…".
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number; chunks: number } | null>(null);
 
   // Held-review recovery (#1732). Re-confirm uses the mode snapshotted at the
   // original confirm attempt, not the still-editable `mode` selector.
@@ -112,47 +115,48 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   });
 
   const importMutation = useMutation({
-    // The mode is carried in the mutation variables so the held-review snapshot
-    // captures the value in effect at *this* confirm attempt (#1732), not a later
-    // selector change.
+    // The mode is carried in the mutation variables so the held-review snapshot captures
+    // the value in effect at *this* confirm attempt (#1732), not a later selector change,
+    // and is threaded to every chunk of the byte-budgeted chunked confirm (#1831).
     mutationFn: ({ items, mode: confirmMode }: { items: ImportConfirmItem[]; mode: ImportMode | undefined }) =>
-      api.confirmImport(items, confirmMode),
-    onSuccess: (result, variables) => {
+      runChunkedConfirm({ items, mode: confirmMode, confirm: api.confirmImport, onProgress: setChunkProgress }),
+    onSuccess: (res, variables) => {
+      const { aggregateResult, submittedItems } = res;
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
 
-      // Held items (#1711/#1732): keep the user on the page with a recovery panel
-      // instead of navigating away (the old "re-confirm from Library Import" path was
-      // a dead end — manual sources live outside the library root Library Import
-      // scans). Snapshot the confirm-attempt mode so a held Move never silently
-      // re-confirms as Copy. Surfaced separately from the outcome toast below so a
-      // held + skipped/failed batch is never swallowed by an early return (#1822).
-      if (result.heldReview.length > 0) {
-        captureHeld(result.heldReview, variables.mode);
-        toast.warning(`${result.heldReview.length} held for recording review`);
+      // Held items (#1711/#1732): keep the user on the page with a recovery panel instead
+      // of navigating away. Snapshot the confirm-attempt mode so a held Move never silently
+      // re-confirms as Copy. Captured ONCE over the aggregate (#1831). Surfaced separately
+      // from the outcome toast so a held + skipped/failed batch is never swallowed (#1822).
+      if (aggregateResult.heldReview.length > 0) {
+        captureHeld(aggregateResult.heldReview, variables.mode);
+        toast.warning(`${aggregateResult.heldReview.length} held for recording review`);
       } else {
         clearHeld();
       }
 
-      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
-      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
-      // never a green "0 queued" lie.
-      const outcome = buildOutcomeToast(result, 'queued for import');
+      // Report accepted/skipped/failed + the chunked transport splits (unsubmitted / too
+      // large). Green fires ONLY on a fully-clean, fully-submitted outcome (#1822/#1831).
+      const outcome = buildChunkedOutcomeToast(res, 'queued for import');
       if (outcome) toast[outcome.severity](outcome.message);
 
-      // Navigate only when everything landed as accepted; otherwise stay and deselect
-      // the accepted rows so a re-submit can't re-send them (#1822).
-      if (isCleanImport(result)) {
+      // Navigate only when the ENTIRE selection landed accepted; otherwise stay and deselect
+      // the accepted rows over submittedItems — NOT the full selection — so the never-sent
+      // remainder and too-large rows stay selected (#1831).
+      if (isChunkedCleanImport(res)) {
         navigate('/library');
         return;
       }
-      const acceptedPaths = acceptedItemPaths(variables.items, result);
+      const acceptedPaths = acceptedItemPaths(submittedItems, aggregateResult);
       if (acceptedPaths.size > 0) {
         setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
       }
     },
     onError: (error: Error) => {
-      toast.error(`Import failed: ${getErrorMessage(error)}`);
+      // 413 (Fastify or the proxy hop) maps to import-domain wording (#1831).
+      toast.error(`Import failed: ${confirmErrorMessage(error)}`);
     },
+    onSettled: () => setChunkProgress(null),
   });
 
   const handleScan = useCallback(() => {
@@ -227,6 +231,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       setEditIndex,
       isMatching,
       progress,
+      chunkProgress,
       heldReview,
     },
     actions: {

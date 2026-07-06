@@ -61,6 +61,26 @@ function createTestApp() {
   app.get('/throw-marker-conflict', async () => { throw new MarkerPathConflictError('/library/Author/Title.import-commit-pending'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
+  // #1831 — genuine Fastify framework 4xx (e.g. body-too-large) is surfaced verbatim…
+  app.get('/throw-fst-413', async () => {
+    const err = new Error('Request body is too large') as Error & { code: string; statusCode: number };
+    err.code = 'FST_ERR_CTP_BODY_TOO_LARGE';
+    err.statusCode = 413;
+    throw err;
+  });
+  // …but a 5xx-coded framework error is NOT passed through (stays masked).
+  app.get('/throw-fst-500', async () => {
+    const err = new Error('framework blew up with secrets') as Error & { code: string; statusCode: number };
+    err.code = 'FST_ERR_SOMETHING';
+    err.statusCode = 500;
+    throw err;
+  });
+  // …and an arbitrary thrown object carrying a statusCode (no FST_ code) stays masked.
+  app.get('/throw-status-401', async () => {
+    const err = new Error('sensitive: db password is hunter2') as Error & { statusCode: number };
+    err.statusCode = 401;
+    throw err;
+  });
   app.get('/success', async () => ({ ok: true }));
 
   // Route with schema validation for F3
@@ -296,6 +316,27 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/success' });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ ok: true });
+    });
+  });
+
+  // #1831 — scoped Fastify framework client-error passthrough
+  describe('Fastify framework 4xx passthrough (#1831)', () => {
+    it('passes through a FST_-coded 4xx (body-too-large) with an accurate { error } message', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-fst-413' });
+      expect(res.statusCode).toBe(413);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Request body is too large' });
+    });
+
+    it('masks a FST_-coded 5xx framework error as a generic 500 (no message leak)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-fst-500' });
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
+    });
+
+    it('masks an arbitrary thrown object carrying statusCode 401 as a generic 500', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-status-401' });
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 
