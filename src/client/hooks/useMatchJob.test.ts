@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useMatchJob } from './useMatchJob';
-import type { MatchJobStatus } from '@/lib/api';
+import { useMatchJob, packMatchCandidates } from './useMatchJob';
+import type { MatchCandidate, MatchJobStatus } from '@/lib/api';
 
 const mockStartMatchJob = vi.fn();
 const mockGetMatchJob = vi.fn();
@@ -261,6 +261,90 @@ describe('useMatchJob', () => {
     });
 
     expect(result.current.error).toBeNull();
+  });
+
+  // #1831 — byte-budgeted match chunking + sequential chunk-job queue
+  describe('chunked match submission (#1831)', () => {
+    /** A candidate whose padded title pushes each one above the byte budget → 1 per chunk. */
+    const bigCandidate = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(300 * 1024) });
+
+    it('packMatchCandidates splits by byte budget, preserving order', () => {
+      const chunks = packMatchCandidates([bigCandidate('/a'), bigCandidate('/b'), bigCandidate('/c')]);
+      expect(chunks).toHaveLength(3);
+      expect(chunks.flat().map(c => c.path)).toEqual(['/a', '/b', '/c']);
+    });
+
+    it('packs small candidates into a single chunk', () => {
+      const chunks = packMatchCandidates([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]);
+      expect(chunks).toHaveLength(1);
+    });
+
+    it('runs chunk jobs sequentially — the next chunk starts only after the previous completes', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob.mockImplementation((id: string) => Promise.resolve({
+        id,
+        status: 'completed',
+        total: 1,
+        matched: 1,
+        results: [{ path: id === 'job-1' ? '/a' : '/b', confidence: 'high', bestMatch: null, alternatives: [] }],
+      } satisfies MatchJobStatus));
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => {
+        await result.current.startMatching([bigCandidate('/a'), bigCandidate('/b')]);
+      });
+
+      // Only the first chunk's job has started.
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+
+      // One poll completes chunk 1 → chunk 2's job launches.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+
+      // Next poll completes chunk 2.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(result.current.isMatching).toBe(false);
+
+      // Append-only accumulation across chunks + queue-wide aggregate progress.
+      expect(result.current.results.map(r => r.path)).toEqual(['/a', '/b']);
+      expect(result.current.progress).toEqual({ matched: 2, total: 2 });
+    });
+
+    it('accumulates results append-only — chunk 1 results survive while chunk 2 is still matching', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockResolvedValueOnce({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [{ path: '/a', confidence: 'high', bestMatch: null, alternatives: [] }] })
+        .mockResolvedValueOnce({ id: 'job-2', status: 'matching', total: 1, matched: 0, results: [] });
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => {
+        await result.current.startMatching([bigCandidate('/a'), bigCandidate('/b')]);
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // chunk 1 completes, chunk 2 starts
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // chunk 2 first poll (still matching)
+
+      // Chunk 1's frozen result is still present; total spans the whole queue.
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+      expect(result.current.progress.total).toBe(2);
+    });
+
+    it('cancel mid-queue abandons pending chunks', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => {
+        await result.current.startMatching([bigCandidate('/a'), bigCandidate('/b')]);
+      });
+
+      act(() => { result.current.cancel(); });
+      expect(mockCancelMatchJob).toHaveBeenCalledWith('job-1');
+      expect(result.current.isMatching).toBe(false);
+
+      // The queued second chunk never starts.
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('resets results when starting a new job', async () => {
