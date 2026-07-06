@@ -22,7 +22,7 @@ export function ManualImportPage() {
   const libraryPath = settings?.library?.path ?? '';
 
   const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
-  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, heldReview } = state;
+  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview } = state;
   const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, handleReconfirmHeld } = actions;
   const { scanMutation, importMutation } = mutations;
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
@@ -128,6 +128,9 @@ export function ManualImportPage() {
               onModeChange={setMode}
               onImport={handleImport}
               importing={importMutation.isPending}
+              {...(importMutation.isPending && chunkProgress && chunkProgress.total > 0
+                ? { registerLabel: `Registering ${chunkProgress.current} of ${chunkProgress.total}…` }
+                : {})}
             />
           </div>
         </div>

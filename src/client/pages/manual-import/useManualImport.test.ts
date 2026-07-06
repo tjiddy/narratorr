@@ -3,6 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useManualImport } from './useManualImport';
+import { ApiError } from '@/lib/api';
 import type { ScanResult, BookMetadata } from '@/lib/api';
 
 const mockNavigate = vi.fn();
@@ -19,7 +20,12 @@ vi.mock('sonner', () => ({
   },
 }));
 
-vi.mock('@/lib/api', () => ({
+// Preserve the real runtime exports (notably `ApiError`, imported at runtime by the
+// 413 mapping in confirmErrorMessage — #1831) and override only `api`. Replacing the
+// barrel wholesale would drop ApiError and break the confirm error path
+// (vimock-barrel-replace-drops-named-exports).
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     scanDirectory: vi.fn(),
     confirmImport: vi.fn(),
@@ -745,6 +751,25 @@ describe('useManualImport', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Import failed: Server error');
+    });
+  });
+
+  it('413 confirm failure maps to import-domain wording (#1831)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    vi.mocked(api.confirmImport).mockRejectedValue(new ApiError(413, { error: 'Payload Too Large' }));
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    await act(async () => { result.current.actions.handleImport(); });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        'Import failed: The import request was too large to send. Select fewer books and try again.',
+      );
     });
   });
 

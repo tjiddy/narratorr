@@ -20,6 +20,7 @@ export function LibraryImportPage() {
     setEditIndex,
     isMatching,
     progress,
+    chunkProgress,
     libraryRoot,
     heldReview,
     handleToggle,
@@ -215,7 +216,9 @@ export function LibraryImportPage() {
               disabled={!!matchJobError}
               registerLabel={
                 registerMutation.isPending
-                  ? 'Importing...'
+                  ? (chunkProgress && chunkProgress.total > 0
+                      ? `Registering ${chunkProgress.current} of ${chunkProgress.total}…`
+                      : 'Importing...')
                   : `Import ${selectedCount} book${selectedCount !== 1 ? 's' : ''}`
               }
             />

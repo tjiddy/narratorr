@@ -11,7 +11,8 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
-import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
+import { acceptedItemPaths, buildChunkedOutcomeToast, isChunkedCleanImport, confirmErrorMessage } from '@/lib/import-outcome.js';
+import { runChunkedConfirm } from '@/lib/confirm-chunk-runner.js';
 
 export type Step = 'scanning' | 'review' | 'error';
 
@@ -31,6 +32,8 @@ export function useLibraryImport() {
   const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  // Progress across the sequential chunked confirm run (#1831) — drives "Registering X of Y…".
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null);
   // Items the server held for recording review (#1711) — surfaced for re-confirm.
   // Library always registers with mode `undefined`, so the snapshot is unused here.
   const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
@@ -122,40 +125,51 @@ export function useLibraryImport() {
   });
 
   const registerMutation = useMutation({
-    mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items, undefined),
-    onSuccess: (result, variables) => {
+    // Byte-budgeted chunked confirm (#1831). A large library exceeds the 1 MiB body
+    // limit in one request, so the runner packs the selection into sub-1-MiB chunks and
+    // POSTs them sequentially, resolving with the aggregate + the actually-submitted items.
+    mutationFn: (items: ImportConfirmItem[]) => {
+      setChunkProgress({ current: 0, total: items.length });
+      return runChunkedConfirm({ items, mode: undefined, confirm: api.confirmImport, onProgress: setChunkProgress });
+    },
+    onSuccess: (res) => {
+      const { aggregateResult, submittedItems } = res;
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
 
-      // Held items (#1711): keep the user on the page so they can re-confirm them,
-      // instead of navigating. Surfaced separately from the outcome toast below so a
+      // Held items (#1711): keep the user on the page so they can re-confirm them, instead
+      // of navigating. Captured ONCE over the aggregate (#1831) — a per-chunk call would
+      // clobber earlier chunks' held items. Surfaced separately from the outcome toast so a
       // held + skipped/failed batch is never swallowed by an early return (#1822).
-      if (result.heldReview.length > 0) {
-        captureHeld(result.heldReview, undefined);
-        toast.warning(`${result.heldReview.length} held for recording review`);
+      if (aggregateResult.heldReview.length > 0) {
+        captureHeld(aggregateResult.heldReview, undefined);
+        toast.warning(`${aggregateResult.heldReview.length} held for recording review`);
       } else {
         clearHeld();
       }
 
-      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
-      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
-      // never a green "0 registered" lie.
-      const outcome = buildOutcomeToast(result, 'registered');
+      // Report accepted/skipped/failed + the chunked transport splits (unsubmitted / too
+      // large). Green fires ONLY on a fully-clean, fully-submitted outcome (#1822/#1831).
+      const outcome = buildChunkedOutcomeToast(res, 'registered');
       if (outcome) toast[outcome.severity](outcome.message);
 
-      // Navigate only when everything landed as accepted; otherwise stay and deselect
-      // the accepted rows so a re-submit can't re-send them (#1822).
-      if (isCleanImport(result)) {
+      // Navigate only when the ENTIRE selection landed accepted (nothing held/skipped/
+      // failed/unsubmitted/too-large); otherwise stay and deselect the accepted rows over
+      // submittedItems — NOT the full selection — so the never-sent remainder stays selected.
+      if (isChunkedCleanImport(res)) {
         navigate('/library');
         return;
       }
-      const acceptedPaths = acceptedItemPaths(variables, result);
+      const acceptedPaths = acceptedItemPaths(submittedItems, aggregateResult);
       if (acceptedPaths.size > 0) {
         setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
       }
     },
     onError: (error: Error) => {
-      toast.error(`Registration failed: ${getErrorMessage(error)}`);
+      // First-chunk failure (nothing submitted) rejects here, exactly as a single-request
+      // failure did. 413 (Fastify or the proxy hop) maps to import-domain wording (#1831).
+      toast.error(`Import failed: ${confirmErrorMessage(error)}`);
     },
+    onSettled: () => setChunkProgress(null),
   });
 
   // Auto-scan on mount once settings are loaded and we have a library path.
@@ -273,6 +287,7 @@ export function useLibraryImport() {
     setEditIndex,
     isMatching,
     progress,
+    chunkProgress,
     libraryRoot,
     heldReview,
 
