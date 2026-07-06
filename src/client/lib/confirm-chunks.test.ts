@@ -75,4 +75,45 @@ describe('packConfirmChunks (#1831)', () => {
     expect(chunks).toHaveLength(0);
     expect(tooLarge).toHaveLength(1);
   });
+
+  // Byte-vs-character accounting: every fixture above is ASCII (chars == bytes), so a
+  // TextEncoder → .length regression would pass the whole suite while undercounting
+  // multi-byte metadata up to 4× and breaching the 1 MiB floor. 'あ' is 1 JS char / 3 UTF-8 bytes.
+  it('diverts a multi-byte item whose UTF-8 bytes exceed the ceiling even though its char count does not', () => {
+    // 310k chars ≈ 930 KiB serialized > 900 KiB ceiling; a char-count accounting would pass it.
+    const item = { path: '/utf8', title: 'T', metadata: { blob: 'あ'.repeat(310 * 1024) } as never };
+    expect(serializedItemBytes(item)).toBeGreaterThan(MAX_SINGLE_ITEM_BYTES);
+    const { chunks, tooLarge } = packConfirmChunks([item]);
+    expect(tooLarge).toHaveLength(1);
+    expect(chunks).toHaveLength(0);
+  });
+
+  it('splits multi-byte items by UTF-8 byte budget even when combined char count is under it', () => {
+    // Two items each ~240 KiB serialized (80k 3-byte chars) → 480 KiB > 400 KiB budget → 2 chunks.
+    // Char-count accounting (~160k total) would pack them together.
+    const mk = (p: string) => ({ path: p, title: 'T', metadata: { blob: 'あ'.repeat(80 * 1024) } as never });
+    const { chunks } = packConfirmChunks([mk('/a'), mk('/b')]);
+    expect(chunks).toHaveLength(2);
+  });
+
+  // Exactly-at-threshold boundaries: a flipped > vs >= would silently ship.
+  it('ships an item at exactly MAX_SINGLE_ITEM_BYTES; one byte over diverts (ceiling is inclusive)', () => {
+    const exact = itemOfSize('/exact', MAX_SINGLE_ITEM_BYTES);
+    expect(serializedItemBytes(exact)).toBe(MAX_SINGLE_ITEM_BYTES);
+    const atCeiling = packConfirmChunks([exact]);
+    expect(atCeiling.tooLarge).toHaveLength(0);
+    expect(atCeiling.chunks).toEqual([[exact]]);
+
+    const over = itemOfSize('/over', MAX_SINGLE_ITEM_BYTES + 1);
+    const overCeiling = packConfirmChunks([over]);
+    expect(overCeiling.tooLarge).toHaveLength(1);
+    expect(overCeiling.chunks).toHaveLength(0);
+  });
+
+  it('packs items summing to exactly CHUNK_BYTE_BUDGET into one chunk; one byte more splits', () => {
+    const half = itemOfSize('/h1', CHUNK_BYTE_BUDGET / 2);
+    expect(serializedItemBytes(half)).toBe(CHUNK_BYTE_BUDGET / 2);
+    expect(packConfirmChunks([half, itemOfSize('/h2', CHUNK_BYTE_BUDGET / 2)]).chunks).toHaveLength(1);
+    expect(packConfirmChunks([half, itemOfSize('/h3', CHUNK_BYTE_BUDGET / 2 + 1)]).chunks).toHaveLength(2);
+  });
 });

@@ -328,6 +328,76 @@ describe('useMatchJob', () => {
       expect(result.current.progress.total).toBe(2);
     });
 
+    it('packMatchCandidates budgets UTF-8 bytes, not characters', () => {
+      // 80k 3-byte chars ≈ 240 KiB serialized per candidate → two exceed the 400 KiB budget
+      // → 2 chunks. Char-count accounting (~160k) would pack them together.
+      const mk = (p: string): MatchCandidate => ({ path: p, title: 'あ'.repeat(80 * 1024) });
+      expect(packMatchCandidates([mk('/a'), mk('/b')])).toHaveLength(2);
+    });
+
+    it('startMatching([]) is a no-op: no API call, idle state', async () => {
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { await result.current.startMatching([]); });
+      expect(mockStartMatchJob).not.toHaveBeenCalled();
+      expect(result.current.isMatching).toBe(false);
+      expect(result.current.progress).toEqual({ matched: 0, total: 0 });
+    });
+
+    // Chunk N>1 failure paths flow through the startChunkRef indirection — structurally
+    // distinct from the first-chunk path, so a stale-closure or ref-wiring bug would only
+    // manifest on the second chunk, exactly where these look.
+    it('chunk N>1 start failure surfaces the error, stops the queue, and preserves chunk 1 results', async () => {
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockRejectedValueOnce(new Error('provider down'));
+      mockGetMatchJob.mockResolvedValueOnce({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{ path: '/a', confidence: 'high', bestMatch: null, alternatives: [] }],
+      } satisfies MatchJobStatus);
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => {
+        await result.current.startMatching([bigCandidate('/a'), bigCandidate('/b')]);
+      });
+      // Chunk 1 completes → chunk 2's start rejects.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+
+      expect(result.current.error).toBe('provider down');
+      expect(result.current.isMatching).toBe(false);
+      // Chunk 1's frozen results survive the failure.
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+      // No further starts after the failure.
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+    });
+
+    it('chunk N>1 poll failure stops polling, surfaces the error, and preserves chunk 1 results', async () => {
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockResolvedValueOnce({
+          id: 'job-1', status: 'completed', total: 1, matched: 1,
+          results: [{ path: '/a', confidence: 'high', bestMatch: null, alternatives: [] }],
+        } satisfies MatchJobStatus)
+        .mockRejectedValueOnce(new Error('job expired'));
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => {
+        await result.current.startMatching([bigCandidate('/a'), bigCandidate('/b')]);
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // chunk 1 completes, chunk 2 starts
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // chunk 2's first poll rejects
+
+      expect(result.current.error).toBe('job expired');
+      expect(result.current.isMatching).toBe(false);
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+      // Polling has stopped.
+      mockGetMatchJob.mockClear();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(mockGetMatchJob).not.toHaveBeenCalled();
+    });
+
     it('cancel mid-queue abandons pending chunks', async () => {
       mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
       mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });

@@ -338,6 +338,33 @@ describe('library-scan routes', () => {
       expect(services.matchJob.createJob).not.toHaveBeenCalled();
     });
 
+    // Positive boundary: without these, the raise is untestable — createTestApp's default
+    // 1 MiB cap would 413 the 11 MiB negatives above even if the route option were deleted.
+    it('confirm route accepts a ~3 MiB body (over the 1 MiB default, under the route limit)', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      const midsize = 'x'.repeat(3 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: { books: [{ path: '/a/b', title: 'Book', metadata: { blob: midsize } }] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.libraryScan.confirmImport).toHaveBeenCalled();
+    });
+
+    it('match route accepts a ~3 MiB body (over the 1 MiB default, under the route limit)', async () => {
+      (services.matchJob.createJob as ReturnType<typeof vi.fn>).mockReturnValue('job-3mib');
+      const midsize = 'x'.repeat(3 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/match',
+        payload: { books: [{ path: '/a/b', title: midsize }] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.matchJob.createJob).toHaveBeenCalled();
+    });
+
     it('leaves the global 1 MiB default in place on other routes (scan 413s above 1 MiB)', async () => {
       (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ discoveries: [], totalFolders: 0 });

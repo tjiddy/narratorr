@@ -749,6 +749,43 @@ describe('useLibraryImport hook (#133)', () => {
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('not confirmed'));
   });
 
+  it('held item from an early chunk survives a later chunk failure (#1831)', async () => {
+    // captureHeld REPLACES held state, so it must run once over the aggregate at run end —
+    // a per-chunk capture (or an onError that skips it) would drop chunk 1's held item.
+    mockScanDirectory.mockResolvedValue({
+      ...mockScanResult,
+      discoveries: [
+        { path: '/audiobooks/X/B1', parsedTitle: 'B1', parsedAuthor: 'X', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+        { path: '/audiobooks/Y/B2', parsedTitle: 'B2', parsedAuthor: 'Y', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+      ],
+    });
+    mockConfirmImport
+      .mockResolvedValueOnce({
+        accepted: 0,
+        heldReview: [{ path: '/audiobooks/X/B1', title: 'B1', reason: 'recording-review-required' }],
+        skipped: [],
+        failed: [],
+      })
+      .mockRejectedValueOnce(new Error('connection reset'));
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.rows.length).toBe(2));
+
+    // Push each row over the chunk byte budget → two separate chunks.
+    act(() => result.current.handleEdit(0, { title: 'B1', author: 'X', series: '', metadata: bigMetadata(500 * 1024) }));
+    act(() => result.current.handleEdit(1, { title: 'B2', author: 'Y', series: '', metadata: bigMetadata(500 * 1024) }));
+    act(() => result.current.handleRegister());
+
+    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalledTimes(2));
+    // Chunk 1's held item is captured despite chunk 2's failure.
+    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+    expect(result.current.heldReview[0]!.path).toBe('/audiobooks/X/B1');
+    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
+    // The run failure still surfaces, and nothing navigates.
+    expect(toast.error).toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   // AC3: empty state (#141)
   it('returns emptyResult=true when scan returns zero discoveries', async () => {
     mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
