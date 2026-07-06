@@ -677,4 +677,24 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
     expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
   });
+
+  // #1829 — the Detailed preset's fileFormat now carries { (?edition?)}, so choosing the
+  // preset (not just hand-typing the token) flips the row from the capability hint to a
+  // real rendered filename. SAMPLE_TOKENS has no trackNumber, so no ordinal renders.
+  it('selecting the Detailed preset flips the file edition row from the hint to a rendered filename (#1829)', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
+    });
+    await user.selectOptions(screen.getByLabelText('Preset'), 'detailed');
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe(
+        'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).m4b',
+      );
+    });
+  });
 });
