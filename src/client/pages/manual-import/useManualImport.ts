@@ -33,7 +33,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
   // Progress across the sequential chunked confirm run (#1831) — drives "Registering X of Y…".
-  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null);
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number; chunks: number } | null>(null);
 
   // Held-review recovery (#1732). Re-confirm uses the mode snapshotted at the
   // original confirm attempt, not the still-editable `mode` selector.
@@ -118,10 +118,8 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     // The mode is carried in the mutation variables so the held-review snapshot captures
     // the value in effect at *this* confirm attempt (#1732), not a later selector change,
     // and is threaded to every chunk of the byte-budgeted chunked confirm (#1831).
-    mutationFn: ({ items, mode: confirmMode }: { items: ImportConfirmItem[]; mode: ImportMode | undefined }) => {
-      setChunkProgress({ current: 0, total: items.length });
-      return runChunkedConfirm({ items, mode: confirmMode, confirm: api.confirmImport, onProgress: setChunkProgress });
-    },
+    mutationFn: ({ items, mode: confirmMode }: { items: ImportConfirmItem[]; mode: ImportMode | undefined }) =>
+      runChunkedConfirm({ items, mode: confirmMode, confirm: api.confirmImport, onProgress: setChunkProgress }),
     onSuccess: (res, variables) => {
       const { aggregateResult, submittedItems } = res;
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });

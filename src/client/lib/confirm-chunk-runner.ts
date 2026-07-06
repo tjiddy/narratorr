@@ -39,8 +39,12 @@ export interface RunChunkedConfirmParams {
   /** Threaded to every chunk so manual-import's per-attempt mode snapshot (#1732) is preserved. */
   mode: ImportMode | undefined;
   confirm: (items: ImportConfirmItem[], mode: ImportMode | undefined) => Promise<ImportResult>;
-  /** Progress across the sequential run — drives the "Registering X of Y…" label. */
-  onProgress?: (progress: { current: number; total: number }) => void;
+  /**
+   * Progress across the sequential run — drives the "Registering X of Y…" label.
+   * `chunks` is the number of requests the run splits into; the UI only surfaces the
+   * label for a genuinely multi-chunk run (a single-chunk import keeps "Importing…").
+   */
+  onProgress?: (progress: { current: number; total: number; chunks: number }) => void;
 }
 
 const emptyResult = (): ImportResult => ({ accepted: 0, heldReview: [], skipped: [], failed: [] });
@@ -52,10 +56,11 @@ export async function runChunkedConfirm(params: RunChunkedConfirmParams): Promis
   const aggregate = emptyResult();
   const submittedItems: ImportConfirmItem[] = [];
   const total = chunks.reduce((n, c) => n + c.length, 0);
+  const chunkCount = chunks.length;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]!;
-    onProgress?.({ current: submittedItems.length, total });
+    onProgress?.({ current: submittedItems.length, total, chunks: chunkCount });
 
     let result: ImportResult;
     try {
@@ -81,7 +86,7 @@ export async function runChunkedConfirm(params: RunChunkedConfirmParams): Promis
     aggregate.failed.push(...result.failed);
   }
 
-  onProgress?.({ current: submittedItems.length, total });
+  onProgress?.({ current: submittedItems.length, total, chunks: chunkCount });
   return {
     aggregateResult: aggregate,
     submittedItems,

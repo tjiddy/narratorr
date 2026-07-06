@@ -44,8 +44,8 @@ describe('runChunkedConfirm (#1831)', () => {
 
     expect(confirm).toHaveBeenNthCalledWith(1, expect.any(Array), 'move');
     expect(confirm).toHaveBeenNthCalledWith(2, expect.any(Array), 'move');
-    // Final progress reports both items submitted of the total.
-    expect(onProgress).toHaveBeenLastCalledWith({ current: 2, total: 2 });
+    // Final progress reports both items submitted of the total, across 2 chunks.
+    expect(onProgress).toHaveBeenLastCalledWith({ current: 2, total: 2, chunks: 2 });
   });
 
   it('mid-sequence failure returns submittedItems + the in-flight/remainder split', async () => {

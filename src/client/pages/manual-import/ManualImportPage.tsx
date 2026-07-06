@@ -128,7 +128,7 @@ export function ManualImportPage() {
               onModeChange={setMode}
               onImport={handleImport}
               importing={importMutation.isPending}
-              {...(importMutation.isPending && chunkProgress && chunkProgress.total > 0
+              {...(importMutation.isPending && chunkProgress && chunkProgress.chunks > 1
                 ? { registerLabel: `Registering ${chunkProgress.current} of ${chunkProgress.total}…` }
                 : {})}
             />

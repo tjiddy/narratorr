@@ -33,7 +33,7 @@ export function useLibraryImport() {
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   // Progress across the sequential chunked confirm run (#1831) — drives "Registering X of Y…".
-  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null);
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number; chunks: number } | null>(null);
   // Items the server held for recording review (#1711) — surfaced for re-confirm.
   // Library always registers with mode `undefined`, so the snapshot is unused here.
   const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
@@ -128,10 +128,8 @@ export function useLibraryImport() {
     // Byte-budgeted chunked confirm (#1831). A large library exceeds the 1 MiB body
     // limit in one request, so the runner packs the selection into sub-1-MiB chunks and
     // POSTs them sequentially, resolving with the aggregate + the actually-submitted items.
-    mutationFn: (items: ImportConfirmItem[]) => {
-      setChunkProgress({ current: 0, total: items.length });
-      return runChunkedConfirm({ items, mode: undefined, confirm: api.confirmImport, onProgress: setChunkProgress });
-    },
+    mutationFn: (items: ImportConfirmItem[]) =>
+      runChunkedConfirm({ items, mode: undefined, confirm: api.confirmImport, onProgress: setChunkProgress }),
     onSuccess: (res) => {
       const { aggregateResult, submittedItems } = res;
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
