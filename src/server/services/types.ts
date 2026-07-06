@@ -13,7 +13,7 @@ import type {
   seriesMembers,
   suggestions,
 } from '../../db/schema.js';
-import type { BookStatus, EnrichmentStatus } from '../../shared/schemas/book.js';
+import type { BookStatus, EnrichmentStatus, ProductionType } from '../../shared/schemas/book.js';
 import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
 import type { BlacklistReason, BlacklistType } from '../../shared/schemas/blacklist.js';
 import type { DownloadProtocol } from '../../core/indexers/types.js';
@@ -34,9 +34,10 @@ import type { SuggestionReason } from '../../shared/schemas/discovery.js';
 // Re-narrow the status / enrichmentStatus columns so callers can consume
 // `book.status` directly without re-asserting `as BookStatus`.
 // Canonical home — do not redeclare per-file.
-export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus'> & {
+export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus' | 'productionType'> & {
   status: BookStatus;
   enrichmentStatus: EnrichmentStatus;
+  productionType: ProductionType;
 };
 
 // Two-axis download state (#1445): narrow both axis columns to their Zod-derived

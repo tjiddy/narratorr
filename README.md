@@ -17,7 +17,7 @@ Narratorr is the automation layer for your audiobook library: it searches your i
 - **Quality Gate** — Auto-import the first qualifying release for a wanted book and hold questionable ones for manual review. Imported books are never automatically replaced — re-importing a better version is a deliberate, manual choice.
 - **Library Management** — Configurable folder/file naming, audio enrichment from file tags, grid and list views with filtering and bulk actions.
 - **Discovery** — Personalized book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
-- **Audio Processing** — Optional FFmpeg-based conversion, merging, metadata tag embedding, and cover art embedding.
+- **Audio Processing** — Optional FFmpeg-based conversion, merging, cover art embedding, and metadata tag embedding (author, title, narrator, series, plus the media-server set: subtitle, ASIN, publisher, description, year, and genre).
 - **Notifications** — Discord, Slack, Telegram, Pushover, Gotify, Ntfy, email, and generic webhooks.
 - **Import Lists** — Sync wanted books from external sources.
 - **Security** — Forms or Basic auth with CSRF defenses, rate-limited login, AES-256-GCM credential encryption at rest, CSP with nonce-based script execution, SSRF protection on attacker-influenced fetches, library-root ancestry checks on filesystem mutations.

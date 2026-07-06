@@ -11,12 +11,43 @@ import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAud
 import { reconstructDiscGroup } from '../../utils/import-helpers.js';
 import { renameFilesWithTemplate } from '../../utils/paths.js';
 import type { RenameableBook } from '../../utils/paths.js';
+import { OwnedRecordingError, type BookWithAuthor } from '../book.service.js';
 import { toNamingOptions } from '../../../core/utils/naming.js';
 import { safeEmit } from '../../utils/safe-emit.js';
 import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
 import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { fireAndForget } from '../../utils/fire-and-forget.js';
+import { writeOpfForImport } from '../../utils/opf-writer.js';
+
+/**
+ * Build the {@link RenameableBook} for the file-rename step, preferring the hydrated
+ * full book (which carries ordered narrators + the stored `edition_label`, #1712) and
+ * falling back to the job's `bookRow` for the fields it has. Extracted to keep
+ * `renameIfConfigured` under the complexity cap.
+ *
+ * `pendingEditionLabel` (#1740) is the label freshly derived by `copyToLibrary` on
+ * THIS import — it has not been persisted yet, so the hydrated `fullBook` still
+ * carries the stale/null value. Prefer it (nullish, never `||`, so a deliberate
+ * empty-string label is not dropped) so `{edition}` renders on the creating import;
+ * when undefined (no disambiguation occurred), fall through to the stored value.
+ */
+function buildRenameableBook(
+  fullBook: BookWithAuthor | null,
+  bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
+  pendingEditionLabel?: string,
+): RenameableBook {
+  return {
+    title: fullBook?.title ?? bookRow.title,
+    seriesName: fullBook?.seriesName ?? bookRow.seriesName,
+    seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
+    narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
+    publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
+    // Freshly-derived label (#1740) wins over the not-yet-persisted hydrated value;
+    // else the stored edition_label (#1712) so {edition} renders end-to-end.
+    editionLabel: pendingEditionLabel ?? fullBook?.editionLabel ?? null,
+  };
+}
 
 function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload {
   let parsedJson: unknown;
@@ -95,20 +126,31 @@ export class ManualImportAdapter implements ImportAdapter {
       }
 
       let finalPath = payload.path;
+      // Edition discriminator (#1711): set when the collision fence disambiguated
+      // a different recording into a new folder. Persisted so a rescan reuses the
+      // same label rather than re-deriving from later-enriched metadata.
+      let editionLabel: string | undefined;
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
         await ctx.setPhase('copying');
-        finalPath = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
+        const copyResult = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
           ctx.emitProgress('copying', progress, byteCounter);
         });
+        finalPath = copyResult.targetPath;
+        editionLabel = copyResult.editionLabel;
 
-        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings);
+        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings, editionLabel);
       }
 
       const stats = await getAudioStats(finalPath, log);
       log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
 
-      await db.update(books).set({ path: finalPath, size: stats.totalSize, updatedAt: new Date() }).where(eq(books.id, bookId));
+      await db.update(books).set({
+        path: finalPath,
+        size: stats.totalSize,
+        ...(editionLabel !== undefined && { editionLabel }),
+        updatedAt: new Date(),
+      }).where(eq(books.id, bookId));
 
       await ctx.setPhase('fetching_metadata');
 
@@ -127,12 +169,29 @@ export class ManualImportAdapter implements ImportAdapter {
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
 
+      // Best-effort: OPF metadata sidecar (media-server handoff). Awaited inline (canonical on-disk
+      // file, NOT the droppable connector queue); gated on tagging.writeOpf and independent of tag
+      // embedding. The shared helper reloads BookWithAuthor fresh by id, so post-enrichment data lands.
+      await this.writeOpfSidecar(bookId, finalPath, log);
+
       // Fire-and-forget: connector refresh. Pointer-mode (in-place adopt, !mode)
       // notifies too, with reason 'adopt'; copy/move mode uses 'import'.
       this.enqueueConnectorRefresh(bookId, payload, finalPath, mode, log);
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
       throw error;
+    }
+  }
+
+  private async writeOpfSidecar(bookId: number, finalPath: string, log: ImportAdapterContext['log']): Promise<void> {
+    try {
+      const taggingSettings = await this.deps.settingsService.get('tagging');
+      await writeOpfForImport({
+        enabled: taggingSettings.writeOpf, bookService: this.deps.bookService,
+        bookId, bookFolder: finalPath, log,
+      });
+    } catch (opfError: unknown) {
+      log.warn({ error: serializeError(opfError), bookId }, 'OPF write failed during manual import — continuing');
     }
   }
 
@@ -154,6 +213,17 @@ export class ManualImportAdapter implements ImportAdapter {
     error: unknown, bookId: number, payload: ManualImportJobPayload, log: ImportAdapterContext['log'],
   ): void {
     const { eventHistory, broadcaster } = this.deps;
+    // Forced-import refusal (#1736): a copy-time `OwnedRecordingError` from a FORCED import is NOT a
+    // generic failure — stop translating it here (no generic `book_status_change → failed`, no opaque
+    // `import_failed` event) so the worker's refused terminal disposition (placeholder deletion +
+    // enriched `import_failed` event/SSE) owns it after this rethrows.
+    //
+    // Gate on `forceImport` (F1): the copy-time on-disk collision fence is force-INDEPENDENT, so a
+    // NON-forced import can also throw `OwnedRecordingError` (e.g. a `different-recording` item that
+    // cleared confirm-time dedup but lands on an occupied target folder). That was never user-forced,
+    // so surfacing it as a "force refused" event would be factually wrong — keep it on the ordinary
+    // generic failure path below, exactly as it behaved before #1736.
+    if (error instanceof OwnedRecordingError && payload.forceImport === true) return;
     // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
     safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'failed' }, log);
     recordImportFailedEvent({
@@ -173,18 +243,14 @@ export class ManualImportAdapter implements ImportAdapter {
     finalPath: string, bookId: number, bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
     payload: ManualImportJobPayload, ctx: ImportAdapterContext,
     librarySettings: AppSettings['library'],
+    // #1740: label freshly derived by copyToLibrary on this import, not yet persisted.
+    editionLabel?: string,
   ): Promise<void> {
     if (!librarySettings.fileFormat?.trim()) return;
 
     await ctx.setPhase('renaming');
     const fullBook = await this.deps.bookService.getById(bookId);
-    const renameableBook: RenameableBook = {
-      title: fullBook?.title ?? bookRow.title,
-      seriesName: fullBook?.seriesName ?? bookRow.seriesName,
-      seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
-      narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
-      publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
-    };
+    const renameableBook = buildRenameableBook(fullBook, bookRow, editionLabel);
     const namingOptions = toNamingOptions(librarySettings);
     await renameFilesWithTemplate(
       finalPath,

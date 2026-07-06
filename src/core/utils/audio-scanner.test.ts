@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { scanAudioDirectory, getFFprobeDuration, readAlbumTag } from './audio-scanner.js';
+import { scanAudioDirectory, getFFprobeDuration, getFFprobeStreamInfo, getFFprobeStreamDuration, readAlbumTag } from './audio-scanner.js';
 
 // Mock music-metadata
 vi.mock('music-metadata', () => ({
@@ -881,7 +881,10 @@ describe('scanAudioDirectory', () => {
       });
 
       it('runs ffprobe with a sanitized env (no secret, PATH preserved) alongside the timeout', async () => {
-        process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
+        // Stub the whole env so the assertion is against a known surface, not the
+        // host runner's ambient PATH (which may be absent or differ between envs).
+        const originalEnv = process.env;
+        process.env = { ...originalEnv, NARRATORR_SECRET_KEY: 'sentinel-secret', PATH: '/sentinel/bin' };
         try {
           mockExecFileSuccess(JSON.stringify({ format: { duration: '100.0' } }));
           await getFFprobeDuration('/usr/bin/ffprobe', '/audio/book.m4b');
@@ -890,9 +893,93 @@ describe('scanAudioDirectory', () => {
           expect(opts.timeout).toBe(10_000);
           expect(opts.env).toBeDefined();
           expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
-          expect(opts.env).toHaveProperty('PATH');
+          expect(opts.env!.PATH).toBe('/sentinel/bin');
         } finally {
-          delete process.env.NARRATORR_SECRET_KEY;
+          process.env = originalEnv;
+        }
+      });
+    });
+
+    describe('getFFprobeStreamDuration helper (#1676)', () => {
+      it('returns parsed duration from the first stream when ffprobe returns valid JSON with a stream duration string', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '50177.273333' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeCloseTo(50177.273333);
+      });
+
+      it('returns null when ffprobe returns empty/malformed JSON', async () => {
+        mockExecFileSuccess('not json at all');
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the streams array is absent or empty', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the first stream carries no duration', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ codec_name: 'aac' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the stream duration is "0"', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '0' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the stream duration is a negative string', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '-123.456' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when the stream duration is NaN or a non-numeric string', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: 'N/A' }] }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null without throwing when ffprobe spawn fails (ENOENT)', async () => {
+        mockExecFileError(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }));
+        const result = await getFFprobeStreamDuration('/nonexistent/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('returns null when ffprobe spawn exceeds 10 000 ms timeout', async () => {
+        mockExecFileError(Object.assign(new Error('killed'), { killed: true, signal: 'SIGTERM' }));
+        const result = await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(result).toBeNull();
+      });
+
+      it('passes the stream=duration argv (with -select_streams a:0) to ffprobe', async () => {
+        mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '100.0' }] }));
+        await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+        expect(mockExecFile).toHaveBeenCalledWith(
+          '/usr/bin/ffprobe',
+          ['-v', 'quiet', '-select_streams', 'a:0', '-show_entries', 'stream=duration', '-of', 'json', '/audio/book.m4b'],
+          expect.objectContaining({ timeout: 10_000 }),
+          expect.any(Function),
+        );
+      });
+
+      it('runs ffprobe with a sanitized env (no secret, PATH preserved) alongside the timeout', async () => {
+        const originalEnv = process.env;
+        process.env = { ...originalEnv, NARRATORR_SECRET_KEY: 'sentinel-secret', PATH: '/sentinel/bin' };
+        try {
+          mockExecFileSuccess(JSON.stringify({ streams: [{ duration: '100.0' }] }));
+          await getFFprobeStreamDuration('/usr/bin/ffprobe', '/audio/book.m4b');
+
+          const opts = mockExecFile.mock.calls[0]![2] as { timeout?: number; env?: Record<string, string> };
+          expect(opts.timeout).toBe(10_000);
+          expect(opts.env).toBeDefined();
+          expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+          expect(opts.env!.PATH).toBe('/sentinel/bin');
+        } finally {
+          process.env = originalEnv;
         }
       });
     });
@@ -1048,6 +1135,406 @@ describe('scanAudioDirectory', () => {
         expect(result!.tagTitle).toBe('Test Book');
         expect(result!.tagNarrator).toBe('Test Narrator');
       });
+    });
+  });
+});
+
+describe('scanAudioDirectory codec fallback (xHE-AAC / USAC, #1667)', () => {
+  const FFPROBE_PATH = '/usr/bin/ffprobe';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function setupSingleFile(name = 'House of Chains.m4b') {
+    mockReaddir.mockResolvedValue([makeDirent(name, true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1_700_000_000 } as never);
+  }
+
+  /** music-metadata shape for a file whose codec it cannot read (e.g. xHE-AAC). */
+  function noCodecMetadata(formatOverrides: Record<string, unknown> = {}) {
+    return makeMetadata({
+      format: { codec: undefined, bitrate: undefined, sampleRate: undefined, numberOfChannels: undefined, duration: undefined, ...formatOverrides },
+    });
+  }
+
+  /**
+   * Route execFile by argv across the three ffprobe entries this fallback uses:
+   *   - `stream` → the codec probe (`stream=codec_name…`)
+   *   - `streamDuration` → the stream-level duration recovery probe (`stream=duration`)
+   *   - `duration` → the in-band format-level duration probe (`format=duration`)
+   * Each handler may be a flat response (`string | Error`) or a function of the
+   * probed file path, so multi-file cases route independently by argv — no
+   * call-order / `*Once()` sequencing required.
+   */
+  type ProbeResp = string | Error | ((filePath: string) => string | Error);
+  function routeExecFile(handlers: { stream?: ProbeResp; duration?: ProbeResp; streamDuration?: ProbeResp }) {
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (...a: unknown[]) => void;
+      const argv = (args[1] as string[]) ?? [];
+      const filePath = argv[argv.length - 1] ?? '';
+      const has = (needle: string) => argv.some(a => typeof a === 'string' && a.includes(needle));
+      // Order matters: `stream=duration` and `stream=codec_name` both contain "stream=",
+      // and the codec-name probe must win its own branch.
+      const handler = has('stream=codec_name') ? handlers.stream
+        : has('stream=duration') ? handlers.streamDuration
+          : handlers.duration;
+      const resp = typeof handler === 'function' ? handler(filePath) : handler;
+      if (resp instanceof Error) callback(resp, '', '');
+      else callback(null, resp ?? '', '');
+      return {} as never;
+    });
+  }
+
+  const streamJson = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({ streams: [{ codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2, ...over }] });
+
+  it('populates codec/bitrate/sampleRate/channels from ffprobe when music-metadata yields no codec', async () => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    routeExecFile({ stream: streamJson(), duration: JSON.stringify({ format: { duration: '50177.0' } }) });
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+    expect(result).not.toBeNull();
+    expect(result!.codec).toBe('aac');
+    expect(result!.bitrate).toBe(128000);
+    expect(result!.sampleRate).toBe(44100);
+    expect(result!.channels).toBe(2);
+    expect(result!.fileFormat).toBe('m4b');
+  });
+
+  it('fills only the missing fields and does not clobber music-metadata technical values', async () => {
+    setupSingleFile();
+    // music-metadata supplies bitrate + channels but no codec; ffprobe differs on both
+    mockParseFile.mockResolvedValue(noCodecMetadata({ bitrate: 96000, numberOfChannels: 1 }) as never);
+    routeExecFile({ stream: streamJson({ bit_rate: '128000', channels: 2, sample_rate: '48000' }) });
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+    expect(result!.codec).toBe('aac');       // filled by ffprobe
+    expect(result!.bitrate).toBe(96000);     // music-metadata preserved
+    expect(result!.channels).toBe(1);        // music-metadata preserved
+    expect(result!.sampleRate).toBe(48000);  // music-metadata absent → ffprobe fills
+  });
+
+  it('stores ffprobe bit_rate as a bps number (no kbps mixing)', async () => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    routeExecFile({ stream: streamJson({ bit_rate: '128000' }) });
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+    expect(result!.bitrate).toBe(128000);
+  });
+
+  it('accepts a valid codec with 0 channels and 0 bitrate (does not reject odd-but-real streams)', async () => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    routeExecFile({ stream: streamJson({ channels: 0, bit_rate: '0' }) });
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+    expect(result).not.toBeNull();
+    expect(result!.codec).toBe('aac');
+    expect(result!.channels).toBe(0);
+    expect(result!.bitrate).toBe(0);
+  });
+
+  it.each([
+    ['malformed JSON', 'not json'],
+    ['no streams array', JSON.stringify({ streams: [] })],
+    ['stream without codec_name', JSON.stringify({ streams: [{ bit_rate: '128000' }] })],
+  ])('returns null and signals onFilesWithoutCodec when ffprobe yields %s', async (_label, streamResp) => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    routeExecFile({ stream: streamResp });
+    const onFilesWithoutCodec = vi.fn();
+    const onDebug = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec, onDebug });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null without throwing when the codec probe spawn fails (ENOENT)', async () => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    routeExecFile({ stream: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) });
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attempt the codec fallback when ffprobePath is undefined', async () => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/malazan', { onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT signal onFilesWithoutCodec for a genuinely-empty directory', async () => {
+    mockReaddir.mockResolvedValue([] as never);
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/empty', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).not.toHaveBeenCalled();
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('does NOT signal onFilesWithoutCodec when every collected file fails to parse (firstParsed === null), ffprobe unconfigured (#1677)', async () => {
+    setupSingleFile();
+    // Every processOneFile throws after collection (e.g. EACCES) → firstParsed stays null.
+    mockParseFile.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/locked', { onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    // No file parsed far enough to show a missing codec — this is a non-codec failure
+    // (orchestrator maps it to probe_failed), so the codec signal must stay silent.
+    expect(onFilesWithoutCodec).not.toHaveBeenCalled();
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('does not let configured ffprobe recover a codec when every file failed to parse (firstParsed === null) — returns null, no probe, no signal (#1677)', async () => {
+    setupSingleFile();
+    mockParseFile.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+    // ffprobe WOULD return a readable stream if the fallback ran — it must not run on an
+    // unparsed file, so an all-files-failed directory can never become a codec-only success.
+    routeExecFile({ stream: streamJson(), duration: JSON.stringify({ format: { duration: '50177.0' } }) });
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/locked', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).not.toHaveBeenCalled();
+    const streamCalls = mockExecFile.mock.calls.filter(c => (c[1] as string[]).some(a => typeof a === 'string' && a.includes('stream=codec_name')));
+    expect(streamCalls).toHaveLength(0);
+  });
+
+  it('fires onFilesWithoutCodec for a mixed directory where one file throws but another parses with no codec (firstParsed !== null) (#1677)', async () => {
+    // Sorted by name: bad.m4b (throws) before good.m4b (parses, no codec) → firstParsed !== null.
+    mockReaddir.mockResolvedValue([makeDirent('bad.m4b', true), makeDirent('good.m4b', true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1_000_000 } as never);
+    mockParseFile
+      .mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+      .mockResolvedValueOnce(noCodecMetadata() as never);
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/audiobooks/mixed', { onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not invoke the codec probe when music-metadata already read the codec', async () => {
+    setupSingleFile('readable.mp3');
+    mockParseFile.mockResolvedValue(makeMetadata({ format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1000 } }) as never);
+    routeExecFile({ duration: JSON.stringify({ format: { duration: '1000.0' } }) });
+
+    const result = await scanAudioDirectory('/audiobooks/readable', { ffprobePath: FFPROBE_PATH });
+
+    expect(result!.codec).toBe('MPEG 1 Layer 3');
+    const streamCalls = mockExecFile.mock.calls.filter(c => (c[1] as string[]).some(a => typeof a === 'string' && a.includes('stream=codec_name')));
+    expect(streamCalls).toHaveLength(0);
+  });
+
+  it('runs the codec probe with a sanitized env (no secret, PATH preserved)', async () => {
+    setupSingleFile();
+    mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+    routeExecFile({ stream: streamJson() });
+    // Stub the whole env so the assertion is against a known surface, not the host
+    // runner's ambient PATH (which may be absent or differ between environments).
+    const originalEnv = process.env;
+    process.env = { ...originalEnv, NARRATORR_SECRET_KEY: 'sentinel-secret', PATH: '/sentinel/bin' };
+    try {
+      await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+      const streamCall = mockExecFile.mock.calls.find(c => (c[1] as string[]).some(a => typeof a === 'string' && a.includes('stream=codec_name')));
+      const opts = streamCall![2] as { timeout?: number; env?: Record<string, string> };
+      expect(opts.timeout).toBe(10_000);
+      expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
+      expect(opts.env!.PATH).toBe('/sentinel/bin');
+    } finally {
+      process.env = originalEnv;
+    }
+  });
+
+  describe('stream-level duration recovery (#1676)', () => {
+    const durStreamJson = (duration: string) => JSON.stringify({ streams: [{ duration }] });
+    const norm = (p: string) => p.split('\\').join('/');
+
+    function setupMultiFile(names: string[]) {
+      mockReaddir.mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 700_000_000 } as never);
+    }
+
+    const streamDurCalls = () =>
+      mockExecFile.mock.calls.filter(c => (c[1] as string[]).some(a => typeof a === 'string' && a.includes('stream=duration')));
+    const codecCalls = () =>
+      mockExecFile.mock.calls.filter(c => (c[1] as string[]).some(a => typeof a === 'string' && a.includes('stream=codec_name')));
+
+    it('(a) recovers a non-zero totalDuration from a stream=duration probe of the parsed file', async () => {
+      setupSingleFile();
+      mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+      routeExecFile({
+        stream: streamJson(),
+        duration: JSON.stringify({ format: { duration: '0' } }), // in-band format=duration leaves totalDuration 0
+        streamDuration: durStreamJson('1234.5'),
+      });
+
+      const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+      expect(result).not.toBeNull();
+      expect(result!.codec).toBe('aac');
+      expect(result!.totalDuration).toBe(1234.5);
+      expect(streamDurCalls()).toHaveLength(1);
+      const probed = norm((streamDurCalls()[0]![1] as string[]).at(-1)!);
+      expect(probed).toBe('/audiobooks/malazan/House of Chains.m4b');
+    });
+
+    it('(a×b) codec AND stream-duration recovery follow the winning file (file 2), not the stale firstParsed', async () => {
+      setupMultiFile(['part1.m4b', 'part2.m4b']);
+      mockParseFile.mockResolvedValue(noCodecMetadata() as never); // both parse, neither has a codec
+      const file2 = '/audiobooks/series/part2.m4b';
+      routeExecFile({
+        // file 1 → no codec; file 2 → a codec
+        stream: p => (norm(p) === file2 ? streamJson({ codec_name: 'usac' }) : JSON.stringify({ streams: [] })),
+        duration: JSON.stringify({ format: { duration: '0' } }), // in-band leaves totalDuration 0 for both
+        streamDuration: p => (norm(p) === file2 ? durStreamJson('999') : durStreamJson('0')),
+      });
+
+      const result = await scanAudioDirectory('/audiobooks/series', { ffprobePath: FFPROBE_PATH });
+
+      expect(result).not.toBeNull();
+      expect(result!.codec).toBe('usac');
+      expect(result!.totalDuration).toBe(999);
+      // exactly one stream=duration recovery probe, and it carries file 2's path (not file 1)
+      expect(streamDurCalls()).toHaveLength(1);
+      expect(norm((streamDurCalls()[0]![1] as string[]).at(-1)!)).toBe(file2);
+    });
+
+    it('(#1677) a parseFile-throwing single file stays null — no codec/duration probe, no signal', async () => {
+      setupSingleFile();
+      mockParseFile.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+      // ffprobe WOULD recover both codec and duration if the fallback ran — it must not.
+      routeExecFile({ stream: streamJson(), duration: JSON.stringify({ format: { duration: '0' } }), streamDuration: durStreamJson('500') });
+      const onFilesWithoutCodec = vi.fn();
+
+      const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+      expect(result).toBeNull();
+      expect(onFilesWithoutCodec).not.toHaveBeenCalled();
+      expect(mockExecFile).not.toHaveBeenCalled();
+    });
+
+    it('(b) iterates parsed candidates until a codec is found, then stops (later files not probed)', async () => {
+      setupMultiFile(['part1.m4b', 'part2.m4b', 'part3.m4b']);
+      mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+      routeExecFile({
+        // part1 → no codec; part2 & part3 → a codec, but iteration must stop after part2
+        stream: p => (norm(p) === '/audiobooks/series/part1.m4b' ? JSON.stringify({ streams: [] }) : streamJson({ codec_name: 'usac' })),
+        duration: JSON.stringify({ format: { duration: '3600' } }), // real in-band duration → no recovery
+      });
+
+      const result = await scanAudioDirectory('/audiobooks/series', { ffprobePath: FFPROBE_PATH });
+
+      expect(result!.codec).toBe('usac');
+      expect(codecCalls()).toHaveLength(2); // part1 (miss) + part2 (hit); part3 never probed
+      expect(streamDurCalls()).toHaveLength(0); // in-band duration present → no stream=duration recovery
+    });
+
+    it('(no-regression) every parsed file yields no codec → null and signals onFilesWithoutCodec once', async () => {
+      setupMultiFile(['part1.m4b', 'part2.m4b']);
+      mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+      routeExecFile({ stream: JSON.stringify({ streams: [] }) }); // no codec for any file
+      const onFilesWithoutCodec = vi.fn();
+
+      const result = await scanAudioDirectory('/audiobooks/series', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+      expect(result).toBeNull();
+      expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+      expect(streamDurCalls()).toHaveLength(0); // no codec recovered → never reaches duration recovery
+    });
+
+    it('(duration-0 policy) stream=duration of "0" leaves totalDuration 0; result stays non-null on the codec', async () => {
+      setupSingleFile();
+      mockParseFile.mockResolvedValue(noCodecMetadata() as never);
+      routeExecFile({
+        stream: streamJson(),
+        duration: JSON.stringify({ format: { duration: '0' } }),
+        streamDuration: durStreamJson('0'), // <= 0 → helper returns null → not added
+      });
+
+      const result = await scanAudioDirectory('/audiobooks/malazan', { ffprobePath: FFPROBE_PATH });
+
+      expect(result).not.toBeNull();
+      expect(result!.codec).toBe('aac');
+      expect(result!.totalDuration).toBe(0);
+    });
+  });
+
+  describe('getFFprobeStreamInfo helper', () => {
+    function mockStreamSuccess(stdout: string) {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (...a: unknown[]) => void;
+        callback(null, stdout, '');
+        return {} as never;
+      });
+    }
+
+    it('parses codec/bitrate/sampleRate/channels from valid stream JSON', async () => {
+      mockStreamSuccess(JSON.stringify({ streams: [{ codec_name: 'aac', bit_rate: '128000', sample_rate: '44100', channels: 2 }] }));
+      const info = await getFFprobeStreamInfo(FFPROBE_PATH, '/audio/book.m4b');
+      expect(info).toEqual({ codec: 'aac', bitrate: 128000, sampleRate: 44100, channels: 2 });
+    });
+
+    it('returns null for malformed JSON', async () => {
+      mockStreamSuccess('not json');
+      expect(await getFFprobeStreamInfo(FFPROBE_PATH, '/audio/book.m4b')).toBeNull();
+    });
+
+    it('returns null when there is no stream with a codec_name', async () => {
+      mockStreamSuccess(JSON.stringify({ streams: [{ bit_rate: '128000' }] }));
+      expect(await getFFprobeStreamInfo(FFPROBE_PATH, '/audio/book.m4b')).toBeNull();
+    });
+
+    it('omits non-numeric bit_rate ("N/A") rather than storing NaN', async () => {
+      mockStreamSuccess(JSON.stringify({ streams: [{ codec_name: 'aac', bit_rate: 'N/A', sample_rate: '44100', channels: 2 }] }));
+      const info = await getFFprobeStreamInfo(FFPROBE_PATH, '/audio/book.m4b');
+      expect(info).toEqual({ codec: 'aac', sampleRate: 44100, channels: 2 });
+    });
+
+    it('passes the expected ffprobe arguments', async () => {
+      mockStreamSuccess(JSON.stringify({ streams: [{ codec_name: 'aac' }] }));
+      await getFFprobeStreamInfo(FFPROBE_PATH, '/audio/book.m4b');
+      expect(mockExecFile).toHaveBeenCalledWith(
+        FFPROBE_PATH,
+        ['-v', 'quiet', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name,bit_rate,sample_rate,channels', '-of', 'json', '/audio/book.m4b'],
+        expect.objectContaining({ timeout: 10_000 }),
+        expect.any(Function),
+      );
+    });
+
+    it('returns null without throwing on spawn error', async () => {
+      mockExecFile.mockImplementation((...args: unknown[]) => {
+        const callback = args[args.length - 1] as (...a: unknown[]) => void;
+        callback(Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }), '', '');
+        return {} as never;
+      });
+      expect(await getFFprobeStreamInfo('/nonexistent/ffprobe', '/audio/book.m4b')).toBeNull();
     });
   });
 });

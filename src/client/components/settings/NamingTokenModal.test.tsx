@@ -5,26 +5,26 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { NamingTokenModal } from './NamingTokenModal';
 
 vi.mock('@core/utils/index.js', () => ({
-  renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
-    let result = template;
+  renderTemplate: (template: string, tokens: Record<string, unknown>, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{edition}', (tokens?.edition as string) ?? '');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   },
-  renderFilename: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
-    let result = template;
+  renderFilename: (template: string, tokens: Record<string, unknown>, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{edition}', (tokens?.edition as string) ?? '');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   },
-  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'edition', 'trackNumber', 'trackTotal', 'partName'],
   FOLDER_TOKEN_GROUPS: [
     { label: 'Author', tokens: ['author', 'authorLastFirst'] },
     { label: 'Title', tokens: ['title', 'titleSort'] },
     { label: 'Series', tokens: ['series', 'seriesPosition'] },
     { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year'] },
+    { label: 'Metadata', tokens: ['year', 'edition'] },
   ],
   FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
@@ -55,7 +55,7 @@ describe('NamingTokenModal', () => {
       expect(screen.queryByText('{trackNumber}')).not.toBeInTheDocument();
     });
 
-    it('shows correct tokens per group — Author (2), Title (2), Series (2), Narrator (2), Metadata (1)', () => {
+    it('shows correct tokens per group — Author (2), Title (2), Series (2), Narrator (2), Metadata (2: year + edition)', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} />);
       expect(screen.getByText('{author}')).toBeInTheDocument();
       expect(screen.getByText('{authorLastFirst}')).toBeInTheDocument();
@@ -66,6 +66,8 @@ describe('NamingTokenModal', () => {
       expect(screen.getByText('{narrator}')).toBeInTheDocument();
       expect(screen.getByText('{narratorLastFirst}')).toBeInTheDocument();
       expect(screen.getByText('{year}')).toBeInTheDocument();
+      // #1712 — {edition} is discoverable in the Metadata group.
+      expect(screen.getByText('{edition}')).toBeInTheDocument();
     });
   });
 
@@ -90,6 +92,46 @@ describe('NamingTokenModal', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} onInsert={onInsert} />);
       await user.click(screen.getByText('{author}'));
       expect(onInsert).toHaveBeenCalledWith('author');
+    });
+  });
+
+  describe('{edition} auto-behavior descriptor (#1774)', () => {
+    it('renders the one-line descriptor for {edition}', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      expect(
+        screen.getByText(/Added automatically to the folder for multiple editions/),
+      ).toBeInTheDocument();
+    });
+
+    it('renders the descriptor exactly once — no other chip gets one', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      // Only {edition} carries a descriptor; siblings like {year} in the same Metadata group stay bare.
+      expect(screen.getAllByText(/Added automatically to the folder/)).toHaveLength(1);
+      // The {year} chip renders as a bare token with no adjacent descriptive text.
+      expect(screen.getByText('{year}')).toBeInTheDocument();
+    });
+
+    it('clicking {edition} still calls onInsert with "edition" despite the descriptor', async () => {
+      const onInsert = vi.fn();
+      const user = userEvent.setup();
+      renderWithProviders(<NamingTokenModal {...defaultProps} onInsert={onInsert} />);
+      await user.click(screen.getByText('{edition}'));
+      expect(onInsert).toHaveBeenCalledWith('edition');
+    });
+  });
+
+  describe('{edition} live-preview footer (#1774)', () => {
+    it('renders the edition label in the footer when the format places {edition}', () => {
+      renderWithProviders(
+        <NamingTokenModal
+          {...defaultProps}
+          currentFormat="{author}/{title}/{edition}"
+          previewTokens={{ author: 'Brandon Sanderson', title: 'The Way of Kings', edition: 'Full Cast' }}
+        />,
+      );
+      // Fixture split (#1774) must keep an edition-bearing sample flowing to the modal — otherwise
+      // a user who inserts {edition} sees it render empty ("the modal lies").
+      expect(screen.getByText(/Full Cast/)).toBeInTheDocument();
     });
   });
 

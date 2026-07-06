@@ -8,6 +8,12 @@ import type { ScanResult } from '@/lib/api';
 import { createMockSettings } from '@/__tests__/factories';
 import { toast } from 'sonner';
 
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 const mockScanDirectory = vi.fn();
 const mockConfirmImport = vi.fn();
 const mockStartMatchJob = vi.fn();
@@ -29,7 +35,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
 function createWrapper() {
@@ -139,6 +145,45 @@ describe('useLibraryImport hook (#133)', () => {
     expect(pathDupRow?.selected).toBe(false);
   });
 
+  it('post-match duplicate (F8): high-confidence result flagged isDuplicate deselects the row and excludes it from the confirm payload (#1662)', async () => {
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1',
+      status: 'completed',
+      total: 1,
+      matched: 1,
+      results: [
+        {
+          path: '/audiobooks/AuthorA/Book1',
+          confidence: 'high',
+          bestMatch: { title: 'Book One', authors: [{ name: 'Author A' }] },
+          alternatives: [],
+          isDuplicate: true,
+          existingBookId: 421,
+          duplicateReason: 'slug',
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+    expect(result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
+
+    // After the post-match flag arrives, the row is flagged AND deselected.
+    await waitFor(() => {
+      const row = result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1');
+      expect(row?.book.isDuplicate).toBe(true);
+      expect(row?.book.existingBookId).toBe(421);
+      expect(row?.selected).toBe(false);
+    }, { timeout: 5000 });
+
+    // It is therefore absent from the confirm payload.
+    act(() => result.current.handleRegister());
+    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
+    const items = mockConfirmImport.mock.calls[0]![0] as Array<{ path: string }>;
+    expect(items.some(i => i.path === '/audiobooks/AuthorA/Book1')).toBe(false);
+  });
+
   it('match results merge: confidence=medium (Review) deselects non-duplicate row; reviewCount increments, selectedCount excludes it', async () => {
     // Medium-confidence ("Review" badge) rows must NOT default to checked — a human
     // should eyeball the match before importing it (#1318).
@@ -214,9 +259,11 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
-  it('slug-duplicate row: case-only title change unlocks row (exact title equality contract)', async () => {
-    // Existing book has title 'Book Three' (mixed case). Editing to 'book three' (all lowercase)
-    // must NOT collide because exact equality 'book three' !== 'Book Three'.
+  it('slug-duplicate row: case-only / colon-subtitle title change KEEPS row flagged (normalized contract #1662)', async () => {
+    // Existing book has title 'Book Three' / 'Author C'. Under the shared
+    // normalized-title + author-slug predicate, a case-only ('book three') or
+    // colon-subtitle ('Book Three: A Subtitle') change still collides — the row
+    // stays flagged (the recheck no longer uses exact title equality).
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
     ]);
@@ -228,13 +275,34 @@ describe('useLibraryImport hook (#133)', () => {
     const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'book three', author: 'Author C', series: '' });
+      result.current.handleEdit(slugDupIdx, { title: 'Book Three: A Subtitle', author: 'author c', series: '' });
     });
 
-    await waitFor(() => {
-      const row = result.current.rows[slugDupIdx];
-      expect(row!.book.isDuplicate).toBe(false);
+    // Give the recheck a tick; the row must remain flagged.
+    await waitFor(() => expect(result.current.rows[slugDupIdx]!.userEdited).toBe(true));
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
+  });
+
+  it('slug-duplicate row flagged by ASIN stays flagged after non-colliding title/author edits (#1662 F5)', async () => {
+    // The library entry shares only the ASIN. Editing the title + author to a
+    // genuinely different identity must NOT clear the flag, because the ASIN
+    // (carried on the edited state) still matches branch 1 of the predicate.
+    mockGetBookIdentifiers.mockResolvedValue([
+      { asin: 'B0OWNEDASIN', title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
+    ]);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+
+    act(() => {
+      result.current.handleEdit(slugDupIdx, { title: 'Totally Different', author: 'Someone Else', series: '', asin: 'B0OWNEDASIN' });
     });
+
+    await waitFor(() => expect(result.current.rows[slugDupIdx]!.userEdited).toBe(true));
+    expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('match-job failure: matchJobError is set after startMatchJob rejects', async () => {
@@ -298,7 +366,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('Register call: confirmImport called with correct items payload and no mode', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
@@ -318,8 +386,55 @@ describe('useLibraryImport hook (#133)', () => {
     );
   });
 
+  it('register returning heldReview stores the held items, stays on the page, and warns (#1711 F1)', async () => {
+    const heldPath = '/audiobooks/AuthorA/Book1';
+    mockConfirmImport.mockResolvedValueOnce({
+      accepted: 0,
+      heldReview: [{ path: heldPath, title: 'Book One', reason: 'recording-review-required', existingBookId: 9 }],
+      skipped: [], failed: [],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+
+    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+    expect(result.current.heldReview[0]!.path).toBe(heldPath);
+    expect(result.current.heldReview[0]!.reason).toBe('recording-review-required');
+    // Partial success keeps the user on the import page (does not navigate away).
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalled();
+  });
+
+  it('handleReconfirmHeld re-submits the held rows with forceImport=true (#1711 F1)', async () => {
+    const heldPath = '/audiobooks/AuthorA/Book1';
+    mockConfirmImport.mockResolvedValueOnce({
+      accepted: 0,
+      heldReview: [{ path: heldPath, title: 'Book One', reason: 'recording-review-required' }],
+      skipped: [], failed: [],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+
+    // Re-confirm: the held row is resubmitted with forceImport bypassing the safety-net.
+    mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+    await act(async () => { result.current.handleReconfirmHeld(); });
+
+    const lastCall = mockConfirmImport.mock.calls.at(-1)!;
+    expect(lastCall[0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: heldPath, forceImport: true }),
+    ]));
+    // The re-confirm with nothing held navigates to the library.
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
+  });
+
   it('handleRegister forwards edited.narrators and seriesPosition (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -349,7 +464,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('handleRegister forwards seriesPosition: 0 (regression guard) (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -378,7 +493,7 @@ describe('useLibraryImport hook (#133)', () => {
       ],
       totalFolders: 1,
     });
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
@@ -413,7 +528,7 @@ describe('useLibraryImport hook (#133)', () => {
         },
       ],
     });
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
@@ -430,7 +545,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('handleRegister does not forward narrators when empty array (#1028)', async () => {
-    mockConfirmImport.mockResolvedValue({ accepted: 1 });
+    mockConfirmImport.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
@@ -450,6 +565,92 @@ describe('useLibraryImport hook (#133)', () => {
     const items = (mockConfirmImport.mock.calls[0]![0]) as Array<Record<string, unknown>>;
     const found = items.find((b) => b.path === '/audiobooks/AuthorA/Book1');
     expect(found).not.toHaveProperty('narrators');
+  });
+
+  it('all-skipped register shows amber, no green, no navigate (#1822)', async () => {
+    mockConfirmImport.mockResolvedValue({
+      accepted: 0,
+      heldReview: [],
+      skipped: [{ path: '/audiobooks/AuthorA/Book1', title: 'Book One', reason: 'already-in-library', existingBookId: 4, existingTitle: 'Book One' }],
+      failed: [],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
+
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledWith("already in your library as 'Book One'");
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('all-failed register shows red, no green, no navigate (#1822)', async () => {
+    mockConfirmImport.mockResolvedValue({
+      accepted: 0,
+      heldReview: [],
+      skipped: [],
+      failed: [{ path: '/audiobooks/AuthorA/Book1', title: 'Book One', message: 'Import failed — see server logs for details.' }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
+
+    expect(toast.error).toHaveBeenCalledWith('1 failed');
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('held + failed register surfaces the failure (regression pin for the early-return swallow) (#1822)', async () => {
+    mockConfirmImport.mockResolvedValue({
+      accepted: 0,
+      heldReview: [{ path: '/audiobooks/AuthorA/Book1', title: 'Book One', reason: 'recording-review-required' }],
+      skipped: [],
+      failed: [{ path: '/audiobooks/AuthorA/Book1b', title: 'Book One B', message: 'Import failed — see server logs for details.' }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(result.current.heldReview).toHaveLength(1));
+
+    expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
+    expect(toast.error).toHaveBeenCalledWith('1 failed');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('partial success (accepted + skipped) stays on the page and deselects the accepted rows (#1822)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 2, totalSize: 80000, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+    mockConfirmImport.mockResolvedValue({
+      accepted: 1,
+      heldReview: [],
+      skipped: [{ path: '/audiobooks/AuthorB/Book2', title: 'Book Two', reason: 'already-in-library' }],
+      failed: [],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.rows).toHaveLength(2));
+
+    await act(async () => { result.current.handleRegister(); });
+    await waitFor(() => expect(mockConfirmImport).toHaveBeenCalled());
+
+    expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 already in your library');
+    expect(mockNavigate).not.toHaveBeenCalled();
+    // The accepted row (Book1) is deselected; the skipped row (Book2) is left as-is.
+    const book1 = result.current.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')!;
+    expect(book1.selected).toBe(false);
   });
 
   it('Register error path: toast.error shown when confirmImport rejects', async () => {
@@ -1418,7 +1619,7 @@ describe('empty result edge case', () => {
         totalFolders: 2,
       };
       mockScanDirectory.mockResolvedValue(scanResult);
-      mockConfirmImport.mockResolvedValue({ accepted: 2 });
+      mockConfirmImport.mockResolvedValue({ accepted: 2, heldReview: [], skipped: [], failed: [] });
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.step).toBe('review'); });

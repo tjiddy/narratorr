@@ -1,6 +1,8 @@
 import { basename, dirname, relative } from 'node:path';
+import type { z } from 'zod';
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadArtifact, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { qbCategoriesResponseSchema, qbTorrentsResponseSchema } from './schemas.js';
+import type { qbTorrentSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
@@ -15,24 +17,7 @@ export interface QBittorrentConfig {
   useSsl: boolean;
 }
 
-interface QBTorrent {
-  hash: string;
-  name: string;
-  state: string;
-  progress: number;
-  total_size: number;
-  downloaded: number;
-  uploaded: number;
-  ratio: number;
-  num_seeds: number;
-  num_leechs: number;
-  eta: number;
-  dlspeed?: number;
-  save_path: string;
-  content_path?: string;
-  added_on: number;
-  completion_on: number;
-}
+type QBTorrent = z.infer<typeof qbTorrentSchema>;
 
 export class QBittorrentClient implements DownloadClientAdapter {
   readonly type = 'qbittorrent';
@@ -294,7 +279,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
 
     if (parsed.data.length === 0) return null;
-    return this.mapItem(parsed.data[0] as QBTorrent);
+    return this.mapItem(parsed.data[0]!);
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
@@ -313,7 +298,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       );
     }
 
-    return parsed.data.map((t) => this.mapItem(t as QBTorrent));
+    return parsed.data.map((t) => this.mapItem(t));
   }
 
   async pauseDownload(hash: string): Promise<void> {
@@ -398,7 +383,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       seeders: qbt.num_seeds,
       leechers: qbt.num_leechs,
       eta: qbt.eta > 0 && qbt.eta < ETA_UPPER_BOUND_SEC ? qbt.eta : undefined,
-      downloadSpeed: qbt.dlspeed,
+      downloadSpeed: qbt.dlspeed ?? undefined,
       addedAt: new Date(qbt.added_on * 1000),
       completedAt: qbt.completion_on > 0 ? new Date(qbt.completion_on * 1000) : undefined,
     };

@@ -2,14 +2,14 @@ import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { blacklistAndRetrySearch, type BlacklistAndRetryRequest } from './rejection-helpers.js';
-import type { BlacklistService } from '../services/blacklist.service.js';
-import type { SettingsService } from '../services/settings.service.js';
-import { RetryBudget } from '../services/retry-budget.js';
-import type { IndexerSearchService } from '../services/indexer-search.service.js';
-import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
-import type { BookService } from '../services/book.service.js';
-import type { IndexerService } from '../services/indexer.service.js';
-import type { RetrySearchDeps } from '../services/retry-search.js';
+import type { BlacklistService } from './blacklist.service.js';
+import type { SettingsService } from './settings.service.js';
+import { RetryBudget } from './retry-budget.js';
+import type { IndexerSearchService } from './indexer-search.service.js';
+import type { DownloadOrchestrator } from './download-orchestrator.js';
+import type { BookService } from './book.service.js';
+import type { IndexerService } from './indexer.service.js';
+import type { RetrySearchDeps } from './retry-search.js';
 
 // NOTE: This file is intentionally separate from rejection-helpers.test.ts
 // because that file vi.mocks retrySearch — which means deleting the real

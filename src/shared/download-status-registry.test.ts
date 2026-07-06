@@ -8,12 +8,9 @@ import {
   getTerminalStatuses,
   getCompletedStatuses,
   getClientPolledStatuses,
-  getReplaceableStatuses,
   deriveDisplayStatus,
-  isInProgressState,
   isTerminalState,
   isReplaceableState,
-  isClientPolledState,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -178,19 +175,6 @@ describe('download-status-registry', () => {
     });
   });
 
-  describe('getReplaceableStatuses', () => {
-    it('returns exactly the five replaceable statuses', () => {
-      expect(getReplaceableStatuses().sort()).toEqual(
-        ['checking', 'downloading', 'paused', 'pending_review', 'queued'],
-      );
-    });
-
-    it('excludes importing (import-pipeline status)', () => {
-      const replaceable = getReplaceableStatuses();
-      expect(replaceable).not.toContain('importing');
-    });
-  });
-
   // ── Two-axis derivation (#1445) ─────────────────────────────────────────
   describe('deriveDisplayStatus', () => {
     it('maps client-only tuples (pipelineStage=idle) onto the client status, including the failure tuple', () => {
@@ -211,14 +195,6 @@ describe('download-status-registry', () => {
     const clientStatuses = clientStatusSchema.options;
     const pipelineStages = pipelineStageSchema.options;
 
-    it('isInProgressState matches isInProgressStatus(deriveDisplayStatus(...)) for every tuple', () => {
-      for (const c of clientStatuses) {
-        for (const p of pipelineStages) {
-          expect(isInProgressState(c, p)).toBe(isInProgressStatus(deriveDisplayStatus(c, p)));
-        }
-      }
-    });
-
     it('isTerminalState matches isTerminalStatus(deriveDisplayStatus(...)) for every tuple', () => {
       for (const c of clientStatuses) {
         for (const p of pipelineStages) {
@@ -233,26 +209,13 @@ describe('download-status-registry', () => {
       }
     });
 
-    it('isReplaceableState matches getReplaceableStatuses() membership for every tuple', () => {
-      const replaceable = new Set(getReplaceableStatuses());
+    it('isReplaceableState mirrors the replaceable-status set for every tuple', () => {
+      const replaceable = new Set<string>(['queued', 'downloading', 'paused', 'checking', 'pending_review']);
       for (const c of clientStatuses) {
         for (const p of pipelineStages) {
           expect(isReplaceableState(c, p)).toBe(replaceable.has(deriveDisplayStatus(c, p)));
         }
       }
-    });
-
-    it('isClientPolledState is true only for pipeline-idle queued/downloading/paused rows', () => {
-      const polled = new Set(getClientPolledStatuses());
-      for (const c of clientStatuses) {
-        for (const p of pipelineStages) {
-          expect(isClientPolledState(c, p)).toBe(polled.has(deriveDisplayStatus(c, p)));
-        }
-      }
-      // Concretely: a completed client status with idle stage is never polled.
-      expect(isClientPolledState('completed', 'idle')).toBe(false);
-      expect(isClientPolledState('downloading', 'idle')).toBe(true);
-      expect(isClientPolledState('downloading', 'checking')).toBe(false);
     });
   });
 });

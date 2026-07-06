@@ -1,11 +1,8 @@
-import { writeFile, rename, readdir, unlink } from 'node:fs/promises';
+import { writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
-import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { MAX_COVER_SIZE } from '../../shared/constants.js';
 import { mimeToExt } from '../../shared/mime.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -14,6 +11,7 @@ import {
   createSsrfSafeDispatcher,
   fetchWithSsrfRedirect,
 } from '../../core/utils/network-service.js';
+import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
 
 /** Check whether a coverUrl points to a remote HTTP(S) resource. */
 export function isRemoteCoverUrl(url: string | null | undefined): boolean {
@@ -103,7 +101,11 @@ async function readBodyWithCap(response: Response): Promise<Buffer> {
  * via Content-Length pre-check + streamed running total.
  *
  * Atomic write: writes to a temp file first, then renames over the target.
- * Returns true on success, false on failure (never throws).
+ *
+ * Returns a {@link CoverWriteOutcome}: `'written'` once the `cover.*` rename commits (even if the
+ * subsequent DB `coverUrl` update throws — see {@link finalizeCoverWrite}), `'failed'` on any
+ * failure *before* the rename, and `'skipped'` when there is no remote URL to materialize. Never
+ * throws.
  */
 export async function downloadRemoteCover(
   bookId: number,
@@ -111,59 +113,54 @@ export async function downloadRemoteCover(
   remoteUrl: string,
   db: Db,
   log: FastifyBaseLogger,
-): Promise<boolean> {
+): Promise<CoverWriteOutcome> {
+  // Caller-gated no-op: nothing to materialize (null / non-remote URL). Not a failure.
   if (!remoteUrl || !bookPath || !isRemoteCoverUrl(remoteUrl)) {
-    return false;
+    return 'skipped';
   }
 
   const dispatcher = createSsrfSafeDispatcher();
 
   try {
-    const response = await fetchWithSsrfRedirect(remoteUrl, { dispatcher });
+    let finalPath: string;
+    let keepFilename: string;
+    try {
+      const response = await fetchWithSsrfRedirect(remoteUrl, { dispatcher });
 
-    if (!response.ok) {
-      log.warn({ bookId, status: response.status, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover download returned non-OK status');
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      return false;
-    }
-
-    const contentType = response.headers.get('content-type');
-    if (!isImageContentType(contentType)) {
-      log.warn({ bookId, contentType, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover response is not an image');
-      await response.body?.cancel().catch(() => { /* best-effort */ });
-      return false;
-    }
-
-    await inspectContentLength(response, { bookId, remoteUrl, log });
-    const buffer = await readBodyWithCap(response);
-    const ext = contentTypeToExt(contentType);
-    const finalPath = join(bookPath, `cover.${ext}`);
-    const tempPath = join(bookPath, `.cover-download-${randomUUID()}.tmp`);
-
-    // Atomic write: temp file → rename (rename() overwrites target)
-    await writeFile(tempPath, buffer);
-    await rename(tempPath, finalPath);
-
-    // Clean up stale cover siblings with different extensions (e.g., old cover.png when new is cover.jpg)
-    const targetFilename = `cover.${ext}`;
-    const entries = await readdir(bookPath).catch(() => [] as string[]);
-    for (const entry of entries) {
-      if (COVER_FILE_REGEX.test(entry) && entry.toLowerCase() !== targetFilename.toLowerCase()) {
-        await unlink(join(bookPath, entry)).catch(() => { /* best-effort cleanup */ });
+      if (!response.ok) {
+        log.warn({ bookId, status: response.status, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover download returned non-OK status');
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        return 'failed';
       }
+
+      const contentType = response.headers.get('content-type');
+      if (!isImageContentType(contentType)) {
+        log.warn({ bookId, contentType, url: sanitizeLogUrl(remoteUrl) }, 'Remote cover response is not an image');
+        await response.body?.cancel().catch(() => { /* best-effort */ });
+        return 'failed';
+      }
+
+      await inspectContentLength(response, { bookId, remoteUrl, log });
+      const buffer = await readBodyWithCap(response);
+      const ext = contentTypeToExt(contentType);
+      keepFilename = `cover.${ext}`;
+      finalPath = join(bookPath, keepFilename);
+      const tempPath = join(bookPath, `.cover-download-${randomUUID()}.tmp`);
+
+      // Atomic write: temp file → rename (rename() overwrites target). This is the irreversible
+      // media-visible write — once it commits the outcome is 'written' regardless of what follows.
+      await writeFile(tempPath, buffer);
+      await rename(tempPath, finalPath);
+    } catch (error: unknown) {
+      log.warn({ error: serializeError(error), bookId, url: sanitizeLogUrl(remoteUrl) }, 'Failed to download remote cover');
+      return 'failed';
     }
 
-    // Update DB immediately after irreversible filesystem step
-    await db.update(books).set({
-      coverUrl: `/api/books/${bookId}/cover`,
-      updatedAt: new Date(),
-    }).where(eq(books.id, bookId));
-
+    // Cover materialized on disk. Sibling cleanup + DB `coverUrl` update are nonfatal from here:
+    // a failure is logged but does NOT downgrade the outcome (the file changed regardless).
+    await finalizeCoverWrite(bookId, bookPath, keepFilename, db, log);
     log.info({ bookId, path: finalPath }, 'Remote cover downloaded and saved locally');
-    return true;
-  } catch (error: unknown) {
-    log.warn({ error: serializeError(error), bookId, url: sanitizeLogUrl(remoteUrl) }, 'Failed to download remote cover');
-    return false;
+    return 'written';
   } finally {
     await dispatcher.close().catch(() => { /* best-effort cleanup */ });
   }

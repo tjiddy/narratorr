@@ -8,7 +8,8 @@ import {
   type IndexerTestResult,
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
+import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { indexerSettingsSchemas, type IndexerSettings } from '../../shared/schemas/indexer.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
 import { stripReadarrEchoOnlyFields } from '../utils/readarr-echo-fields.js';
@@ -91,10 +92,8 @@ export class IndexerService {
   async update(id: number, data: Partial<NewIndexer>): Promise<IndexerRow | null> {
     const toUpdate = { ...data };
     if (toUpdate.settings) {
-      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(indexers).where(eq(indexers.id, id)).limit(1);
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('indexer'));
-      toUpdate.settings = encryptFields('indexer', settings, getKey());
+      toUpdate.settings = resolveAndEncryptSettings('indexer', toUpdate.settings as Record<string, unknown>, existing[0]?.settings as Record<string, unknown> | undefined);
     }
     const result = await this.db
       .update(indexers)
@@ -254,8 +253,7 @@ export class IndexerService {
         if (!existing) {
           return { success: false, message: 'Indexer not found' };
         }
-        resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('indexer'));
+        resolvedSettings = resolveSettings('indexer', data.settings, existing.settings as Record<string, unknown> | undefined);
       }
 
       const proxyUrl = await this.getProxyUrl();

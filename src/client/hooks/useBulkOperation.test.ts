@@ -13,6 +13,7 @@ const mockGetBulkJob = vi.fn();
 const mockStartBulkRename = vi.fn();
 const mockStartBulkRetag = vi.fn();
 const mockStartBulkConvert = vi.fn();
+const mockStartBulkWriteMetadataSidecars = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -21,6 +22,7 @@ vi.mock('@/lib/api', () => ({
     startBulkRename: (...args: unknown[]) => mockStartBulkRename(...args),
     startBulkRetag: (...args: unknown[]) => mockStartBulkRetag(...args),
     startBulkConvert: (...args: unknown[]) => mockStartBulkConvert(...args),
+    startBulkWriteMetadataSidecars: (...args: unknown[]) => mockStartBulkWriteMetadataSidecars(...args),
   },
 }));
 
@@ -63,6 +65,7 @@ describe('useBulkOperation', () => {
     mockStartBulkRename.mockResolvedValue({ jobId: 'job-1' });
     mockStartBulkRetag.mockResolvedValue({ jobId: 'job-2' });
     mockStartBulkConvert.mockResolvedValue({ jobId: 'job-3' });
+    mockStartBulkWriteMetadataSidecars.mockResolvedValue({ jobId: 'job-4' });
   });
 
   afterEach(() => {
@@ -109,6 +112,23 @@ describe('useBulkOperation', () => {
     expect(mockStartBulkRename).toHaveBeenCalled();
     expect(result.current.isRunning).toBe(true);
     expect(result.current.jobType).toBe('rename');
+  });
+
+  it('routes startJob("write_metadata_sidecars") to the sidecar-reconcile endpoint (#1670)', async () => {
+    mockGetActiveBulkJob.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useBulkOperation());
+    await act(async () => {}); // flush mount
+
+    await act(async () => {
+      await result.current.startJob('write_metadata_sidecars');
+    });
+
+    expect(mockStartBulkWriteMetadataSidecars).toHaveBeenCalledTimes(1);
+    expect(mockStartBulkRename).not.toHaveBeenCalled();
+    expect(mockStartBulkConvert).not.toHaveBeenCalled();
+    expect(result.current.isRunning).toBe(true);
+    expect(result.current.jobType).toBe('write_metadata_sidecars');
   });
 
   it('increments progress as poll results update completed count', async () => {

@@ -84,6 +84,8 @@ CREATE TABLE `books` (
 	`genres` text,
 	`status` text DEFAULT 'wanted' NOT NULL,
 	`enrichment_status` text DEFAULT 'pending' NOT NULL,
+	`production_type` text DEFAULT 'unknown' NOT NULL,
+	`edition_label` text,
 	`enrichment_attempts` integer DEFAULT 0 NOT NULL,
 	`path` text,
 	`size` integer,
@@ -109,7 +111,7 @@ CREATE UNIQUE INDEX `books_public_id_unique` ON `books` (`public_id`);--> statem
 CREATE INDEX `idx_books_status` ON `books` (`status`);--> statement-breakpoint
 CREATE INDEX `idx_books_path` ON `books` (`path`);--> statement-breakpoint
 CREATE INDEX `idx_books_enrichment_status` ON `books` (`enrichment_status`);--> statement-breakpoint
-CREATE UNIQUE INDEX `idx_books_asin_unique` ON `books` (`asin`) WHERE asin IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_books_asin_unique` ON `books` (upper("asin")) WHERE asin IS NOT NULL;--> statement-breakpoint
 CREATE TABLE `connectors` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
@@ -272,7 +274,6 @@ CREATE TABLE `series_members` (
 	`author_name` text,
 	`position` real,
 	`source` text DEFAULT 'hardcover' NOT NULL,
-	`last_seen_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
 	FOREIGN KEY (`series_id`) REFERENCES `series`(`id`) ON UPDATE no action ON DELETE cascade,
@@ -321,7 +322,6 @@ CREATE UNIQUE INDEX `idx_suggestions_asin_unique` ON `suggestions` (`asin`);--> 
 CREATE TABLE `unmatched_genres` (
 	`genre` text PRIMARY KEY NOT NULL,
 	`count` integer DEFAULT 1 NOT NULL,
-	`first_seen` integer DEFAULT (unixepoch()) NOT NULL,
 	`last_seen` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint

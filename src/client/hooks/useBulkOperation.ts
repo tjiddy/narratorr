@@ -96,6 +96,7 @@ export function useBulkOperation(): UseBulkOperationReturn {
     const startFn =
       type === 'rename' ? api.startBulkRename :
       type === 'retag' ? api.startBulkRetag :
+      type === 'write_metadata_sidecars' ? api.startBulkWriteMetadataSidecars :
       api.startBulkConvert;
 
     const { jobId } = await startFn();

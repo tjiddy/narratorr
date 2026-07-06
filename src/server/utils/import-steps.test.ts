@@ -10,6 +10,10 @@ vi.mock('node:fs/promises', () => ({
   // it per-describe to report a non-symlink directory (the symlink branch is covered in delete-managed-files.test.ts).
   lstat: vi.fn(),
   readdir: vi.fn(),
+  // #1674: deleteManagedBookFiles (reached via cleanupOldBookPath/handleImportFailure) now reads a
+  // root `metadata.opf` for the narratorr provenance marker. Default to UNMARKED (foreign) content so
+  // a swept OPF is preserved unless a test stages a marked body — matching import.service.test.ts.
+  readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
   // #1591: cleanupOldBookPath / handleImportFailure now run the symlink-aware realpath containment.
@@ -219,7 +223,9 @@ describe('checkDiskSpace', () => {
 // ── embedTagsForImport ──────────────────────────────────────────────────
 
 describe('embedTagsForImport', () => {
-  const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, coverUrl: 'http://cover.jpg' };
+  // Carries a new bibliographic field (publisher) + seriesPosition so the
+  // caller-propagation contract (#1671) is exercised end-to-end into tagBook.
+  const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' };
 
   it('calls tagBook when tagging enabled and ffmpegPath configured', async () => {
     const log = createMockLog();
@@ -290,7 +296,8 @@ describe('embedTagsForImport', () => {
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
-      { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, coverUrl: 'http://cover.jpg' },
+      // publisher + seriesPosition reach tagBook → proves caller propagation (#1671).
+      { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
       '/ffmpeg', 'populate_missing', false,
     );
   });

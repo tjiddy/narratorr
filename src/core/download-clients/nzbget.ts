@@ -341,10 +341,10 @@ export class NZBGetClient implements DownloadClientAdapter {
     // branched on; the post-proc fields carry the failure signal).
     if (upper.startsWith('SUCCESS') || upper.startsWith('WARNING')) {
       if (
-        postProcFailed(item.ParStatus) ||
-        postProcFailed(item.UnpackStatus) ||
-        postProcFailed(item.MoveStatus) ||
-        postProcFailed(item.ScriptStatus)
+        postProcFailed(item.ParStatus ?? undefined) ||
+        postProcFailed(item.UnpackStatus ?? undefined) ||
+        postProcFailed(item.MoveStatus ?? undefined) ||
+        postProcFailed(item.ScriptStatus ?? undefined)
       )
         return 'error';
       return 'completed';

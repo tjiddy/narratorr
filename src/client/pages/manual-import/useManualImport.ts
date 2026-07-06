@@ -6,9 +6,11 @@ import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
+import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
+import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
 
 export type Step = 'path' | 'review';
 
@@ -29,6 +31,13 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
+
+  // Held-review recovery (#1732). Re-confirm uses the mode snapshotted at the
+  // original confirm attempt, not the still-editable `mode` selector.
+  const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
+    rows,
+    confirm: (items, confirmMode) => importMutation.mutate({ items, mode: confirmMode }),
+  });
 
   // Merge match results into rows state (single source of truth)
   const prevMatchCountRef = useRef(0);
@@ -80,6 +89,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       setRows(newRows);
       setScanError(null);
       setStep('review');
+      // A new scan supersedes any held rows from a prior directory (#1732) — clear
+      // them so the panel never renders stale titles whose paths are gone.
+      clearHeld();
 
       // Start matching only for non-duplicate books
       const candidates = result.discoveries
@@ -100,11 +112,43 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   });
 
   const importMutation = useMutation({
-    mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items, mode),
-    onSuccess: (result) => {
+    // The mode is carried in the mutation variables so the held-review snapshot
+    // captures the value in effect at *this* confirm attempt (#1732), not a later
+    // selector change.
+    mutationFn: ({ items, mode: confirmMode }: { items: ImportConfirmItem[]; mode: ImportMode | undefined }) =>
+      api.confirmImport(items, confirmMode),
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      toast.success(`${result.accepted} book${result.accepted !== 1 ? 's' : ''} queued for import`);
-      navigate('/library');
+
+      // Held items (#1711/#1732): keep the user on the page with a recovery panel
+      // instead of navigating away (the old "re-confirm from Library Import" path was
+      // a dead end — manual sources live outside the library root Library Import
+      // scans). Snapshot the confirm-attempt mode so a held Move never silently
+      // re-confirms as Copy. Surfaced separately from the outcome toast below so a
+      // held + skipped/failed batch is never swallowed by an early return (#1822).
+      if (result.heldReview.length > 0) {
+        captureHeld(result.heldReview, variables.mode);
+        toast.warning(`${result.heldReview.length} held for recording review`);
+      } else {
+        clearHeld();
+      }
+
+      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
+      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
+      // never a green "0 queued" lie.
+      const outcome = buildOutcomeToast(result, 'queued for import');
+      if (outcome) toast[outcome.severity](outcome.message);
+
+      // Navigate only when everything landed as accepted; otherwise stay and deselect
+      // the accepted rows so a re-submit can't re-send them (#1822).
+      if (isCleanImport(result)) {
+        navigate('/library');
+        return;
+      }
+      const acceptedPaths = acceptedItemPaths(variables.items, result);
+      if (acceptedPaths.size > 0) {
+        setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
+      }
     },
     onError: (error: Error) => {
       toast.error(`Import failed: ${getErrorMessage(error)}`);
@@ -139,22 +183,11 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   }, []);
 
   const handleImport = useCallback(() => {
-    const selected = rows.filter(r => r.selected);
-    const items: ImportConfirmItem[] = selected.map(r => ({
-      path: r.book.path,
-      title: r.edited.title,
-      ...(r.edited.author && { authorName: r.edited.author }),
-      ...(r.edited.series && { seriesName: r.edited.series }),
-      ...(r.edited.narrators?.length && { narrators: r.edited.narrators }),
-      ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
-      ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
-      ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
-      ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),
-      // Duplicate rows that user explicitly selected require force-import to bypass safety net
-      ...(r.book.isDuplicate ? { forceImport: true } : {}),
-    }));
-    importMutation.mutate(items);
-  }, [rows, importMutation]);
+    // Shared canonical builder (#1732/#1765) — `forceImport` still derives from
+    // `r.book.isDuplicate` for user-selected duplicates (force=false here).
+    const items = rows.filter(r => r.selected).map(r => toConfirmItem(r, false));
+    importMutation.mutate({ items, mode });
+  }, [rows, importMutation, mode]);
 
   const handleBack = useCallback(() => {
     if (step === 'review') {
@@ -162,10 +195,12 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       prevMatchCountRef.current = 0;
       setStep('path');
       setRows([]);
+      // Drop held rows so backing out of review can't leave a stale panel (#1732).
+      clearHeld();
     } else {
       navigate('/library');
     }
-  }, [step, cancelMatching, navigate]);
+  }, [step, cancelMatching, navigate, clearHeld]);
 
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
@@ -192,6 +227,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       setEditIndex,
       isMatching,
       progress,
+      heldReview,
     },
     actions: {
       handleScan,
@@ -200,6 +236,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       handleEdit,
       handleImport,
       handleBack,
+      handleReconfirmHeld,
     },
     mutations: {
       scanMutation,

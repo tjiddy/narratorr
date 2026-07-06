@@ -27,6 +27,11 @@ vi.mock('node:fs/promises', () => ({
       ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
       : { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
+  // #1674: deleteManagedBookFiles now reads a root `metadata.opf` for the narratorr provenance
+  // marker. Default the read to UNMARKED (foreign) content so the sweep preserves any OPF — a
+  // blanket "marked" default would silently flip preservation assertions on every cleanup path.
+  // Tests asserting deletion of a narratorr-owned OPF override this to resolve marked content.
+  readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
@@ -445,6 +450,32 @@ describe('ImportService', () => {
         expect.any(Object),
         expect.any(String),
         expect.objectContaining({ separator: 'period', case: 'upper' }),
+        null, // #1712 — stored edition_label (null for this book) threaded as the 6th arg
+      );
+    });
+
+    it('passes the stored edition label into buildTargetPath as the 6th arg (#1712 F1)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title} ({edition})', fileFormat: '', namingSeparator: 'space', namingCase: 'default' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({});
+        return Promise.resolve({});
+      });
+      mockBookService.getById.mockResolvedValueOnce(withAuthor({ ...mockBook, editionLabel: 'Full Cast' }));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(buildTargetPath).toHaveBeenCalledWith(
+        '/audiobooks',
+        '{author}/{title} ({edition})',
+        expect.any(Object),
+        expect.any(String),
+        expect.any(Object),
+        'Full Cast',
       );
     });
 
@@ -760,6 +791,26 @@ describe('ImportService', () => {
       // #1589: the old folder's MANAGED files are deleted per-file (not a blanket recursive rm).
       const rmMock = vi.mocked(rm);
       expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]chapter1\.mp3$/), { force: true });
+    });
+
+    it('preserves an unmarked (foreign) metadata.opf in the old folder during re-import cleanup (#1674)', async () => {
+      // The old folder holds a managed audio file AND a third-party (ABS/Calibre) metadata.opf.
+      // The default readFile mock resolves unmarked content, so the OPF must NOT be deleted.
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+        { name: 'metadata.opf', isFile: () => true, isDirectory: () => false },
+      ] as never);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      const rmMock = vi.mocked(rm);
+      // The managed audio is force-deleted...
+      expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]chapter1\.mp3$/), { force: true });
+      // ...but the foreign metadata.opf is never deleted.
+      expect(rmMock).not.toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]metadata\.opf$/), { force: true });
     });
 
     it('logs old path at info level during re-import', async () => {

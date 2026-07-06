@@ -1339,6 +1339,32 @@ describe('enrichment job', () => {
       expect(log.info).toHaveBeenCalledWith({ bookId: 1, asin: 'B009SP2WO5' }, 'Book enriched successfully');
     });
 
+    it('canonicalizes a lowercase resolved ASIN before the collision check and scalar write (#1733)', async () => {
+      // The resolver may hand back a lowercase ASIN; the background write boundary
+      // must uppercase it (canonicalizeAsin) BEFORE both findAsinCollision and the
+      // scalar UPDATE, so the case-insensitive identity holds at the job level too.
+      // Guards line 307 against regressing to `result.asin ?? null` (which would pass
+      // the lowercase value straight through both calls).
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B001', title: 'New Edition', isbn: null, author: 'Author' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ duration: null, genres: null, title: 'New Edition', description: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null }]));  // existing
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'b0newedition', title: 'New Edition', authors: [{ name: 'Author' }], duration: 700,
+      });
+      bookService.findAsinCollision.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(updateChain);
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      // Collision check receives the canonical (uppercase) ASIN, not the raw lowercase value.
+      expect(bookService.findAsinCollision).toHaveBeenCalledWith(1, 'B0NEWEDITION');
+      // The scalar UPDATE persists the canonical ASIN.
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).toHaveProperty('asin', 'B0NEWEDITION');
+    });
+
     it('does NOT write the ASIN and marks the row failed when the resolved ASIN collides with another book', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_BAD', title: 'Dupe', isbn: null, author: 'Author' }]));  // candidates

@@ -8,8 +8,11 @@ import type { SettingsService } from './settings.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { RateLimitError } from '../../core/index.js';
 import type { EnrichmentStatus } from '../../shared/schemas/enrichment.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -141,16 +144,20 @@ async function resolveAsinWriteback(
   primaryAsin: string | null | undefined,
   deps: Pick<EnrichmentDeps, 'log' | 'bookService'>,
 ): Promise<string | undefined> {
-  if (!resolvedAsin || resolvedAsin === primaryAsin) return undefined;
-  const collision = await deps.bookService.findAsinCollision(bookId, resolvedAsin);
+  // Canonicalize the resolved ASIN at this write boundary (#1733) and compare
+  // case-insensitively against the primary so a case-only "change" isn't written
+  // back. The returned value is the canonical form actually persisted.
+  const canonical = canonicalizeAsin(resolvedAsin);
+  if (!canonical || canonical === canonicalizeAsin(primaryAsin)) return undefined;
+  const collision = await deps.bookService.findAsinCollision(bookId, canonical);
   if (collision) {
     deps.log.warn(
-      { bookId, resolvedAsin, conflictBookId: collision.conflictBookId },
+      { bookId, resolvedAsin: canonical, conflictBookId: collision.conflictBookId },
       'Resolved ASIN collides with an existing book — keeping fetched fields, skipping ASIN writeback',
     );
     return undefined;
   }
-  return resolvedAsin;
+  return canonical;
 }
 
 async function applyEnrichmentData(
@@ -304,6 +311,7 @@ export function buildBookCreatePayload(
   meta: BookMetadata | null,
   status: 'imported' | 'importing',
 ) {
+  const primary = pickPrimarySeries(meta);
   return {
     title: item.title,
     // When metadata provides multiple authors (co-authored books), preserve the full array.
@@ -316,9 +324,8 @@ export function buildBookCreatePayload(
     // Prefer the canonical primary-series ref over `series[0]` (#1088 / #1097) —
     // `series[0]` on Audible can be a broader universe entry rather than the
     // real book series. When `meta` is null (no provider match accepted), fall back to item-derived values.
-    seriesName: (meta?.seriesPrimary ?? meta?.series?.[0])?.name ?? item.seriesName ?? undefined,
-    seriesPosition: (meta?.seriesPrimary ?? meta?.series?.[0])?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
-    seriesAsin: (meta?.seriesPrimary ?? meta?.series?.[0])?.asin ?? undefined,
+    seriesName: primary?.name ?? item.seriesName ?? undefined,
+    seriesPosition: primary?.position ?? (item.seriesPosition !== undefined ? item.seriesPosition : undefined),
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,
@@ -329,6 +336,9 @@ export function buildBookCreatePayload(
     publishedDate: meta?.publishedDate,
     genres: meta?.genres,
     providerId: meta?.providerId,
+    // Recording production form (#1710). Only this manual-import/enrichment path
+    // populates it in story 1; every other create path takes the column default.
+    productionType: normalizeProductionType(meta?.formatType),
     status,
   };
 }

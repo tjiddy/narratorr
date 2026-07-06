@@ -1,4 +1,5 @@
 import type { BookMetadata } from '@/lib/api';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 
 export function getInitials(name: string): string {
   return name
@@ -20,7 +21,7 @@ export function groupBooksBySeries(books: BookMetadata[]): { series: SeriesGroup
 
   // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) so books
   // are grouped under their real series, not a broader universe entry.
-  const primaryRef = (b: BookMetadata) => b.seriesPrimary ?? b.series?.[0];
+  const primaryRef = (b: BookMetadata) => pickPrimarySeries(b);
 
   for (const book of books) {
     const s = primaryRef(book);

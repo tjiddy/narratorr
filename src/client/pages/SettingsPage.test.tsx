@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent, configure } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsLayout } from '@/pages/settings';
 
-vi.mock('@/components/library/BulkOperationsSection', () => ({
-  BulkOperationsSection: () => null,
-}));
+// Flake-proofing (not masking a bug): each test here renders the FULL SettingsLayout, and every
+// naming/edition preview is a synchronous useMemo in NamingSettingsSection — the DOM is correct the
+// instant the render is scheduled (a single test passes in ~270ms). Under full-suite CPU
+// saturation, though, 26 back-to-back heavy renders can push an initial getSettings→mount→waitFor
+// chain past RTL's 1000ms default poll budget, starving a waitFor whose target has, in fact,
+// already rendered. Both ceilings must rise together: raising the poll budget alone would collide
+// with the 5000ms per-test default (the wait would outlive the test). A genuine render regression
+// still fails fast — well inside 4s per assertion — so the extra headroom only ever spends
+// wall-clock on real load, never on the happy path.
+configure({ asyncUtilTimeout: 4000 });
+vi.setConfig({ testTimeout: 20000 });
 
 // Mock api
 vi.mock('@/lib/api', () => ({
@@ -532,5 +540,141 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     // The folder format input should now contain {year}
     const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
     expect(input.value).toContain('{year}');
+  });
+});
+
+describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/utils)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([]);
+    vi.mocked(api.getClients).mockResolvedValue([]);
+  });
+
+  it('auto-suffix branch: the Multiple editions row = With-series folder leaf + " (Full Cast)"', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    // Default folder template has no {edition}, so the row is the real suffix-branch composition —
+    // byte-identical to buildTargetPath's `composeEditionSuffixLeaf(leaf, sanitizeEditionDiscriminator('Full Cast'))`.
+    const row = await screen.findByTestId('preview-multi-edition');
+    expect(row.textContent).toBe('Brandon Sanderson/The Way of Kings (Full Cast)');
+  });
+
+  it('in-place branch: {edition} renders at its position with no double suffix; baseline row stays edition-free', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+    fireEvent.change(folderInput, { target: { value: '{author}/{title}/{edition}' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-multi-edition').textContent).toBe('Brandon Sanderson/The Way of Kings/Full Cast');
+    });
+    // Verbatim in-place render — the mandatory " (…)" suffix must NOT also be appended.
+    expect(screen.getByTestId('preview-multi-edition').textContent).not.toContain('(Full Cast)');
+    // Both folder baseline rows render edition-free: With-series consumes SAMPLE_TOKENS and
+    // Without-series consumes SAMPLE_TOKENS_NO_SERIES, neither of which carries an edition. Pin
+    // both so a fixture that later regains `edition` regresses the Without-series row loudly (F1).
+    expect(screen.getAllByTestId('preview-with-series')[0]!.textContent).not.toContain('Full Cast');
+    expect(screen.getAllByTestId('preview-without-series')[0]!.textContent).not.toContain('Full Cast');
+  });
+
+  it('baseline file rows stay edition-free even when the file format places {edition}', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { value: '{author} - {title} ({edition})' } });
+
+    await waitFor(() => {
+      expect((screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement).value).toBe('{author} - {title} ({edition})');
+    });
+    // File box previews are index 1 (With/Without series); Multi-file is file-only.
+    expect(screen.getAllByTestId('preview-with-series')[1]!.textContent).not.toContain('Full Cast');
+    expect(screen.getAllByTestId('preview-without-series')[1]!.textContent).not.toContain('Full Cast');
+    expect(screen.getByTestId('preview-multi-file').textContent).not.toContain('Full Cast');
+  });
+
+  it('row shape: one Multiple-editions row (folder), one Multi-file row (file), one folder-only note', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
+    expect(screen.getAllByTestId('preview-multi-file')).toHaveLength(1);
+    expect(screen.getAllByText(/kept side-by-side automatically/)).toHaveLength(1);
+  });
+});
+
+describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([]);
+    vi.mocked(api.getClients).mockResolvedValue([]);
+  });
+
+  it('conditional {edition} form renders the full sample filename including the .m4b suffix (AC1)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    // The conditional `{ (?edition?)}` wrapper is exactly what the naive section-test mock cannot
+    // exercise — the real renderFilename must produce the parenthesized label in place. Pin the whole
+    // string so a renderer regression is loud.
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { value: '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe(
+        'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).m4b',
+      );
+    });
+  });
+
+  it('row live-updates as the file format is edited (real renderer)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+    // Default template has no {edition} → the capability hint is shown, not a render.
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
+    });
+    // Adding {edition} flips the same row to a live sample render.
+    fireEvent.change(fileInput, { target: { value: '{title}{ (?edition?)}' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
+    });
+    // Editing again re-renders.
+    fireEvent.change(fileInput, { target: { value: '{author} - {title}{ (?edition?)}' } });
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-file-edition').textContent).toBe('Brandon Sanderson - The Way of Kings (Full Cast).m4b');
+    });
+  });
+
+  it('no {edition} token: file edition row shows the capability affordance, not a With-series duplicate (AC2)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    const row = await screen.findByTestId('preview-file-edition');
+    expect(row.textContent).toMatch(/Add \{edition\} to include the edition label in filenames/);
+    // The default file format is `{author} - {title}` → With-series file row is index 1.
+    const withSeriesFile = screen.getAllByTestId('preview-with-series')[1]!;
+    expect(row.textContent).not.toBe(withSeriesFile.textContent);
+  });
+
+  it('row shape: exactly one file edition row (file) and one multiple-editions row (folder)', async () => {
+    renderSettingsPage('/settings');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
+    expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
   });
 });

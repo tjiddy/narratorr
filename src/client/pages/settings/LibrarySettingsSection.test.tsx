@@ -9,10 +9,6 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@/components/library/BulkOperationsSection', () => ({
-  BulkOperationsSection: () => null,
-}));
-
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
@@ -278,6 +274,25 @@ describe('LibrarySettingsSection', () => {
       });
       expect(screen.getByPlaceholderText('/audiobooks')).toBeInTheDocument();
       expect(screen.getByText('The root folder where imported audiobooks will be stored')).toBeInTheDocument();
+    });
+  });
+
+  // #1704 — library actions consolidated into the Library page; Settings → Library is path-only.
+  // This describe deliberately does NOT mock BulkOperationsSection — if the component were
+  // re-imported/rendered here, its buttons (and the un-mocked useBulkOperation API calls)
+  // would surface and fail these assertions.
+  describe('library actions removed from Settings (#1704)', () => {
+    it('renders only the Library Path field — no bulk/library action buttons', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Library Path')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Library Actions')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /rename all books/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /re-tag all books/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /write\/refresh metadata sidecars/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^refresh library$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /import existing library/i })).not.toBeInTheDocument();
     });
   });
 

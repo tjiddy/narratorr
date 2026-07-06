@@ -11,7 +11,8 @@ import {
 import { getErrorMessage } from '../utils/error-message.js';
 import { notifierSettingsSchemas, type NotifierSettings } from '../../shared/schemas/notifier.js';
 import { parseEntitySettings } from '../utils/parse-entity-settings.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
+import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { NotifierRow } from './types.js';
@@ -57,12 +58,8 @@ export class NotifierService {
   async update(id: number, data: Partial<NewNotifier>): Promise<NotifierRow | null> {
     const toUpdate = { ...data };
     if (toUpdate.settings) {
-      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(notifiers).where(eq(notifiers.id, id)).limit(1);
-      // Resolve sentinels against RAW (encrypted) existing settings — encryptFields
-      // skips $ENC$-prefixed values, so unchanged secrets retain their stored bytes.
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('notifier'));
-      toUpdate.settings = encryptFields('notifier', settings, getKey());
+      toUpdate.settings = resolveAndEncryptSettings('notifier', toUpdate.settings as Record<string, unknown>, existing[0]?.settings as Record<string, unknown> | undefined);
     }
     const result = await this.db
       .update(notifiers)
@@ -154,8 +151,7 @@ export class NotifierService {
         if (!existing) {
           return { success: false, message: 'Notifier not found' };
         }
-        resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('notifier'));
+        resolvedSettings = resolveSettings('notifier', data.settings, existing.settings as Record<string, unknown> | undefined);
       }
 
       const fakeRow = {

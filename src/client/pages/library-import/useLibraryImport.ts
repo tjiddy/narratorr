@@ -5,11 +5,13 @@ import { toast } from 'sonner';
 import { api, type ImportConfirmItem, type MatchResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
-import { slugify } from '../../../shared/utils.js';
+import { matchesLibraryIdentity } from '../../../shared/dedup.js';
 import { mergeMatchIntoRow, type ImportRow, type BookEditState } from '@/components/manual-import';
+import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
+import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
 
 export type Step = 'scanning' | 'review' | 'error';
 
@@ -29,6 +31,12 @@ export function useLibraryImport() {
   const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  // Items the server held for recording review (#1711) — surfaced for re-confirm.
+  // Library always registers with mode `undefined`, so the snapshot is unused here.
+  const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
+    rows,
+    confirm: (items) => registerMutation.mutate(items),
+  });
 
   // Settings query to get library path
   const { data: settings, isError: settingsError } = useQuery({
@@ -115,10 +123,35 @@ export function useLibraryImport() {
 
   const registerMutation = useMutation({
     mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items, undefined),
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      toast.success(`${result.accepted} book${result.accepted !== 1 ? 's' : ''} registered`);
-      navigate('/library');
+
+      // Held items (#1711): keep the user on the page so they can re-confirm them,
+      // instead of navigating. Surfaced separately from the outcome toast below so a
+      // held + skipped/failed batch is never swallowed by an early return (#1822).
+      if (result.heldReview.length > 0) {
+        captureHeld(result.heldReview, undefined);
+        toast.warning(`${result.heldReview.length} held for recording review`);
+      } else {
+        clearHeld();
+      }
+
+      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
+      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
+      // never a green "0 registered" lie.
+      const outcome = buildOutcomeToast(result, 'registered');
+      if (outcome) toast[outcome.severity](outcome.message);
+
+      // Navigate only when everything landed as accepted; otherwise stay and deselect
+      // the accepted rows so a re-submit can't re-send them (#1822).
+      if (isCleanImport(result)) {
+        navigate('/library');
+        return;
+      }
+      const acceptedPaths = acceptedItemPaths(variables, result);
+      if (acceptedPaths.size > 0) {
+        setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
+      }
     },
     onError: (error: Error) => {
       toast.error(`Registration failed: ${getErrorMessage(error)}`);
@@ -162,13 +195,20 @@ export function useLibraryImport() {
 
       let updatedBook: DiscoveredBook = r.book;
 
-      // Slug-duplicate recheck: if this was a slug-duplicate, see if edited title+author no longer collides.
-      // Exact title equality matches the backend's findDuplicate() contract.
+      // Slug-duplicate recheck: if this was flagged a DB duplicate, see if the
+      // edited identity still collides. Runs the FULL shared predicate (#1662 F5)
+      // — ASIN-first, then normalized title+author — over each library identifier
+      // (which carries asin/title/authorSlug). Because every library-identity hit
+      // now reports `duplicateReason: 'slug'` (including ASIN hits), an ASIN-flagged
+      // row stays flagged after title/author edits that no longer textually collide
+      // but whose ASIN still matches.
       if (r.book.isDuplicate && r.book.duplicateReason === 'slug' && bookIdentifiers) {
-        const editedAuthorSlug = slugify(state.author ?? '');
-        const stillCollides = bookIdentifiers.some(
-          lb => lb.title === state.title && lb.authorSlug === editedAuthorSlug,
-        );
+        const candidate = {
+          title: state.title,
+          ...(state.author !== undefined && { authorName: state.author }),
+          ...(state.asin !== undefined && { asin: state.asin }),
+        };
+        const stillCollides = bookIdentifiers.some(lb => matchesLibraryIdentity(candidate, lb));
         if (!stillCollides) {
           updatedBook = { ...r.book, isDuplicate: false };
         }
@@ -180,19 +220,7 @@ export function useLibraryImport() {
   }, [bookIdentifiers]);
 
   const handleRegister = useCallback(() => {
-    const selected = rows.filter(r => r.selected);
-    const items: ImportConfirmItem[] = selected.map(r => ({
-      path: r.book.path,
-      title: r.edited.title,
-      ...(r.edited.author && { authorName: r.edited.author }),
-      ...(r.edited.series && { seriesName: r.edited.series }),
-      ...(r.edited.narrators?.length && { narrators: r.edited.narrators }),
-      ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
-      ...(r.edited.coverUrl !== undefined && { coverUrl: r.edited.coverUrl }),
-      ...(r.edited.asin !== undefined && { asin: r.edited.asin }),
-      ...(r.edited.metadata !== undefined && { metadata: r.edited.metadata }),
-      ...(r.book.isDuplicate ? { forceImport: true } : {}),
-    }));
+    const items = rows.filter(r => r.selected).map(r => toConfirmItem(r, false));
     registerMutation.mutate(items);
   }, [rows, registerMutation]);
 
@@ -201,9 +229,10 @@ export function useLibraryImport() {
     if (!libraryPath) return;
     setScanError(null);
     setEmptyResult(false);
+    clearHeld();
     prevMatchCountRef.current = 0;
     scanMutation.mutate(libraryPath);
-  }, [settings, scanMutation]);
+  }, [settings, scanMutation, clearHeld]);
 
   const handleRetryMatch = useCallback(() => {
     const candidates = rows
@@ -245,11 +274,13 @@ export function useLibraryImport() {
     isMatching,
     progress,
     libraryRoot,
+    heldReview,
 
     handleToggle,
     handleSelectAll,
     handleEdit,
     handleRegister,
+    handleReconfirmHeld,
     handleRetry,
     handleRetryMatch,
 

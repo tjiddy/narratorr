@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import {
   serializerCompiler,
@@ -13,6 +13,10 @@ import type { BookService } from '../../services/book.service.js';
 import type { IndexerSearchService } from '../../services/indexer-search.service.js';
 import type { DownloadOrchestrator } from '../../services/download-orchestrator.js';
 import type { DownloadService } from '../../services/download.service.js';
+import type { BlacklistService } from '../../services/blacklist.service.js';
+import type { SettingsService } from '../../services/settings.service.js';
+import type { IndexerService } from '../../services/indexer.service.js';
+import * as searchPipeline from '../../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../../core/download-clients/errors.js';
 import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
@@ -113,6 +117,12 @@ const bookService = { getById: vi.fn() } as unknown as BookService;
 const indexerSearchService = { searchAll: vi.fn() } as unknown as IndexerSearchService;
 const downloadOrchestrator = { grab: vi.fn() } as unknown as DownloadOrchestrator;
 const downloadService = { getById: vi.fn() } as unknown as DownloadService;
+// #1800 — post-processing deps for the shared display filter chain the v1
+// search handler now routes through. Defaults (set in beforeEach) are pass-all:
+// empty blacklist, permissive quality/metadata, empty LAN allowlist.
+const blacklistService = { getBlacklistedIdentifiers: vi.fn() } as unknown as BlacklistService;
+const settingsService = { get: vi.fn() } as unknown as SettingsService;
+const indexerService = { getLanAllowlist: vi.fn() } as unknown as IndexerService;
 const db = createMockDb();
 
 // Per-test mutable state driving the smart db.select impl: resolveByPublicId
@@ -130,7 +140,7 @@ describe('v1 action routes (search + grab)', () => {
     app.setSerializerCompiler(serializerCompiler);
     await app.register(cookie);
     await app.register(authPlugin, { authService });
-    await v1ActionsRoutes(app, { bookService, indexerSearchService, downloadOrchestrator, downloadService }, inject<Db>(db));
+    await v1ActionsRoutes(app, { bookService, indexerSearchService, downloadOrchestrator, downloadService, blacklistService, settingsService, indexerService }, inject<Db>(db));
     await app.ready();
   });
 
@@ -143,6 +153,15 @@ describe('v1 action routes (search + grab)', () => {
     (bookService.getById as Mock).mockResolvedValue(hydratedBook());
     (indexerSearchService.searchAll as Mock).mockResolvedValue([]);
     (downloadService.getById as Mock).mockResolvedValue(null);
+    // Pass-all post-processing defaults so the existing search tests still see
+    // their raw fixtures survive the filter chain (blacklist/quality/enrichment).
+    (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() });
+    (settingsService.get as Mock).mockImplementation((cat: string) => {
+      if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, rejectWords: '', requiredWords: '' });
+      if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+      return Promise.resolve({});
+    });
+    (indexerService.getLanAllowlist as Mock).mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() });
     (downloadOrchestrator.grab as Mock).mockResolvedValue(hydratedDownload());
     bookRows = [{ id: BOOK_ID }];
     downloadRows = [];
@@ -187,6 +206,23 @@ describe('v1 action routes (search + grab)', () => {
       }
     });
 
+    it('serializes a release whose seeders is absent (post-fix adapter shape) as seeders: null, no 500', async () => {
+      // AC4: the torznab adapter now omits seeders entirely for a non-numeric
+      // attr (never emits NaN). The strict releaseV1Schema accepts the
+      // absent-then-nulled seeders; the v1 DTO has no leechers field.
+      const { seeders: _drop, ...noSeeders } = searchResult();
+      void _drop;
+      (indexerSearchService.searchAll as Mock).mockResolvedValue([noSeeders]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(1);
+      expect(body.data[0].seeders).toBeNull();
+      expect(body.data[0]).not.toHaveProperty('leechers');
+    });
+
     it('feeds the resolved book into the query and forwards { title, author } to searchAll', async () => {
       (indexerSearchService.searchAll as Mock).mockResolvedValue([]);
 
@@ -216,6 +252,106 @@ describe('v1 action routes (search + grab)', () => {
       expect(res.statusCode).toBe(400);
       expectV1Envelope(res.json());
       expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+    });
+
+    // ------------------------------------------------------------------------
+    // #1800 — v1 search now routes through the shared display filter chain.
+    // ------------------------------------------------------------------------
+
+    it('excludes a blacklisted release (by guid) from the v1 data list; total is the filtered count', async () => {
+      const clean = searchResult({ guid: 'clean-guid', title: 'Words of Radiance (Unabridged)' });
+      const blacklisted = searchResult({ guid: 'blk-guid', title: 'Oathbringer (Unabridged)' });
+      (indexerSearchService.searchAll as Mock).mockResolvedValue([clean, blacklisted]);
+      (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set(['blk-guid']),
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(1);
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0].title).toBe('Words of Radiance (Unabridged)');
+    });
+
+    it('excludes a "Part 2 of 5" multi-part Usenet release from the v1 data list (real multi-part filter)', async () => {
+      // language pre-set so enrichUsenetLanguages skips it (no NZB fetch); the
+      // multi-part filter keys off the title regardless.
+      const partial = searchResult({
+        protocol: 'usenet',
+        title: 'Words of Radiance Part 2 of 5',
+        language: 'English',
+        infoHash: undefined,
+        seeders: undefined,
+        guid: 'usenet-guid',
+      });
+      const full = searchResult({ guid: 'full-guid', title: 'Words of Radiance (Unabridged)' });
+      (indexerSearchService.searchAll as Mock).mockResolvedValue([partial, full]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(1);
+      expect(body.data.map((r: { title: string }) => r.title)).toEqual(['Words of Radiance (Unabridged)']);
+    });
+
+    it('keeps the v1 envelope unchanged: only { data, total }, no unsupportedResults/durationUnknown, total === data.length', async () => {
+      (indexerSearchService.searchAll as Mock).mockResolvedValue([searchResult(), searchResult({ guid: 'guid-2', title: 'Oathbringer' })]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(Object.keys(body).sort()).toEqual(['data', 'total']);
+      expect(body).not.toHaveProperty('unsupportedResults');
+      expect(body).not.toHaveProperty('durationUnknown');
+      expect(body.total).toBe(body.data.length);
+    });
+
+    // Duration precedence (AC5): the handler must derive the seconds value via
+    // resolveBookQualityInputs, NOT a raw `book.duration * 60`. Spy on the shared
+    // wrapper and assert the exact bookDuration second-argument it receives.
+    describe('duration precedence via resolveBookQualityInputs', () => {
+      afterEach(() => { vi.restoreAllMocks(); });
+
+      function spyPostProcess() {
+        return vi.spyOn(searchPipeline, 'postProcessSearchResults').mockResolvedValue({
+          results: [],
+          durationUnknown: false,
+          unsupportedResults: { count: 0, titles: [] },
+        });
+      }
+
+      it('passes audioDuration (seconds) when present, ignoring the minutes-backed duration', async () => {
+        const spy = spyPostProcess();
+        (bookService.getById as Mock).mockResolvedValue(hydratedBook({ audioDuration: 3600, duration: 30 }));
+
+        await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0]![1]).toBe(3600); // NOT 1800 (30 * 60)
+      });
+
+      it('falls back to duration * 60 (minutes→seconds) when audioDuration is null', async () => {
+        const spy = spyPostProcess();
+        (bookService.getById as Mock).mockResolvedValue(hydratedBook({ audioDuration: null, duration: 60 }));
+
+        await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+        expect(spy.mock.calls[0]![1]).toBe(3600); // 60 min → 3600 s
+      });
+
+      it('passes undefined (durationUnknown path) when the book has neither audioDuration nor duration', async () => {
+        const spy = spyPostProcess();
+        (bookService.getById as Mock).mockResolvedValue(hydratedBook({ audioDuration: null, duration: null }));
+
+        await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+        expect(spy.mock.calls[0]![1]).toBeUndefined(); // NOT 0
+      });
     });
   });
 
@@ -275,6 +411,35 @@ describe('v1 action routes (search + grab)', () => {
         indexerId: 3,
         bookId: BOOK_ID,
       });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // #1800 — grab replay boundary (documentation, NOT enforcement).
+  // --------------------------------------------------------------------------
+
+  describe('grab replay boundary (#1800)', () => {
+    it('grabs a release from a previously-signed id even though it would be filtered at search (MAC-only, no re-search/re-filter)', async () => {
+      // The grab token is a stable, no-TTL HMAC. /grab verifies only the MAC and
+      // does NOT re-run search or the filter chain, so a consumer holding an id
+      // for a now-blacklisted / multi-part release can still replay it. This is
+      // the SAME posture as every internal surface — filtering the v1 search list
+      // is presentation parity, not grab-time enforcement. Pinning the boundary
+      // makes any future grab-time-enforcement change a deliberate, test-visible
+      // decision (Not in Scope for #1800).
+      const releaseId = signReleaseId({ downloadUrl: 'http://x/blacklisted', title: 'Part 2 of 5', protocol: 'usenet', guid: 'blk-guid' });
+      (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set(['blk-guid']),
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+      expect(res.statusCode).toBe(201);
+      expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
+      // Grab never touches the search/filter chain.
+      expect(indexerSearchService.searchAll as Mock).not.toHaveBeenCalled();
+      expect(blacklistService.getBlacklistedIdentifiers as Mock).not.toHaveBeenCalled();
     });
   });
 

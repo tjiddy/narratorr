@@ -1,6 +1,6 @@
 import { fetchApi } from './client.js';
 
-export type BulkOpType = 'rename' | 'retag' | 'convert';
+export type BulkOpType = 'rename' | 'retag' | 'convert' | 'write_metadata_sidecars';
 
 export interface BulkJobStatus {
   jobId: string;
@@ -47,6 +47,9 @@ export const bulkOperationsApi = {
 
   startBulkConvert: () =>
     fetchApi<{ jobId: string }>('/books/bulk/convert', { method: 'POST' }),
+
+  startBulkWriteMetadataSidecars: () =>
+    fetchApi<{ jobId: string }>('/books/bulk/write-metadata-sidecars', { method: 'POST' }),
 
   getBulkJob: (jobId: string) =>
     fetchApi<BulkJobStatus>(`/books/bulk/${jobId}`),

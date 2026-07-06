@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 vi.mock('./search-pipeline.js', () => ({
   searchAndGrabForBook: vi.fn().mockResolvedValue(undefined),
   buildNarratorPriority: vi.fn().mockReturnValue([]),
+  buildSearchFilterOptions: vi.fn().mockReturnValue({}),
 }));
 
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';

@@ -1036,7 +1036,7 @@ describe('POST /api/system/restore', () => {
       await csrfApp.register(authPlugin, { authService: csrfServices.auth as any });
       const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
       await systemRoutes(csrfApp, csrfServices, mockDb);
-      await bookFilesRoute(csrfApp, csrfServices.book);
+      await bookFilesRoute(csrfApp, csrfServices.book, csrfServices.settings);
       await csrfApp.ready();
     });
 

@@ -6,6 +6,7 @@ import { DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
+import { OwnedRecordingError } from '../services/book-dedup.js';
 import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
@@ -43,7 +44,17 @@ vi.mock('../config.js', () => ({
   config: { configPath: '/test-config' },
 }));
 
+// #1670 — spy on the OPF writer (the per-book refresh helper calls it cross-module). The route
+// tests assert it is/isn't called with the right `enabled` + `bookFolder`, not OPF XML generation.
+vi.mock('../utils/opf-writer.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../utils/opf-writer.js')>()),
+  writeOpfSidecar: vi.fn().mockResolvedValue('written'),
+}));
+
 import { serveCoverFromCache } from '../utils/cover-cache.js';
+import { writeOpfSidecar } from '../utils/opf-writer.js';
+import { createMockSettingsService } from '../__tests__/helpers.js';
+import type { BookService } from '../services/book.service.js';
 
 const mockBook = {
   ...createMockDbBook(),
@@ -82,8 +93,14 @@ function makeBookRouteDeps(overrides: Partial<BookRouteDeps> = {}): BookRouteDep
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    connectorService: makeMockConnector(),
     ...overrides,
   };
+}
+
+/** Minimal ConnectorService stand-in — only `notifyRefresh` is exercised by the refresh triggers. */
+function makeMockConnector(): NonNullable<BookRouteDeps['connectorService']> {
+  return { notifyRefresh: vi.fn().mockResolvedValue(undefined) } as unknown as NonNullable<BookRouteDeps['connectorService']>;
 }
 
 /** Register only `booksRoutes` onto a fresh Fastify app, wired from the given
@@ -398,7 +415,7 @@ describe('books routes', () => {
 
   describe('POST /api/books', () => {
     it('creates book with title only (no authors field) and returns 201 (#246)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, authors: [] });
 
       const res = await app.inject({
@@ -415,7 +432,7 @@ describe('books routes', () => {
     });
 
     it('creates book with empty authors array and returns 201 (#246)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, authors: [] });
 
       const res = await app.inject({
@@ -428,7 +445,7 @@ describe('books routes', () => {
     });
 
     it('returns 409 when authorless duplicate exists (#246)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
 
       const res = await app.inject({
         method: 'POST',
@@ -441,7 +458,7 @@ describe('books routes', () => {
 
     it('returns 201 when authorless add and only authored matches exist (#253)', async () => {
       // findDuplicate returns null because authored "Shogun" is excluded by notExists
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, title: 'Shogun', authors: [] });
 
       const res = await app.inject({
@@ -451,12 +468,12 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.book.findDuplicate).toHaveBeenCalledWith('Shogun', [], undefined);
+      expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Shogun', authors: [] }));
       expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Shogun', authors: [] }));
     });
 
     it('creates book and returns 201', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -470,7 +487,7 @@ describe('books routes', () => {
     });
 
     it('creates book with full metadata and returns 201', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({
         ...mockBook,
         asin: 'B003P2WO5E',
@@ -506,7 +523,7 @@ describe('books routes', () => {
     });
 
     it('returns 409 when duplicate found', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
 
       const res = await app.inject({
         method: 'POST',
@@ -516,6 +533,51 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).title).toBe('The Way of Kings');
+      expect(services.book.create).not.toHaveBeenCalled();
+    });
+
+    // #1723 F8 — a create-time ASIN race: findDuplicate clears the pre-create guard
+    // (different-recording) but create() fail-closes with OwnedRecordingError. The
+    // route must 409 with the incumbent owner (fetched via getById) and fire NONE of
+    // the post-create side effects, even with searchImmediately:true requested.
+    it('returns 409 with the incumbent owner on a create-time ASIN race and fires no post-create side effects (#1723 F8)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (services.book.create as Mock).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 7, title: 'The Way of Kings', reason: 'asin-owned' }),
+      );
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 7 });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).id).toBe(7);
+      expect(services.book.getById).toHaveBeenCalledWith(7);
+
+      // Give any (incorrectly) fired fire-and-forget work a tick to surface.
+      await new Promise(r => setTimeout(r, 50));
+      expect(services.eventHistory.create).not.toHaveBeenCalled();
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
+      expect(services.downloadOrchestrator.grab).not.toHaveBeenCalled();
+    });
+
+    // #1723 F8 — a `review` verdict (uncertain recording identity) carrying an
+    // incumbent must block with 409 surfacing that incumbent, never create.
+    it('returns 409 with the incumbent on a review verdict, without creating (#1723 F8)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'review', book: { ...mockBook, id: 88 } });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).id).toBe(88);
       expect(services.book.create).not.toHaveBeenCalled();
     });
 
@@ -530,7 +592,7 @@ describe('books routes', () => {
     });
 
     it('triggers search when searchImmediately is true and status is wanted', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       mockStreamingSearch([
@@ -554,7 +616,7 @@ describe('books routes', () => {
     });
 
     it('fire-and-forget search excludes results matching reject words', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue({
         grabFloor: 0, minSeeders: 0, protocolPreference: 'none',
@@ -582,7 +644,7 @@ describe('books routes', () => {
     });
 
     it('fire-and-forget search skips grab when no results match required words', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue({
         grabFloor: 0, minSeeders: 0, protocolPreference: 'none',
@@ -607,7 +669,7 @@ describe('books routes', () => {
 
     // ===== #386 — fire-and-forget search reads metadata.languages =====
     it('fire-and-forget search reads metadata settings for language filtering', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
@@ -634,7 +696,7 @@ describe('books routes', () => {
     });
 
     it('fire-and-forget search filters out results with non-matching language', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
@@ -665,7 +727,7 @@ describe('books routes', () => {
 
     // #406 — fire-and-forget search filters blacklisted releases via blacklistService
     it('fire-and-forget search filters blacklisted releases by infoHash', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({
@@ -694,7 +756,7 @@ describe('books routes', () => {
     });
 
     it('does not trigger search when searchImmediately is false', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -708,7 +770,7 @@ describe('books routes', () => {
     });
 
     it('does not trigger search when searchImmediately is not provided', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -722,7 +784,7 @@ describe('books routes', () => {
     });
 
     it('search trigger failure does not fail book creation', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       (services.indexerSearch.getEnabledIndexers as Mock).mockRejectedValue(new Error('Indexer down'));
@@ -741,7 +803,7 @@ describe('books routes', () => {
 
     it('does not trigger search when book status is not wanted', async () => {
       const importedBook = { ...mockBook, status: 'imported' };
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(importedBook);
 
       const res = await app.inject({
@@ -756,8 +818,8 @@ describe('books routes', () => {
 
     // #439 — fire-and-forget search respects searchPriority narrator-accuracy mode
     it('fire-and-forget search grabs narrator-matched release when searchPriority is accuracy', async () => {
-      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 600 };
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         if (cat === 'quality') return Promise.resolve(DEFAULT_SETTINGS.quality);
@@ -787,7 +849,7 @@ describe('books routes', () => {
     });
 
     it('passes providerId to service for ASIN enrichment', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
 
       const res = await app.inject({
@@ -851,6 +913,88 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(404);
+    });
+  });
+
+  // #1670 — per-book OPF refresh on metadata-change triggers (PUT). The writer is spied; we assert
+  // the `enabled` gate (from tagging.writeOpf) and the `bookFolder` (the book's path) it is called with.
+  describe('PUT /api/books/:id — OPF sidecar refresh (#1670)', () => {
+    const writeOpfMock = vi.mocked(writeOpfSidecar);
+
+    beforeEach(() => { writeOpfMock.mockClear(); });
+
+    function depsFor(opts: { writeOpf: boolean; path: string | null }) {
+      const bookService = inject<BookService>({
+        update: vi.fn().mockResolvedValue({ ...mockBook, id: 1, path: opts.path }),
+        getById: vi.fn().mockResolvedValue({ ...mockBook, id: 1, path: opts.path }),
+      });
+      return makeBookRouteDeps({
+        bookService,
+        settingsService: createMockSettingsService({ tagging: { writeOpf: opts.writeOpf } }),
+      });
+    }
+
+    it('refreshes the OPF after update on an imported book with writeOpf=true', async () => {
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: '/lib/Author/Book' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledTimes(1);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/lib/Author/Book' }));
+      await app2.close();
+    });
+
+    it('passes enabled=false (short-circuit) when writeOpf is off', async () => {
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: false, path: '/lib/Author/Book' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+      await app2.close();
+    });
+
+    it('skips the writer entirely for a not-imported book (path=null)', async () => {
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: null }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      await app2.close();
+    });
+
+    it('still returns 200 when the OPF refresh throws (nonfatal)', async () => {
+      writeOpfMock.mockRejectedValueOnce(new Error('boom'));
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: '/lib/Author/Book' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      await app2.close();
+    });
+
+    it('skips the write for a single-file pointer path (no crash)', async () => {
+      // The writer (real impl) guards the pointer path; here we assert it is invoked with that
+      // bookFolder and the route still succeeds — the spy stands in for the real skip.
+      const app2 = await createAppFromDeps(depsFor({ writeOpf: true, path: '/audiobooks/Doctor Sleep.m4b' }));
+      const res = await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } });
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ bookFolder: '/audiobooks/Doctor Sleep.m4b' }));
+      await app2.close();
+    });
+
+    // #1707 — the standalone edit route fires a 'metadata' refresh only when the OPF was written.
+    it("fires a 'metadata' refresh when the OPF is written, none when skipped", async () => {
+      const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+      const connectorService = inject<NonNullable<BookRouteDeps['connectorService']>>({ notifyRefresh });
+
+      writeOpfMock.mockResolvedValueOnce('written');
+      const app2 = await createAppFromDeps({ ...depsFor({ writeOpf: true, path: '/lib/Author/Book' }), connectorService });
+      expect((await app2.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } })).statusCode).toBe(200);
+      expect(notifyRefresh).toHaveBeenCalledTimes(1);
+      expect(notifyRefresh).toHaveBeenCalledWith('metadata', [expect.objectContaining({ bookId: 1, libraryPath: '/lib/Author/Book' })]);
+      await app2.close();
+
+      writeOpfMock.mockResolvedValueOnce('skipped');
+      notifyRefresh.mockClear();
+      const app3 = await createAppFromDeps({ ...depsFor({ writeOpf: false, path: '/lib/Author/Book' }), connectorService });
+      expect((await app3.inject({ method: 'PUT', url: '/api/books/1', payload: { title: 'X' } })).statusCode).toBe(200);
+      expect(notifyRefresh).not.toHaveBeenCalled();
+      await app3.close();
     });
   });
 
@@ -1128,6 +1272,46 @@ describe('books routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.tagged).toBe(3);
       expect(body.failed).toBe(0);
+    });
+
+    // #1721 — `refreshItem` is server-only internal enqueue state (carries the absolute on-disk
+    // libraryPath). It must NOT serialize into the public retag response, so the happy-path API shape
+    // is unchanged and the filesystem path never leaks to the client.
+    it('does not expose the internal refreshItem (or its libraryPath) in the response', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [],
+        refreshItem: { bookId: 1, title: 'Book', authorName: 'A', libraryPath: '/abs/library/Author/Book' },
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).not.toHaveProperty('refreshItem');
+      expect(res.payload).not.toContain('/abs/library/Author/Book');
+      // Public shape is exactly counts + warnings.
+      expect(Object.keys(body).sort()).toEqual(['bookId', 'failed', 'skipped', 'tagged', 'warnings']);
+    });
+
+    // #1707 — the per-book retag route fires a 'metadata' refresh only when ≥1 file was tagged.
+    // #1721 — the refresh item now comes from RetagResult.refreshItem (built pre-tag-write), so the
+    // route no longer reloads the book after the mutation; getById rejecting can't drop the refresh.
+    it("fires a 'metadata' refresh when ≥1 file tagged, none when all skipped", async () => {
+      const notify = services.connector.notifyRefresh as Mock;
+      notify.mockResolvedValue(undefined);
+      // A post-retag reload would fail — proves the refresh no longer depends on it.
+      (services.book.getById as Mock).mockRejectedValue(new Error('libSQL read failed'));
+
+      (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 1, tagged: 2, skipped: 0, failed: 0, warnings: [], refreshItem: { bookId: 1, title: 'Book', authorName: 'A', libraryPath: '/lib/A/Book' } });
+      notify.mockClear();
+      expect((await app.inject({ method: 'POST', url: '/api/books/1/retag' })).statusCode).toBe(200);
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledWith('metadata', [expect.objectContaining({ bookId: 1, libraryPath: '/lib/A/Book' })]);
+
+      (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 1, tagged: 0, skipped: 4, failed: 0, warnings: [], refreshItem: { bookId: 1, title: 'Book', authorName: 'A', libraryPath: '/lib/A/Book' } });
+      notify.mockClear();
+      expect((await app.inject({ method: 'POST', url: '/api/books/1/retag' })).statusCode).toBe(200);
+      expect(notify).not.toHaveBeenCalled();
     });
 
     it('returns partial success with warnings', async () => {
@@ -1862,7 +2046,7 @@ describe('books routes', () => {
 
     // #439 — per-book search respects searchPriority narrator-accuracy mode
     it('per-book search grabs narrator-matched release when searchPriority is accuracy', async () => {
-      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 36000 };
+      const bookWithNarrators = { ...mockBook, narrators: [{ name: 'Kevin R. Free' }], duration: 600 };
       (services.book.getById as Mock).mockResolvedValue(bookWithNarrators);
       const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
       const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
@@ -1991,7 +2175,7 @@ describe('books routes', () => {
 
   describe('error paths', () => {
     it('POST /api/books returns 500 when service.create throws', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockRejectedValue(new Error('DB insert failed'));
 
       const res = await app.inject({
@@ -2314,7 +2498,7 @@ describe('POST /api/books — array payload schema (#71)', () => {
       authors: [createMockDbAuthor()],
       narrators: [],
     };
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
 
     const res = await app.inject({
@@ -2335,7 +2519,7 @@ describe('POST /api/books — array payload schema (#71)', () => {
   });
 
   it('accepts authors: [] (empty array) with 201 (#246)', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (services.book.create as Mock).mockResolvedValue(mockBook);
 
     const res = await app.inject({
@@ -2375,7 +2559,7 @@ describe('POST /api/books — array payload schema (#71)', () => {
       authors: [createMockDbAuthor()],
       narrators: [],
     };
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (services.book.create as Mock).mockResolvedValue(bookNoNarrators);
 
     const res = await app.inject({
@@ -2676,7 +2860,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
   // #341 — book_added event on POST /api/books
   describe('book_added event on create', () => {
     it('records book_added event with source=manual after successful create', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       const createdBook = { ...mockBook, id: 42, title: 'Test Book' };
       (services.book.create as Mock).mockResolvedValue(createdBook);
 
@@ -2698,7 +2882,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('includes comma-joined authorName for multi-author books', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       const multiAuthorBook = {
         ...mockBook,
         id: 43,
@@ -2725,7 +2909,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('does NOT record book_added event when 409 duplicate is returned', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
 
       const res = await app.inject({
         method: 'POST',
@@ -2738,7 +2922,7 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
     });
 
     it('book creation succeeds even if eventHistory.create() rejects (fire-and-forget)', async () => {
-      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, id: 44 });
       (services.eventHistory.create as Mock).mockRejectedValue(new Error('DB write failed'));
 
@@ -2865,7 +3049,7 @@ describe('POST /api/books/:id/cover', () => {
 
   describe('happy path', () => {
     it('uploads valid JPEG and returns 200 with updated book', async () => {
-      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
       const imageData = Buffer.from('fake-jpeg-data');
       const { payload, contentType } = createCoverPayload('cover.jpg', imageData, 'image/jpeg');
 
@@ -2883,7 +3067,7 @@ describe('POST /api/books/:id/cover', () => {
     });
 
     it('uploads valid PNG and passes image/png mimetype to service', async () => {
-      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
       const imageData = Buffer.from('fake-png-data');
       const { payload, contentType } = createCoverPayload('cover.png', imageData, 'image/png');
 
@@ -2899,7 +3083,7 @@ describe('POST /api/books/:id/cover', () => {
     });
 
     it('uploads valid WebP and passes image/webp mimetype to service', async () => {
-      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
       const imageData = Buffer.from('fake-webp-data');
       const { payload, contentType } = createCoverPayload('cover.webp', imageData, 'image/webp');
 
@@ -2912,6 +3096,97 @@ describe('POST /api/books/:id/cover', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.book.uploadCover).toHaveBeenCalledWith(1, expect.any(Buffer), 'image/webp');
+    });
+  });
+
+  // #1670 — a cover upload on an imported book refreshes the OPF sidecar (F3: bookFilesRoute now
+  // takes settingsService). A failing OPF refresh must not fail the upload response.
+  describe('OPF sidecar refresh (#1670)', () => {
+    const writeOpfMock = vi.mocked(writeOpfSidecar);
+
+    it('refreshes the OPF after a successful upload when writeOpf=true', async () => {
+      writeOpfMock.mockClear();
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'tagging' ? { writeOpf: true } : {}));
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('x'), 'image/jpeg');
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/cover', payload, headers: { 'content-type': contentType } });
+
+      expect(res.statusCode).toBe(200);
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/library/book' }));
+    });
+
+    it('still returns 200 when the OPF refresh throws (nonfatal)', async () => {
+      writeOpfMock.mockClear();
+      writeOpfMock.mockRejectedValueOnce(new Error('boom'));
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'tagging' ? { writeOpf: true } : {}));
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('x'), 'image/jpeg');
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/cover', payload, headers: { 'content-type': contentType } });
+
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  // #1707 — the cover-upload route is the single aggregation point for its two media-visible writes
+  // (cover.* + metadata.opf): EXACTLY ONE 'metadata' refresh per upload when either materialized.
+  describe('connector refresh aggregation (#1707)', () => {
+    const writeOpfMock = vi.mocked(writeOpfSidecar);
+    function primeTagging(writeOpf: boolean) {
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(cat === 'tagging' ? { writeOpf } : {}));
+    }
+    function notify() { return services.connector.notifyRefresh as Mock; }
+
+    async function upload() {
+      const { payload, contentType } = createCoverPayload('cover.jpg', Buffer.from('x'), 'image/jpeg');
+      return app.inject({ method: 'POST', url: '/api/books/1/cover', payload, headers: { 'content-type': contentType } });
+    }
+
+    beforeEach(() => {
+      writeOpfMock.mockClear();
+      notify().mockResolvedValue(undefined);
+      notify().mockClear();
+    });
+
+    it('fires EXACTLY ONE refresh when both the cover and the OPF wrote (no double-fire)', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
+      writeOpfMock.mockResolvedValueOnce('written');
+      primeTagging(true);
+
+      expect((await upload()).statusCode).toBe(200);
+      expect(notify()).toHaveBeenCalledTimes(1);
+      expect(notify()).toHaveBeenCalledWith('metadata', [expect.objectContaining({ bookId: 1 })]);
+    });
+
+    it('fires once off the cover write even with writeOpf off (OPF skipped)', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
+      writeOpfMock.mockResolvedValueOnce('skipped');
+      primeTagging(false);
+
+      expect((await upload()).statusCode).toBe(200);
+      expect(notify()).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires when the cover DB update threw after the rename (coverOutcome stays 'written')", async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
+      writeOpfMock.mockResolvedValueOnce('skipped');
+      primeTagging(false);
+
+      expect((await upload()).statusCode).toBe(200);
+      expect(notify()).toHaveBeenCalledTimes(1);
+    });
+
+    it('fires NO refresh when both sub-writes skipped/failed', async () => {
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'failed' });
+      writeOpfMock.mockResolvedValueOnce('skipped');
+      primeTagging(false);
+
+      expect((await upload()).statusCode).toBe(200);
+      expect(notify()).not.toHaveBeenCalled();
     });
   });
 
@@ -2952,7 +3227,7 @@ describe('POST /api/books/:id/cover', () => {
 
   describe('size validation', () => {
     it('accepts file at exactly 10 MB boundary', async () => {
-      (services.book.uploadCover as Mock).mockResolvedValue(updatedBook);
+      (services.book.uploadCover as Mock).mockResolvedValue({ book: updatedBook, coverOutcome: 'written' });
       const exactlyTenMb = Buffer.alloc(10 * 1024 * 1024);
       const { payload, contentType } = createCoverPayload('exact.jpg', exactlyTenMb, 'image/jpeg');
 
@@ -3315,7 +3590,7 @@ describe('#1071 series routes', () => {
   });
 
   it('POST /api/books no longer enqueues an async series refresh (#1133 — lazy via GET)', async () => {
-    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     const created = { ...mockBook, id: 42, asin: 'B01NA0JA51', seriesName: 'The Band', seriesPosition: 1, status: 'wanted' };
     (services.book.create as Mock).mockResolvedValueOnce(created);
     const refresh = vi.fn();
@@ -3392,7 +3667,6 @@ describe('#1071 series routes', () => {
         title: 'New Title',
         seriesName: 'New Series',
         seriesPosition: 2,
-        seriesAsin: 'SERIES_NEW',
         genres: ['Fantasy'],
         isbn: '9781111111111',
       }));
@@ -3580,6 +3854,88 @@ describe('#1071 series routes', () => {
         expect(res.statusCode).toBe(200);
         expect(services.rename.renameBook).not.toHaveBeenCalled();
         expect(services.tagging.retagBook).not.toHaveBeenCalled();
+      });
+
+      // #1670 — Fix Match refreshes the OPF on BOTH the retag and non-retag paths, gated on
+      // tagging.writeOpf, independent of retagFiles. Configure settings so the writer is reached.
+      function primeWriteOpfEnabled() {
+        (services.settings.get as Mock).mockImplementation((cat: string) =>
+          Promise.resolve(cat === 'tagging' ? { writeOpf: true } : {}));
+      }
+
+      it('retagFiles=false: still refreshes the OPF (non-retag path is the regression target)', async () => {
+        const writeOpfMock = vi.mocked(writeOpfSidecar);
+        writeOpfMock.mockClear();
+        primeSuccessfulFixMatch();
+        primeWriteOpfEnabled();
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: false },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.tagging.retagBook).not.toHaveBeenCalled();
+        expect(writeOpfMock).toHaveBeenCalledTimes(1);
+        expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 7, bookFolder: '/library/book-7' }));
+      });
+
+      it('retagFiles=true: refreshes the OPF exactly once (no double write with the retag)', async () => {
+        const writeOpfMock = vi.mocked(writeOpfSidecar);
+        writeOpfMock.mockClear();
+        primeSuccessfulFixMatch();
+        primeWriteOpfEnabled();
+        (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 7, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.tagging.retagBook).toHaveBeenCalledTimes(1);
+        expect(writeOpfMock).toHaveBeenCalledTimes(1);
+      });
+
+      // #1707 — Fix Match emits EXACTLY ONE 'metadata' refresh covering its retag + OPF writes.
+      it('retagFiles=true: fires exactly one metadata connector refresh (not one per writer)', async () => {
+        vi.mocked(writeOpfSidecar).mockClear();
+        primeSuccessfulFixMatch();
+        primeWriteOpfEnabled();
+        (services.tagging.retagBook as Mock).mockResolvedValueOnce({ bookId: 7, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+        const notify = services.connector.notifyRefresh as Mock;
+        notify.mockResolvedValue(undefined);
+        notify.mockClear();
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: true },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify).toHaveBeenCalledWith('metadata', [expect.objectContaining({ bookId: 7 })]);
+      });
+
+      it("retagFiles=false with writeOpf off: fires NO metadata refresh (nothing materialized)", async () => {
+        vi.mocked(writeOpfSidecar).mockClear();
+        vi.mocked(writeOpfSidecar).mockResolvedValueOnce('skipped');
+        primeSuccessfulFixMatch();
+        const notify = services.connector.notifyRefresh as Mock;
+        notify.mockResolvedValue(undefined);
+        notify.mockClear();
+
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books/7/fix-match',
+          payload: { asin: 'B_NEW', retagFiles: false },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(notify).not.toHaveBeenCalled();
       });
 
       it('renameFiles=true on book without path: skips renameService call', async () => {

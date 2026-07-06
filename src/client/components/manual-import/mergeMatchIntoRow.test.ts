@@ -78,6 +78,61 @@ describe('mergeMatchIntoRow', () => {
     expect(merged.selected).toBe(true);
   });
 
+  it('post-match duplicate deselects a selected high-confidence row and flags row.book (#1662 F8)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', isDuplicate: true, existingBookId: 421, duplicateReason: 'slug' }),
+    );
+    expect(result.selected).toBe(false);
+    expect(result.book.isDuplicate).toBe(true);
+    expect(result.book.existingBookId).toBe(421);
+    expect(result.book.duplicateReason).toBe('slug');
+  });
+
+  it('post-match duplicate override beats the userEdited selection branch (#1662 F8)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ userEdited: true, selected: true }),
+      makeMatch({ confidence: 'high', isDuplicate: true, existingBookId: 7, duplicateReason: 'slug' }),
+    );
+    expect(result.selected).toBe(false);
+    expect(result.book.isDuplicate).toBe(true);
+  });
+
+  it('a non-duplicate high match still preserves selection and leaves row.book untouched (no regression)', () => {
+    const result = mergeMatchIntoRow(makeRow({ selected: true }), makeMatch({ confidence: 'high' }));
+    expect(result.selected).toBe(true);
+    expect(result.book.isDuplicate).toBe(false);
+  });
+
+  it('threads recordingVerdict onto row.book for a same-recording duplicate (#1712)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', isDuplicate: true, existingBookId: 5, duplicateReason: 'slug', recordingVerdict: 'same-recording' }),
+    );
+    expect(result.book.isDuplicate).toBe(true);
+    expect(result.book.recordingVerdict).toBe('same-recording');
+  });
+
+  it('threads recordingVerdict onto row.book for a different-recording (new version of owned title), row stays selected (#1712)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', recordingVerdict: 'different-recording' }),
+    );
+    // Not a hard duplicate — a deliberate new copy stays selected.
+    expect(result.selected).toBe(true);
+    expect(result.book.isDuplicate).toBe(false);
+    expect(result.book.recordingVerdict).toBe('different-recording');
+  });
+
+  it('threads recordingVerdict alongside reviewReason for a review verdict (#1712)', () => {
+    const result = mergeMatchIntoRow(
+      makeRow({ selected: true }),
+      makeMatch({ confidence: 'high', reviewReason: 'Possible different recording', recordingVerdict: 'review' }),
+    );
+    expect(result.book.reviewReason).toBe('Possible different recording');
+    expect(result.book.recordingVerdict).toBe('review');
+  });
+
   it('produces identical output for the same (row, match) inputs — no per-caller drift', () => {
     const row = makeRow({ userEdited: true, selected: true });
     const match = makeMatch({ confidence: 'medium' });

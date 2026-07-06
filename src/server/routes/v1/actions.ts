@@ -6,11 +6,15 @@ import type { Db } from '../../../db/index.js';
 import { books, downloads } from '../../../db/schema.js';
 import type { BookService } from '../../services/book.service.js';
 import type { IndexerSearchService } from '../../services/indexer-search.service.js';
+import type { IndexerService } from '../../services/indexer.service.js';
+import type { BlacklistService } from '../../services/blacklist.service.js';
+import type { SettingsService } from '../../services/settings.service.js';
 import type { DownloadOrchestrator, GrabParams } from '../../services/download-orchestrator.js';
 import type { DownloadService } from '../../services/download.service.js';
 import { DuplicateDownloadError } from '../../services/download-errors.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '../../../core/download-clients/errors.js';
-import { buildSearchQuery } from '../../services/search-pipeline.js';
+import { resolveBookQualityInputs } from '../../../core/utils/index.js';
+import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { downloadV1Schema, toDownloadV1 } from '../../../shared/schemas/v1/downloads.js';
 import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
@@ -42,6 +46,12 @@ export interface V1ActionsRouteDeps {
   indexerSearchService: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
   downloadService: DownloadService;
+  // Post-processing deps for the shared display filter chain (#1800). Note
+  // `indexerService` (the LAN allowlist for NZB-body fetches) is DISTINCT from
+  // `indexerSearchService` (the multi-indexer search fan-out) — both are needed.
+  blacklistService: BlacklistService;
+  settingsService: SettingsService;
+  indexerService: IndexerService;
 }
 
 /** `:publicId` path param. `.strict()` per the v1 owned-schema convention. */
@@ -220,11 +230,43 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
           }
 
           const author = book.authors?.[0]?.name;
-          const results = await deps.indexerSearchService.searchAll(query, {
+          const allResults = await deps.indexerSearchService.searchAll(query, {
             title: book.title,
             ...(author !== undefined && { author }),
           });
-          return { data: results.map((r) => toReleaseV1(r, signReleaseId)), total: results.length };
+
+          // #1800 — v1 search filtering contract. Route raw `searchAll` output
+          // through the SAME display post-processing wrapper the UI/SSE path
+          // uses (search-stream.ts:100) so a v1 consumer sees the same filtered
+          // candidate list the UI does: blacklist gate → Usenet language
+          // enrichment → multi-part filter → quality ranking. Without this the
+          // v1 surface was an unfiltered fifth search path (blacklisted +
+          // "Part 2 of 5" partials reachable). The response envelope is
+          // unchanged — `processed.{durationUnknown,unsupportedResults}` are
+          // consumed internally only; `total` is the FILTERED count.
+          //
+          // Duration MUST flow through `resolveBookQualityInputs` (audioDuration
+          // precedence, minutes→seconds fallback), NOT raw `duration * 60`, so
+          // v1 ranks identically to the auto-grab / retry / RSS paths (#1797).
+          //
+          // REPLAY BOUNDARY (parity, NOT closure): the grab token is a stable,
+          // no-TTL HMAC (grab-token.ts) and /grab (verifyReleaseId) checks only
+          // the MAC — it does not re-search or re-filter. A consumer holding a
+          // previously-signed id for a now-filtered release can still replay it
+          // to /grab. This matches every internal surface (all filter at search
+          // time, none re-filter at grab time). Filtering the list is
+          // presentation parity, not grab-time enforcement; grab-time
+          // re-filtering across all surfaces is out of scope for #1800.
+          const { durationSeconds } = resolveBookQualityInputs(book);
+          const processed = await postProcessSearchResults(
+            allResults,
+            durationSeconds ?? undefined,
+            deps.blacklistService,
+            deps.settingsService,
+            deps.indexerService,
+            request.log,
+          );
+          return { data: processed.results.map((r) => toReleaseV1(r, signReleaseId)), total: processed.results.length };
         },
       );
 

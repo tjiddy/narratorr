@@ -15,6 +15,9 @@ import { safeEmit } from '../utils/safe-emit.js';
 import { sweepCommitPendingMarkers } from '../utils/import-staging.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import { OwnedRecordingError } from './book.service.js';
+import type { EventHistoryService } from './event-history.service.js';
+import { finalizeForcedImportRefusal } from './import-refused.js';
 
 
 const SAFETY_POLL_INTERVAL_MS = 30_000;
@@ -25,6 +28,7 @@ export class ImportQueueWorker {
   private readonly log: FastifyBaseLogger;
   private readonly broadcaster: EventBroadcasterService | null;
   private readonly getLibraryRoot: (() => Promise<string | null | undefined>) | null;
+  private readonly eventHistory: EventHistoryService | null;
   private readonly emitter = new EventEmitter();
   private running = false;
   private stopping = false;
@@ -37,17 +41,25 @@ export class ImportQueueWorker {
    * `getLibraryRoot` resolves the configured library root for the boot-time stranded-marker
    * sweep (#1338). Injected (rather than holding a `SettingsService`) to keep the worker's
    * dependency surface minimal; omitted in unit tests that don't exercise the sweep.
+   *
+   * `eventHistory` is used only by the forced-import-refused terminal disposition (#1736) to
+   * record the enriched `import_failed` event when the copy-time fence refuses a forced import.
+   * Optional (omitted in unit tests that don't exercise that branch); when absent the refusal
+   * still finalizes the job, deletes the placeholder, and emits the enriched SSE — only the
+   * durable event row is skipped (best-effort, matching the broadcaster contract).
    */
   constructor(
     db: Db,
     log: FastifyBaseLogger,
     broadcaster?: EventBroadcasterService,
     getLibraryRoot?: () => Promise<string | null | undefined>,
+    eventHistory?: EventHistoryService,
   ) {
     this.db = db;
     this.log = log.child({ component: 'ImportQueueWorker' });
     this.broadcaster = broadcaster ?? null;
     this.getLibraryRoot = getLibraryRoot ?? null;
+    this.eventHistory = eventHistory ?? null;
   }
 
   /** Nudge the worker to check for new pending jobs. */
@@ -87,8 +99,18 @@ export class ImportQueueWorker {
   }
 
   /**
-   * Boot recovery: mark any rows left in 'processing' as failed.
-   * These are orphans from a previous crash.
+   * Boot recovery: resolve any import jobs left in `processing` by a previous crash (#1663).
+   *
+   * The linked book's status — read within the recovery transaction — decides each orphan's
+   * outcome. Boot recovery writes ONLY the `import_jobs` row: it never writes the book and never
+   * infers completion from book status.
+   *   - book still `importing` → the genuine interrupted case (no success/failure transition has
+   *     run yet). Re-queue the job (`pending`/`queued`, clear `lastError`) so the next drain
+   *     retries it; the book stays `importing`.
+   *   - any other status (`imported`, a failure-path revert to `failed`/`missing`/`wanted`, …) or
+   *     a null `bookId` → terminal-fail the job (`ProcessRestart`), leaving the book untouched.
+   * A requeued job whose real work cannot proceed is terminal-failed later by the NORMAL drain-time
+   * failure path with its real error (#1663 AC4) — never pre-emptively here.
    */
   private async bootRecovery(): Promise<void> {
     const orphans = await this.db
@@ -98,36 +120,23 @@ export class ImportQueueWorker {
 
     if (orphans.length === 0) return;
 
-    this.log.info({ count: orphans.length }, 'Boot recovery: marking orphaned processing jobs as failed');
+    this.log.info({ count: orphans.length }, 'Boot recovery: resolving orphaned processing jobs');
 
     const now = new Date();
-    const errorJson = JSON.stringify({ message: 'Interrupted by server restart', type: 'ProcessRestart' });
-
-    let recovered = 0;
+    let requeued = 0;
+    let settled = 0;
     let failed = 0;
 
     for (const orphan of orphans) {
       try {
-        await this.db.transaction(async (tx) => {
-          await tx.update(importJobs).set({
-            status: 'failed',
-            phase: 'failed',
-            lastError: errorJson,
-            completedAt: now,
-            updatedAt: now,
-          }).where(eq(importJobs.id, orphan.id));
-
-          if (orphan.bookId != null) {
-            // Guarded book write in the SAME transaction as the job write (#1448):
-            // both rows commit together or neither does. The `importing` guard (#1470)
-            // settles the book to `failed` only when it's still mid-import (the normal
-            // interrupted-orphan case where no revert ran); a book already moved off
-            // `importing` by a revert is left untouched — the guard misses (no-op).
-            await transitionBookStatus(tx, orphan.bookId, { status: 'failed', expected: { status: 'importing' } });
-          }
-        });
-        recovered++;
-        this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job marked as failed');
+        const didRequeue = await this.recoverOrphanedJob(orphan, now);
+        if (didRequeue) {
+          requeued++;
+          this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job re-queued for retry');
+        } else {
+          settled++;
+          this.log.info({ jobId: orphan.id, bookId: orphan.bookId }, 'Orphaned import job marked as failed');
+        }
       } catch (error: unknown) {
         failed++;
         this.log.error(
@@ -137,7 +146,49 @@ export class ImportQueueWorker {
       }
     }
 
-    this.log.info({ count: orphans.length, recovered, failed }, 'Boot recovery complete');
+    this.log.info({ count: orphans.length, requeued, settled, failed }, 'Boot recovery complete');
+  }
+
+  /**
+   * Resolve a single orphaned `processing` job in one transaction. Reads the linked book's status
+   * (race-free: boot recovery is single-threaded and fully completes before `drainLoop()` starts,
+   * so no concurrent worker can move the book between the read and the job write), then writes ONLY
+   * the `import_jobs` row — never the book. Returns `true` when the job was re-queued (book still
+   * `importing`), `false` when it was terminal-failed.
+   */
+  private async recoverOrphanedJob(orphan: { id: number; bookId: number | null }, now: Date): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      let bookStatus: string | null = null;
+      if (orphan.bookId != null) {
+        const [bookRow] = await tx
+          .select({ status: books.status })
+          .from(books)
+          .where(eq(books.id, orphan.bookId))
+          .limit(1);
+        bookStatus = bookRow?.status ?? null;
+      }
+
+      if (bookStatus === 'importing') {
+        await tx.update(importJobs).set({
+          status: 'pending',
+          phase: 'queued',
+          lastError: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: now,
+        }).where(eq(importJobs.id, orphan.id));
+        return true;
+      }
+
+      await tx.update(importJobs).set({
+        status: 'failed',
+        phase: 'failed',
+        lastError: JSON.stringify({ message: 'Interrupted by server restart', type: 'ProcessRestart' }),
+        completedAt: now,
+        updatedAt: now,
+      }).where(eq(importJobs.id, orphan.id));
+      return false;
+    });
   }
 
   /**
@@ -366,6 +417,22 @@ export class ImportQueueWorker {
         }
       }
       const currentPhase = phaseHistory.length > 0 ? phaseHistory[phaseHistory.length - 1]!.phase : 'queued';
+      // Forced-import refusal (#1736): a forced import that confirm-time honored but the copy-time
+      // collision fence refused (never-overwrite) surfaces a DISTINCT terminal disposition instead
+      // of the opaque generic failure path — branch BEFORE markJobFailed. The placeholder book row
+      // is deleted (not left in `importing`/`failed` limbo) and the failure carries a structured
+      // `forced-import-refused` reason so the user can see force was refused and why.
+      //
+      // Gated to FORCED imports (F1): the copy-time fence is force-independent, so a non-forced
+      // import can also throw `OwnedRecordingError`. That was never user-forced, so it is an ordinary
+      // generic failure (markJobFailed below) — labeling it `forced-import-refused` would be wrong.
+      if (error instanceof OwnedRecordingError && this.isForcedImport(job)) {
+        await finalizeForcedImportRefusal(
+          { db: this.db, broadcaster: this.broadcaster, eventHistory: this.eventHistory, log: this.log },
+          { jobId, bookId, currentPhase, bookTitle, error, phaseHistory },
+        );
+        return;
+      }
       await this.markJobFailed(jobId, bookId, currentPhase, bookTitle, JSON.stringify(serializeError(error)), phaseHistory);
     }
   }
@@ -455,6 +522,25 @@ export class ImportQueueWorker {
 
     const result = manualImportJobPayloadSchema.safeParse(parsed);
     return result.success ? result.data.title : 'Unknown';
+  }
+
+  /**
+   * True only for a `manual` job whose payload set `forceImport: true`. The forced-import-refused
+   * terminal disposition (#1736) is scoped to forced imports — a NON-forced copy-time
+   * `OwnedRecordingError` (the on-disk collision fence is force-independent and reachable without
+   * force) is an ordinary generic failure, not a "force refused" event, so it must NOT be mislabeled
+   * (F1). Non-manual jobs and unparseable/non-forced payloads return false. Never throws.
+   */
+  private isForcedImport(job: ImportJobRow): boolean {
+    if (job.type !== 'manual') return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(job.metadata);
+    } catch {
+      return false;
+    }
+    const result = manualImportJobPayloadSchema.safeParse(parsed);
+    return result.success && result.data.forceImport === true;
   }
 
   /** Create a throttled progress emitter for a specific job. */

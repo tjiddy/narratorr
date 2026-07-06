@@ -206,7 +206,7 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(cd1).toBeUndefined();
   });
 
-  it('detects duplicates when a matching book exists in the DB', async () => {
+  it('surfaces a title+author match as a review-hint candidate (no decisive ASIN, #1711 F6)', async () => {
     // Seed a book that matches one of the dedup-test folders by title + author
     const bookRes = await e2e.app.inject({
       method: 'POST',
@@ -219,7 +219,6 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(bookRes.statusCode).toBe(201);
 
     // Scan the dedicated dedup-test subdirectory (2 Author/Title books)
-    // This gives us the focused 2/1/1 scenario from the AC
     const res = await e2e.app.inject({
       method: 'POST',
       url: '/api/library/import/scan',
@@ -231,17 +230,19 @@ describe('Library scan → Discovery flow E2E', () => {
 
     // totalFolders counts both folders discovered
     expect(result.totalFolders).toBe(2);
-    // Both books appear in discoveries: 1 new + 1 duplicate
     expect(result.discoveries).toHaveLength(2);
 
-    // The duplicate appears with isDuplicate: true
+    // A title+author match with no decisive ASIN is NOT a hard duplicate anymore
+    // (#1711 F6): it flows through the match job carrying a review hint so the
+    // post-match recording verdict (same/different/review) can be computed.
     const wayOfKings = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'The Way of Kings',
     );
     expect(wayOfKings).toBeDefined();
-    expect(wayOfKings.isDuplicate).toBe(true);
+    expect(wayOfKings.isDuplicate).toBe(false);
+    expect(wayOfKings.reviewReason).toBeDefined();
 
-    // The non-duplicate has isDuplicate: false
+    // The non-matching folder is a plain new discovery.
     const nameOfTheWind = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'The Name of the Wind',
     );

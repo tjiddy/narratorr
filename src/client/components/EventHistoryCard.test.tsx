@@ -222,6 +222,15 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
   });
 
+  // #1735 — import-list review verdict: recording_review_skipped gets a configured
+  // label/icon so it renders instead of falling through to the raw event type.
+  it('recording_review_skipped renders with label "Recording Review" (not fallback)', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ eventType: 'recording_review_skipped' })} />);
+    expect(screen.getByText('Recording Review')).toBeInTheDocument();
+    expect(screen.queryByText('recording_review_skipped')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+  });
+
   // #1633 — import-list activity: book_added + specific list-name chip
   it('renders the specific list name from reason.importListName (not raw "import_list")', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent({

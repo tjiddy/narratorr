@@ -1,12 +1,10 @@
-import { writeFile, rename, readdir, unlink } from 'node:fs/promises';
+import { writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
-import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { mimeToExt } from '../utils/mime.js';
+import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
 
 export type CoverUploadErrorCode = 'INVALID_MIME' | 'NOT_FOUND' | 'NO_PATH';
 
@@ -22,6 +20,11 @@ export class CoverUploadError extends Error {
  * Upload a custom cover image for a book.
  * Atomic write (temp file → rename), stale sibling cleanup, immediate DB update.
  * Follows the same pattern as downloadRemoteCover in cover-download.ts.
+ *
+ * Returns a {@link CoverWriteOutcome}: `'written'` once the `cover.*` rename commits (even if the
+ * subsequent DB `coverUrl` update throws — see {@link finalizeCoverWrite}). Pre-rename failures
+ * (unsupported MIME, rename error) still THROW so the upload request keeps its existing error
+ * response rather than reporting a spurious success — there is no `'failed'`/`'skipped'` path here.
  */
 export async function uploadBookCover(
   bookId: number,
@@ -30,16 +33,19 @@ export async function uploadBookCover(
   mimeType: string,
   db: Db,
   log: FastifyBaseLogger,
-): Promise<void> {
+): Promise<CoverWriteOutcome> {
   const ext = mimeToExt(mimeType);
   if (!ext) {
     throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
   }
 
-  const finalPath = join(bookPath, `cover.${ext}`);
+  const keepFilename = `cover.${ext}`;
+  const finalPath = join(bookPath, keepFilename);
   const tempPath = join(bookPath, `.cover-upload-${randomUUID()}.tmp`);
 
-  // Atomic write: temp file → rename (rename() overwrites target)
+  // Atomic write: temp file → rename (rename() overwrites target). A pre-rename failure throws
+  // (preserving the upload's existing error response); once the rename commits the cover has
+  // materialized and the outcome is 'written' regardless of the DB update below.
   await writeFile(tempPath, buffer);
   try {
     await rename(tempPath, finalPath);
@@ -49,20 +55,9 @@ export async function uploadBookCover(
     throw error;
   }
 
-  // Clean up stale cover siblings with different extensions
-  const targetFilename = `cover.${ext}`;
-  const entries = await readdir(bookPath).catch(() => [] as string[]);
-  for (const entry of entries) {
-    if (COVER_FILE_REGEX.test(entry) && entry.toLowerCase() !== targetFilename.toLowerCase()) {
-      await unlink(join(bookPath, entry)).catch(() => { /* best-effort cleanup */ });
-    }
-  }
-
-  // Update DB immediately after irreversible filesystem step
-  await db.update(books).set({
-    coverUrl: `/api/books/${bookId}/cover`,
-    updatedAt: new Date(),
-  }).where(eq(books.id, bookId));
+  // Cover committed on disk. Sibling cleanup + DB `coverUrl` update are nonfatal from here.
+  await finalizeCoverWrite(bookId, bookPath, keepFilename, db, log);
 
   log.info({ bookId, path: finalPath }, 'Custom cover uploaded');
+  return 'written';
 }

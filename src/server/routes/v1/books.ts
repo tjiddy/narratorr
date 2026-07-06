@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { Db } from '../../../db/index.js';
 import { books } from '../../../db/schema.js';
-import type { BookService } from '../../services/book.service.js';
+import { OwnedRecordingError, type BookService } from '../../services/book.service.js';
 import type { BookListService } from '../../services/book-list.service.js';
 import type {
   MetadataService,
@@ -21,6 +21,7 @@ import { triggerImmediateSearch } from '../../services/trigger-immediate-search.
 import { snapshotBookForEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import type { BookMetadata } from '../../../core/index.js';
+import { normalizeProductionType } from '../../../core/metadata/production-type.js';
 import {
   bookV1Schema,
   bookV1ListQuerySchema,
@@ -29,6 +30,7 @@ import {
   toBookV1,
 } from '../../../shared/schemas/v1/books.js';
 import { v1ListResponseSchema, v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 
 export interface V1BooksRouteDeps {
@@ -76,12 +78,11 @@ function copyOptional<K extends keyof CreateBookInput>(
  * `books.asin`, breaking the find-by-ASIN retry-safety guarantee.
  */
 function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): CreateBookInput {
-  const primarySeries = meta.seriesPrimary ?? meta.series?.[0];
+  const primarySeries = pickPrimarySeries(meta);
   const out: CreateBookInput = {
     title: meta.title,
     authors: meta.authors,
     asin: meta.asin ?? requestedAsin,
-    seriesProvider: 'audible',
   };
   copyOptional(out, 'narrators', meta.narrators);
   copyOptional(out, 'subtitle', meta.subtitle);
@@ -91,11 +92,14 @@ function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): Cre
   copyOptional(out, 'isbn', meta.isbn);
   copyOptional(out, 'seriesName', primarySeries?.name);
   copyOptional(out, 'seriesPosition', primarySeries?.position);
-  copyOptional(out, 'seriesAsin', meta.seriesPrimary?.asin);
   copyOptional(out, 'duration', meta.duration);
   copyOptional(out, 'publishedDate', meta.publishedDate);
   copyOptional(out, 'genres', meta.genres);
   copyOptional(out, 'providerId', meta.providerId);
+  // Recording production form (#1731). Gate on presence: `normalizeProductionType`
+  // never returns undefined, so piping it unconditionally would write an explicit
+  // 'unknown' for ASINs with no formatType, regressing the absent-input contract.
+  if (meta.formatType) copyOptional(out, 'productionType', normalizeProductionType(meta.formatType));
   return out;
 }
 
@@ -214,14 +218,16 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         async (request, reply) => {
           const { asin } = request.body;
 
-          // Find-by-ASIN first. The ASIN (third arg) short-circuits findDuplicate
-          // on its ASIN branch; empty title + no authors are never read on that path.
-          const existing = await deps.bookService.findDuplicate('', undefined, asin);
-          if (existing) {
-            request.log.info({ asin, existingId: existing.publicId }, 'v1 add-by-ASIN: book already in library');
+          // Find-by-ASIN first (#1711). Add-by-ASIN is ASIN-only; an exact-ASIN
+          // incumbent resolves to `same-recording` (the resolver's authoritative
+          // ASIN-equal rule) → 409. A free ASIN gathers no incumbent →
+          // `different-recording` (book: null) → proceed.
+          const resolution = await deps.bookService.findDuplicate({ title: '', asin });
+          if (resolution.verdict !== 'different-recording' && resolution.book) {
+            request.log.info({ asin, existingId: resolution.book.publicId }, 'v1 add-by-ASIN: book already in library');
             return reply.status(409).send({
               error: { code: 'book_exists', message: 'A book with this ASIN already exists' },
-              existingId: existing.publicId,
+              existingId: resolution.book.publicId,
             });
           }
 
@@ -258,7 +264,23 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             );
           }
 
-          const book = await deps.bookService.create(metadataToCreatePayload(lookup.book, asin));
+          let book;
+          try {
+            book = await deps.bookService.create(metadataToCreatePayload(lookup.book, asin));
+          } catch (error: unknown) {
+            // Same-ASIN create-time race (#1711) — the recording is already owned.
+            if (error instanceof OwnedRecordingError) {
+              const owner = await deps.bookService.getById(error.existingBookId);
+              if (owner) {
+                request.log.info({ asin, existingId: owner.publicId }, 'v1 add-by-ASIN: book already in library (ASIN race)');
+                return reply.status(409).send({
+                  error: { code: 'book_exists', message: 'A book with this ASIN already exists' },
+                  existingId: owner.publicId,
+                });
+              }
+            }
+            throw error;
+          }
 
           deps.eventHistory
             .create({

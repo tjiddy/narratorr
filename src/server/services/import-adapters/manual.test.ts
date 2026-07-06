@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Dirent, Stats } from 'node:fs';
 import { join, extname } from 'node:path';
 import { inject, createMockSettingsService } from '../../__tests__/helpers.js';
 import type { Db } from '../../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { BookService } from '../book.service.js';
+import { OwnedRecordingError, type BookService } from '../book.service.js';
 import type { BookImportService } from '../book-import.service.js';
 import type { SettingsService } from '../settings.service.js';
 import type { EventHistoryService } from '../event-history.service.js';
@@ -13,6 +13,8 @@ import type { EnrichmentDeps } from '../enrichment-orchestration.helpers.js';
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
+import * as importOrchestration from '../import-orchestration.helpers.js';
+import { writeOpfForImport } from '../../utils/opf-writer.js';
 
 // Boundary choice: this file mocks fs primitives + stageSourceAudio (the import-steps `copyToLibrary`
 // the pipeline now calls per #1602) + getAudioPathSize, NOT the pipeline `copyToLibrary` /
@@ -22,6 +24,13 @@ import { ManualImportAdapter } from './manual.js';
 // rather than its stream primitives because its dedicated tests (import-steps.test.ts,
 // copy-to-library-progress.test.ts) exercise real audio-filtering + streaming behavior; here it is
 // the copy boundary the pipeline forwards (sourcePath, targetPath, sourceStats, onProgress) into.
+//
+// Exception (#1740): the edition-threading test ("uses the FRESH copy-result label") narrowly
+// `vi.spyOn`s the pipeline `copyToLibrary` to return a non-empty `editionLabel` — the only place
+// that label is derived is the occupied-target disambiguation path, which is impractical to fake
+// faithfully here. These spies are restored by the suite-level `afterEach(vi.restoreAllMocks)` —
+// failure-safe even if an awaited `process()` rejects — so every other test keeps the real pipeline
+// copier running against the lower mocks.
 
 vi.mock('../enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
@@ -71,6 +80,12 @@ vi.mock('../../utils/safe-emit.js', () => ({
 // and import-orchestration.helpers.test.ts.
 vi.mock('../../utils/delete-managed-files.js', () => ({
   deleteManagedBookFiles: vi.fn().mockResolvedValue({ deletedManaged: [], preservedForeign: [], failedManaged: [] }),
+}));
+
+// #1669: mock the OPF writer — the adapter-wiring (gate, finalPath, fresh bookId) is asserted via the
+// spy; the writer's own behavior (fresh reload, XML shape, nonfatal write) lives in opf-writer.test.ts.
+vi.mock('../../utils/opf-writer.js', () => ({
+  writeOpfForImport: vi.fn().mockResolvedValue(undefined),
 }));
 
 function createMockLogger(): FastifyBaseLogger {
@@ -216,6 +231,16 @@ describe('ManualImportAdapter', () => {
     adapter = new ManualImportAdapter(deps);
   });
 
+  // Un-install any `vi.spyOn` spies (e.g. the temporary importOrchestration.copyToLibrary
+  // spies below) after every test — including when an awaited `adapter.process(...)` rejects
+  // before a manual restore would run — so a stubbed copier can never leak into a later test.
+  // Complements beforeEach's `clearAllMocks()` (which resets call state but does not restore
+  // spies) and leaves the module-level import-steps `vi.mock` factory and `vi.fn()` doubles
+  // untouched — `restoreAllMocks()` only reverts `vi.spyOn` spies.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe('process', () => {
     it('happy path: processes book — updates status to imported and records event', async () => {
       const job = makeJob();
@@ -259,6 +284,51 @@ describe('ManualImportAdapter', () => {
       expect(mockConnectorService.notifyRefresh).toHaveBeenCalledWith('adopt', [
         expect.objectContaining({ bookId: 42, title: 'Test Book', libraryPath: '/audiobooks/Author/Title' }),
       ]);
+    });
+
+    describe('OPF sidecar (#1669)', () => {
+      function makeOpfAdapter(writeOpf: boolean): ManualImportAdapter {
+        const settings = createMockSettingsService({ library: { path: '/library', fileFormat: '' }, tagging: { writeOpf } });
+        return new ManualImportAdapter({ ...deps, settingsService: inject<SettingsService>(settings) });
+      }
+
+      it('writes the OPF sidecar into the copy/move finalPath when writeOpf is enabled', async () => {
+        await makeOpfAdapter(true).process(makeJob(), ctx);
+
+        expect(writeOpfForImport).toHaveBeenCalledTimes(1);
+        const arg = vi.mocked(writeOpfForImport).mock.calls[0]![0];
+        expect(arg.enabled).toBe(true);
+        expect(arg.bookId).toBe(42);
+        expect(arg.bookService).toBe(deps.bookService);
+        expect(normPath(arg.bookFolder)).toBe(TARGET_PATH);
+      });
+
+      it('writes the OPF sidecar into the pointer/adopt finalPath (the source path) when enabled', async () => {
+        const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
+        await makeOpfAdapter(true).process(job, ctx);
+
+        const arg = vi.mocked(writeOpfForImport).mock.calls[0]![0];
+        expect(arg.enabled).toBe(true);
+        expect(normPath(arg.bookFolder)).toBe('/audiobooks/Author/Title');
+      });
+
+      it('passes enabled:false to the OPF helper when writeOpf is disabled (default)', async () => {
+        await adapter.process(makeJob(), ctx);
+
+        expect(writeOpfForImport).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 42 }));
+      });
+
+      it('OPF write failure is nonfatal — import still completes and a warning is logged', async () => {
+        vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
+
+        await expect(makeOpfAdapter(true).process(makeJob(), ctx)).resolves.toBeUndefined();
+        // Connector refresh after the OPF write still fires → import path was not aborted.
+        expect(mockConnectorService.notifyRefresh).toHaveBeenCalled();
+        expect(deps.log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 42 }),
+          expect.stringContaining('continuing'),
+        );
+      });
     });
 
     it('mode=copy: forwards the source stats to stageSourceAudio (the copier mkdirs the target itself)', async () => {
@@ -935,6 +1005,69 @@ describe('ManualImportAdapter', () => {
         }));
       });
 
+      // #1736 — a FORCED import's copy-time OwnedRecordingError is not translated into a generic
+      // failure. The adapter must rethrow the typed error WITHOUT emitting the generic
+      // `book_status_change → failed` SSE or recording the opaque generic `import_failed` event — the
+      // worker's refused terminal disposition owns it. Contrast with the ENOSPC failure above, which
+      // DOES emit/record the generic side effects.
+      it('mode=copy + forceImport + copyToLibrary throws OwnedRecordingError: rethrows typed error, skips generic failure side effects', async () => {
+        const { safeEmit } = await import('../../utils/safe-emit.js');
+        const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
+        vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
+
+        const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy', forceImport: true }) });
+        await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
+
+        // No generic `book_status_change → failed` SSE (the placeholder is deleted by the worker, not reverted).
+        expect(vi.mocked(safeEmit)).not.toHaveBeenCalledWith(
+          expect.anything(), 'book_status_change',
+          expect.objectContaining({ new_status: 'failed' }),
+          expect.anything(),
+        );
+        // No generic opaque `import_failed` event recorded by the adapter.
+        expect(mockEventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
+      });
+
+      // #1736 F1 — a NON-forced import's copy-time OwnedRecordingError was never user-forced, so the
+      // copy-time fence's refusal is an ordinary generic failure, NOT a "force refused" event. The
+      // adapter must keep the generic side effects (gate on `forceImport`), exactly as it did before
+      // #1736 — otherwise a non-forced collision is silently mislabeled as a forced refusal.
+      it('mode=copy WITHOUT forceImport + copyToLibrary throws OwnedRecordingError: keeps the generic failure side effects', async () => {
+        const { safeEmit } = await import('../../utils/safe-emit.js');
+        const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
+        vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
+
+        // makeJob()'s default payload has no `forceImport`.
+        const job = makeJob();
+        await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
+
+        // Generic failure path retained: book reverted to failed + opaque import_failed event recorded.
+        expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
+          expect.anything(), 'book_status_change',
+          expect.objectContaining({ book_id: 42, new_status: 'failed' }),
+          expect.anything(),
+        );
+        expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
+      });
+
+      it('mode=copy + copyToLibrary throws a non-Owned error: keeps the generic failure side effects', async () => {
+        const { safeEmit } = await import('../../utils/safe-emit.js');
+        vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(new Error('disk full'));
+
+        const job = makeJob();
+        await expect(adapter.process(job, ctx)).rejects.toThrow('disk full');
+
+        expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
+          expect.anything(), 'book_status_change',
+          expect.objectContaining({ book_id: 42, new_status: 'failed' }),
+          expect.anything(),
+        );
+        expect(mockEventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+          eventType: 'import_failed',
+          reason: { error: 'disk full' },
+        }));
+      });
+
       it('mode=copy + fileFormat=\'{narrator}\' + bookService.getById returns narrators: rendered filename uses primary narrator', async () => {
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3']);
@@ -952,6 +1085,87 @@ describe('ManualImportAdapter', () => {
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Jane Narrator.mp3`]);
+      });
+
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + copyToLibrary derives editionLabel: rename uses the FRESH copy-result label, not the stale getById value (#1740)', async () => {
+        // Regression guard (#1740): the rename runs BEFORE edition_label is persisted, so the
+        // hydrated `getById` book still carries the stale/null label. The label that must drive the
+        // rename is the one `copyToLibrary` returned on THIS import. We stub the pipeline copier
+        // (the documented seam is otherwise real — see boundary note above) to return a non-empty
+        // editionLabel while `getById` returns a DIFFERENT (null) value, proving precedence.
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
+        vi.spyOn(importOrchestration, 'copyToLibrary')
+          .mockResolvedValue({ targetPath: TARGET_PATH, editionLabel: 'Full Cast' });
+        const settingsSvc = makeRenameSettingsService('{title} ({edition})');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
+            narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            editionLabel: null, status: 'importing', size: 100_000, genres: [],
+          }),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (Full Cast).mp3`]);
+      });
+
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + no copy-result label + getById returns editionLabel: falls back to the stored label (#1740)', async () => {
+        // The undefined-passthrough branch: when no disambiguation occurred (copyToLibrary returns
+        // no editionLabel), the rename still honors the hydrated/stored edition_label (#1712).
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
+        const settingsSvc = makeRenameSettingsService('{title} ({edition})');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
+            narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            editionLabel: 'Unabridged', status: 'importing', size: 100_000, genres: [],
+          }),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (Unabridged).mp3`]);
+      });
+
+      it('mode=copy + fileFormat=\'{title} ({edition})\' + null editionLabel: renders no stray brackets (#1712 F2)', async () => {
+        const fs = await import('node:fs/promises');
+        await mockReaddirAudioFiles(['a.mp3']);
+        const settingsSvc = makeRenameSettingsService('{title} ({edition})');
+        deps.settingsService = inject<SettingsService>(settingsSvc);
+        deps.bookService = inject<BookService>({
+          findDuplicate: vi.fn(), create: vi.fn(),
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'Test Book', seriesName: null, seriesPosition: null,
+            narrators: [], authors: [{ id: 1, name: 'Author', asin: null }],
+            publishedDate: '2024-01-15', path: '/library/Author/Title',
+            editionLabel: null, status: 'importing', size: 100_000, genres: [],
+          }),
+        });
+        adapter = new ManualImportAdapter(deps);
+
+        const job = makeJob();
+        await adapter.process(job, ctx);
+
+        expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(fs.rename).mock.calls[0]!.map(normPath)).toEqual(
+          [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book.mp3`]);
       });
 
       it('mode=copy + fileFormat set + bookService.getById returns null narrators: rename proceeds using bookRow fallbacks', async () => {

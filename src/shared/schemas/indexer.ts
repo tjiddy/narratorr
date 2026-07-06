@@ -120,10 +120,6 @@ export const updateIndexerSchema = z.object({
   }
 });
 
-// Output types (after Zod applies defaults/transforms)
-export type CreateIndexerInput = z.infer<typeof createIndexerSchema>;
-export type UpdateIndexerInput = z.infer<typeof updateIndexerSchema>;
-
 // ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
 
 export const createIndexerFormSchema = z.object({

@@ -3,13 +3,114 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { compareNarratorSignals, diceCoefficient, normalizeNarrator, scoreResult } from '../../core/utils/similarity.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.service.js';
 import type { MatchSource } from './tag-search-planner.js';
+import type { BookService } from './book.service.js';
+import { serializeError } from '../utils/serialize-error.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
+
+/** User-facing reason surfaced on a post-match recording-review row (#1711). */
+export const RECORDING_REVIEW_REASON =
+  'Possible different recording of a book you already own — review before importing';
+
+/**
+ * Post-match recording-identity check (#1662, #1711). On a resolved match, ask
+ * the three-way `findDuplicate` whether the matched recording is already owned,
+ * a different recording, or needs review — `bestMatch` carries the narrators +
+ * duration the resolver needs (a no-author filename does not):
+ *
+ *  - `same-recording` → flag `isDuplicate=true, duplicateReason='slug'` (owned),
+ *    plus `recordingVerdict:'same-recording'`.
+ *  - `review`/no-signal → set the display-only `reviewReason` (NOT a hard
+ *    `isDuplicate`) so the UI surfaces it but the row still flows, plus
+ *    `recordingVerdict:'review'`.
+ *  - `different-recording` WITH an incumbent → `recordingVerdict:'different-recording'`
+ *    (a deliberate new recording of an owned title); not a duplicate, row stays selected.
+ *  - `different-recording` WITHOUT an incumbent → a genuinely new book; left unflagged
+ *    (no verdict, no badge).
+ *
+ * A failed lookup is non-fatal: the match still returns, just without a flag.
+ */
+export async function applyLibraryDuplicate(
+  result: MatchResult,
+  bookService: Pick<BookService, 'findDuplicate'>,
+  log: FastifyBaseLogger,
+): Promise<MatchResult> {
+  if (!result.bestMatch) return result;
+  try {
+    const resolution = await bookService.findDuplicate({
+      title: result.bestMatch.title,
+      authors: result.bestMatch.authors,
+      ...(result.bestMatch.asin !== undefined && { asin: result.bestMatch.asin }),
+      ...(result.bestMatch.narrators !== undefined && { narrators: result.bestMatch.narrators }),
+      ...(result.bestMatch.duration !== undefined && { duration: result.bestMatch.duration }),
+      // Production form (#1728, F2): normalize the matched edition's formatType so
+      // an abridged-vs-unabridged best match with no usable duration classifies as
+      // review rather than a silent same-recording duplicate.
+      ...(result.bestMatch.formatType ? { productionType: normalizeProductionType(result.bestMatch.formatType) } : {}),
+    });
+    if (resolution.verdict === 'same-recording' && resolution.book) {
+      log.debug(
+        { path: result.path, existingBookId: resolution.book.id, title: result.bestMatch.title },
+        'Post-match library duplicate detected (same recording)',
+      );
+      return { ...result, isDuplicate: true, existingBookId: resolution.book.id, duplicateReason: 'slug', recordingVerdict: 'same-recording' };
+    }
+    if (resolution.verdict === 'review') {
+      log.debug(
+        { path: result.path, existingBookId: resolution.book?.id, title: result.bestMatch.title, recordingReviewReason: resolution.recordingReviewReason },
+        'Post-match recording review required',
+      );
+      // The user-facing `reviewReason` display text is intentionally left as the
+      // generic human warning (#1728): the machine reason rides the log context
+      // above, never into the display string.
+      return {
+        ...result,
+        reviewReason: RECORDING_REVIEW_REASON,
+        recordingVerdict: 'review',
+        ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
+      };
+    }
+    // `different-recording` WITH an incumbent → a new recording of an owned title.
+    // A different-recording with NO incumbent is a genuinely new book — left unflagged.
+    if (resolution.verdict === 'different-recording' && resolution.hasIncumbent) {
+      log.debug(
+        { path: result.path, title: result.bestMatch.title },
+        'Post-match: new recording of an owned title (different recording)',
+      );
+      return { ...result, recordingVerdict: 'different-recording' };
+    }
+  } catch (error: unknown) {
+    log.warn({ error: serializeError(error), path: result.path }, 'Post-match duplicate check failed — proceeding without flag');
+  }
+  return result;
+}
 
 const DURATION_THRESHOLD_STRICT = 0.05;
 const DURATION_THRESHOLD_RELAXED = 0.15;
 const COMBINED_SCORE_GATE = 0.95;
+const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
+
+/**
+ * Cap a computed Confidence at the planner-attempt's `maxConfidence`. Stripped
+ * attempts (album/strip-leading-series/etc.) emit `'medium'` as their cap so
+ * downstream Review/Verified UI can flag them for human attention even when
+ * the duration check would otherwise bless them as `'high'`.
+ */
+export function capConfidence(c: Confidence, cap: 'high' | 'medium'): Confidence {
+  if (cap === 'medium' && c === 'high') return 'medium';
+  return c;
+}
+
+// Cap-driven downgrades from a planner attempt need a user-facing tooltip
+// reason; without one the amber Review pill renders with no explanation (#1052).
+export function applyAttemptCap(raw: Confidence, cap: 'high' | 'medium', durationReason: string | undefined): { confidence: Confidence; reason?: string } {
+  const confidence = capConfidence(raw, cap);
+  const reason = durationReason ?? (confidence === 'medium' ? CAPPED_ATTEMPT_REASON : undefined);
+  return reason !== undefined ? { confidence, reason } : { confidence };
+}
 
 export interface DurationConfidenceResult {
   confidence: Confidence;
@@ -67,6 +168,34 @@ export function resolveConfidenceFromDuration(
     };
   }
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
+}
+
+/**
+ * Single-candidate RAW confidence (#1821): `high` unless the scanned runtime and
+ * the candidate runtime are BOTH present and disagree (then `medium`/Review with
+ * the same mismatch reason the multi-result path emits). Reuses the exact band in
+ * `isDurationVerified` — no new threshold. A MISSING runtime on either side stays
+ * `high` (absent data must not demote; only a positive disagreement warns).
+ *
+ * This is the RAW value. On the filename-single path it becomes the final
+ * `MatchResult.confidence` directly; on the tag-single path it is still subject to
+ * the pre-existing attempt cap, which can clamp a raw `high` to final `medium` for
+ * a `maxConfidence: 'medium'` attempt. The helper only ever demotes an otherwise-
+ * `high` single; it never raises a capped attempt's ceiling.
+ */
+export function resolveSingleResultConfidence(
+  meta: BookMetadata,
+  scannedDuration: number | undefined,
+  score: number,
+): DurationConfidenceResult {
+  const bothPresent = !!scannedDuration && scannedDuration > 0 && !!meta.duration && meta.duration > 0;
+  if (bothPresent && !isDurationVerified(meta, scannedDuration, score)) {
+    return {
+      confidence: 'medium',
+      reason: `Duration mismatch — scanned ${formatHours(scannedDuration)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
+    };
+  }
+  return { confidence: 'high' };
 }
 
 export interface TagQuery {
@@ -192,7 +321,7 @@ const TAG_AUTHOR_WEIGHT = 0.4;
  */
 export function tagTitleScore(input: string, result: BookMetadata): number {
   const title = cleanTagTitle(result.title ?? '');
-  const primary = result.seriesPrimary ?? result.series?.[0];
+  const primary = pickPrimarySeries(result);
   const seriesName = cleanTagTitle(primary?.name ?? '');
   const seriesPos = primary?.position;
   const candidates: string[] = [title];

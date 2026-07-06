@@ -8,7 +8,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { serializeError } from '../utils/serialize-error.js';

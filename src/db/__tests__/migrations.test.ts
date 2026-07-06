@@ -93,13 +93,34 @@ describe('drizzle baseline migration', () => {
     expect(suggestionColumns.has('dismissed_at'), 'expected survivor column suggestions.dismissed_at').toBe(true);
 
     // The flattened baseline must fold in columns that shipped as ADD COLUMN
-    // migrations before each re-flatten: subtitle/publisher (#1614) and
-    // enrichment_attempts (#1630). Pin their presence so a future re-flatten that
-    // drops any of them fails here.
+    // migrations before each re-flatten: subtitle/publisher (#1614),
+    // enrichment_attempts (#1630), production_type (#1710, story 1) and
+    // edition_label (#1711/#1712). Those incremental migrations were collapsed into
+    // the single 0000_baseline. Pin their presence so a future re-flatten that
+    // drops any of them fails here. Both production_type (edition
+    // discriminator) and edition_label (persisted folder suffix) are load-bearing
+    // for the keep-both edition-safe ingest path. These pins guard column
+    // PRESENCE only, not enum-value integrity — production_type is a
+    // text(..., { enum }) column with no DB-level CHECK ([[drizzle-sqlite-text-enum-no-db-check]]).
     const bookColumns = await columnNames(dbPath, 'books');
     expect(bookColumns.has('subtitle'), 'expected books.subtitle in the baseline schema').toBe(true);
     expect(bookColumns.has('publisher'), 'expected books.publisher in the baseline schema').toBe(true);
     expect(bookColumns.has('enrichment_attempts'), 'expected books.enrichment_attempts in the baseline schema').toBe(true);
+    expect(bookColumns.has('production_type'), 'expected books.production_type in the baseline schema').toBe(true);
+    expect(bookColumns.has('edition_label'), 'expected books.edition_label in the baseline schema').toBe(true);
+
+    // Write-only vestiges dropped before the v1.0.0 tag (#1780): series_members.last_seen_at
+    // (written only by its insert default, never read/updated — the name implied a stale-member
+    // prune input that never existed) and unmatched_genres.first_seen (write-only telemetry).
+    // These are PRESENCE/ABSENCE pins only — assert the dropped column is gone, anchored by a
+    // survivor column on the same table so a typo'd table name can't pass the absence check vacuously.
+    const seriesMemberColumns = await columnNames(dbPath, 'series_members');
+    expect(seriesMemberColumns.has('last_seen_at'), 'series_members.last_seen_at must not exist in the baseline schema').toBe(false);
+    expect(seriesMemberColumns.has('source'), 'expected survivor column series_members.source').toBe(true);
+
+    const unmatchedGenreColumns = await columnNames(dbPath, 'unmatched_genres');
+    expect(unmatchedGenreColumns.has('first_seen'), 'unmatched_genres.first_seen must not exist in the baseline schema').toBe(false);
+    expect(unmatchedGenreColumns.has('genre'), 'expected survivor column unmatched_genres.genre').toBe(true);
   });
 
   it('is idempotent — re-running the migrator is a no-op', async () => {
@@ -130,6 +151,56 @@ describe('drizzle baseline migration', () => {
     try {
       const applied = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
       expect(Number(applied.rows[0]!.count)).toBe(journal.entries.length);
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe('baseline upper(asin) unique index (#1733, folded into the flattened baseline)', () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // Windows: libsql file handles may linger briefly after close()
+    }
+  });
+
+  // The #1733 data-migration (quarantine case-drifted duplicate ASINs, uppercase survivors) can no
+  // longer occur on a from-scratch baseline — there is no legacy data to fix — so its upgrade-
+  // transition test was dropped when 0003 was collapsed into 0000_baseline. What stays load-bearing
+  // is the STRUCTURAL guarantee that migration installed: the flattened baseline's
+  // `idx_books_asin_unique` is on `upper(asin)` (partial, WHERE asin IS NOT NULL), so case-drifted
+  // ASINs collide while NULLs still coexist. Pin that against the real baseline.
+  it('enforces case-insensitive ASIN uniqueness and still allows multiple NULLs', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'narratorr-asin-idx-test-'));
+    const dbPath = join(tmpDir, 'test.db');
+
+    const client = createClient({ url: `file:${dbPath}` });
+    try {
+      await migrate(drizzle(client), { migrationsFolder: PROD_DRIZZLE });
+
+      // The unique index exists and is on upper(asin) — not the raw column.
+      const idx = await client.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_books_asin_unique'",
+      );
+      expect((idx.rows[0]!.sql as string).toLowerCase()).toContain('upper');
+
+      // A case-drifted duplicate of an existing ASIN is rejected...
+      await client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_a', 'Upper', 'B0ABC')");
+      await expect(
+        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_b', 'Lower', 'b0abc')"),
+      ).rejects.toThrow(/UNIQUE constraint failed/);
+
+      // ...while multiple NULL-ASIN rows still coexist (partial index on asin IS NOT NULL).
+      await expect(
+        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_c', 'Null One', NULL)"),
+      ).resolves.toBeDefined();
+      await expect(
+        client.execute("INSERT INTO books (public_id, title, asin) VALUES ('bk_d', 'Null Two', NULL)"),
+      ).resolves.toBeDefined();
     } finally {
       client.close();
     }

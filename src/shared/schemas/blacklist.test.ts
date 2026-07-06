@@ -95,7 +95,7 @@ describe('createBlacklistSchema — trim behavior', () => {
 
 import { BLACKLIST_REASONS, REASON_LABELS, type BlacklistReason } from './blacklist.js';
 import type { BlacklistEntry } from '../../client/lib/api/blacklist.js';
-import type { BlacklistAndRetryRequest } from '../../server/utils/rejection-helpers.js';
+import type { BlacklistAndRetryRequest } from '../../server/services/rejection-helpers.js';
 
 // Compile-time assertions: consumer types must stay aligned with BlacklistReason.
 // If BlacklistEntry.reason or BlacklistAndRetryRequest.reason diverge from BlacklistReason,

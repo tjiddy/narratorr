@@ -12,10 +12,6 @@ vi.mock('sonner', () => ({
 const { toast } = await import('sonner');
 const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
 
-vi.mock('@/components/library/BulkOperationsSection', () => ({
-  BulkOperationsSection: () => null,
-}));
-
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
@@ -25,15 +21,14 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-vi.mock('@core/utils/index.js', () => ({
-  TOKEN_PATTERN_SOURCE: String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
+// #1774 — spread the REAL barrel so `NamingSettingsSection` (rendered by GeneralSettings) resolves
+// its newly-referenced helpers (`templateHasToken`, `composeEditionSuffixLeaf`,
+// `sanitizeEditionDiscriminator`) to their real implementations instead of `undefined`. Only the two
+// render fakes and the preset seam are overridden. See `vimock-barrel-replace-drops-named-exports`.
+vi.mock('@core/utils/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@core/utils/index.js')>()),
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
-  toLastFirst: (name: string) => name,
-  toSortTitle: (title: string) => title,
-  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
-  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
   NAMING_PRESETS: [
     { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
     { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
@@ -44,14 +39,6 @@ vi.mock('@core/utils/index.js', () => ({
     if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
     return 'custom';
   },
-  FOLDER_TOKEN_GROUPS: [
-    { label: 'Author', tokens: ['author', 'authorLastFirst'] },
-    { label: 'Title', tokens: ['title', 'titleSort'] },
-    { label: 'Series', tokens: ['series', 'seriesPosition'] },
-    { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-    { label: 'Metadata', tokens: ['year'] },
-  ],
-  FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
 
 const { api } = await import('@/lib/api');

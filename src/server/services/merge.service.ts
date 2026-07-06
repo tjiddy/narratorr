@@ -9,6 +9,8 @@ import type { SettingsService } from './settings.service.js';
 import type { AppSettings } from '../../shared/schemas/settings/registry.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { ConnectorService } from './connector.service.js';
+import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -75,6 +77,7 @@ export class MergeService {
     private log: FastifyBaseLogger,
     private eventHistory?: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
+    private connectorService?: ConnectorService,
   ) {}
 
   private emitMergeStarted(bookId: number, bookTitle: string): void {
@@ -312,7 +315,7 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'committing');
-      const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId);
+      const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
       const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
@@ -419,6 +422,7 @@ export class MergeService {
     bookPath: string,
     originalsToDelete: string[],
     bookId: number,
+    book: { title: string; authors?: Array<{ name: string }> | null },
   ): Promise<string> {
     const outputPath = join(bookPath, stagedOutput);
     await rename(join(stagingDir, stagedOutput), outputPath);
@@ -436,6 +440,15 @@ export class MergeService {
         // Best-effort: file may have already been removed
       }
     }
+
+    // The originals are now deleted — the irreversible media-visible swap is done. Fire the
+    // connector refresh HERE, before the staging `rm` below, so a throw in `rm` (the only step
+    // that can fail after this point — the DB update already ran above) can't suppress it: ABS/Plex
+    // still reference the now-deleted originals and need a rescan. A merge that fails at/before the
+    // DB size update fires nothing (the originals are still intact at that point).
+    enqueueBookRefresh(this.connectorService, this.log, 'merge', {
+      bookId, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: bookPath,
+    });
 
     await rm(stagingDir, { recursive: true, force: true });
 

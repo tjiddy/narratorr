@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
+import { OwnedRecordingError } from './book-dedup.js';
 import type { MetadataService } from './metadata.service.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
@@ -39,7 +40,7 @@ function makeBookService(overrides: {
   findDuplicate?: ReturnType<typeof vi.fn>;
   create?: ReturnType<typeof vi.fn>;
 } = {}): BookService {
-  const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue(null);
+  const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
   const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
     id: 100,
     publicId: 'bk_test000000000000000',
@@ -57,6 +58,8 @@ function makeBookService(overrides: {
     genres: null,
     status: 'wanted',
     enrichmentStatus: 'pending',
+    productionType: 'unknown',
+    editionLabel: null,
     enrichmentAttempts: 0,
     path: null,
     size: null,
@@ -436,7 +439,7 @@ describe('ImportListService', () => {
       subtitle: null, description: null, publisher: null, coverUrl: null,
       asin: null, isbn: null, seriesName: null, seriesPosition: null,
       duration: null, publishedDate: null, genres: null,
-      status: 'wanted', enrichmentStatus: 'pending',
+      status: 'wanted', enrichmentStatus: 'pending', productionType: 'unknown', editionLabel: null,
       enrichmentAttempts: 0,
       path: null, size: null,
       audioCodec: null, audioBitrate: null, audioSampleRate: null,
@@ -473,12 +476,12 @@ describe('ImportListService', () => {
       db.update.mockReturnValue(mockDbChain([]));
 
       const create = vi.fn().mockResolvedValue(createdBook(42, 'New Book'));
-      const findDuplicate = vi.fn().mockResolvedValue(null);
+      const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
       service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }));
 
       await service.syncDueLists();
 
-      expect(findDuplicate).toHaveBeenCalledWith('New Book', [{ name: 'Author Name' }], undefined);
+      expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'New Book', authors: [{ name: 'Author Name' }] }));
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         title: 'New Book',
         authors: [{ name: 'Author Name' }],
@@ -582,7 +585,7 @@ describe('ImportListService', () => {
         db.insert.mockReturnValue(eventInsertChain);
         db.update.mockReturnValue(mockDbChain([]));
 
-        const findDuplicate = vi.fn().mockResolvedValue({ id: 999, title: 'Already Have' });
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'same-recording', book: { id: 999, title: 'Already Have' } });
         const create = vi.fn();
         const mockMetadata = {
           resolveBook: vi.fn().mockResolvedValue(null),
@@ -594,7 +597,7 @@ describe('ImportListService', () => {
 
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Already Have', [{ name: 'Someone' }], 'B_DUP');
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Already Have', authors: [{ name: 'Someone' }], asin: 'B_DUP' }));
         expect(create).not.toHaveBeenCalled();
         // No event row written
         expect(eventInsertChain.values).not.toHaveBeenCalledWith(
@@ -603,7 +606,7 @@ describe('ImportListService', () => {
         expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
         expect(mockLog.debug).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Already Have' }),
-          expect.stringContaining('Book already exists, skipped'),
+          expect.stringContaining('Book already exists (same recording), skipped'),
         );
       });
 
@@ -619,14 +622,138 @@ describe('ImportListService', () => {
         db.insert.mockReturnValue(mockDbChain([]));
         db.update.mockReturnValue(mockDbChain([]));
 
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         const create = vi.fn().mockResolvedValue(createdBook(11, 'Anonymous Book'));
         service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
 
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Anonymous Book', undefined, undefined);
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book' }));
+        expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('authors');
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
+      });
+
+      // #1723 F8 — create-time ASIN race: the pre-create guard says
+      // different-recording, but create() fail-closes with OwnedRecordingError.
+      // createImportListBook maps that to an owned skip (returns null) → no event
+      // row, no immediate search.
+      it('owned ASIN race (create throws OwnedRecordingError): skips, no event, no immediate search (#1723 F8)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Race Book', author: 'Someone', asin: 'B_RACE' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
+        const create = vi.fn().mockRejectedValue(
+          new OwnedRecordingError({ existingBookId: 321, title: 'Race Book', reason: 'asin-owned' }),
+        );
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), undefined, searchDeps,
+        );
+
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(eventInsertChain.values).not.toHaveBeenCalledWith(
+          expect.objectContaining({ source: 'import_list' }),
+        );
+        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+      });
+
+      // #1735 — a `review` verdict (uncertain identity) is still skipped on
+      // automated lists (no held-review UI), but it is now OBSERVABLE: it emits a
+      // `recording_review_skipped` event so the held candidate is queryable via the
+      // existing event-history surface instead of being lost to a server log line.
+      // No create, no immediate search. The mock returns a realistic review
+      // resolution carrying the incumbent (NOT `book: null`, which diverges from the
+      // real `resolveDuplicate` contract — see DV2).
+      it('review verdict: skips create but emits an observable recording_review_skipped event (#1735)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Maybe Owned', author: 'Someone', asin: 'B_REVIEW' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList({ name: 'Review List' })]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({
+          verdict: 'review',
+          book: { id: 999, title: 'Owned Incumbent' },
+          hasIncumbent: true,
+        });
+        const create = vi.fn();
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), undefined, searchDeps,
+        );
+
+        await service.syncDueLists();
+
+        expect(create).not.toHaveBeenCalled();
+        // The disposition is now observable outside logs: a recording_review_skipped
+        // row on the incumbent's history, carrying the list name + incumbent id.
+        expect(eventInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bookId: 999,
+            bookTitle: 'Maybe Owned',
+            authorName: 'Someone',
+            eventType: 'recording_review_skipped',
+            source: 'import_list',
+            reason: expect.objectContaining({ importListName: 'Review List', existingBookId: 999 }),
+          }),
+        );
+        // A held item is wanted-but-uncertain, not grabbed: no immediate search.
+        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        // #1735 — branch-specific info log distinguishes the review skip from the
+        // same-recording skip (which logs at `debug` with a different message).
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Maybe Owned', asin: 'B_REVIEW', existingBookId: 999 }),
+          expect.stringContaining('needs recording review'),
+        );
+      });
+
+      // #1735 — the run distinguishes "synced N vs. held/skipped-for-review M": the
+      // sync-complete log carries a createdCount and heldReviewCount so a held item
+      // is no longer indistinguishable from a clean run.
+      it('sync-complete log surfaces createdCount vs heldReviewCount for a mixed run (#1735)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Fresh Book', author: 'Author One' },
+            { title: 'Held Book', author: 'Author Two' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList({ id: 9, name: 'Mixed Run' })]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn()
+          .mockResolvedValueOnce({ verdict: 'different-recording', book: null })
+          .mockResolvedValueOnce({ verdict: 'review', book: { id: 555, title: 'Owned' }, hasIncumbent: true });
+        const create = vi.fn().mockResolvedValue(createdBook(70, 'Fresh Book'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
+
+        await service.syncDueLists();
+
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 9, name: 'Mixed Run', createdCount: 1, heldReviewCount: 1 }),
+          expect.stringContaining('Import list sync completed'),
+        );
       });
     });
 
@@ -760,11 +887,146 @@ describe('ImportListService', () => {
           publisher: 'Audnexus Publisher',
           seriesName: 'Real Series',
           seriesPosition: 3,
-          seriesAsin: 'SER1',
           duration: 36000,
           publishedDate: '2020-01-01',
           genres: ['Fantasy'],
         }));
+      });
+
+      // #1731 — production_type is populated from the matched record's formatType
+      // on the import-list create path (previously dropped → always 'unknown').
+      it('matched item with a mixed-case formatType flows normalized productionType to create (#1731)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B002', title: 'Matched Title', authors: [{ name: 'Matched Author' }],
+            formatType: 'Unabridged',
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Item', author: 'Author', asin: 'B002' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(11, 'Matched Title'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
+      });
+
+      it('matched item with no formatType leaves productionType unset → create takes the DB default (#1731)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B002', title: 'Matched Title', authors: [{ name: 'Matched Author' }],
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Item', author: 'Author', asin: 'B002' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(12, 'Matched Title'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata);
+        await service.syncDueLists();
+
+        expect(create.mock.calls[0]![0].productionType).toBeUndefined();
+      });
+
+      it('unmatched (raw) item carries no production signal to create (#1731 F1)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Raw Only', author: 'Raw Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(13, 'Raw Only'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
+        await service.syncDueLists();
+
+        expect(create.mock.calls[0]![0].productionType).toBeUndefined();
+      });
+
+      // #1728 F1/F4 — the normalized production form is forwarded to findDuplicate
+      // (F1), and when the resolver holds the item for a production-type mismatch
+      // the machine reason rides the recording_review_skipped event JSON (F4), so
+      // the held downgrade is diagnosable instead of silent.
+      it('matched item forwards productionType to findDuplicate and surfaces recordingReviewReason in the held event (#1728 F1/F4)', async () => {
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B100', title: 'Held Title', authors: [{ name: 'Held Author' }],
+            narrators: ['Jim Dale'], formatType: 'Unabridged',
+          }),
+        } as unknown as MetadataService;
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Held Title', author: 'Held Author', asin: 'B100' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList({ name: 'Veto List' })]));
+        const eventInsertChain = mockDbChain([]);
+        db.insert.mockReturnValue(eventInsertChain);
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({
+          verdict: 'review',
+          book: { id: 321, title: 'Owned Abridged' },
+          hasIncumbent: true,
+          recordingReviewReason: 'production-type-mismatch',
+        });
+        const create = vi.fn();
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }), mockMetadata);
+        await service.syncDueLists();
+
+        // F1 — normalized production form reaches the resolver.
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unabridged' }));
+        // F4 — held, not created; the event carries the machine reason.
+        expect(create).not.toHaveBeenCalled();
+        expect(eventInsertChain.values).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'recording_review_skipped',
+            reason: expect.objectContaining({ recordingReviewReason: 'production-type-mismatch', existingBookId: 321 }),
+          }),
+        );
+      });
+
+      it('unmatched (raw) item passes NO productionType to findDuplicate — unchanged behavior (#1728 F1)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Raw Only', author: 'Raw Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
+        const create = vi.fn().mockResolvedValue(createdBook(14, 'Raw Only'));
+        service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }));
+        await service.syncDueLists();
+
+        expect(findDuplicate).toHaveBeenCalledTimes(1);
+        expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('productionType');
       });
 
       // #1119 AC test #1 — ASIN-identity: metadata author + title win at the
@@ -792,13 +1054,13 @@ describe('ImportListService', () => {
         db.update.mockReturnValue(mockDbChain([]));
 
         const create = vi.fn().mockResolvedValue(createdBook(10, 'Golden Son'));
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         service = new ImportListService(
           inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
         );
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Golden Son', [{ name: 'Pierce Brown' }], 'B00R6S1RCY');
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son', authors: [{ name: 'Pierce Brown' }], asin: 'B00R6S1RCY' }));
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'Golden Son',
           authors: [{ name: 'Pierce Brown' }],
@@ -829,13 +1091,13 @@ describe('ImportListService', () => {
         db.update.mockReturnValue(mockDbChain([]));
 
         const create = vi.fn().mockResolvedValue(createdBook(10, 'Golden Son'));
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         service = new ImportListService(
           inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
         );
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Golden Son', [{ name: 'Pierce Brown' }], 'B00R6S1RCY');
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son', authors: [{ name: 'Pierce Brown' }], asin: 'B00R6S1RCY' }));
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Golden Son' }));
       });
 
@@ -1024,13 +1286,13 @@ describe('ImportListService', () => {
         db.update.mockReturnValue(mockDbChain([]));
 
         const create = vi.fn().mockResolvedValue(createdBook(10, 'Game On'));
-        const findDuplicate = vi.fn().mockResolvedValue(null);
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
         service = new ImportListService(
           inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), mockMetadata,
         );
         await service.syncDueLists();
 
-        expect(findDuplicate).toHaveBeenCalledWith('Game On', [{ name: 'Navessa Allen' }], undefined);
+        expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Game On', authors: [{ name: 'Navessa Allen' }] }));
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
           title: 'Game On',
           authors: [{ name: 'Navessa Allen' }],
@@ -1293,7 +1555,6 @@ describe('ImportListService', () => {
           asin: 'B_MATCH',
           seriesName: 'The Stormlight Archive',
           seriesPosition: 1,
-          seriesAsin: 'SA',
           coverUrl: 'http://match.com/cover.jpg',
         }));
       });
@@ -1400,7 +1661,7 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
-          seriesName: 'Real Series', seriesPosition: 2, seriesAsin: 'PRIM',
+          seriesName: 'Real Series', seriesPosition: 2,
         }));
       });
     });

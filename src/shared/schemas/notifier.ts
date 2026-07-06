@@ -164,9 +164,6 @@ export const updateNotifierSchema = z.object({
   }
 });
 
-export type CreateNotifierInput = z.infer<typeof createNotifierSchema>;
-export type UpdateNotifierInput = z.infer<typeof updateNotifierSchema>;
-
 // ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
 
 export const createNotifierFormSchema = z.object({

@@ -353,7 +353,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
 
     // SABnzbd's `storage` is the full destination path — split into parent + name
     // to match the contract expected by import (join(savePath, name))
-    const { parent, base } = splitStorage(slot.storage, slot.filename);
+    const { parent, base } = splitStorage(slot.storage ?? undefined, slot.filename);
 
     return {
       id: slot.nzo_id,
@@ -368,7 +368,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
       seeders: 0,
       leechers: 0,
       eta: this.parseTimeleft(slot.timeleft),
-      downloadSpeed: parseKbpersec(slot.kbpersec),
+      downloadSpeed: parseKbpersec(slot.kbpersec ?? undefined),
       addedAt: new Date(), // SABnzbd queue doesn't expose added time
       completedAt: undefined,
     };

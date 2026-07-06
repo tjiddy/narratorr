@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
+import { HeldReviewPanel } from '@/components/held-review';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { PageHeader } from '@/components/PageHeader.js';
 import { makeRelativePath } from '@/lib/pathUtils.js';
@@ -20,10 +21,12 @@ export function LibraryImportPage() {
     isMatching,
     progress,
     libraryRoot,
+    heldReview,
     handleToggle,
     handleSelectAll,
     handleEdit,
     handleRegister,
+    handleReconfirmHeld,
     handleRetry,
     handleRetryMatch,
     registerMutation,
@@ -139,6 +142,15 @@ export function LibraryImportPage() {
           </button>
         </div>
       )}
+
+      {/* Held for recording review (#1711) — items the server could not confirm as
+          the same vs a different recording of a book you own. Not imported; re-confirm
+          to keep both recordings. */}
+      <HeldReviewPanel
+        heldReview={heldReview}
+        onReconfirm={handleReconfirmHeld}
+        isPending={registerMutation.isPending}
+      />
 
       {/* Review list */}
       {step === 'review' && !scanError && !emptyResult && (

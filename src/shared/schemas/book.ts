@@ -40,7 +40,7 @@ export type BookLifecycle = BookStatus;
  * source of truth:
  *   1. server filter WHERE  — `TAB_STATUS_MAP` (`book-list.service.ts`)
  *   2. server counts        — `getStats` inline sums (`book-list.service.ts`)
- *   3. client dropdown      — `matchesStatusFilter` / `filterTabs` (`pages/library/helpers.ts`)
+ *   3. client dropdown      — `filterTabs` (`pages/library/helpers.ts`)
  *                             + `VALID_STATUS_FILTERS` (`pages/library/useLibraryFilters.ts`)
  *
  * Invariant (enforced in book.test.ts, the property `getStats` tests rely on):
@@ -51,7 +51,7 @@ export type BookLifecycle = BookStatus;
  * As of S2d (#1447) this IS the single source of truth: the three sites above all
  * derive their grouping from this map — server `getStats` per-bucket sums and
  * `buildListWhere` expansion (`book-list.service.ts`, the `TAB_STATUS_MAP`
- * successor), and the client dropdown (`matchesStatusFilter`/`filterTabs` +
+ * successor), and the client dropdown (`filterTabs` +
  * `VALID_STATUS_FILTERS`). The wire/route filter contract is the bucket-key
  * subset only — see `libraryStatusFilterSchema` below.
  */
@@ -87,6 +87,24 @@ export const ENRICHMENT_STATUSES = ['pending', 'enriched', 'failed', 'skipped', 
 export const enrichmentStatusSchema = z.enum(ENRICHMENT_STATUSES);
 export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
 
+/**
+ * Recording production form (#1710, Multiple Narrations 1/3). Distinguishes the
+ * *form* of a recording (not its part-count — that's `contentDeliveryType`).
+ * `unabridged`/`abridged` are the only values import derives today, from Audible's
+ * `format_type` via `normalizeProductionType`; `full_cast`/`dramatized`/
+ * `graphic_audio` are reserved for stories 2/3 (and future providers/heuristics)
+ * to populate without a baseline churn. `unknown` is the default (e.g. all
+ * Audnexus imports, which carry no format field).
+ *
+ * Canonical tuple — `src/db/schema.ts` (the `books.production_type` column) and
+ * the `normalizeProductionType` helper both derive from this, mirroring the
+ * `BOOK_STATUSES` precedent. SQLite `text({ enum })` emits no DB CHECK, so the
+ * schema-alignment test (`schema-db-alignment.test.ts`) is the only drift guard.
+ */
+export const PRODUCTION_TYPES = ['unabridged', 'abridged', 'full_cast', 'dramatized', 'graphic_audio', 'unknown'] as const;
+export const productionTypeSchema = z.enum(PRODUCTION_TYPES);
+export type ProductionType = z.infer<typeof productionTypeSchema>;
+
 export const bookSortFieldSchema = z.enum(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);
 export type BookSortField = z.infer<typeof bookSortFieldSchema>;
 
@@ -116,16 +134,13 @@ export const createBookBodySchema = z.object({
   description: z.string().optional(),
   publisher: z.string().optional(),
   coverUrl: z.string().optional(),
-  asin: z.string().optional(),
+  // `.trim()` to match `fixMatchRequestSchema` (#1733 schema parity) so service-
+  // layer ASIN canonicalization isn't the only line of defense against a padded
+  // value drifting the durable identity.
+  asin: z.string().trim().optional(),
   isbn: z.string().optional(),
   seriesName: z.string().optional(),
   seriesPosition: z.number().optional(),
-  // Provider-known series identity — persisted into the `series` cache table
-  // when present so the Series card can render without a separate provider
-  // round-trip on first GET. Optional because not every Add Book payload
-  // carries it (manual entry, providers without series ASINs).
-  seriesAsin: z.string().optional(),
-  seriesProvider: z.string().optional(),
   duration: z.number().optional(),
   publishedDate: z.string().optional(),
   genres: z.array(z.string()).optional(),
@@ -173,6 +188,12 @@ export const deleteBookQuerySchema = z.object({
 /**
  * User-facing tag field names the preview modal exposes a per-field checkbox for.
  * `track` covers both `track` and `trackTotal` (they're a bundle in ffmpeg args).
+ * `seriesPart` is the numeric `series-part` tag (mapped from `seriesPosition`).
+ *
+ * The ABS-survivable set (`series`, `seriesPart`, `subtitle`, `asin`, `publisher`)
+ * survives embedded tags on MP3 but is dropped by ffmpeg on M4B; `description`,
+ * `date`, `genre` survive both (#1671). Order here is the canonical display order —
+ * mirror it in the modal's `FIELD_ORDER`.
  */
 export const RETAG_EXCLUDABLE_FIELDS = [
   'artist',
@@ -181,6 +202,14 @@ export const RETAG_EXCLUDABLE_FIELDS = [
   'title',
   'composer',
   'grouping',
+  'series',
+  'seriesPart',
+  'subtitle',
+  'asin',
+  'publisher',
+  'description',
+  'date',
+  'genre',
   'track',
 ] as const;
 export const retagExcludableFieldSchema = z.enum(RETAG_EXCLUDABLE_FIELDS);

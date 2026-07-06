@@ -142,7 +142,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(true);
+    expect(result).toBe('written');
     const writePath = String(vi.mocked(writeFile).mock.calls[0]![0]).split('\\').join('/');
     expect(writePath).toContain('/books/test/');
     expect(vi.mocked(writeFile).mock.calls[0]![1]).toBeInstanceOf(Buffer);
@@ -173,7 +173,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('skipped');
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -183,7 +183,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('skipped');
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -193,7 +193,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('skipped');
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -203,7 +203,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('skipped');
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -215,7 +215,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('failed');
     expect(mockDb.update).not.toHaveBeenCalled();
   });
 
@@ -228,8 +228,25 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('failed');
     expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
+  it("returns 'written' even when the post-rename DB coverUrl update throws (file materialized)", async () => {
+    mockFetch.mockResolvedValue(createImageResponse());
+    // DB update rejects AFTER the cover.* rename committed — the file changed on disk regardless,
+    // so the outcome must stay 'written' (a stale coverUrl self-heals on the next reconcile).
+    mockDb.update.mockReturnValue({
+      set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB locked')) }),
+    });
+
+    const result = await downloadRemoteCover(
+      7, '/books/test', 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log,
+    );
+
+    expect(result).toBe('written');
+    expect(rename).toHaveBeenCalled(); // the irreversible write committed
   });
 
   it('logs warning on download failure without throwing', async () => {
@@ -240,7 +257,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('failed');
     expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
       expect.stringContaining('cover'),
@@ -258,7 +275,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('failed');
     expect(writeFile).not.toHaveBeenCalled();
   });
 
@@ -272,7 +289,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(true);
+    expect(result).toBe('written');
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).toHaveBeenNthCalledWith(
       1,
@@ -358,7 +375,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(mockFetch).not.toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();
       expect(mockDb.update).not.toHaveBeenCalled();
@@ -383,7 +400,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -398,7 +415,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(mockedDnsLookup).not.toHaveBeenCalled();
       expect(mockFetch).not.toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();
@@ -410,7 +427,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(mockedDnsLookup).not.toHaveBeenCalled();
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -428,7 +445,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(writeFile).not.toHaveBeenCalled();
     });
@@ -463,7 +480,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(getReaderSpy).not.toHaveBeenCalled();
       expect(cancelSpy).toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();
@@ -496,7 +513,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(cancelSpy).toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();
       expect(mockDb.update).not.toHaveBeenCalled();
@@ -518,7 +535,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(true);
+      expect(result).toBe('written');
       expect((log.warn as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
@@ -530,7 +547,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(true);
+      expect(result).toBe('written');
       expect((log.warn as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
@@ -556,7 +573,7 @@ describe('downloadRemoteCover', () => {
           inject<Db>(mockDb), log,
         );
 
-        expect(result).toBe(true);
+        expect(result).toBe('written');
         expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
           expect.objectContaining({
             bookId: 7,
@@ -619,7 +636,7 @@ describe('downloadRemoteCover', () => {
           inject<Db>(mockDb), log,
         );
 
-        expect(result).toBe(false);
+        expect(result).toBe('failed');
         expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
           expect.objectContaining({ contentLength: 'abc' }),
           expect.stringContaining('malformed Content-Length'),
@@ -648,7 +665,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(writeFile).not.toHaveBeenCalled();
     });
 
@@ -663,7 +680,7 @@ describe('downloadRemoteCover', () => {
         inject<Db>(mockDb), log,
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(writeFile).not.toHaveBeenCalled();
     });
   });
@@ -787,7 +804,7 @@ describe('downloadRemoteCover', () => {
       inject<Db>(mockDb), log,
     );
 
-    expect(result).toBe(false);
+    expect(result).toBe('failed');
     expect(writeFile).not.toHaveBeenCalled();
     expect(mockDb.update).not.toHaveBeenCalled();
     expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
@@ -910,7 +927,7 @@ describe('downloadRemoteCover', () => {
       // Prove the body-read failure path was taken — without these, the
       // dispatcher-close assertion alone passes on any path that reaches the
       // `finally` block (e.g. an early helper failure that skips body read).
-      expect(result).toBe(false);
+      expect(result).toBe('failed');
       expect(readSpy).toHaveBeenCalled();
       expect(cancelSpy).toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalled();

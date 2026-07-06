@@ -5,7 +5,7 @@ import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE } from '@core/utils/index.js';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE, templateHasToken, composeEditionSuffixLeaf, sanitizeEditionDiscriminator } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG, type AppSettings } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
 import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
@@ -14,6 +14,11 @@ import type { z } from 'zod';
 
 type NamingFormData = z.infer<typeof namingFormSchema>;
 
+// Fixed edition label used only for the "Multiple editions" folder preview row and the modal
+// live-preview footer. The baseline rows (With series / Without series / Multi-file) render
+// edition-free — a normal single copy has no edition label — so `edition` is intentionally NOT
+// part of SAMPLE_TOKENS. It is re-attached only where an edition is meant to appear (#1774).
+const SAMPLE_EDITION = 'Full Cast';
 const SAMPLE_TOKENS = {
   author: 'Brandon Sanderson', authorLastFirst: toLastFirst('Brandon Sanderson'),
   title: 'The Way of Kings', titleSort: toSortTitle('The Way of Kings'),
@@ -81,8 +86,11 @@ interface FormatFieldProps {
   preview: string;
   previewNoSeries: string;
   previewMultiFile?: string | undefined;
+  previewMultiEdition?: string | undefined;
+  previewFileEdition?: { hasToken: boolean; rendered: string } | undefined;
   previewSuffix?: string | undefined;
   previewSuffixMultiFile?: string | undefined;
+  previewNote?: ReactNode;
   warnings?: ReactNode;
   onOpenTokenModal: () => void;
   onInsertToken: (token: string) => void;
@@ -95,7 +103,7 @@ interface FormatFieldProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewSuffix, previewSuffixMultiFile, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewFileEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (
     <div>
@@ -177,8 +185,27 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
               </span>
             </div>
           )}
+          {previewMultiEdition !== undefined && (
+            <div className="flex items-baseline gap-3">
+              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Multiple editions</span>
+              <span data-testid="preview-multi-edition" className="text-sm font-mono break-all">
+                {previewMultiEdition ? previewMultiEdition : <span className="text-muted-foreground italic">Empty</span>}
+              </span>
+            </div>
+          )}
+          {previewFileEdition !== undefined && (
+            <div className="flex items-baseline gap-3">
+              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">With edition</span>
+              <span data-testid="preview-file-edition" className="text-sm font-mono break-all">
+                {previewFileEdition.hasToken
+                  ? <>{previewFileEdition.rendered}{previewSuffix}</>
+                  : <span className="text-muted-foreground italic">Add {'{edition}'} to include the edition label in filenames</span>}
+              </span>
+            </div>
+          )}
         </div>
       )}
+      {previewNote}
     </div>
   );
 }
@@ -220,9 +247,37 @@ export function NamingSettingsSection() {
 
   const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
   const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
+  // "Multiple editions" folder row (#1774): mirror `buildTargetPath`'s two branches exactly.
+  // If the template places {edition} itself, render it in place (verbatim, no suffix) so the row
+  // matches production's double-render guard. Otherwise apply the mandatory collision suffix to the
+  // With-series leaf via the real core primitives — byte-identical to the suffix branch by construction.
+  const folderPreviewMultiEdition = useMemo(() => {
+    if (!folderFormat) return '';
+    if (templateHasToken(folderFormat, 'edition')) {
+      return renderTemplate(folderFormat, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions);
+    }
+    const discriminator = sanitizeEditionDiscriminator(SAMPLE_EDITION);
+    if (!discriminator) return folderPreview;
+    const segments = folderPreview.split('/');
+    segments[segments.length - 1] = composeEditionSuffixLeaf(segments[segments.length - 1] ?? '', discriminator);
+    return segments.join('/');
+  }, [folderFormat, namingOptions, folderPreview]);
   const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
+  // "With edition" file row (#1819): {edition} is file-supported but never appears in the baseline
+  // rows (they render edition-free). Unlike the folder row there is NO automatic-append branch to
+  // mirror — files get no side-by-side discriminator. So only render the sample when the template
+  // actually places {edition}; otherwise the row would be byte-identical to With-series and read as
+  // a bug. When absent, the row teaches the capability with a muted hint instead. `templateHasToken`
+  // detects {edition} inside conditional wrappers (e.g. `{ (?edition?)}`), so gating on it is safe.
+  const filePreviewEdition = useMemo((): { hasToken: boolean; rendered: string } => {
+    const hasToken = !!fileFormat && templateHasToken(fileFormat, 'edition');
+    return {
+      hasToken,
+      rendered: hasToken ? renderFilename(fileFormat!, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions) : '',
+    };
+  }, [fileFormat, namingOptions]);
 
   const hasTitleToken = folderFormat ? hasTitle(folderFormat) : true;
   const hasAuthorToken = folderFormat ? hasAuthor(folderFormat) : true;
@@ -248,8 +303,12 @@ export function NamingSettingsSection() {
     else if (tokenModalScope === 'file') insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
   };
 
+  // Carry the edition sample into the modal preview so a user who inserts {edition} sees it render
+  // (otherwise the modal footer would render it empty — the modal would "lie") (#1774).
   const modalPreviewTokens = useMemo(() =>
-    tokenModalScope === 'file' ? { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' } : SAMPLE_TOKENS,
+    tokenModalScope === 'file'
+      ? { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }
+      : { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION },
   [tokenModalScope]);
 
   const folderReg = register('folderFormat');
@@ -273,7 +332,12 @@ export function NamingSettingsSection() {
 
         <FormatField
           id="folderFormat" label="Folder Format" ariaLabel="Folder token reference" placeholder="{author}/{title}"
-          error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
+          error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} previewMultiEdition={folderPreviewMultiEdition} hasValue={!!folderFormat}
+          previewNote={
+            <p className="mt-2 text-xs text-muted-foreground">
+              Multiple editions of a book are kept side-by-side automatically — narratorr appends the edition to the folder. Add {'{edition}'} above to control where it appears.
+            </p>
+          }
           onOpenTokenModal={() => setTokenModalScope('folder')}
           onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
           onKeyDown={(e) => createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)(e)}
@@ -290,7 +354,7 @@ export function NamingSettingsSection() {
 
         <FormatField
           id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
-          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
+          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewFileEdition={filePreviewEdition} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
           onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}

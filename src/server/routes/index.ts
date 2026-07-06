@@ -83,6 +83,7 @@ import { v1SeriesRoutes } from './v1/series.js';
 import { v1DownloadsRoutes } from './v1/downloads.js';
 import { v1ActionsRoutes } from './v1/actions.js';
 import { v1MetadataRoutes } from './v1/metadata.js';
+import { v1SystemRoutes } from './v1/system.js';
 
 // The `Services` DI container type and `SERVICE_KEYS` list live in services/di.ts
 // (the correct layer — routes depend on services, not the reverse). Imported for
@@ -121,14 +122,14 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
-  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster, connector);
+  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster, connector, book);
   const seriesCard = new SeriesCardService(db, log, settings);
   const libraryScan = new LibraryScanService(db, book, bookImport, metadata, settings, log, eventHistory, eventBroadcaster, connector);
-  const matchJob = new MatchJobService(metadata, log, settings);
+  const matchJob = new MatchJobService(metadata, log, settings, book);
 
   const qualityGateService = new QualityGateService(db, log);
   const renameService = new RenameService(db, book, settings, log, eventHistory, connector);
-  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
+  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster, connector);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const importList = new ImportListService(db, log, book, metadata, {
@@ -142,7 +143,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   });
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, settings);
-  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log);
+  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector);
 
   // Bootstrap processing defaults on first run (no-op if row exists)
   const { probeFfmpeg, detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
@@ -176,7 +177,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   );
 
   // Construct remaining cyclic-dep services (worker created before QGO/wire phase)
-  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path);
+  const importQueueWorker = new ImportQueueWorker(db, log, eventBroadcaster, async () => (await settings.get('library')).path, eventHistory);
   const nudgeImportWorker = (): void => importQueueWorker.nudge();
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, {
     eventHistory,
@@ -227,8 +228,9 @@ const routeRegistry: RouteFactory[] = [
     eventBroadcaster: s.eventBroadcaster,
     seriesCardService: s.seriesCard,
     metadataService: s.metadata,
+    connectorService: s.connector,
   }),
-  (app, s) => bookFilesRoute(app, s.book),
+  (app, s) => bookFilesRoute(app, s.book, s.settings, s.connector),
   (app, s) => bookPreviewRoute(app, s.book),
   (app, s) => searchRoutes(app, s.downloadOrchestrator),
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.bookImport, () => s.importQueueWorker.nudge()),
@@ -279,8 +281,12 @@ const routeRegistry: RouteFactory[] = [
     indexerSearchService: s.indexerSearch,
     downloadOrchestrator: s.downloadOrchestrator,
     downloadService: s.download,
+    blacklistService: s.blacklist,
+    settingsService: s.settings,
+    indexerService: s.indexer,
   }, db),
   (app, s) => v1MetadataRoutes(app, { metadataService: s.metadata, bookService: s.book }),
+  (app) => v1SystemRoutes(app),
 ];
 
 export { routeRegistry };

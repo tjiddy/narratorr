@@ -11,13 +11,23 @@ import type { JobScheduler } from './jobs/index.js';
  *     alongside them — otherwise the import-maintenance cron / library-rescan can
  *     keep feeding the very queues being drained and they never reach quiescence
  *     (#1515).
- *  2. Stop the import queue worker — it finishes any in-flight import, which may
+ *  2. Stop the SSE broadcaster — ENDS every live SSE reply (not just the heartbeat
+ *     timer). Each `/api/events` reply is hijacked and in-flight; under Fastify's
+ *     default `forceCloseConnections: 'idle'` a never-ended reply is never idle, so
+ *     `app.close()` (step 5) would block until every tab disconnects and the deploy
+ *     degrades to the SIGKILL timer — this MUST precede `app.close()` to release
+ *     those sockets (#1796). Running it here (before the awaited drains) also means
+ *     no heartbeat frame is written while the process tears down (#1776). stop()
+ *     additionally latches the broadcaster so a client reconnecting during the drain
+ *     window is ended on arrival rather than re-registering a fresh never-ended
+ *     reply that would re-block app.close() (#1813).
+ *  3. Stop the import queue worker — it finishes any in-flight import, which may
  *     enqueue connector refreshes on the way out.
- *  3. Drain the best-effort connector refresh queue — clears pending debounce/
+ *  4. Drain the best-effort connector refresh queue — clears pending debounce/
  *     deadline timers (warn-logging dropped batches) and awaits any in-flight
  *     flush. This MUST run before `app.close()` so a refresh that is mid-request
  *     or mid-retry isn't silently lost when the process tears down.
- *  4. Close the Fastify app LAST to release the port.
+ *  5. Close the Fastify app LAST to release the port.
  *
  * Extracted from the `index.ts` signal handler so the ordering contract (AC2 of
  * #1498, scheduler-first of #1515) is unit-testable without booting the server.
@@ -29,6 +39,7 @@ export async function gracefulShutdown(
 ): Promise<void> {
   app.log.info('Shutting down server…');
   jobScheduler.stopAll();
+  services.eventBroadcaster.stop();
   await services.importQueueWorker.stop();
   await services.connector.stop();
   await app.close();

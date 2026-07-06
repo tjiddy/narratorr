@@ -2,7 +2,7 @@ import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from
 import { sql } from 'drizzle-orm';
 import { CLIENT_STATUSES, PIPELINE_STAGES } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
-import { BOOK_STATUSES, ENRICHMENT_STATUSES } from '../shared/schemas/book';
+import { BOOK_STATUSES, ENRICHMENT_STATUSES, PRODUCTION_TYPES } from '../shared/schemas/book';
 import { BLACKLIST_REASONS } from '../shared/schemas/blacklist';
 import { INDEXER_TYPES } from '../shared/indexer-registry';
 import { DOWNLOAD_CLIENT_TYPES } from '../shared/download-client-registry';
@@ -64,6 +64,21 @@ export const books = sqliteTable('books', {
   })
     .notNull()
     .default('pending'),
+  // Recording production form (#1710). Populated at manual-import/enrichment from
+  // metadata `formatType` via `normalizeProductionType`; defaults to `unknown`
+  // for every path that doesn't supply it. Additive, no behavior change in 1/3.
+  productionType: text('production_type', {
+    enum: PRODUCTION_TYPES,
+  })
+    .notNull()
+    .default('unknown'),
+  // Edition discriminator for multiple-narration coexistence (#1711, Multiple
+  // Narrations 2/3). NULL/absent for single-recording books (their on-disk path
+  // renders unchanged); set to a deterministic, stable-metadata-derived label
+  // (primary narrator / production form) the first time a different-recording
+  // path collision is disambiguated, so a rescan reuses the same folder rather
+  // than re-deriving from later-enriched metadata and spawning a phantom folder.
+  editionLabel: text('edition_label'),
   // Persisted count of background-enrichment failure attempts. Incremented on
   // every `failed`/no-match transition through markFailedGuarded so the
   // candidate query can cap unresolvable rows (they rest as terminal `failed`,
@@ -96,7 +111,15 @@ export const books = sqliteTable('books', {
   index('idx_books_status').on(table.status),
   index('idx_books_path').on(table.path),
   index('idx_books_enrichment_status').on(table.enrichmentStatus),
-  uniqueIndex('idx_books_asin_unique').on(table.asin).where(sql`asin IS NOT NULL`),
+  // Case-insensitive durable ASIN identity (#1733). The unique index is on the
+  // `upper(asin)` EXPRESSION (not the raw column) so it matches the resolver's
+  // case-insensitive equality and the canonicalize-on-write boundary — a
+  // case-drifted duplicate ('b0..' vs a stored 'B0..') is rejected at the DB.
+  // The partial `WHERE asin IS NOT NULL` predicate is preserved so multiple
+  // null-ASIN rows still coexist ([[sqlite-null-unique-index]]). Hand-managed via
+  // drizzle/0000_baseline.sql (drizzle-kit can't auto-generate the expression index +
+  // the data canonicalization/quarantine); keep this mirrored with that migration.
+  uniqueIndex('idx_books_asin_unique').on(sql`upper(${table.asin})`).where(sql`asin IS NOT NULL`),
 ]);
 
 export const bookAuthors = sqliteTable('book_authors', {
@@ -154,7 +177,6 @@ export const seriesMembers = sqliteTable('series_members', {
   authorName: text('author_name'),
   position: real('position'),
   source: text('source', { enum: ['hardcover', 'local'] }).notNull().default('hardcover'),
-  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [
@@ -337,6 +359,7 @@ export const bookEvents = sqliteTable('book_events', {
       'book_added',
       'metadata_fixed',
       'grab_failed',
+      'recording_review_skipped',
     ],
   }).notNull(),
   source: text('source', {
@@ -380,9 +403,6 @@ export const blacklist = sqliteTable('blacklist', {
 export const unmatchedGenres = sqliteTable('unmatched_genres', {
   genre: text('genre').primaryKey(),
   count: integer('count').notNull().default(1),
-  firstSeen: integer('first_seen', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
   lastSeen: integer('last_seen', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

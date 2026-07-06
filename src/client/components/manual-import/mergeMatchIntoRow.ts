@@ -14,6 +14,12 @@ import type { ImportRow } from './types.js';
  * this helper only owns the selection predicate + auto-populate.
  *
  * Selection rules:
+ * - A post-match library duplicate (`match.isDuplicate`) fails closed: it is
+ *   deselected AND its duplicate fields are propagated onto `row.book` so the
+ *   "Already in library" badge lights up. This overrides BOTH the confidence and
+ *   `userEdited` branches — a newly discovered owned book must not be sent to
+ *   confirm with `forceImport` (#1662 F8). Re-importing requires the user to
+ *   deliberately re-check the row (the existing force-import opt-in).
  * - A row the user explicitly FIXED via the edit modal (`userEdited`) keeps its
  *   current selection regardless of the incoming confidence — discrete user
  *   intent is not the merge predicate's to override (#1374).
@@ -22,9 +28,34 @@ import type { ImportRow } from './types.js';
  *   never the default (#1318).
  */
 export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow {
-  const selected = row.userEdited
-    ? row.selected
-    : (match.confidence === 'high' ? row.selected : false);
+  const isPostMatchDuplicate = match.isDuplicate === true;
+
+  const selected = isPostMatchDuplicate
+    ? false
+    : row.userEdited
+      ? row.selected
+      : (match.confidence === 'high' ? row.selected : false);
+
+  // Propagate the post-match duplicate verdict onto the row's book so the badge
+  // + the hooks' `isDbDuplicate`/`isDuplicate` checks see it (#1662 F8). A
+  // non-duplicate `review` verdict (#1711) instead surfaces a display-only
+  // `reviewReason` on the row — the row still flows (not hard-skipped).
+  const baseBook = isPostMatchDuplicate
+    ? {
+        ...row.book,
+        isDuplicate: true,
+        ...(match.existingBookId !== undefined && { existingBookId: match.existingBookId }),
+        ...(match.duplicateReason !== undefined && { duplicateReason: match.duplicateReason }),
+      }
+    : match.reviewReason !== undefined
+      ? { ...row.book, reviewReason: match.reviewReason }
+      : row.book;
+  // Thread the recording verdict (#1712) onto the row regardless of branch — it
+  // co-occurs with `isDuplicate` (same-recording), with `reviewReason` (review), or
+  // stands alone (different-recording of an owned title). Drives the ImportCard ladder.
+  const book = match.recordingVerdict !== undefined
+    ? { ...baseBook, recordingVerdict: match.recordingVerdict }
+    : baseBook;
 
   // Auto-populate edited fields from the best match only when the user hasn't
   // already edited this row. A row counts as edited if the user committed a fix
@@ -37,10 +68,11 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
   if (!wasEdited && match.bestMatch) {
     return {
       ...row,
+      book,
       matchResult: match,
       selected,
       edited: buildEditedFromBestMatch(match.bestMatch, row.edited),
     };
   }
-  return { ...row, matchResult: match, selected };
+  return { ...row, book, matchResult: match, selected };
 }

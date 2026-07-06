@@ -14,7 +14,6 @@ import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-import { BulkOperationsSection } from '@/components/library/BulkOperationsSection';
 
 const libraryPathSchema = z.object({
   path: z.string().trim().min(1, 'Library path is required'),
@@ -99,7 +98,6 @@ export function LibrarySettingsSection() {
           The root folder where imported audiobooks will be stored
         </p>
       </div>
-      <BulkOperationsSection />
       <ConfirmModal
         isOpen={showRescanPrompt}
         title="Refresh Library?"

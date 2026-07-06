@@ -48,8 +48,15 @@ export interface ConnectorRefreshResult {
   resolvedServerPaths?: string[];
 }
 
-/** Why a refresh was enqueued. A coalesced batch may carry several (see queue grouping). */
-export type ConnectorReason = 'import' | 'adopt' | 'rename' | 'restored';
+/**
+ * Why a refresh was enqueued. A coalesced batch may carry several (see queue grouping).
+ *
+ * The reason is observability-only — ABS issues a full-library scan regardless and Plex
+ * derives the paths to refresh from `items` — so adding a literal here never changes adapter
+ * behaviour. `merge`/`convert`/`metadata` cover the post-import file mutations (audio swap,
+ * OPF/cover sidecar writes, re-tag) that also change media-server-visible files.
+ */
+export type ConnectorReason = 'import' | 'adopt' | 'rename' | 'restored' | 'merge' | 'convert' | 'metadata';
 
 export interface ConnectorImportItem {
   bookId: number;

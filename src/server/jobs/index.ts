@@ -188,7 +188,7 @@ async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLo
   await services.importOrchestrator.processCompletedDownloads();
 
   // Backfill: download remote covers for imported books (#369)
-  await runCoverBackfill(db, log);
+  await runCoverBackfill(db, log, services.connector);
 }
 
 /**

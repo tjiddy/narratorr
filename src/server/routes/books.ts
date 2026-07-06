@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerSearchService, SeriesCardService, MetadataService, IndexerService, ConnectorService } from '../services/index.js';
 import { RenameError } from '../services/rename.service.js';
+import { OwnedRecordingError } from '../services/book.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 import type { BookRejectionService } from '../services/book-rejection.service.js';
@@ -27,8 +28,9 @@ export interface BookRouteDeps {
   eventBroadcaster: EventBroadcasterService;
   seriesCardService: SeriesCardService;
   metadataService: MetadataService;
+  connectorService?: ConnectorService;
 }
-import { searchAndGrabForBook, buildNarratorPriority } from '../services/search-pipeline.js';
+import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
 import {
@@ -50,6 +52,8 @@ import {
 } from '../../shared/schemas.js';
 import { registerFixMatchRoute } from './books-fix-match.js';
 import { registerSeriesRoutes } from './books-series.js';
+import { refreshOpfForBook } from '../utils/opf-refresh.js';
+import { enqueueBookRefresh, enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
@@ -103,13 +107,35 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { body: createBookBodySchema } },
     async (request, reply) => {
       const body = request.body;
-      const existing = await deps.bookService.findDuplicate(body.title, body.authors, body.asin);
-      if (existing) {
-        request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
-        return reply.status(409).send(existing);
+      // Three-way recording identity (#1711): only an owned (same-recording) OR
+      // an uncertain (review/no-signal) verdict blocks with 409 — a genuinely
+      // different recording of an owned title is allowed through (keep-both). A
+      // 'different-recording' verdict returns `book: null`, so the 409 only fires
+      // when there is an incumbent to surface.
+      const resolution = await deps.bookService.findDuplicate({
+        title: body.title,
+        authors: body.authors,
+        ...(body.asin !== undefined && { asin: body.asin }),
+        ...(body.narrators !== undefined && { narrators: body.narrators }),
+        ...(body.duration !== undefined && { duration: body.duration }),
+      });
+      if (resolution.verdict !== 'different-recording' && resolution.book) {
+        request.log.info({ title: body.title, existingId: resolution.book.id, verdict: resolution.verdict }, 'Duplicate book detected');
+        return reply.status(409).send(resolution.book);
       }
 
-      const book = await deps.bookService.create(body);
+      let book;
+      try {
+        book = await deps.bookService.create(body);
+      } catch (error: unknown) {
+        // Same-ASIN create-time race (#1711) → the recording is already owned.
+        if (error instanceof OwnedRecordingError) {
+          request.log.info({ title: body.title, existingId: error.existingBookId }, 'Duplicate book detected (ASIN race)');
+          const owner = await deps.bookService.getById(error.existingBookId);
+          return reply.status(409).send(owner);
+        }
+        throw error;
+      }
 
       deps.eventHistory.create({
         bookId: book.id,
@@ -161,7 +187,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
       const result = await searchAndGrabForBook(book, {
         indexerSearchService: deps.indexerSearchService,
         downloadOrchestrator: deps.downloadOrchestrator,
-        qualitySettings: { ...qualitySettings, languages: metadataSettings.languages, narratorPriority },
+        qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log: request.log,
         blacklistService: deps.blacklistService,
         indexerService: deps.indexerService,
@@ -298,6 +324,25 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         return reply.status(404).send({ error: 'Book not found' });
       }
 
+      // Keep the on-disk metadata.opf current with the edited DB state (gated on tagging.writeOpf,
+      // independent of any audio-retag). Skipped for not-yet-imported books (path === null).
+      const opfOutcome = await refreshOpfForBook({
+        settingsService: deps.settingsService,
+        bookService,
+        bookId: id,
+        bookFolder: book.path ?? null,
+        log: request.log,
+      });
+
+      // Standalone metadata-edit route: a refresh only when the OPF actually got written
+      // ('skipped'/'failed' → none). The cover-upload and Fix-Match routes aggregate their own
+      // OPF write into a single refresh, so this independent OPF fire is scoped to the edit route.
+      if (opfOutcome === 'written') {
+        enqueueBookRefresh(deps.connectorService, request.log, 'metadata', {
+          bookId: id, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path!,
+        });
+      }
+
       request.log.info({ id }, 'Book updated');
       return book;
     },
@@ -358,8 +403,19 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const excludeFields = new Set(request.body?.excludeFields ?? []);
       const result = await taggingService.retagBook(id, excludeFields, pickRetagOverrides(request.body ?? undefined));
+
+      // A re-tag rewrites embedded audio tags in place (new inode, same path) — fire a 'metadata'
+      // refresh when ≥1 file was tagged so ABS/Plex re-reads the changed files. The refresh item is
+      // built from `RetagResult.refreshItem` (loaded before the tag write), so a post-re-tag reload
+      // failure can't drop it. Single home shared with the bulk re-tag job (bulk-operation.service.ts).
+      enqueueRetagRefresh(deps.connectorService, request.log, result);
+
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
-      return result;
+      // `refreshItem` is internal enqueue state (carries the absolute on-disk `libraryPath`) — strip it
+      // so the public response stays the counts/warnings shape the client `RetagResult` expects and the
+      // filesystem path never leaks to the API.
+      const { refreshItem: _refreshItem, ...response } = result;
+      return response;
     },
   );
 

@@ -197,9 +197,6 @@ export function makeUpdateConnectorSchema(
 
 export const updateConnectorSchema = makeUpdateConnectorSchema();
 
-export type CreateConnectorInput = z.infer<typeof createConnectorSchema>;
-export type UpdateConnectorInput = z.infer<typeof updateConnectorSchema>;
-
 // ── Form schema (superRefine + registry.requiredFields for zodResolver compat) ──
 
 export const createConnectorFormSchema = z.object({

@@ -279,6 +279,34 @@ describe('applyAudnexusEnrichment', () => {
     expect(setArg).toMatchObject({ asin: 'B999', duration: 3600, enrichmentStatus: 'enriched' });
   });
 
+  it('(#1733) resolved ASIN is canonicalized (uppercased) before collision check + writeback', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce({ asin: 'b0newedition', duration: 3600 });
+    mockFindCollision(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    // The collision check sees the canonical (uppercase) form, and the persisted
+    // ASIN is canonical — never the lowercase provider value.
+    expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B0NEWEDITION');
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).toMatchObject({ asin: 'B0NEWEDITION', enrichmentStatus: 'enriched' });
+  });
+
+  it('(#1733) resolved ASIN equal to primary only by case → treated as unchanged, not rewritten', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockResolvedValue(null);
+    mockResolveBook(deps).mockResolvedValueOnce({ asin: 'b001', duration: 3600 });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    // A case-only "difference" from the primary is not a real ASIN change.
+    expect(mockFindCollision(deps)).not.toHaveBeenCalled();
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('asin');
+  });
+
   it('(F1) search fallback hits with NO asin — fields written, no asin write, no collision check', async () => {
     const { db, updateChain } = dbWithUpdateChain();
     mockEnrichBook(deps).mockResolvedValue(null);
@@ -573,46 +601,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBeUndefined();
   });
 
-  it('extracts meta.series[0].asin onto seriesAsin (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1, asin: 'B09168SRZK' }] },
-      'importing',
-    );
-    expect(payload.seriesAsin).toBe('B09168SRZK');
-  });
-
-  it('seriesAsin is undefined when meta is null (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      null,
-      'importing',
-    );
-    expect(payload.seriesAsin).toBeUndefined();
-  });
-
-  it('seriesAsin is undefined when meta.series is empty (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      { title: 'T', authors: [{ name: 'A' }], series: [] },
-      'importing',
-    );
-    expect(payload.seriesAsin).toBeUndefined();
-  });
-
-  it('seriesAsin is undefined when meta.series[0].asin is missing (#1074)', async () => {
-    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
-    const payload = buildBookCreatePayload(
-      { path: '/x', title: 'T' },
-      { title: 'T', authors: [{ name: 'A' }], series: [{ name: 'S', position: 1 }] },
-      'importing',
-    );
-    expect(payload.seriesAsin).toBeUndefined();
-  });
-
   // #1097 — canonical primary-series preference over series[0]
   it('prefers seriesPrimary over series[0] when both are present (#1097)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
@@ -631,6 +619,32 @@ describe('buildBookCreatePayload (#1028)', () => {
     );
     expect(payload.seriesName).toBe('The Stormlight Archive');
     expect(payload.seriesPosition).toBe(2);
-    expect(payload.seriesAsin).toBe('B009NF6YPM');
+  });
+
+  // #1710 — production_type populated from meta.formatType on this path only
+  it('populates productionType from meta.formatType (#1710)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }], formatType: 'Unabridged' },
+      'importing',
+    );
+    expect(payload.productionType).toBe('unabridged');
+  });
+
+  it('defaults productionType to unknown when meta.formatType is absent (#1710)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload(
+      { path: '/x', title: 'T' },
+      { title: 'T', authors: [{ name: 'A' }] },
+      'importing',
+    );
+    expect(payload.productionType).toBe('unknown');
+  });
+
+  it('defaults productionType to unknown when meta is null (#1710)', async () => {
+    const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
+    const payload = buildBookCreatePayload({ path: '/x', title: 'T' }, null, 'importing');
+    expect(payload.productionType).toBe('unknown');
   });
 });

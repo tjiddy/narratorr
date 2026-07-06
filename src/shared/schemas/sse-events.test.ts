@@ -444,6 +444,31 @@ describe('#637 import progress — SSE event schemas', () => {
     it('rejects payload missing error_message', () => {
       expect(() => importFailedPayload.parse({ job_id: 1, book_id: 2, book_title: 'Test', phase: 'copying' })).toThrow();
     });
+
+    // #1736 — the forced-import-refused discriminator rides the existing import_failed channel.
+    it('parses a forced-import-refused payload with a real existingBookId', () => {
+      const valid = {
+        job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying',
+        error_message: 'force refused: target owned by book #2 (recording-review)',
+        refusal_reason: { kind: 'forced-import-refused', recordingReason: 'recording-review', existingBookId: 2 },
+      };
+      expect(importFailedPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('parses a forced-import-refused payload with a null existingBookId (ownerless variant)', () => {
+      const valid = {
+        job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying',
+        error_message: 'force refused (recording-review-no-disambiguator)',
+        refusal_reason: { kind: 'forced-import-refused', recordingReason: 'recording-review-no-disambiguator', existingBookId: null },
+      };
+      expect(importFailedPayload.parse(valid)).toEqual(valid);
+    });
+
+    it('parses an ordinary import_failed payload with no refusal_reason (back-compat)', () => {
+      const valid = { job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying', error_message: 'Copy failed' };
+      const parsed = importFailedPayload.parse(valid);
+      expect(parsed.refusal_reason).toBeUndefined();
+    });
   });
 
   describe('import_complete payload (extended)', () => {

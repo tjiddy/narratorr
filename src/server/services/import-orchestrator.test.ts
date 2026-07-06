@@ -13,7 +13,7 @@ import { createMockLogger, createMockSettingsService, inject } from '../__tests_
 import { ContentFailureError } from '../utils/import-helpers.js';
 
 // Mock rejection-helpers for blacklist dispatch testing
-vi.mock('../utils/rejection-helpers.js', () => ({
+vi.mock('./rejection-helpers.js', () => ({
   blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -24,7 +24,7 @@ vi.mock('../utils/enqueue-auto-import.js', () => ({
 
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 
 // Mock import-steps — passthrough isContentFailure to real implementation, spy on the rest
 vi.mock('../utils/import-steps.js', async (importOriginal) => {
@@ -50,6 +50,14 @@ import {
   recordImportEvent, recordImportFailedEvent,
   embedTagsForImport, runImportPostProcessing,
 } from '../utils/import-steps.js';
+
+// Mock the OPF writer — orchestrator wiring is asserted by the spy; the writer's own behavior
+// (fresh reload, XML shape, nonfatal failure) is covered in opf-writer.test.ts.
+vi.mock('../utils/opf-writer.js', () => ({
+  writeOpfForImport: vi.fn().mockResolvedValue(undefined),
+}));
+import { writeOpfForImport } from '../utils/opf-writer.js';
+import type { BookService } from './book.service.js';
 
 function createMockImportService(overrides?: Partial<Record<string, unknown>>): ImportService {
   return inject<ImportService>({
@@ -96,6 +104,7 @@ describe('ImportOrchestrator', () => {
   let eventHistory: EventHistoryService;
   let broadcaster: EventBroadcasterService;
   let connector: { notifyRefresh: ReturnType<typeof vi.fn> };
+  let bookService: BookService;
   let orchestrator: ImportOrchestrator;
 
   beforeEach(() => {
@@ -112,8 +121,9 @@ describe('ImportOrchestrator', () => {
     eventHistory = inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({ id: 1 }) });
     broadcaster = inject<EventBroadcasterService>({ emit: vi.fn() });
     connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
+    bookService = inject<BookService>({ getById: vi.fn().mockResolvedValue(null) });
 
-    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector));
+    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
 
     // Default wire — most tests need wired deps. Tests that exercise the unwired
     // contract construct their own orchestrator and skip the wire() call.
@@ -178,6 +188,49 @@ describe('ImportOrchestrator', () => {
         targetPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
         bookTitle: 'The Way of Kings',
       }));
+    });
+
+    it('dispatches the OPF write after tagging, passing the writeOpf setting, fresh bookId, and target path (#1669)', async () => {
+      settingsService = createMockSettingsService({ tagging: { writeOpf: true } });
+      orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+
+      await orchestrator.importDownload(1);
+
+      expect(writeOpfForImport).toHaveBeenCalledWith(expect.objectContaining({
+        enabled: true,
+        bookService,
+        bookId: 1,
+        bookFolder: '/audiobooks/Brandon Sanderson/The Way of Kings',
+      }));
+      // Freshness contract: the helper receives the bookId (it reloads), never the pre-enrichment snapshot.
+      const opfArg = vi.mocked(writeOpfForImport).mock.calls[0]![0] as unknown as Record<string, unknown>;
+      expect(opfArg).not.toHaveProperty('book');
+    });
+
+    it('passes enabled:false to the OPF helper when writeOpf is disabled (default)', async () => {
+      await orchestrator.importDownload(1);
+
+      expect(writeOpfForImport).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 1 }));
+    });
+
+    it('OPF write failure is nonfatal — import resolves, later side effects still run, and log.warn records the continuation (#1669, F1)', async () => {
+      settingsService = createMockSettingsService({ tagging: { writeOpf: true } });
+      orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+      vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
+
+      // Import still succeeds — the OPF rejection is swallowed by the best-effort catch.
+      await expect(orchestrator.importDownload(1)).resolves.toEqual(mockResult);
+
+      // Side effects after the OPF write still fire (the catch did not abort the success path).
+      expect(runImportPostProcessing).toHaveBeenCalled();
+      expect(emitImportStatusSuccess).toHaveBeenCalled();
+      expect(connector.notifyRefresh).toHaveBeenCalled();
+
+      // The continuation is logged at warn with the book id.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        'OPF write failed during import — continuing',
+      );
     });
 
     it('emits SSE status transitions after successful import (no import_complete — owned by queue worker, #1108)', async () => {

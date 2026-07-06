@@ -4,12 +4,8 @@ import type {
   AuthorMetadataSchema,
   SeriesMetadataSchema,
   MetadataSearchResultsSchema,
-  AuthorRefSchema,
-  SeriesRefSchema,
 } from './schemas.js';
 
-export type AuthorRef = z.infer<typeof AuthorRefSchema>;
-export type SeriesRef = z.infer<typeof SeriesRefSchema>;
 export type BookMetadata = z.infer<typeof BookMetadataSchema>;
 export type AuthorMetadata = z.infer<typeof AuthorMetadataSchema>;
 export type SeriesMetadata = z.infer<typeof SeriesMetadataSchema>;

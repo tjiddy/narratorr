@@ -581,7 +581,7 @@ describe('ManualImportPage', () => {
 
   describe('import execution', () => {
     it('calls confirmImport with selected rows and copy mode', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1 });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -600,7 +600,7 @@ describe('ManualImportPage', () => {
     });
 
     it('sends move mode when user switches to Move', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1 });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
@@ -618,7 +618,7 @@ describe('ManualImportPage', () => {
     });
 
     it('passes metadata through from match (no redundant provider lookups)', async () => {
-      mockConfirmImport.mockResolvedValueOnce({ accepted: 1 });
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       const book = makeDiscoveredBook();
       const bestMatch = {
         title: 'Book Title',
@@ -643,6 +643,61 @@ describe('ManualImportPage', () => {
         ]),
         'copy',
       );
+    });
+  });
+
+  describe('held-review panel (#1732)', () => {
+    it('renders held titles and a re-confirm button instead of navigating away', async () => {
+      mockConfirmImport.mockResolvedValueOnce({
+        accepted: 0,
+        heldReview: [{ path: '/media/audiobooks/Author/Book Title', title: 'Book Title', reason: 'recording-review-required' }],
+        skipped: [], failed: [],
+      });
+      const book = makeDiscoveredBook();
+      const { rerender } = await scanAndReview([book]);
+      await simulateMatchResults(rerender, [makeMatchResult()]);
+
+      await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
+
+      const panel = await screen.findByTestId('held-review-panel');
+      expect(within(panel).getByText('Book Title')).toBeInTheDocument();
+      expect(within(panel).getByRole('button', { name: /re-confirm and import/i })).toBeInTheDocument();
+      // The dead-end navigation no longer fires for held results.
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
+    it('is absent when there are no held items', async () => {
+      const book = makeDiscoveredBook();
+      const { rerender } = await scanAndReview([book]);
+      await simulateMatchResults(rerender, [makeMatchResult()]);
+
+      expect(screen.queryByTestId('held-review-panel')).not.toBeInTheDocument();
+    });
+
+    it('re-confirm resubmits the held row with forceImport=true', async () => {
+      mockConfirmImport.mockResolvedValueOnce({
+        accepted: 0,
+        heldReview: [{ path: '/media/audiobooks/Author/Book Title', title: 'Book Title', reason: 'recording-review-required' }],
+        skipped: [], failed: [],
+      });
+      const book = makeDiscoveredBook();
+      const { rerender } = await scanAndReview([book]);
+      await simulateMatchResults(rerender, [makeMatchResult()]);
+
+      await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
+      const panel = await screen.findByTestId('held-review-panel');
+
+      mockConfirmImport.mockResolvedValueOnce({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      await userEvent.click(within(panel).getByRole('button', { name: /re-confirm and import/i }));
+
+      await waitFor(() => {
+        expect(mockConfirmImport).toHaveBeenLastCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({ path: '/media/audiobooks/Author/Book Title', forceImport: true }),
+          ]),
+          'copy',
+        );
+      });
     });
   });
 

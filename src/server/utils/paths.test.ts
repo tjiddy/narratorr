@@ -552,6 +552,20 @@ describe('planFileRenames', () => {
     });
   });
 
+  describe('{edition} file token (#1712)', () => {
+    it('renders book.editionLabel via the {edition} token', async () => {
+      await mockFiles(['audiobook.mp3']);
+      const renames = await planFileRenames('/t', '{title} ({edition})', { ...book, editionLabel: 'Full Cast' }, 'Author');
+      expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Test Book (Full Cast).mp3' }]);
+    });
+
+    it('renders empty (no stray brackets) when editionLabel is null', async () => {
+      await mockFiles(['audiobook.mp3']);
+      const renames = await planFileRenames('/t', '{title} ({edition})', { ...book, editionLabel: null }, 'Author');
+      expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Test Book.mp3' }]);
+    });
+  });
+
   describe('ordering source', () => {
     it('does not import metadata/tag readers on the rename path (filenames only, no ID3)', async () => {
       const { readFile } = await import('node:fs/promises');

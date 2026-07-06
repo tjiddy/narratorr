@@ -282,6 +282,12 @@ export interface EmbedTagsArgs {
     narrator: string | null | undefined;
     seriesName: string | null | undefined;
     seriesPosition: number | null | undefined;
+    asin?: string | null | undefined;
+    subtitle?: string | null | undefined;
+    description?: string | null | undefined;
+    publisher?: string | null | undefined;
+    publishedDate?: string | null | undefined;
+    genres?: string[] | null | undefined;
     coverUrl: string | null | undefined;
   };
   log: FastifyBaseLogger;

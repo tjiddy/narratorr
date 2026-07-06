@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizePath, renderTemplate, renderFilename, parseTemplate, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
+import { sanitizePath, renderTemplate, renderFilename, parseTemplate, templateHasToken, toLastFirst, toSortTitle, toNamingOptions, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT } from './naming.js';
 
 describe('sanitizePath', () => {
   it('removes illegal filesystem characters', () => {
@@ -197,6 +197,45 @@ describe('renderTemplate', () => {
       expect(result).not.toContain('//');
     });
   });
+
+  // #1712 — the {edition} token renders the stored edition_label. Drive through the
+  // real renderTemplate/stripEmptyWrappers path (not a unit on the renderer internals).
+  describe('{edition} token (#1712)', () => {
+    it('renders the label when the token input is a non-empty string', () => {
+      const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' });
+      expect(result).toBe('Dark Matter (Full Cast)');
+    });
+
+    it('renders empty and strips the empty `( )` wrapper when the input is null', () => {
+      const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: null });
+      expect(result).toBe('Dark Matter');
+      // No leftover separators/brackets from the stripped empty token.
+      expect(result).not.toContain('(');
+      expect(result).not.toContain(')');
+    });
+
+    it('keeps the `( )` wrapper when the label is present', () => {
+      const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' });
+      expect(result).toBe('Dark Matter (Full Cast)');
+    });
+
+    it('a template with no {edition} renders byte-identically with or without an edition value', () => {
+      const withVal = renderTemplate('{author}/{series}/{title}', { ...sampleTokens, edition: 'Full Cast' });
+      const without = renderTemplate('{author}/{series}/{title}', sampleTokens);
+      expect(withVal).toBe(without);
+    });
+  });
+});
+
+describe('templateHasToken (#1712)', () => {
+  it('detects the {edition} token in folder and file templates', () => {
+    expect(templateHasToken('{title} ({edition})', 'edition')).toBe(true);
+    expect(templateHasToken('{author}/{title}', 'edition')).toBe(false);
+  });
+
+  it('detects a token used only as a conditional suffix', () => {
+    expect(templateHasToken('{title}{edition? (}{edition}{edition?)}', 'edition')).toBe(true);
+  });
 });
 
 describe('parseTemplate', () => {
@@ -241,11 +280,11 @@ describe('parseTemplate', () => {
   });
 
   it('recognizes all allowed tokens', () => {
-    const template = ALLOWED_TOKENS.map((t) => `{${t}}`).join('/');
+    const template = FOLDER_ALLOWED_TOKENS.map((t) => `{${t}}`).join('/');
     const result = parseTemplate(template);
     expect(result.errors).toEqual([]);
     expect(result.warnings).toEqual([]);
-    expect(result.tokens.sort()).toEqual([...ALLOWED_TOKENS].sort());
+    expect(result.tokens.sort()).toEqual([...FOLDER_ALLOWED_TOKENS].sort());
   });
 
   it('accepts {titleSort} as valid title token', () => {
@@ -344,13 +383,91 @@ describe('renderFilename', () => {
     const result = renderFilename('{author}', { author: '' });
     expect(result).toBe('Unknown');
   });
+
+  describe('{edition} stays transformed in FILE templates (#1739, F8)', () => {
+    it('applies namingSeparator/namingCase to {edition} (verbatim bypass is folder-only)', () => {
+      // renderFilename does NOT pass the folder verbatim-token set, so the edition token keeps
+      // being styled by the naming options exactly as before this fix.
+      const result = renderFilename('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' }, { separator: 'period', case: 'upper' });
+      expect(result).toBe('DARK.MATTER (FULL.CAST)');
+    });
+  });
+});
+
+describe('sanitizeEditionDiscriminator (#1739)', () => {
+  it('strips path separators into one segment', () => {
+    expect(sanitizeEditionDiscriminator('R.C. Bray/Full Cast')).toBe('R.C. BrayFull Cast');
+    expect(sanitizeEditionDiscriminator('A\\B')).toBe('AB');
+  });
+
+  it('strips colons, other illegal chars, and control chars', () => {
+    expect(sanitizeEditionDiscriminator('Cast: Ensemble')).toBe('Cast Ensemble');
+    expect(sanitizeEditionDiscriminator('a<b>c|d?e*f')).toBe('abcdef');
+    expect(sanitizeEditionDiscriminator('Full\x01\x02Cast')).toBe('FullCast');
+  });
+
+  it('removes trailing dots and collapses whitespace', () => {
+    expect(sanitizeEditionDiscriminator('Full Cast...')).toBe('Full Cast');
+    expect(sanitizeEditionDiscriminator('Full   Cast')).toBe('Full Cast');
+  });
+
+  it('returns null (not "Unknown") for empty / null / sanitize-to-empty input', () => {
+    expect(sanitizeEditionDiscriminator(null)).toBeNull();
+    expect(sanitizeEditionDiscriminator(undefined)).toBeNull();
+    expect(sanitizeEditionDiscriminator('')).toBeNull();
+    expect(sanitizeEditionDiscriminator('   ')).toBeNull();
+    expect(sanitizeEditionDiscriminator(':::')).toBeNull();
+    expect(sanitizeEditionDiscriminator('\x01\x02')).toBeNull();
+  });
+
+  it('caps output at the segment limit', () => {
+    const out = sanitizeEditionDiscriminator('A'.repeat(400));
+    expect(out).not.toBeNull();
+    expect(out!.length).toBe(PATH_SEGMENT_LIMIT);
+  });
+
+  it('does not retain a reserved import-sibling suffix', () => {
+    expect(sanitizeEditionDiscriminator('Full Cast.import-bak')).toBe('Full Cast');
+    expect(sanitizeEditionDiscriminator('.import-tmp')).toBeNull();
+  });
+});
+
+describe('composeEditionSuffixLeaf (#1739)', () => {
+  it('appends the discriminator verbatim as one segment', () => {
+    expect(composeEditionSuffixLeaf('Dark Matter', 'Full Cast')).toBe('Dark Matter (Full Cast)');
+  });
+
+  it('budgets the base so the discriminator survives the segment cap', () => {
+    const leaf = composeEditionSuffixLeaf('A'.repeat(PATH_SEGMENT_LIMIT), 'Full Cast');
+    expect(leaf.length).toBeLessThanOrEqual(PATH_SEGMENT_LIMIT);
+    expect(leaf.endsWith('(Full Cast)')).toBe(true);
+  });
+
+  it('never ends in a reserved import-sibling suffix', () => {
+    expect(composeEditionSuffixLeaf('Book', 'Full Cast').endsWith('.import-bak')).toBe(false);
+  });
+
+  // #1774 — the settings "Multiple editions" preview row composes its suffix-branch leaf as
+  // `composeEditionSuffixLeaf(baseLeaf, sanitizeEditionDiscriminator(label))`. Pin that exact
+  // composition here (real core) so the preview can never diverge from the production suffix branch.
+  it('parity: composing a sanitized "Full Cast" onto the sample leaf matches the preview row (#1774)', () => {
+    const discriminator = sanitizeEditionDiscriminator('Full Cast');
+    expect(discriminator).toBe('Full Cast');
+    expect(composeEditionSuffixLeaf('The Way of Kings', discriminator!)).toBe('The Way of Kings (Full Cast)');
+  });
+
+  it('keeps a non-empty discriminator visible when discriminator + wrapper exceed the cap, sacrificing the base first (F1)', () => {
+    // A pathologically long discriminator behind a long base: base-first truncation must drop the
+    // base ENTIRELY and keep the discriminator non-empty, never bury it behind 255 chars of base.
+    const leaf = composeEditionSuffixLeaf('B'.repeat(PATH_SEGMENT_LIMIT), 'D'.repeat(PATH_SEGMENT_LIMIT));
+    expect(leaf.length).toBeLessThanOrEqual(PATH_SEGMENT_LIMIT);
+    expect(leaf).toContain('D');           // discriminator survives, non-empty
+    expect(leaf).not.toContain('B');        // base sacrificed first
+    expect(leaf.startsWith('(')).toBe(true);
+  });
 });
 
 describe('FOLDER_ALLOWED_TOKENS / FILE_ALLOWED_TOKENS', () => {
-  it('FOLDER_ALLOWED_TOKENS matches ALLOWED_TOKENS', () => {
-    expect([...FOLDER_ALLOWED_TOKENS]).toEqual([...ALLOWED_TOKENS]);
-  });
-
   it('FILE_ALLOWED_TOKENS includes folder tokens plus file-specific tokens', () => {
     for (const token of FOLDER_ALLOWED_TOKENS) {
       expect(FILE_ALLOWED_TOKENS).toContain(token);
@@ -358,6 +475,11 @@ describe('FOLDER_ALLOWED_TOKENS / FILE_ALLOWED_TOKENS', () => {
     expect(FILE_ALLOWED_TOKENS).toContain('trackNumber');
     expect(FILE_ALLOWED_TOKENS).toContain('trackTotal');
     expect(FILE_ALLOWED_TOKENS).toContain('partName');
+  });
+
+  it('includes {edition} in folder tokens, inherited by file tokens (#1712)', () => {
+    expect(FOLDER_ALLOWED_TOKENS).toContain('edition');
+    expect(FILE_ALLOWED_TOKENS).toContain('edition');
   });
 });
 

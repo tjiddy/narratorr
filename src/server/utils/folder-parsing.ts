@@ -19,6 +19,7 @@ import {
   NARRATOR_PAREN_REGEX,
   applyLastFirstSwap,
 } from './folder-parsing-primitives.js';
+import { TAG_TITLE_SERIES_MARKER_REGEX } from '../../shared/dedup.js';
 
 // Re-export so the public import surface is unchanged (consumers import
 // CODEC_TEST_REGEX from this module — see folder-parsing.test.ts).
@@ -66,8 +67,9 @@ const TRAILING_PAREN_REGEX = /\s*\(([^)]+)\)\s*$/;
  * Catches comma-prefixed AND space-prefixed forms: `, Book 9`, ` book 1`,
  * `trilogy book 1`, `saga book 5`, `series book 3`, `chronicles vol 2`.
  * cleanName uses the stricter comma-only `SERIES_MARKER_REGEX` because folder
- * names rely on the comma to disambiguate from titles ending in `<word> N`. */
-const TAG_TITLE_SERIES_MARKER_REGEX = /[\s,]+(?:saga|trilogy|series|cycle|chronicles)?\s*(?:book|vol(?:ume)?)\s+\d+\s*$/i;
+ * names rely on the comma to disambiguate from titles ending in `<word> N`.
+ * The regex itself now lives in `src/shared/dedup.ts` (imported above) — one
+ * home shared with the library-dedup normalizer (#1662 F6). */
 
 /** P4: `Series, Book NN - Title` — only fires when the left of the first ` - ` ends with `, Book NN`. */
 const SERIES_BOOK_DASH_TITLE_REGEX = /^(.+?),\s*book\s+(\d+)\s*-\s*(.+)$/i;

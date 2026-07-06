@@ -1,8 +1,9 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
-export type { DiscoveredBook, DuplicateReason, ImportMode } from '../../../shared/schemas/library-scan.js';
-import type { DiscoveredBook, ImportMode } from '../../../shared/schemas/library-scan.js';
+export type { DiscoveredBook, DuplicateReason, ImportMode, HeldReviewItem, ImportResult, ImportSkippedItem, ImportFailedItem } from '../../../shared/schemas/library-scan.js';
+import type { DiscoveredBook, DuplicateReason, ImportMode, ImportResult } from '../../../shared/schemas/library-scan.js';
+import type { RecordingVerdict } from '../../../shared/schemas/recording-verdict.js';
 
 export interface ImportConfirmItem {
   path: string;
@@ -21,10 +22,6 @@ export interface ImportConfirmItem {
 export interface ScanResult {
   discoveries: DiscoveredBook[];
   totalFolders: number;
-}
-
-export interface ImportResult {
-  accepted: number;
 }
 
 export interface RescanResult {
@@ -48,6 +45,26 @@ export interface MatchResult {
   alternatives: BookMetadata[];
   error?: string;
   reason?: string;
+  /**
+   * Post-match library-duplicate flags (#1662). Mirrors the server `MatchResult`.
+   * `mergeMatchIntoRow` propagates these onto `row.book` so the existing
+   * "Already in library" badge lights up and the row fails closed (deselected).
+   */
+  isDuplicate?: boolean;
+  existingBookId?: number;
+  duplicateReason?: DuplicateReason;
+  /**
+   * Display-only recording-review warning (#1711). Mirrors the server `MatchResult`.
+   * `mergeMatchIntoRow` propagates this onto `row.book.reviewReason` so the import
+   * UI surfaces "possible different recording" without hard-skipping the row.
+   */
+  reviewReason?: string;
+  /**
+   * Recording-identity verdict for a library hit (#1712). Mirrors the server
+   * `MatchResult`. `mergeMatchIntoRow` propagates it onto `row.book.recordingVerdict`
+   * so `ImportCard` renders the three-way duplicate badge.
+   */
+  recordingVerdict?: RecordingVerdict;
 }
 
 export interface MatchJobStatus {

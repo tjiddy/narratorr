@@ -107,8 +107,6 @@ describe('mapBookMetadataToPayload', () => {
     const payload = mapBookMetadataToPayload(book);
     expect(payload.seriesName).toBe('The Stormlight Archive');
     expect(payload.seriesPosition).toBe(1);
-    expect(payload.seriesAsin).toBe('B009NF6YPM');
-    expect(payload.seriesProvider).toBe('audible');
   });
 
   it('falls back to series[0] when seriesPrimary is absent (#1097)', () => {
@@ -204,6 +202,39 @@ describe('isBookInLibrary — authorless matching (#246)', () => {
   it('does not match when titles differ even if both have no authors', () => {
     const book: BookMetadata = { title: 'Shogun', authors: [] };
     const libBook: BookWithAuthor = { ...createMockBook(), asin: null, title: 'Different Book', authors: [] };
+    expect(isBookInLibrary(book, [libBook])).toBe(false);
+  });
+});
+
+describe('isBookInLibrary — shared library-identity predicate (#1662 F7)', () => {
+  it('flags a colon-subtitle / edition variant of an owned title as in-library', () => {
+    const book: BookMetadata = {
+      title: 'Tehanu: The Last Book of Earthsea',
+      authors: [{ name: 'Ursula K. Le Guin' }],
+    };
+    const libBook: BookWithAuthor = {
+      ...createMockBook(),
+      asin: null,
+      title: 'Tehanu',
+      authors: [{ id: 1, name: 'Ursula K. Le Guin', slug: 'ursula-k-le-guin' }],
+    };
+    expect(isBookInLibrary(book, [libBook])).toBe(true);
+  });
+
+  it('still matches case-insensitive ASIN first, even when title/author differ', () => {
+    const book: BookMetadata = { title: 'Whatever', asin: 'b01g9epere', authors: [{ name: 'Nobody' }] };
+    const libBook: BookWithAuthor = { ...createMockBook(), asin: 'B01G9EPERE' };
+    expect(isBookInLibrary(book, [libBook])).toBe(true);
+  });
+
+  it('does not flag a genuinely different book', () => {
+    const book: BookMetadata = { title: 'A Wizard of Earthsea', authors: [{ name: 'Ursula K. Le Guin' }] };
+    const libBook: BookWithAuthor = {
+      ...createMockBook(),
+      asin: null,
+      title: 'The Tombs of Atuan',
+      authors: [{ id: 1, name: 'Ursula K. Le Guin', slug: 'ursula-k-le-guin' }],
+    };
     expect(isBookInLibrary(book, [libBook])).toBe(false);
   });
 });

@@ -41,6 +41,29 @@ const confidenceLabel = {
   none: 'No Match',
 } as const;
 
+/**
+ * Three-way import-review badge ladder (#1712 §3c). Precedence: the recording
+ * verdict (set by the match job for library hits) wins; a scan-time DB duplicate
+ * (path/decisive-ASIN) carries no verdict and falls back to the duplicate flags.
+ *
+ * `reviewReason` is deliberately NOT a rung — it is a separate display-only
+ * absorbed-content warning (#1031) rendered as its own tooltip indicator, and an
+ * ordinary new book can carry it. Only `recordingVerdict:'review'` lights the
+ * "Possible duplicate (review)" badge.
+ */
+function ownershipBadge(book: ImportRow['book']): { label: string; variant: 'muted' | 'warning' } | null {
+  switch (book.recordingVerdict) {
+    case 'same-recording': return { label: 'Already owned', variant: 'muted' };
+    case 'different-recording': return { label: 'New version of an owned title', variant: 'muted' };
+    case 'review': return { label: 'Possible duplicate (review)', variant: 'warning' };
+  }
+  // Scan-time DB duplicates bypass the match-job helper, so they have no verdict.
+  if (book.isDuplicate && (book.duplicateReason === 'path' || book.duplicateReason === 'slug')) {
+    return { label: 'Already owned', variant: 'muted' };
+  }
+  return null;
+}
+
 function ConfidenceBadge({ confidence, reason }: { confidence?: Confidence | undefined; reason?: string | undefined }) {
   if (!confidence) {
     return (
@@ -66,7 +89,12 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
   const displayTitle = row.edited.title;
   const displayAuthor = row.edited.author || row.book.parsedAuthor || '';
-  const displayNarrator = row.edited.metadata?.narrators?.join(', ');
+  // Prefer the top-level edited narrator (where the Edit Book modal saves the user's
+  // edit, and where matched rows are seeded) over metadata.narrators — mirroring the
+  // import-confirm + server narrator precedence so the row shows what will be imported (#1660).
+  const displayNarrator = row.edited.narrators?.length
+    ? row.edited.narrators.join(', ')
+    : row.edited.metadata?.narrators?.join(', ');
   // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
@@ -78,6 +106,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
   const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
   const showEditButton = !isDuplicate || isSlugDuplicate || isWithinScanDuplicate;
+  const ownership = ownershipBadge(row.book);
 
   // Left border: amber for no-match, matches LibraryPage's status border pattern
   const borderClass = confidence === 'none'
@@ -135,12 +164,13 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         </p>
       </div>
 
-      {/* Badge: "Already in library" for DB duplicates, "Duplicate in scan" for within-scan, confidence badge otherwise */}
+      {/* Badge: three-way recording-review ladder (#1712) for owned/new-version/review,
+          "Duplicate in scan" for within-scan, confidence badge for a genuinely new book. */}
       <div className="w-32 shrink-0 flex justify-center">
         {isWithinScanDuplicate ? (
           <Badge variant="muted">Duplicate in scan</Badge>
-        ) : isDuplicate ? (
-          <Badge variant="muted">Already in library</Badge>
+        ) : ownership ? (
+          <Badge variant={ownership.variant}>{ownership.label}</Badge>
         ) : (
           <ConfidenceBadge confidence={confidence} reason={row.matchResult?.reason} />
         )}

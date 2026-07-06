@@ -6,15 +6,20 @@ import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js'
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/types.js';
+import { normalizeProductionType } from '../../core/metadata/production-type.js';
+import type { ProductionType } from '../../shared/schemas/book.js';
 import { RateLimitError, TransientError } from '../../core/index.js';
-import { encryptFields, decryptFields, resolveSentinelFields, getKey, getSecretFieldNames } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
+import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import type { BookService } from './book.service.js';
+import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
 import type { ImportListType } from '../../shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '../../shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { AppSettings } from '../../shared/schemas.js';
+import type { RecordingReviewReason } from '../../shared/schemas/recording-verdict.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 type QualitySettings = AppSettings['quality'];
 
@@ -22,6 +27,23 @@ type QualitySettings = AppSettings['quality'];
 const MS_PER_MINUTE = 60_000;
 
 type NewImportList = typeof importLists.$inferInsert;
+
+/**
+ * Per-item disposition surfaced by {@link ImportListService.processItem} so
+ * {@link ImportListService.syncList} can distinguish a clean "synced N" run from
+ * one that held M items for recording review (#1735):
+ * - `created` — a book row was inserted (counts toward `createdCount`).
+ * - `held_review` — the `review` verdict skipped create but emitted an
+ *   observable `recording_review_skipped` event (counts toward `heldReviewCount`).
+ * - `skipped` — owned same-recording, or an ASIN-race owned skip — no count.
+ */
+type ItemOutcome = 'created' | 'held_review' | 'skipped';
+
+/** Synced-vs-held tally returned by {@link ImportListService.syncList} (#1735). */
+interface SyncCounts {
+  createdCount: number;
+  heldReviewCount: number;
+}
 
 /**
  * Parse a saved settings JSON blob through the per-type Zod schema.
@@ -79,10 +101,8 @@ export class ImportListService {
   async update(id: number, data: Partial<NewImportList>): Promise<ImportListRow | null> {
     const toUpdate = { ...data };
     if (toUpdate.settings) {
-      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(importLists).where(eq(importLists.id, id)).limit(1);
-      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('importList'));
-      toUpdate.settings = encryptFields('importList', settings, getKey());
+      toUpdate.settings = resolveAndEncryptSettings('importList', toUpdate.settings as Record<string, unknown>, existing[0]?.settings as Record<string, unknown> | undefined);
     }
     const result = await this.db
       .update(importLists)
@@ -114,8 +134,7 @@ export class ImportListService {
         if (!existing) {
           return { success: false, message: 'Import list not found' };
         }
-        resolvedSettings = { ...data.settings };
-        resolveSentinelFields(resolvedSettings, (existing.settings ?? {}) as Record<string, unknown>, getSecretFieldNames('importList'));
+        resolvedSettings = resolveSettings('importList', data.settings, existing.settings as Record<string, unknown> | undefined);
       }
 
       const parsed = parseSettingsForType(data.type, resolvedSettings);
@@ -154,13 +173,16 @@ export class ImportListService {
 
     for (const list of dueLists) {
       try {
-        await this.syncList(list);
+        const counts = await this.syncList(list);
         const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
         await this.db
           .update(importLists)
           .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
           .where(eq(importLists.id, list.id));
-        this.log.info({ id: list.id, name: list.name }, 'Import list sync completed');
+        this.log.info(
+          { id: list.id, name: list.name, createdCount: counts.createdCount, heldReviewCount: counts.heldReviewCount },
+          'Import list sync completed',
+        );
       } catch (error: unknown) {
         const message = getErrorMessage(error);
         const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
@@ -173,7 +195,7 @@ export class ImportListService {
     }
   }
 
-  private async syncList(list: ImportListRow): Promise<void> {
+  private async syncList(list: ImportListRow): Promise<SyncCounts> {
     const decrypted = this.decryptRow(list);
     const factory = IMPORT_LIST_ADAPTER_FACTORIES[decrypted.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
     if (!factory) throw new Error(`Unknown provider type: ${decrypted.type}`);
@@ -186,6 +208,7 @@ export class ImportListService {
 
     const qualitySettings = this.searchDeps ? await this.searchDeps.settingsService.get('quality') : undefined;
 
+    const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0 };
     for (const item of items) {
       if (!item.title?.trim()) {
         this.log.warn({ listId: list.id, item }, 'Skipping item with empty/null title');
@@ -193,11 +216,14 @@ export class ImportListService {
       }
 
       try {
-        await this.processItem(item, list, qualitySettings);
+        const outcome = await this.processItem(item, list, qualitySettings);
+        if (outcome === 'created') counts.createdCount++;
+        else if (outcome === 'held_review') counts.heldReviewCount++;
       } catch (error: unknown) {
         this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
     }
+    return counts;
   }
 
   /**
@@ -281,36 +307,112 @@ export class ImportListService {
     );
   }
 
-  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<void> {
+  /**
+   * Three-way recording-identity resolution (#1711) for an enriched item.
+   * `enrichItem` supplies narrators + duration, so the resolver usually has
+   * signal: `same-recording` is owned; `review` is no/ambiguous signal;
+   * `different-recording` is a genuinely new recording. The caller
+   * ({@link processItem}) acts on the verdict — keeping `list` context out of
+   * this method's signature.
+   */
+  private async resolveImportDisposition(enriched: EnrichedItem) {
+    const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
+    return this.bookService.findDuplicate({
+      title: enriched.title,
+      ...(authorList && { authors: authorList }),
+      ...(enriched.asin !== undefined && { asin: enriched.asin }),
+      ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
+      ...(enriched.duration != null && { duration: enriched.duration }),
+      // Production form (#1728, F1): `enriched.productionType` is already
+      // normalized upstream (`buildMatchedEnriched`). Pass it so an
+      // abridged-vs-unabridged item with no duration holds for review instead of
+      // silently skipping as same-recording.
+      ...(enriched.productionType !== undefined && { productionType: enriched.productionType }),
+    });
+  }
+
+  /**
+   * Make the `review` disposition observable for automated import lists (#1735).
+   * Import lists have no interactive held-review UI, so a `review` verdict
+   * previously skipped the wanted recording with only a server log line. Emit a
+   * structured `recording_review_skipped` event (the same direct
+   * `this.db.insert(bookEvents)` precedent used for `book_added`) so the held
+   * candidate is queryable via the existing event-history surface and lands on
+   * the incumbent's book history. `bookTitle` is `notNull`, so it carries the
+   * candidate title; `existingBookId` is the incumbent the candidate matched.
+   */
+  private async recordReviewSkip(
+    enriched: EnrichedItem,
+    list: ImportListRow,
+    existingBookId: number | null,
+    recordingReviewReason: RecordingReviewReason | undefined,
+  ): Promise<void> {
+    this.log.info(
+      { title: enriched.title, asin: enriched.asin, existingBookId, recordingReviewReason },
+      'Import-list item needs recording review — recording held-review event',
+    );
+    await this.db.insert(bookEvents).values({
+      bookId: existingBookId,
+      bookTitle: enriched.title,
+      authorName: enriched.authorName ?? null,
+      eventType: 'recording_review_skipped',
+      source: 'import_list',
+      // `reason` is unstructured JSON (no migration). The machine reason (#1728)
+      // makes the held downgrade diagnosable — e.g. `production-type-mismatch`.
+      reason: { importListName: list.name, existingBookId, ...(recordingReviewReason && { recordingReviewReason }) },
+    });
+  }
+
+  /**
+   * Create the book row, mapping a same-ASIN create-time race (#1711) to an owned
+   * skip (returns null, no enqueue) rather than a hard failure.
+   */
+  private async createImportListBook(enriched: EnrichedItem, enrichmentStatus: 'failed' | undefined, list: ImportListRow): Promise<BookWithAuthor | null> {
+    try {
+      return await this.bookService.create({
+        title: enriched.title,
+        authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
+        narrators: enriched.narrators,
+        subtitle: enriched.subtitle,
+        description: enriched.description,
+        publisher: enriched.publisher,
+        coverUrl: enriched.coverUrl,
+        asin: enriched.asin,
+        isbn: enriched.isbn,
+        seriesName: enriched.seriesName,
+        seriesPosition: enriched.seriesPosition,
+        duration: enriched.duration,
+        publishedDate: enriched.publishedDate,
+        genres: enriched.genres,
+        productionType: enriched.productionType,
+        status: 'wanted',
+        enrichmentStatus,
+        importListId: list.id,
+      });
+    } catch (error: unknown) {
+      if (error instanceof OwnedRecordingError) {
+        this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: error.existingBookId }, 'Import-list item already owned (ASIN race), skipped');
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<ItemOutcome> {
     const { enriched, enrichmentStatus } = await this.enrichItem(item);
 
-    const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
-    const duplicate = await this.bookService.findDuplicate(enriched.title, authorList, enriched.asin);
-    if (duplicate) {
-      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists, skipped');
-      return;
+    const resolution = await this.resolveImportDisposition(enriched);
+    if (resolution.verdict === 'same-recording') {
+      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists (same recording), skipped');
+      return 'skipped';
+    }
+    if (resolution.verdict === 'review') {
+      await this.recordReviewSkip(enriched, list, resolution.book?.id ?? null, resolution.recordingReviewReason);
+      return 'held_review';
     }
 
-    const created = await this.bookService.create({
-      title: enriched.title,
-      authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
-      narrators: enriched.narrators,
-      subtitle: enriched.subtitle,
-      description: enriched.description,
-      publisher: enriched.publisher,
-      coverUrl: enriched.coverUrl,
-      asin: enriched.asin,
-      isbn: enriched.isbn,
-      seriesName: enriched.seriesName,
-      seriesPosition: enriched.seriesPosition,
-      seriesAsin: enriched.seriesAsin,
-      duration: enriched.duration,
-      publishedDate: enriched.publishedDate,
-      genres: enriched.genres,
-      status: 'wanted',
-      enrichmentStatus,
-      importListId: list.id,
-    });
+    const created = await this.createImportListBook(enriched, enrichmentStatus, list);
+    if (!created) return 'skipped';
 
     await this.db.insert(bookEvents).values({
       bookId: created.id,
@@ -330,6 +432,7 @@ export class ImportListService {
       };
       triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
     }
+    return 'created';
   }
 }
 
@@ -364,7 +467,7 @@ function buildRawEnriched(item: ImportListItem): EnrichedItem {
 }
 
 function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): EnrichedItem {
-  const primarySeries = match.seriesPrimary ?? match.series?.[0];
+  const primarySeries = pickPrimarySeries(match);
   return {
     title: match.title,
     authorName: match.authors[0]?.name,
@@ -374,7 +477,6 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     publisher: match.publisher,
     seriesName: primarySeries?.name,
     seriesPosition: primarySeries?.position,
-    seriesAsin: primarySeries?.asin,
     narrators: match.narrators,
     duration: match.duration,
     publishedDate: match.publishedDate,
@@ -385,6 +487,10 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     // On the ASIN fast path `match.asin` echoes `item.asin`, so this is a no-op.
     asin: match.asin ?? item.asin,
     isbn: item.isbn ?? match.isbn,
+    // Recording production form (#1731). Gate on presence so a match without a
+    // formatType leaves the field unset (DB default 'unknown') rather than
+    // persisting an explicit 'unknown'. `buildRawEnriched` carries no signal.
+    productionType: match.formatType ? normalizeProductionType(match.formatType) : undefined,
   };
 }
 
@@ -400,7 +506,6 @@ interface EnrichedItem {
   publisher?: string | undefined;
   seriesName?: string | undefined;
   seriesPosition?: number | undefined;
-  seriesAsin?: string | undefined;
   narrators?: string[] | undefined;
   duration?: number | undefined;
   publishedDate?: string | undefined;
@@ -408,4 +513,5 @@ interface EnrichedItem {
   asin?: string | undefined;
   isbn?: string | undefined;
   authorName?: string | undefined;
+  productionType?: ProductionType | undefined;
 }

@@ -1,11 +1,11 @@
 import { stat } from 'node:fs/promises';
 import { extname } from 'node:path';
-import { execFile } from 'node:child_process';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
-// Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
-import { sanitizedEnv } from './sanitized-env.js';
+// ffprobe-backed media probing lives in audio-probe (imported by path; Node-only).
+import { resolveFileDuration, fillTechnicalViaFFprobe, getFFprobeStreamDuration } from './audio-probe.js';
+export { getFFprobeDuration, getFFprobeStreamInfo, getFFprobeStreamDuration } from './audio-probe.js';
 
 export interface AudioScanResult {
   // From tags (first file with tags wins, except tagTitle for multi-file scans —
@@ -65,6 +65,24 @@ export interface AudioScanOptions {
   onWarn?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
   /** Diagnostic debug callback (e.g. ffprobe failure → music-metadata fallback). Caller maps to its logger. */
   onDebug?: ((msg: string, payload?: Record<string, unknown>) => void) | undefined;
+  /**
+   * Called when the scan collected ≥1 audio file but still returns null because
+   * no codec could be determined — music-metadata read nothing and the ffprobe
+   * codec fallback (when available) also found no readable stream. Lets a caller
+   * distinguish a genuinely-empty directory (this is NOT called) from
+   * files-present-but-unreadable (this IS called) to pick an honest hold reason.
+   * Other callers omit it and keep plain `null` semantics.
+   */
+  onFilesWithoutCodec?: (() => void) | undefined;
+}
+
+/** Loose music-metadata `format` shape used for the codec-fallback merge. */
+export interface MetadataFormat {
+  codec?: string;
+  bitrate?: number;
+  sampleRate?: number;
+  numberOfChannels?: number;
+  codecProfile?: string;
 }
 
 /**
@@ -86,61 +104,6 @@ export async function readAlbumTag(filePath: string): Promise<string | undefined
   }
 }
 
-/**
- * Get duration of a single audio file using ffprobe.
- * Returns the duration in seconds, or null if ffprobe fails or returns invalid data.
- */
-export async function getFFprobeDuration(ffprobePath: string, filePath: string): Promise<number | null> {
-  try {
-    const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      execFile(
-        ffprobePath,
-        ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'json', filePath],
-        { timeout: 10_000, env: sanitizedEnv() },
-        (error, stdout, stderr) => {
-          if (error) reject(error);
-          else resolve({ stdout: stdout as string, stderr: stderr as string });
-        },
-      );
-    });
-    const parsed = JSON.parse(stdout);
-    const duration = parseFloat(parsed?.format?.duration);
-    if (!Number.isFinite(duration) || duration <= 0) return null;
-    return duration;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolve the duration for a single file: ffprobe if available, music-metadata fallback.
- * Logs diagnostics when the two sources disagree or ffprobe fails.
- */
-async function resolveFileDuration(
-  filePath: string,
-  metadataDuration: number | undefined,
-  ffprobePath: string | undefined,
-  onWarn: AudioScanOptions['onWarn'],
-  onDebug: AudioScanOptions['onDebug'],
-): Promise<number | undefined> {
-  if (!ffprobePath) return metadataDuration ?? undefined;
-
-  const ffprobeDuration = await getFFprobeDuration(ffprobePath, filePath);
-  if (ffprobeDuration === null) {
-    onDebug?.('ffprobe failed for file, falling back to music-metadata duration', { filePath });
-    return metadataDuration ?? undefined;
-  }
-
-  // Warn if ffprobe and music-metadata differ significantly
-  if (metadataDuration && metadataDuration > 0) {
-    const diff = Math.abs(ffprobeDuration - metadataDuration) / metadataDuration;
-    if (diff > 0.1) {
-      onWarn?.('ffprobe/music-metadata duration mismatch (>10%)', { filePath, ffprobeDuration, metadataDuration });
-    }
-  }
-  return ffprobeDuration;
-}
-
 /** Scan a directory of audio files and extract metadata + technical info. */
 export async function scanAudioDirectory(
   dirPath: string,
@@ -149,7 +112,7 @@ export async function scanAudioDirectory(
   const audioFiles = await collectAudioFiles(dirPath);
   if (audioFiles.length === 0) return null;
 
-  const { skipCover = false, ffprobePath, onWarn, onDebug } = options ?? {};
+  const { skipCover = false, ffprobePath, onWarn, onDebug, onFilesWithoutCodec } = options ?? {};
 
   const result: AudioScanResult = {
     codec: '',
@@ -165,21 +128,84 @@ export async function scanAudioDirectory(
   };
 
   const isMultiFile = audioFiles.length > 1;
+  const loop = await scanFiles(audioFiles, result, isMultiFile, { skipCover, ffprobePath, onWarn, onDebug });
+
+  if (loop.firstTaggedCommon !== null) {
+    const multiFileTagAlbum = isMultiFile ? resolveMultiFileAlbum(loop.fileAlbums) : undefined;
+    extractTagInfo(result, loop.firstTaggedCommon, loop.firstTaggedNative, isMultiFile, multiFileTagAlbum);
+  }
+
+  const codecCandidatePath = await applyCodecFallback(result, loop.parsedCandidates, ffprobePath, onDebug);
+
+  if (!result.codec) {
+    // Files were collected (length 0 returned earlier) but none yielded a codec.
+    // Only signal "present but unreadable" when at least one file parsed far enough
+    // to show a missing codec (parsedCandidates non-empty). If every collected file
+    // threw in processOneFile (e.g. EACCES / transient access error) the directory
+    // never parsed anything — leave it a plain null so the caller maps it to a generic
+    // probe failure rather than blaming a codec it never read (#1677).
+    if (loop.parsedCandidates.length > 0) onFilesWithoutCodec?.();
+    return null;
+  }
+
+  // (a) The codec came from ffprobe but the in-band `format=duration` probe yielded
+  // nothing usable (totalDuration still 0). Try a stream-level duration probe — a
+  // *different* ffprobe entry than the in-band pass — for the exact candidate whose
+  // codec probe succeeded (#1676). Add it only when > 0; an honest no-duration outcome
+  // stays 0 rather than fabricating a value.
+  if (codecCandidatePath && ffprobePath && result.totalDuration === 0) {
+    const streamDuration = await getFFprobeStreamDuration(ffprobePath, codecCandidatePath);
+    if (streamDuration && streamDuration > 0) result.totalDuration += streamDuration;
+  }
+
+  return result;
+}
+
+interface ScanLoopState {
+  firstTaggedCommon: ICommonTagsResult | null;
+  firstTaggedNative: Record<string, Array<{ id: string; value: unknown }>> | undefined;
+  /**
+   * Every successfully-parsed file whose codec music-metadata could NOT read,
+   * retained as ordered candidates for the ffprobe codec fallback: when no file
+   * yields a codec from music-metadata, ffprobe re-reads these in turn (stopping at
+   * the first one that yields a codec) and any partial technical fields
+   * music-metadata did supply for the winning file are merged in (not clobbered).
+   * Empty when every collected file threw in `processOneFile` (#1677 guard:
+   * recovery must never run on a file that did not parse) — its length is the
+   * "≥1 file parsed but lacked a codec" signal that drives `onFilesWithoutCodec`.
+   */
+  parsedCandidates: Array<{ format: MetadataFormat; filePath: string }>;
+  fileAlbums: Array<string | undefined>;
+}
+
+/** Walk every audio file: accumulate totals/cover/chapters into `result`, gather tag + parse state. */
+async function scanFiles(
+  audioFiles: string[],
+  result: AudioScanResult,
+  isMultiFile: boolean,
+  options: { skipCover: boolean; ffprobePath?: string | undefined; onWarn?: AudioScanOptions['onWarn']; onDebug?: AudioScanOptions['onDebug'] },
+): Promise<ScanLoopState> {
   const fileAlbums: Array<string | undefined> = [];
   let firstTaggedCommon: ICommonTagsResult | null = null;
   let firstTaggedNative: Record<string, Array<{ id: string; value: unknown }>> | undefined;
+  const parsedCandidates: ScanLoopState['parsedCandidates'] = [];
   let technicalExtracted = false;
 
   for (const filePath of audioFiles) {
-    const metadata = await processOneFile(filePath, result, { skipCover, ffprobePath, onWarn, onDebug });
+    const metadata = await processOneFile(filePath, result, options);
     if (!metadata) {
       if (isMultiFile) fileAlbums.push(undefined);
       continue;
     }
 
-    if (!technicalExtracted && metadata.format.codec) {
-      extractTechnicalInfo(result, metadata.format, filePath);
-      technicalExtracted = true;
+    if (metadata.format.codec) {
+      if (!technicalExtracted) {
+        extractTechnicalInfo(result, metadata.format, filePath);
+        technicalExtracted = true;
+      }
+    } else {
+      // Parsed but no codec — retain as an ordered ffprobe-fallback candidate (#1676).
+      parsedCandidates.push({ format: metadata.format, filePath });
     }
 
     if (isMultiFile) recordFileAlbum(metadata.common.album, fileAlbums);
@@ -190,14 +216,35 @@ export async function scanAudioDirectory(
     }
   }
 
-  if (firstTaggedCommon !== null) {
-    const multiFileTagAlbum = isMultiFile ? resolveMultiFileAlbum(fileAlbums) : undefined;
-    extractTagInfo(result, firstTaggedCommon, firstTaggedNative, isMultiFile, multiFileTagAlbum);
+  return { firstTaggedCommon, firstTaggedNative, parsedCandidates, fileAlbums };
+}
+
+/**
+ * Codec fallback (load-bearing for xHE-AAC / USAC): music-metadata's pure-JS
+ * parser cannot read these even on ffmpeg 8, so probe the parsed-but-no-codec files
+ * with ffprobe before giving up. Iterates the retained candidates in scan order,
+ * stopping at the first one ffprobe yields a codec for (each probe bounded by the
+ * existing per-file ffprobe timeout), and returns that winning file path so the
+ * caller can target its stream-level duration recovery at the *same* file (#1676).
+ *
+ * No-op (returns null) once a codec is known, when ffprobe is absent, or when no
+ * file parsed (candidates empty) — recovery must run only on a file that actually
+ * parsed, never on a raw audioFiles[0] every sibling failed to read, which would
+ * turn an all-files-failed directory into a tag-less codec-only success and mask the
+ * true non-codec failure (#1677).
+ */
+async function applyCodecFallback(
+  result: AudioScanResult,
+  parsedCandidates: ScanLoopState['parsedCandidates'],
+  ffprobePath: string | undefined,
+  onDebug: AudioScanOptions['onDebug'],
+): Promise<string | null> {
+  if (result.codec || !ffprobePath || parsedCandidates.length === 0) return null;
+  for (const candidate of parsedCandidates) {
+    await fillTechnicalViaFFprobe(result, candidate.format, candidate.filePath, ffprobePath, onDebug);
+    if (result.codec) return candidate.filePath;
   }
-
-  if (!result.codec) return null;
-
-  return result;
+  return null;
 }
 
 /** Per-file scan: parses metadata, accumulates totals, extracts cover+chapters. Returns null on failure. */

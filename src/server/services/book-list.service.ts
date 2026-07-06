@@ -272,7 +272,8 @@ export class BookListService {
         audioTotalSize: books.audioTotalSize, size: books.size, audioFileFormat: books.audioFileFormat,
         audioDuration: books.audioDuration, duration: books.duration, path: books.path,
         audioFileCount: books.audioFileCount, lastGrabGuid: books.lastGrabGuid,
-        lastGrabInfoHash: books.lastGrabInfoHash, createdAt: books.createdAt, updatedAt: books.updatedAt,
+        lastGrabInfoHash: books.lastGrabInfoHash, editionLabel: books.editionLabel,
+        createdAt: books.createdAt, updatedAt: books.updatedAt,
       })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
@@ -290,6 +291,7 @@ export class BookListService {
     audioTotalSize: number | null; size: number | null; audioFileFormat: string | null;
     audioDuration: number | null; duration: number | null; path: string | null;
     audioFileCount: number | null; lastGrabGuid: string | null; lastGrabInfoHash: string | null;
+    editionLabel: string | null;
     createdAt: Date; updatedAt: Date;
   }>): Promise<LibraryBookListItemRow[]> {
     const bookIds = rows.map((r) => r.id);
@@ -321,7 +323,8 @@ export class BookListService {
       audioTotalSize: r.audioTotalSize, size: r.size, audioFileFormat: r.audioFileFormat,
       audioDuration: r.audioDuration, duration: r.duration, path: r.path,
       audioFileCount: r.audioFileCount, lastGrabGuid: r.lastGrabGuid,
-      lastGrabInfoHash: r.lastGrabInfoHash, createdAt: r.createdAt, updatedAt: r.updatedAt,
+      lastGrabInfoHash: r.lastGrabInfoHash, editionLabel: r.editionLabel,
+      createdAt: r.createdAt, updatedAt: r.updatedAt,
     }));
   }
 
@@ -336,8 +339,26 @@ export class BookListService {
         return [sql`CASE WHEN (SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1) IS NULL THEN 1 ELSE 0 END`, dir(sql`(SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1)`), dir(books.id)];
       case 'series':
         return [sql`CASE WHEN ${books.seriesName} IS NULL THEN 1 ELSE 0 END`, dir(books.seriesName), sql`CASE WHEN ${books.seriesName} IS NULL THEN 0 WHEN ${books.seriesPosition} IS NULL THEN 1 ELSE 0 END`, asc(sql`CASE WHEN ${books.seriesName} IS NOT NULL THEN ${books.seriesPosition} ELSE NULL END`), dir(books.id)];
-      case 'quality':
-        return [sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) IS NULL OR COALESCE(${books.audioDuration}, ${books.duration}) = 0 THEN 1 ELSE 0 END`, dir(sql`CAST(COALESCE(${books.audioTotalSize}, ${books.size}) AS REAL) / CAST(COALESCE(${books.audioDuration}, ${books.duration}) AS REAL)`), dir(books.id)];
+      case 'quality': {
+        // Quality = MB/hr = size(bytes) / duration(seconds). The canonical unit
+        // contract lives in resolveBookQualityInputs() (src/core/utils/quality.ts):
+        // size prefers `audioTotalSize` then `size` (both bytes); duration prefers
+        // `audioDuration` (already seconds), else the `duration` column which is
+        // MINUTES and must be ×60. This SQL is a necessary re-expression of that
+        // helper (DRY-3 single-home rule) and mirrors it bit-for-bit in intent —
+        // the `WHEN … > 0` precedence also matches the helper's zero-as-absent
+        // semantics, so `audioDuration = 0` falls back to `duration * 60` here
+        // exactly as it does there (rather than the old COALESCE routing it to the
+        // unknown bucket). Editing units on one side without the other reintroduces
+        // the #1797/#1814 minutes-vs-seconds divergence.
+        const usableSize = sql`CASE WHEN ${books.audioTotalSize} > 0 THEN ${books.audioTotalSize} ELSE ${books.size} END`;
+        const usableDurationSeconds = sql`CASE WHEN ${books.audioDuration} > 0 THEN ${books.audioDuration} ELSE ${books.duration} * 60 END`;
+        return [
+          sql`CASE WHEN (${usableSize}) IS NULL OR (${usableSize}) <= 0 OR (${usableDurationSeconds}) IS NULL OR (${usableDurationSeconds}) <= 0 THEN 1 ELSE 0 END`,
+          dir(sql`CAST((${usableSize}) AS REAL) / CAST((${usableDurationSeconds}) AS REAL)`),
+          dir(books.id),
+        ];
+      }
       case 'size':
         return [sql`CASE WHEN COALESCE(${books.audioTotalSize}, ${books.size}) IS NULL THEN 1 ELSE 0 END`, dir(sql`COALESCE(${books.audioTotalSize}, ${books.size})`), dir(books.id)];
       case 'format':

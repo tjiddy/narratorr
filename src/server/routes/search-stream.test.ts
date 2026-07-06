@@ -13,6 +13,9 @@ import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import * as searchPipeline from '../services/search-pipeline.js';
 import { fetchSseEvents } from '../__tests__/sse-helpers.js';
+import { HEARTBEAT_INTERVAL_MS } from '../utils/sse-stream.js';
+
+const HB_FRAME = 'event: hb\ndata: {}\n\n';
 
 const EMPTY_POST_PROCESS_RESULT = {
   results: [],
@@ -362,6 +365,131 @@ describe('searchStreamRoutes', () => {
       // Let the search resolve so the handler completes cleanly
       resolveSearch!([] as never[]);
       await handlerPromise;
+    });
+  });
+
+  // #1799 — keep the stream warm with named `hb` heartbeat frames while the search is in flight
+  // so a slow indexer doesn't idle the connection into a reverse-proxy cut.
+  describe('in-flight heartbeat', () => {
+    // Fake only the interval timers so real setTimeout(0) can still flush the
+    // microtask queue between the handler's awaits (vitest-faketimers-react-query).
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function hbCount(write: ReturnType<typeof vi.fn>): number {
+      return write.mock.calls.filter((c: unknown[]) => c[0] === HB_FRAME).length;
+    }
+
+    function deferredSearch() {
+      let resolve!: (v: never[]) => void;
+      let reject!: (e: unknown) => void;
+      indexerService.searchAllStreaming = vi.fn().mockImplementation(
+        () => new Promise<never[]>((res, rej) => { resolve = res; reject = rej; }),
+      );
+      return { resolve: () => resolve([] as never[]), reject: (e: unknown) => reject(e) };
+    }
+
+    // Real setTimeout(0) — flushes pending microtasks so the handler reaches its await.
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    it('emits `hb` heartbeat frames on the shared cadence while searchAllStreaming is in flight, then stops on completion', async () => {
+      const search = deferredSearch();
+      const { reply, request, write } = createMockReplyAndRequest();
+      const handlerPromise = streamHandler!(request, reply);
+      await flush();
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      expect(hbCount(write)).toBe(2);
+
+      search.resolve();
+      await handlerPromise;
+      expect(reply.raw.end).toHaveBeenCalled();
+
+      // No further heartbeats after the finally cleared the timer.
+      const after = hbCount(write);
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+      expect(hbCount(write)).toBe(after);
+    });
+
+    it('clears the heartbeat when the search rejects (catch path still writes fallback search-complete)', async () => {
+      indexerService.searchAllStreaming = vi.fn().mockRejectedValue(new Error('boom'));
+      const { reply, request, write } = createMockReplyAndRequest();
+      await streamHandler!(request, reply);
+
+      const completeCall = write.mock.calls.find(
+        (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('event: search-complete'),
+      );
+      expect(completeCall).toBeDefined();
+
+      const after = hbCount(write);
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+      expect(hbCount(write)).toBe(after);
+      expect(reply.raw.end).toHaveBeenCalled();
+    });
+
+    it('clears the heartbeat when the client disconnects mid-search (and still cleans up the session)', async () => {
+      const search = deferredSearch();
+      const { reply, request, write, onClose } = createMockReplyAndRequest();
+      const handlerPromise = streamHandler!(request, reply);
+      await flush();
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS);
+      const beforeClose = hbCount(write);
+      expect(beforeClose).toBe(1);
+
+      const closeHandler = onClose.mock.calls[0]![1] as () => void;
+      closeHandler();
+
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+      expect(hbCount(write)).toBe(beforeClose);
+
+      search.resolve();
+      await handlerPromise;
+    });
+
+    it('does not throw or crash when a heartbeat write fails, and stops retrying (AC3)', async () => {
+      const search = deferredSearch();
+      const { reply, request, write } = createMockReplyAndRequest();
+      (write as ReturnType<typeof vi.fn>).mockImplementation((frame: string) => {
+        if (frame === HB_FRAME) throw new Error('write after end / broken pipe');
+        return true;
+      });
+      const handlerPromise = streamHandler!(request, reply);
+      await flush();
+
+      // A throw inside the setInterval callback would have no caller and crash the process.
+      expect(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS)).not.toThrow();
+
+      // The guard stopped the timer after the first failure — no repeated attempts.
+      const attempts = hbCount(write);
+      expect(attempts).toBe(1);
+      vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
+      expect(hbCount(write)).toBe(attempts);
+
+      search.resolve();
+      await handlerPromise;
+    });
+
+    it('unref()s the heartbeat timer so a pending tick never pins the event loop (AC4)', async () => {
+      vi.useRealTimers(); // spy on the real setInterval instead of the fake clock
+      const unref = vi.fn();
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval')
+        .mockReturnValue({ unref } as unknown as ReturnType<typeof setInterval>);
+      const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {});
+
+      const { reply, request } = createMockReplyAndRequest();
+      await streamHandler!(request, reply);
+
+      expect(setIntervalSpy).toHaveBeenCalled();
+      expect(unref).toHaveBeenCalled();
+
+      setIntervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
     });
   });
 });

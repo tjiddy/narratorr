@@ -17,6 +17,7 @@ import { v1BooksRoutes } from './books.js';
 import { bookV1Schema } from '../../../shared/schemas/v1/books.js';
 import { v1ErrorEnvelopeSchema } from '../../../shared/schemas/v1/common.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
+import { OwnedRecordingError } from '../../services/book-dedup.js';
 
 // Mock config so the auth plugin runs with authBypass off (mirrors auth.plugin.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -116,7 +117,7 @@ describe('v1 books routes', () => {
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (bookListService.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
     (bookService.getById as Mock).mockResolvedValue(null);
-    (bookService.findDuplicate as Mock).mockResolvedValue(null);
+    (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
     (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
     (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'ok', book: metaBook() });
     (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false });
@@ -333,8 +334,6 @@ describe('v1 books routes', () => {
         isbn: '9780765326355',
         seriesName: 'Stormlight',
         seriesPosition: 1,
-        seriesAsin: 'B0SERIES000',
-        seriesProvider: 'audible',
         duration: 2734,
         publishedDate: '2010-08-31',
         genres: ['Fantasy'],
@@ -343,8 +342,8 @@ describe('v1 books routes', () => {
     });
 
     it('falls back to series[0] for series name/position when seriesPrimary is absent (F2)', async () => {
-      // No seriesPrimary, but a series array → primarySeries = series[0]; seriesAsin
-      // is sourced ONLY from seriesPrimary, so it must be absent in the fallback case.
+      // No seriesPrimary, but a series array → primarySeries = series[0]. seriesAsin
+      // was removed as a dead field (#1716), so it is never on the payload.
       (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
         kind: 'ok',
         book: metaBook({ seriesPrimary: undefined, series: [{ name: 'Mistborn', position: 3 }] }),
@@ -372,12 +371,25 @@ describe('v1 books routes', () => {
         title: 'Bare',
         authors: [{ name: 'Solo' }],
         asin: ASIN, // provider omitted asin → requested ASIN fallback
-        seriesProvider: 'audible',
       });
       // Unsupplied optional fields must be ABSENT, not present-as-undefined.
-      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'seriesAsin', 'providerId']) {
+      // productionType included: a record with no formatType must NOT write an
+      // explicit 'unknown' (defect vector — absent input stays unset, #1731).
+      for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'providerId', 'productionType']) {
         expect(payload).not.toHaveProperty(key);
       }
+    });
+
+    it('maps a known formatType to the normalized productionType (#1731)', async () => {
+      (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
+        kind: 'ok',
+        book: metaBook({ formatType: 'Abridged' }),
+      });
+
+      await post({ asin: ASIN });
+
+      const [payload] = (bookService.create as Mock).mock.calls[0]!;
+      expect(payload.productionType).toBe('abridged');
     });
 
     it('records a manual book_added event', async () => {
@@ -389,7 +401,7 @@ describe('v1 books routes', () => {
     });
 
     it('409: an existing ASIN returns book_exists + existingId, no create/search', async () => {
-      (bookService.findDuplicate as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_existing0000000000' }));
+      (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: hydratedRow({ publicId: 'bk_existing0000000000' }) });
 
       const res = await post({ asin: ASIN });
 
@@ -398,7 +410,7 @@ describe('v1 books routes', () => {
       expect(body.error.code).toBe('book_exists');
       expect(typeof body.error.message).toBe('string');
       expect(body.existingId).toBe('bk_existing0000000000');
-      expect(bookService.findDuplicate as Mock).toHaveBeenCalledWith('', undefined, ASIN);
+      expect(bookService.findDuplicate as Mock).toHaveBeenCalledWith(expect.objectContaining({ title: '', asin: ASIN }));
       expect(bookService.create as Mock).not.toHaveBeenCalled();
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
@@ -414,7 +426,7 @@ describe('v1 books routes', () => {
       expect(first.json().id).toBe('bk_created00000000000');
 
       // Lost-response retry: the same ASIN now finds the created row → 409, no second create.
-      (bookService.findDuplicate as Mock).mockResolvedValueOnce(created);
+      (bookService.findDuplicate as Mock).mockResolvedValueOnce({ verdict: 'same-recording', book: created });
       const second = await post({ asin: ASIN });
 
       expect(second.statusCode).toBe(409);
@@ -423,6 +435,29 @@ describe('v1 books routes', () => {
       expect(body.existingId).toBe('bk_created00000000000');
       // The retry produced no second book.
       expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+    });
+
+    // #1723 F8 — the create-time ASIN race catch (distinct from the pre-create
+    // find-by-ASIN 409 above): findDuplicate clears the guard (different-recording)
+    // but create() fail-closes with OwnedRecordingError. With getById resolving the
+    // incumbent owner, the route returns the v1 book_exists envelope + the owner's
+    // publicId, and never fires the immediate search.
+    it('409 on a create-time ASIN race (OwnedRecordingError): book_exists + incumbent existingId, no search (#1723 F8)', async () => {
+      (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (bookService.create as Mock).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 5, title: 'The Way of Kings', reason: 'asin-owned' }),
+      );
+      (bookService.getById as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_owner00000000000000' }));
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(409);
+      const body = res.json();
+      expect(body.error.code).toBe('book_exists');
+      expect(typeof body.error.message).toBe('string');
+      expect(body.existingId).toBe('bk_owner00000000000000');
+      expect(bookService.getById as Mock).toHaveBeenCalledWith(5);
+      expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
 
     it('422 edition_rejected: a reject-word-matching edition is refused before create (#1545)', async () => {
@@ -475,7 +510,7 @@ describe('v1 books routes', () => {
 
     it('409 still precedes the reject gate even when reject-words are configured (#1545)', async () => {
       (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, rejectWords: 'kings' });
-      (bookService.findDuplicate as Mock).mockResolvedValue(hydratedRow({ publicId: 'bk_existing0000000000' }));
+      (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: hydratedRow({ publicId: 'bk_existing0000000000' }) });
 
       const res = await post({ asin: ASIN });
 

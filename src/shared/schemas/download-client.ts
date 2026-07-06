@@ -134,7 +134,6 @@ export const updateDownloadClientSchema = z.object({
 
 // Output types (after Zod applies defaults/transforms)
 export type CreateDownloadClientInput = z.infer<typeof createDownloadClientSchema>;
-export type UpdateDownloadClientInput = z.infer<typeof updateDownloadClientSchema>;
 
 // ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
 

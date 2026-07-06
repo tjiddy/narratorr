@@ -597,9 +597,9 @@ describe('TorznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      // Number('abc') = NaN — seeders/leechers pass through as NaN, grabs returns undefined
-      expect(results[0]!.seeders).toBeNaN();
-      expect(results[0]!.leechers).toBeNaN();
+      // Number('abc') = NaN — seeders/leechers/grabs are all NaN-guarded and drop to undefined
+      expect(results[0]!.seeders).toBeUndefined();
+      expect(results[0]!.leechers).toBeUndefined();
       expect(results[0]!.grabs).toBeUndefined();
     });
 

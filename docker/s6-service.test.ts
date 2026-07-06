@@ -115,14 +115,14 @@ describe('s6-overlay service definition', () => {
   });
 
   describe('Dockerfile LSIO base image', () => {
-    it('runner stage uses ghcr.io/linuxserver/baseimage-alpine:3.21', () => {
+    it('runner stage uses ghcr.io/linuxserver/baseimage-alpine:3.23', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain('FROM ghcr.io/linuxserver/baseimage-alpine:3.21');
+      expect(content).toContain('FROM ghcr.io/linuxserver/baseimage-alpine:3.23');
     });
 
-    it('builder stage uses node:24-alpine', () => {
+    it('builder stage uses node:24-alpine3.23', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain('FROM node:24-alpine AS builder');
+      expect(content).toContain('FROM node:24-alpine3.23 AS builder');
     });
 
     it('ffmpeg is installed in runner image', () => {
@@ -145,9 +145,9 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('COPY docker/root/ /');
     });
 
-    it('deps stage uses node:24-alpine', () => {
+    it('deps stage uses node:24-alpine3.23', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain('FROM node:24-alpine AS deps');
+      expect(content).toContain('FROM node:24-alpine3.23 AS deps');
     });
 
     it('runner copies Node binary from builder stage', () => {

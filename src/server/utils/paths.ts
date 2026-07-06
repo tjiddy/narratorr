@@ -93,6 +93,8 @@ export interface RenameableBook {
   seriesPosition?: number | null;
   narrators?: Array<{ name: string }> | null;
   publishedDate?: string | null;
+  /** Stored edition_label (#1712) — source for the `{edition}` file-naming token. */
+  editionLabel?: string | null;
 }
 
 /**
@@ -183,6 +185,8 @@ export async function planFileRenames(
     narrator: primaryNarrator || undefined,
     narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
+    // Stored edition_label (#1712); null/empty renders nothing via stripEmptyWrappers.
+    edition: book.editionLabel ?? undefined,
   };
 
   const isMultiFile = audioFiles.length > 1;

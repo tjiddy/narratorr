@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { bookStatusSchema } from '../book.js';
+import { pickPrimarySeries } from '../../pick-primary-series.js';
 
 // ============================================================================
 // Public API v1 — Metadata search (v1.1 — #1519)
@@ -126,7 +127,8 @@ export type MetadataSearchV1Query = z.infer<typeof metadataSearchV1QuerySchema>;
  *   - `narrators` are plain strings (no asin) — projected to `{ name }`.
  *   - the cover field is `coverUrl` — projected to the public `cover`.
  *   - series is a plural `series[]` plus an optional singular `seriesPrimary` —
- *     the DTO exposes a single `series` projected from `seriesPrimary ?? series[0]`.
+ *     the DTO exposes a single `series` projected via the shared
+ *     `pickPrimarySeries` helper (primary ref, else first plural element).
  */
 export interface MetadataSearchResultV1Source {
   asin?: string | undefined;
@@ -148,13 +150,13 @@ export interface MetadataSearchResultV1Source {
  *
  * Optional fields use conditional spreads (not explicit `undefined`) to satisfy
  * `exactOptionalPropertyTypes` and the `.strict()` schema. `narrators` always
- * emits an array (coalesced to `[]`). `series` is `seriesPrimary ?? series[0]`.
+ * emits an array (coalesced to `[]`). `series` is `pickPrimarySeries(source)`.
  * An asin-less book is returned anyway (asin omitted) — NOT filtered out.
  */
 export function toMetadataSearchResultV1(
   source: MetadataSearchResultV1Source,
 ): MetadataSearchResultV1 {
-  const series = source.seriesPrimary ?? source.series?.[0];
+  const series = pickPrimarySeries(source);
   return {
     title: source.title,
     authors: source.authors.map((a) => ({

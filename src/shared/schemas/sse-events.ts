@@ -91,12 +91,30 @@ export const importProgressPayload = z.object({
   }).optional(),
 });
 
+/**
+ * Structured refusal discriminator for a forced import the copy-time collision
+ * fence refused (#1736). Carried on the existing `import_failed` channel (event +
+ * SSE) so a forced import that fails closed is self-describing rather than an
+ * opaque generic failure. `existingBookId` is nullable: the ownerless fence throw
+ * sites (audio on disk, no row claims it) carry no real incumbent id, so the `-1`
+ * sentinel maps to `null` (the user-facing reason never reports "book #-1").
+ */
+export const forcedImportRefusedReasonSchema = z.object({
+  kind: z.literal('forced-import-refused'),
+  recordingReason: z.string(),
+  existingBookId: z.number().nullable(),
+});
+
+export type ForcedImportRefusedReason = z.infer<typeof forcedImportRefusedReasonSchema>;
+
 export const importFailedPayload = z.object({
   job_id: z.number(),
   book_id: z.number().nullable(),
   book_title: z.string(),
   phase: z.string(),
   error_message: z.string(),
+  // Optional (#1736): present only for a forced-import refusal; ordinary failures omit it.
+  refusal_reason: forcedImportRefusedReasonSchema.optional(),
 });
 
 export const reviewNeededPayload = z.object({

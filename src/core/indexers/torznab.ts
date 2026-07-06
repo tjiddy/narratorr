@@ -8,6 +8,7 @@ import {
   type SearchResult,
 } from './types.js';
 import { buildMagnetUri } from '../utils/magnet.js';
+import { parseOptionalNumber } from './parse-attr.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
@@ -191,11 +192,10 @@ export class TorznabIndexer implements IndexerAdapter {
           ? Number(attrs.size)
           : Number($item.find('enclosure').attr('length')) || undefined;
 
-      const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
       const finalSize = size || undefined;
-      const finalGrabs = grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined;
-      const seeders = attrs.seeders != null ? Number(attrs.seeders) : undefined;
-      const leechers = attrs.leechers != null ? Number(attrs.leechers) : undefined;
+      const finalGrabs = parseOptionalNumber(attrs.grabs);
+      const seeders = parseOptionalNumber(attrs.seeders);
+      const leechers = parseOptionalNumber(attrs.leechers);
       const language = normalizeLanguage(attrs.language);
 
       results.push({

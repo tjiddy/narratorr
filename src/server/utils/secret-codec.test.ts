@@ -13,7 +13,6 @@ import {
   encryptFields,
   decryptFields,
   maskFields,
-  redactSecrets,
   resolveSentinelFields,
   SentinelOnNonSecretFieldError,
   loadEncryptionKey,
@@ -677,21 +676,6 @@ describe('SecretCodec', () => {
     });
   });
 
-  describe('redactSecrets', () => {
-    it('redactSecrets replaces secret fields with [REDACTED]', () => {
-      const settings = { apiKey: 'my-key', hostname: 'example.com' };
-      const redacted = redactSecrets('indexer', { ...settings });
-      expect(redacted.apiKey).toBe('[REDACTED]');
-      expect(redacted.hostname).toBe('example.com');
-    });
-
-    it('redactSecrets leaves non-secret fields untouched', () => {
-      const settings = { hostname: 'example.com', pageLimit: 50 };
-      const redacted = redactSecrets('indexer', settings);
-      expect(redacted.hostname).toBe('example.com');
-      expect(redacted.pageLimit).toBe(50);
-    });
-  });
 });
 
 describe('resolveSentinelFields', () => {

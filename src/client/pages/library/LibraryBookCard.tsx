@@ -4,7 +4,7 @@ import { useClickOutside } from '@/hooks/useClickOutside';
 import type { LibraryBookListItem } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
 import { resolveCoverUrl } from '@/lib/url-utils';
-import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
+import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon, AlertTriangleIcon } from '@/components/icons';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
 import { BookContextMenu } from './BookContextMenu.js';
 import { requireDefined } from '../../../shared/utils/assert.js';
@@ -37,7 +37,12 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   const menuAreaRef = useRef<HTMLDivElement>(null);
   useClickOutside(menuAreaRef, onMenuClose, isMenuOpen);
   const canRetryImport = useRetryImportAvailable(book.id, book.status);
-  const isMissing = book.status === 'missing' || book.status === 'failed';
+  // #1663: stop conflating `failed` with `missing`. `missing` keeps the broken-link
+  // "files missing from disk" chip; `failed` renders a distinct import-failed chip whose
+  // copy reflects retry availability (driven by the existing per-book retry signal).
+  const isMissing = book.status === 'missing';
+  const isFailed = book.status === 'failed';
+  const failedTooltip = canRetryImport ? 'Import failed — retry available' : 'Import failed';
   const isCollapsed = (collapsedCount ?? 0) > 0;
   const statusBar = requireDefined(
     bookStatusConfig[book.status],
@@ -69,8 +74,8 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           </div>
         )}
 
-        {/* Top-left chip stack — missing indicator + collapsed badge */}
-        {(isMissing || (collapsedCount != null && collapsedCount > 0)) && (
+        {/* Top-left chip stack — missing / import-failed indicator + collapsed badge */}
+        {(isMissing || isFailed || (collapsedCount != null && collapsedCount > 0)) && (
           <div className="absolute top-2 left-2 z-10 flex flex-col gap-1.5">
             {isMissing && (
               <div
@@ -78,6 +83,14 @@ export const LibraryBookCard = memo(function LibraryBookCard({
                 title="Files missing from disk"
               >
                 <BrokenLinkIcon className="w-3.5 h-3.5 text-red-400 drop-shadow-[0_0_3px_rgba(239,68,68,0.4)]" />
+              </div>
+            )}
+            {isFailed && (
+              <div
+                className="w-7 h-7 flex items-center justify-center rounded-lg backdrop-blur-md bg-black/40 ring-1 ring-amber-500/20 shadow-[0_0_8px_-2px_rgba(245,158,11,0.3)]"
+                title={failedTooltip}
+              >
+                <AlertTriangleIcon className="w-3.5 h-3.5 text-amber-400 drop-shadow-[0_0_3px_rgba(245,158,11,0.4)]" />
               </div>
             )}
             {collapsedCount != null && collapsedCount > 0 && (
@@ -125,6 +138,13 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>
             <p className="text-xs text-white/70 truncate mt-0.5">{book.authors[0]?.name}</p>
+            {/* Edition label (#1712) — individual-book tiles only, so two same-title
+                recordings render as visually distinct tiles. Hidden on a collapsed series
+                tile (#1742): the label is per-recording and would mislabel the group.
+                Renders nothing when null/absent. */}
+            {!isCollapsed && book.editionLabel && (
+              <p className="text-[11px] text-amber-300/80 truncate mt-0.5" data-testid="edition-label">{book.editionLabel}</p>
+            )}
           </div>
 
           {/* Hover expand: narrator + series */}

@@ -60,6 +60,22 @@ describe('LibraryBookCard', () => {
       renderWithProviders(<LibraryBookCard {...defaultProps()} />);
       expect(screen.getByRole('link')).toBeInTheDocument();
     });
+
+    it('renders the edition label when present (#1712)', () => {
+      const book = createMockLibraryBook({ editionLabel: 'Full Cast' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('edition-label')).toHaveTextContent('Full Cast');
+    });
+
+    it('renders nothing for the edition label when null/absent (#1712)', () => {
+      const nullLabel = createMockLibraryBook({ editionLabel: null });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book: nullLabel })} />);
+      expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
+
+      // Absent key (factory omits it) behaves identically to null.
+      renderWithProviders(<LibraryBookCard {...defaultProps()} />);
+      expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
+    });
   });
 
   describe('cover image', () => {
@@ -83,38 +99,61 @@ describe('LibraryBookCard', () => {
     });
   });
 
-  describe('missing indicator', () => {
+  // #1663 — the top-left chip no longer conflates `failed` with `missing`. `missing` keeps
+  // the broken-link "files missing from disk" chip; `failed` renders a distinct import-failed
+  // chip whose tooltip reflects retry availability (driven by useRetryImportAvailable).
+  describe('missing / import-failed indicator', () => {
     it('renders frosted chip with broken-link icon for missing status', () => {
       const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
 
-    it('renders frosted chip with broken-link icon for failed status', () => {
+    it('failed status does NOT render the files-missing chip', () => {
       const book = createMockLibraryBook({ status: 'failed' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
-      expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
     });
 
-    it('does not render chip for imported status', () => {
+    it('failed status renders a distinct import-failed chip (retry unavailable copy by default)', () => {
+      // Default api mock returns { available: false } → "Import failed".
+      const book = createMockLibraryBook({ status: 'failed' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTitle('Import failed')).toBeInTheDocument();
+    });
+
+    it('failed status with retry available shows the retry-available copy', async () => {
+      vi.mocked(api.checkRetryImportAvailable).mockResolvedValue({ available: true });
+      const book = createMockLibraryBook({ status: 'failed' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
+      await waitFor(() => {
+        expect(screen.getByTitle('Import failed — retry available')).toBeInTheDocument();
+      });
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+    });
+
+    it('does not render any chip for imported status', () => {
       const book = createMockLibraryBook({ status: 'imported' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Import failed')).not.toBeInTheDocument();
     });
 
-    it('does not render chip for wanted status', () => {
+    it('does not render any chip for wanted status', () => {
       const book = createMockLibraryBook({ status: 'wanted' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Import failed')).not.toBeInTheDocument();
     });
 
-    it('does not render chip for downloading status', () => {
+    it('does not render any chip for downloading status', () => {
       const book = createMockLibraryBook({ status: 'downloading' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Import failed')).not.toBeInTheDocument();
     });
 
-    it('has tooltip text on the chip', () => {
+    it('has tooltip text on the missing chip', () => {
       const book = createMockLibraryBook({ status: 'missing' });
       renderWithProviders(<LibraryBookCard {...defaultProps({ book })} />);
       const chip = screen.getByTitle('Files missing from disk');
@@ -423,6 +462,12 @@ describe('LibraryBookCard', () => {
       expect(screen.queryByText('Michael Kramer')).not.toBeInTheDocument();
       // Series position label is specific to the hover section (title shows series name without position)
       expect(screen.queryByText('The Stormlight Archive #1')).not.toBeInTheDocument();
+    });
+
+    it('hides edition label when collapsedCount > 0 (#1742)', () => {
+      const book = createMockLibraryBook({ editionLabel: 'Full Cast' });
+      renderWithProviders(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
+      expect(screen.queryByTestId('edition-label')).not.toBeInTheDocument();
     });
 
     it('still renders cover image and total book count badge when collapsedCount > 0', () => {

@@ -3,9 +3,11 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
 import { BookService, CoverUploadError } from './book.service.js';
+import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
+import type { ProductionType } from '../../shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
-import { authors, books, bookAuthors } from '../../db/schema.js';
+import { authors, books } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -102,209 +104,6 @@ describe('BookService', () => {
       // Authors should be in position order: 0 first
       expect(result!.authors[0]!.name).toBe('Brandon Sanderson');
       expect(result!.authors[1]!.name).toBe('Second Author');
-    });
-  });
-
-  describe('findDuplicate', () => {
-    it('finds duplicate by ASIN', async () => {
-      // getById after ASIN match: 3 selects
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // ASIN lookup
-        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, importListName: null }]))
-        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
-        .mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.findDuplicate('The Way of Kings', [{ name: 'Brandon Sanderson' }], 'B003P2WO5E');
-      expect(result).not.toBeNull();
-      expect(result!.title).toBe('The Way of Kings');
-    });
-
-    it('finds duplicate by title + primary-author slug (position=0) when no ASIN', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // title+author match
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))  // getById book
-        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
-        .mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.findDuplicate('The Way of Kings', [{ name: 'Brandon Sanderson' }]);
-      expect(result).not.toBeNull();
-      expect(result!.title).toBe('The Way of Kings');
-    });
-
-    it('[A, B] vs [A, C] same title is duplicate (co-author difference ignored)', async () => {
-      // Position-0 author slug matches → duplicate
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // title+position0 author match
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
-        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
-        .mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.findDuplicate('The Way of Kings', [{ name: 'Brandon Sanderson' }, { name: 'Co Author' }]);
-      expect(result).not.toBeNull();
-    });
-
-    it('[A, B] vs [B, A] same title is not duplicate (primary author differs)', async () => {
-      // When position-0 author is different (B vs A), no match
-      db.select.mockReturnValueOnce(mockDbChain([]));  // title+position0 author: not found
-
-      const result = await service.findDuplicate('The Way of Kings', [{ name: 'Second Author' }]);
-      expect(result).toBeNull();
-    });
-
-    it('returns null when no duplicate', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([]))  // ASIN lookup
-        .mockReturnValueOnce(mockDbChain([]));  // title+author lookup
-
-      const result = await service.findDuplicate('New Book', [{ name: 'New Author' }], 'B000NEW');
-      expect(result).toBeNull();
-    });
-
-    it('with no authors array, only ASIN matching applies', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // ASIN match
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
-        .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.findDuplicate('Title', undefined, 'B003P2WO5E');
-      expect(result).not.toBeNull();
-    });
-
-    it('finds duplicate by title only when no authors and no ASIN (#246)', async () => {
-      // title-only lookup → match, then getById
-      // JS eval order: outer db.select() first, then inner db.select() for notExists subquery
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // outer title-only query match
-        .mockReturnValueOnce(mockDbChain([]))            // notExists subquery builder (consumed but not awaited)
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
-        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
-        .mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.findDuplicate('The Way of Kings');
-      expect(result).not.toBeNull();
-      expect(result!.title).toBe('The Way of Kings');
-    });
-
-    it('finds duplicate by title only with empty authors array (#246)', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // outer query
-        .mockReturnValueOnce(mockDbChain([]))            // notExists subquery
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
-        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
-        .mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.findDuplicate('The Way of Kings', []);
-      expect(result).not.toBeNull();
-    });
-
-    it('returns null for title-only when no match found (#246)', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([]))   // outer title-only query: not found
-        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
-
-      const result = await service.findDuplicate('Nonexistent Book');
-      expect(result).toBeNull();
-    });
-
-    it('skips ASIN check when not provided, falls through to title+author', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));  // title+author: not found
-
-      const result = await service.findDuplicate('The Way of Kings', [{ name: 'Brandon Sanderson' }], undefined);
-      expect(result).toBeNull();
-      expect(db.select).toHaveBeenCalledTimes(1);
-    });
-
-    // #253 — title-only branch must exclude authored books
-    it('title-only: does NOT match an authored book with the same title → returns null (#253)', async () => {
-      // JS eval: outer db.select() first, then inner db.select() for notExists
-      const outerChain = mockDbChain([]);
-      const subqueryChain = mockDbChain([]);
-      db.select
-        .mockReturnValueOnce(outerChain)    // outer title-only query: no authorless match
-        .mockReturnValueOnce(subqueryChain); // notExists subquery builder
-
-      const result = await service.findDuplicate('The Way of Kings');
-      expect(result).toBeNull();
-      expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery, no getById
-
-      // Verify the full title-only predicate contract: and(eq(books.title, title), notExists(bookAuthors correlated)) (#253)
-      // Helper: recursively find a column reference by table name and column name in Drizzle SQL tree
-      const drizzleNameSym = Symbol.for('drizzle:Name');
-      function findColumn(node: unknown, tableName: string, colName: string): boolean {
-        if (!node || typeof node !== 'object') return false;
-        const obj = node as Record<string | symbol, unknown>;
-        // Column reference: has .name and .table[Symbol.for('drizzle:Name')]
-        if (obj.name === colName && typeof obj.table === 'object' && obj.table !== null
-          && (obj.table as Record<symbol, unknown>)[drizzleNameSym] === tableName) return true;
-        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findColumn(c, tableName, colName));
-        return false;
-      }
-      function findText(node: unknown, needle: string): boolean {
-        if (!node || typeof node !== 'object') return false;
-        const obj = node as Record<string, unknown>;
-        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes(needle))) return true;
-        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findText(c, needle));
-        return false;
-      }
-
-      const outerWhere = outerChain.where as Mock;
-      expect(outerWhere).toHaveBeenCalledTimes(1);
-      const predicate = outerWhere.mock.calls[0]![0];
-
-      // 1. Outer predicate contains eq(books.title, title) — title column reference present
-      expect(findColumn(predicate, 'books', 'title')).toBe(true);
-
-      // 2. Outer predicate contains "not exists" operator
-      expect(findText(predicate, 'not exists')).toBe(true);
-
-      // 3. Outer query selects from books table
-      expect(outerChain.from).toHaveBeenCalledWith(books);
-
-      // 4. Subquery selects from bookAuthors table
-      expect(subqueryChain.from).toHaveBeenCalledWith(bookAuthors);
-
-      // 5. Subquery where() is eq(bookAuthors.bookId, books.id) — single equality with both operands
-      const subqueryWhere = subqueryChain.where as Mock;
-      expect(subqueryWhere).toHaveBeenCalledTimes(1);
-      const subPredicate = subqueryWhere.mock.calls[0]![0];
-      // eq() produces a flat SQL: [StringChunk(''), Column(book_id), StringChunk(' = '), Column(id), StringChunk('')]
-      const chunks = subPredicate.queryChunks;
-      expect(chunks).toHaveLength(5);
-      // chunk[1]: left operand — bookAuthors.bookId
-      expect(chunks[1].name).toBe('book_id');
-      expect(chunks[1].table[drizzleNameSym]).toBe('book_authors');
-      // chunk[2]: equality operator
-      expect(chunks[2].value).toContain(' = ');
-      // chunk[3]: right operand — books.id
-      expect(chunks[3].name).toBe('id');
-      expect(chunks[3].table[drizzleNameSym]).toBe('books');
-    });
-
-    it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
-      // Outer query returns authorless book (authored excluded by notExists predicate)
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 42 }]))  // outer query: authorless book found
-        .mockReturnValueOnce(mockDbChain([]))             // notExists subquery builder
-        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, id: 42 }, importListName: null }]))  // getById book
-        .mockReturnValueOnce(mockDbChain([]))             // getById authors (authorless)
-        .mockReturnValueOnce(mockDbChain([]));            // getById narrators
-
-      const result = await service.findDuplicate('The Way of Kings');
-      expect(result).not.toBeNull();
-      expect(result!.id).toBe(42);
-      expect(result!.authors).toEqual([]);
-    });
-
-    it('title-only: empty array triggers same authorless-only behavior as undefined (#253)', async () => {
-      // [] hits same title-only branch as undefined
-      db.select
-        .mockReturnValueOnce(mockDbChain([]))   // outer query: no authorless match
-        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
-
-      const result = await service.findDuplicate('The Way of Kings', []);
-      expect(result).toBeNull();
-      expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery
     });
   });
 
@@ -532,6 +331,114 @@ describe('BookService', () => {
     });
   });
 
+  // #1710 F2 — the full buildBookCreatePayload -> create -> books insert contract.
+  // Asserting the payload alone (enrichment-orchestration.helpers.test.ts) would not
+  // catch create() dropping productionType from .values(); these assert the insert.
+  describe('create() persists productionType into the books insert (#1710)', () => {
+    function setupCreateMocks() {
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))                                  // author found
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))    // getById book
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))         // getById authors
+        .mockReturnValueOnce(mockDbChain([]));                                           // getById narrators
+      const bookInsertChain = mockDbChain([{ id: 1 }]);
+      db.insert
+        .mockReturnValueOnce(bookInsertChain)   // book insert (first insert in create())
+        .mockReturnValueOnce(mockDbChain([]));  // bookAuthors insert
+      return bookInsertChain;
+    }
+
+    it('writes the derived production_type from meta.formatType', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await service.create(buildBookCreatePayload(
+        { path: '/x', title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], formatType: 'Unabridged' },
+        'importing',
+      ));
+
+      expect(bookInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ productionType: 'unabridged' }),
+      );
+    });
+
+    it('defaults to unknown when metadata carries no formatType', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await service.create(buildBookCreatePayload(
+        { path: '/x', title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
+        'importing',
+      ));
+
+      expect(bookInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ productionType: 'unknown' }),
+      );
+    });
+
+    // #1710 F3 — the write-boundary productionTypeSchema.parse() guards against a
+    // runtime-invalid value crossing the TS boundary (SQLite text-enums emit no DB
+    // CHECK). If the parse were replaced with a bare `data.productionType ?? 'unknown'`
+    // forward, this test fails: create() must reject and never submit the insert row.
+    it('rejects an invalid productionType before the books insert', async () => {
+      const bookInsertChain = setupCreateMocks();
+
+      await expect(service.create({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        // Cast simulates an invalid value crossing the TypeScript boundary at runtime.
+        productionType: 'not-a-real-type' as ProductionType,
+      })).rejects.toThrow();
+
+      expect(bookInsertChain.values).not.toHaveBeenCalled();
+    });
+  });
+
+  // #1727 — parity with create()'s write-boundary productionTypeSchema.parse().
+  // update() must validate a present productionType before the transaction (SQLite
+  // text-enums emit no DB CHECK), but — unlike create() — must NOT default-fill an
+  // absent key to 'unknown': a partial update leaves the existing value untouched.
+  describe('update() validates productionType at the write boundary (#1727)', () => {
+    it('rejects an invalid productionType before the books update', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await expect(service.update(1, {
+        // Cast simulates an invalid value crossing the TypeScript boundary at runtime.
+        productionType: 'not-a-real-type' as ProductionType,
+      })).rejects.toThrow();
+
+      // Parse fires outside the transaction, so neither the tx nor the .set() runs.
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(updateChain.set).not.toHaveBeenCalled();
+    });
+
+    it('persists a valid productionType through to .set()', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, { productionType: 'full_cast' });
+
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ productionType: 'full_cast' }),
+      );
+    });
+
+    it('does not write or default-fill productionType when the key is absent', async () => {
+      const updateChain = mockDbChain([{ id: 1 }]);
+      db.update.mockReturnValue(updateChain);
+      setupGetById(db);
+
+      await service.update(1, { title: 'New Title' });
+
+      // Absent key → existing value preserved; no 'unknown' default-fill (≠ create()).
+      const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+      expect(setArg).not.toHaveProperty('productionType');
+    });
+  });
+
   describe('update() junction table CRUD', () => {
     it('deletes old bookNarrators rows and re-inserts with updated positions on update', async () => {
       db.update.mockReturnValue(mockDbChain([mockBook]));
@@ -733,8 +640,9 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
 
+      const bookInsertChain = mockDbChain([{ id: 1 }]);
       db.insert
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))    // book insert
+        .mockReturnValueOnce(bookInsertChain)              // book insert
         .mockReturnValueOnce(mockDbChain([]))              // bookAuthors
         .mockReturnValueOnce(mockDbChain([mockNarrator]))  // narrator insert
         .mockReturnValueOnce(mockDbChain([]));             // bookNarrators
@@ -752,6 +660,12 @@ describe('BookService', () => {
       });
 
       expect(result.title).toBe('The Way of Kings');
+      // #1716 — series metadata no longer carries seriesAsin/seriesProvider, but
+      // the Series-card path is intact: scalar name/position still reach the
+      // books insert and drive the series-link upsert.
+      expect(bookInsertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ seriesName: 'The Stormlight Archive', seriesPosition: 1 }),
+      );
     });
 
     it('persists subtitle and publisher to the books insert (#1614)', async () => {
@@ -1774,6 +1688,30 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(setCall).toHaveBeenCalledWith(expect.objectContaining({
         coverUrl: '/api/books/1/cover',
       }));
+    });
+
+    // #1721 — a transient post-write reload failure must not drop the route's connector refresh.
+    // uploadCover falls back to the pre-write `book` so it always resolves { book, coverOutcome }
+    // (never throws on a reload miss) and the coverOutcome stays 'written' (the cover.* file committed).
+    it("falls back to the pre-write book and keeps coverOutcome 'written' when the post-write reload fails", async () => {
+      vi.mocked(writeFile).mockReset();
+      vi.mocked(rename).mockReset();
+      vi.mocked(readdir).mockReset();
+      vi.mocked(unlink).mockReset();
+      const preWriteBook = createMockDbBook({ id: 1, path: '/library/book', coverUrl: null });
+      const getByIdSpy = vi.spyOn(service, 'getById')
+        .mockResolvedValueOnce(preWriteBook as Awaited<ReturnType<BookService['getById']>>) // initial existence/path check
+        .mockRejectedValueOnce(new Error('libSQL read failed')); // post-write reload throws
+      (writeFile as Mock).mockResolvedValue(undefined);
+      (rename as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValue([]);
+      db.update.mockReturnValue(mockDbChain([preWriteBook]));
+
+      const result = await service.uploadCover(1, testBuffer, 'image/jpeg');
+
+      expect(result.coverOutcome).toBe('written');
+      expect(result.book).toBe(preWriteBook);
+      getByIdSpy.mockRestore();
     });
 
     it('throws CoverUploadError with NO_PATH when book has no path', async () => {

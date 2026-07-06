@@ -1,8 +1,9 @@
 import { cleanEmptyParents } from '../utils/paths.js';
 import { deleteManagedBookFiles, type DeleteManagedFilesResult } from '../utils/delete-managed-files.js';
 import { uploadBookCover, CoverUploadError } from './cover-upload.js';
+import type { CoverWriteOutcome } from './cover-write.js';
 import { SUPPORTED_COVER_MIMES } from '../utils/mime.js';
-import { eq, and, sql, notExists, inArray } from 'drizzle-orm';
+import { eq, sql, inArray } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -13,8 +14,26 @@ import { generatePublicId } from '../utils/public-id.js';
 import { type MetadataService } from './metadata.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRow } from './types.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
+import { productionTypeSchema, type BookStatus, type ProductionType } from '../../shared/schemas/book.js';
+import { canonicalizeAsin } from '../../shared/asin.js';
+import { isUniqueViolation } from '../../shared/error-message.js';
+import {
+  OwnedRecordingError,
+  ASIN_UNIQUE_VIOLATION,
+  resolveDuplicate,
+  findPathOwners,
+  type DuplicateCandidate,
+  type DuplicateResolution,
+} from './book-dedup.js';
 
+// Re-export the dedup primitives so callers keep importing them from this service.
+export {
+  OwnedRecordingError,
+  buildForcedImportRefusedReason,
+  type DuplicateCandidate,
+  type DuplicateResolution,
+  type DuplicateVerdict,
+} from './book-dedup.js';
 
 export { CoverUploadError } from './cover-upload.js';
 
@@ -40,10 +59,8 @@ export interface FixMatchReplacement {
   publishedDate?: string | undefined;
   seriesName?: string | undefined;
   seriesPosition?: number | undefined;
-  seriesAsin?: string | undefined;
   genres?: string[] | undefined;
   isbn?: string | undefined;
-  seriesProvider?: string | undefined;
 }
 
 function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof books.$inferInsert> {
@@ -53,7 +70,8 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
     description: r.description ?? null,
     publisher: r.publisher ?? null,
     coverUrl: r.coverUrl ?? null,
-    asin: r.asin ?? null,
+    // Canonicalize the replacement ASIN at this write boundary (#1733).
+    asin: canonicalizeAsin(r.asin),
     isbn: r.isbn ?? null,
     seriesName: r.seriesName ?? null,
     seriesPosition: r.seriesPosition ?? null,
@@ -121,61 +139,21 @@ export class BookService {
     };
   }
 
-  async findDuplicate(
-    title: string,
-    authorList?: { name: string; asin?: string | undefined }[] | undefined,
-    asin?: string | undefined,
-  ): Promise<BookWithAuthor | null> {
-    // Check by ASIN first if available (opportunistic)
-    if (asin) {
-      const byAsin = await this.db
-        .select({ id: books.id })
-        .from(books)
-        .where(eq(books.asin, asin))
-        .limit(1);
+  /**
+   * Three-way, multi-incumbent-aware duplicate resolution (#1711) — delegates to
+   * the free function in `book-dedup.ts` (keeps this file under the line cap).
+   */
+  async findDuplicate(candidate: DuplicateCandidate): Promise<DuplicateResolution> {
+    return resolveDuplicate(this.db, (id) => this.getById(id), candidate);
+  }
 
-      if (byAsin.length > 0) {
-        return this.getById(byAsin[0]!.id);
-      }
-    }
-
-    // Check by title + position-0 author slug
-    if (authorList && authorList.length > 0) {
-      const primarySlug = slugify(authorList[0]!.name);
-      const byTitleAuthor = await this.db
-        .select({ id: books.id })
-        .from(books)
-        .innerJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
-        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-        .where(and(eq(books.title, title), eq(authors.slug, primarySlug)))
-        .limit(1);
-
-      if (byTitleAuthor.length > 0) {
-        return this.getById(byTitleAuthor[0]!.id);
-      }
-    }
-
-    // Title-only dedup when no authors and no ASIN — shared across manual add,
-    // library import, and discovery callers (#246)
-    // Only match books with zero authors so authored "Shogun" doesn't block authorless "Shogun" (#253)
-    if (!asin && (!authorList || authorList.length === 0)) {
-      const byTitle = await this.db
-        .select({ id: books.id })
-        .from(books)
-        .where(and(
-          eq(books.title, title),
-          notExists(
-            this.db.select({ id: bookAuthors.bookId }).from(bookAuthors).where(eq(bookAuthors.bookId, books.id)),
-          ),
-        ))
-        .limit(1);
-
-      if (byTitle.length > 0) {
-        return this.getById(byTitle[0]!.id);
-      }
-    }
-
-    return null;
+  /**
+   * Return EVERY library row whose stored `path` equals the given normalized path
+   * (#1711) — the cardinality input for the occupied-target collision fence. The
+   * CALLER normalizes before passing so this stays a pure lookup.
+   */
+  async findPathOwners(normalizedPath: string): Promise<BookWithAuthor[]> {
+    return findPathOwners(this.db, (id) => this.getById(id), normalizedPath);
   }
 
   /**
@@ -277,13 +255,12 @@ export class BookService {
     isbn?: string | undefined;
     seriesName?: string | undefined;
     seriesPosition?: number | undefined;
-    seriesAsin?: string | undefined;
-    seriesProvider?: string | undefined;
     duration?: number | undefined;
     publishedDate?: string | undefined;
     genres?: string[] | undefined;
     status?: BookRow['status'] | undefined;
     enrichmentStatus?: BookRow['enrichmentStatus'] | undefined;
+    productionType?: ProductionType | undefined;
     providerId?: string | undefined;
     importListId?: number | undefined;
   }): Promise<BookWithAuthor> {
@@ -301,61 +278,104 @@ export class BookService {
       }
     }
 
-    const bookId = await this.db.transaction(async (tx) => {
-      const result = await tx
-        .insert(books)
-        .values({
-          publicId: generatePublicId('bk'),
-          title: data.title,
-          subtitle: data.subtitle,
-          description: data.description,
-          publisher: data.publisher,
-          coverUrl: data.coverUrl,
-          asin: enrichedAsin,
-          isbn: data.isbn,
-          seriesName: data.seriesName,
-          seriesPosition: data.seriesPosition,
-          duration: data.duration,
-          publishedDate: data.publishedDate,
-          genres: data.genres,
-          status: data.status || 'wanted',
-          enrichmentStatus: data.enrichmentStatus,
-          importListId: data.importListId,
-        })
-        .returning();
+    // Canonicalize at the create write boundary (#1733) so the stored value, the
+    // create-time race guard below, and the durable `upper(asin)` unique index
+    // all agree on a single (UPPERCASE) canonical form — otherwise a case-drifted
+    // ASIN slips two owned rows past both the guard and the constraint.
+    const canonicalAsin = canonicalizeAsin(enrichedAsin);
 
-      const id = result[0]!.id;
+    let bookId: number;
+    try {
+      bookId = await this.db.transaction(async (tx) => {
+        const result = await tx
+          .insert(books)
+          .values({
+            publicId: generatePublicId('bk'),
+            title: data.title,
+            subtitle: data.subtitle,
+            description: data.description,
+            publisher: data.publisher,
+            coverUrl: data.coverUrl,
+            asin: canonicalAsin,
+            isbn: data.isbn,
+            seriesName: data.seriesName,
+            seriesPosition: data.seriesPosition,
+            duration: data.duration,
+            publishedDate: data.publishedDate,
+            genres: data.genres,
+            status: data.status || 'wanted',
+            enrichmentStatus: data.enrichmentStatus,
+            // SQLite text-enums emit no DB CHECK (drizzle-sqlite-text-enum-no-db-check),
+            // so validate the value at the write boundary; absent → column default.
+            productionType: productionTypeSchema.parse(data.productionType ?? 'unknown'),
+            importListId: data.importListId,
+          })
+          .returning();
 
-      await this.syncAuthors(tx, id, data.authors);
-      if (data.narrators && data.narrators.length > 0) {
-        await this.syncNarrators(tx, id, data.narrators);
+        const id = result[0]!.id;
+
+        await this.syncAuthors(tx, id, data.authors);
+        if (data.narrators && data.narrators.length > 0) {
+          await this.syncNarrators(tx, id, data.narrators);
+        }
+
+        // Upsert series + local member row at create time so the Series card
+        // can render immediately. The Hardcover lazy-populate flow at GET time
+        // replaces this local row with canonical Hardcover members when a key
+        // is configured.
+        if (data.seriesName) {
+          await upsertSeriesLink(tx, this.log, id, {
+            name: data.seriesName,
+            position: data.seriesPosition ?? null,
+            title: data.title,
+            authorName: data.authors[0]?.name ?? null,
+          });
+        }
+
+        return id;
+      });
+    } catch (error: unknown) {
+      // Same-ASIN create-time race against the partial unique index (#1711).
+      // Two non-null equal ASINs are `same-recording` by the resolver contract,
+      // so this is a deterministically-owned recording, not a candidate for
+      // review: resolve the incumbent and throw a typed `OwnedRecordingError`
+      // so each caller fail-closes (409 / owned skip, never enqueue).
+      if (canonicalAsin && isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
+        // sourceBookId sentinel (-1): the new row rolled back, so there is no
+        // self-row to exclude — any match is the incumbent.
+        const collision = await this.findAsinCollision(-1, canonicalAsin);
+        if (collision) {
+          throw new OwnedRecordingError({ existingBookId: collision.conflictBookId, title: collision.conflictTitle, reason: 'asin-owned' });
+        }
       }
-
-      // Upsert series + local member row at create time so the Series card
-      // can render immediately. The Hardcover lazy-populate flow at GET time
-      // replaces this local row with canonical Hardcover members when a key
-      // is configured.
-      if (data.seriesName) {
-        await upsertSeriesLink(tx, this.log, id, {
-          name: data.seriesName,
-          position: data.seriesPosition ?? null,
-          title: data.title,
-          authorName: data.authors[0]?.name ?? null,
-        });
-      }
-
-      return id;
-    });
+      throw error;
+    }
 
     this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
-    this.trackUnmatchedGenres(data.genres).catch((error) => {
-      this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
-    });
+    this.trackUnmatchedGenres(data.genres).catch((error) => this.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres'));
     return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 
   async update(id: number, data: { [K in keyof NewBook]?: NewBook[K] | undefined } & { narrators?: string[] | undefined; authors?: { name: string; asin?: string | undefined }[] | undefined }): Promise<BookWithAuthor | null> {
     const { narrators: narratorNames, authors: authorList, ...bookData } = data;
+
+    // Canonicalize the ASIN at this service-internal write boundary (#1733). The
+    // HTTP `updateBookBodySchema` is `.strict()` and carries no `asin` key, so
+    // this only fires for internal callers (enrichment writeback, Fix Match
+    // prep, tests) — but they must store the same canonical form as `create`.
+    if ('asin' in bookData) {
+      bookData.asin = canonicalizeAsin(bookData.asin as string | null | undefined);
+    }
+
+    // Validate the production_type enum at this write boundary, parity with
+    // create() (drizzle-sqlite-text-enum-no-db-check: SQLite text-enums emit no
+    // DB CHECK). Gate on key *presence*, not truthiness — a partial update that
+    // omits productionType must leave the existing value untouched, so unlike
+    // create() there is no `?? 'unknown'` default-fill. A present-but-invalid
+    // value parses to a throw, rejecting before the transaction/write.
+    if ('productionType' in bookData) {
+      bookData.productionType = productionTypeSchema.parse(bookData.productionType);
+    }
 
     const updated = await this.db.transaction(async (tx) => {
       const result = await tx
@@ -397,10 +417,17 @@ export class BookService {
    * Excludes the source book itself (a self-match is not a conflict).
    */
   async findAsinCollision(sourceBookId: number, asin: string): Promise<{ conflictBookId: number; conflictTitle: string } | null> {
+    // Case-insensitive collision check (#1733): canonicalize the argument and
+    // compare against `upper(books.asin)` so a case-drifted incumbent is found
+    // (this was the codebase's only case-sensitive ASIN comparison). Matching on
+    // the `upper(asin)` expression also lets the query use the new expression
+    // unique index. A null/empty argument canonicalizes to null → no collision.
+    const canonical = canonicalizeAsin(asin);
+    if (!canonical) return null;
     const rows = await this.db
       .select({ id: books.id, title: books.title })
       .from(books)
-      .where(eq(books.asin, asin))
+      .where(eq(sql`upper(${books.asin})`, canonical))
       .limit(2);
     for (const r of rows) {
       if (r.id !== sourceBookId) return { conflictBookId: r.id, conflictTitle: r.title };
@@ -484,12 +511,17 @@ export class BookService {
   /**
    * Upload a custom cover image for a book.
    * Validates book exists and has a path, then delegates to uploadBookCover utility.
+   *
+   * Returns the reloaded book PLUS the {@link CoverWriteOutcome} from the writer so the route can
+   * fire a connector refresh keyed off whether the `cover.*` file actually materialized — including
+   * the case where the post-rename DB `coverUrl` update threw (outcome stays `'written'`). Pre-rename
+   * failures still reject through `uploadBookCover` (the route keeps its existing error response).
    */
   async uploadCover(
     bookId: number,
     buffer: Buffer,
     mimeType: string,
-  ): Promise<BookWithAuthor> {
+  ): Promise<{ book: BookWithAuthor; coverOutcome: CoverWriteOutcome }> {
     if (!SUPPORTED_COVER_MIMES.has(mimeType)) {
       throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
     }
@@ -502,8 +534,13 @@ export class BookService {
       throw new CoverUploadError('Book has no path on disk', 'NO_PATH');
     }
 
-    await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
-    return this.getById(bookId) as Promise<BookWithAuthor>;
+    const coverOutcome = await uploadBookCover(bookId, book.path, buffer, mimeType, this.db, this.log);
+    // Fall back to the pre-write `book` if the post-write reload throws, so the route always receives
+    // usable state and still fires its `'metadata'` refresh. `finalizeCoverWrite` deliberately keeps
+    // `coverOutcome === 'written'` on a post-rename DB failure *so the refresh fires* — re-throwing
+    // here on a reload miss would re-introduce the very failure point it avoids.
+    const reloaded = await this.getById(bookId).catch(() => book) as BookWithAuthor;
+    return { book: reloaded, coverOutcome };
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */

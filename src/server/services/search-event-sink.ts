@@ -7,7 +7,10 @@ import { safeEmit } from '../utils/safe-emit.js';
 export type SearchBook = {
   id: number;
   title: string;
+  /** Minutes-backed `books.duration`; normalized to seconds via `resolveBookQualityInputs` (#1797). */
   duration?: number | null;
+  /** Seconds-backed `books.audioDuration`; takes precedence over `duration` for quality (#1797). */
+  audioDuration?: number | null;
   authors?: Array<{ name: string }> | null;
   narrators?: Array<{ name: string }> | null;
 };

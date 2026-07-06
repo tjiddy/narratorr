@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { queryKeys } from '@/lib/queryKeys';
@@ -15,6 +15,15 @@ import {
 import { setMergeProgress } from './useMergeProgress.js';
 import { handleSearchEvent } from './useSearchProgress.js';
 import { safeParseSseEvent } from '@/lib/sse/safe-parse-event';
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_EVENT } from '../../shared/sse-constants.js';
+
+// Silence threshold for the liveness watchdog (#1798). A deaf (half-open) stream
+// delivers no frames at all — not even heartbeats — yet EventSource keeps
+// `readyState` OPEN and never fires `error`. If more than ~3 heartbeat intervals
+// pass with no frame of any kind, the stream is treated as dead and force-reopened.
+// Derived from the shared cadence (DRY) so tightening the heartbeat also tightens
+// detection without a second constant to keep in sync.
+const SSE_SILENCE_THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3;
 
 // ============================================================================
 // Reactive SSE connection state (F3)
@@ -145,12 +154,29 @@ function asPayload<T extends SSEEventType>(data: SSEEventPayloads[SSEEventType])
  * `streamToken` is the short-lived, session-scoped token (#1453) passed as the
  * `?token=` query param — EventSource cannot set headers. A null token means
  * "not ready yet" and no connection is opened. `onStreamError` (optional) fires
- * on the EventSource `error` event so the caller can re-mint an expired token and
- * reconnect (the token changing re-runs this effect).
+ * on the EventSource `error` event so the caller can re-mint an expired token.
+ *
+ * Reconnect model (#1776): the connection effect is keyed on a `reconnectKey`
+ * generation, NOT on `streamToken`, so a routine 4-minute token refresh does not
+ * churn a healthy stream. The freshest token is held in a ref and read at open
+ * time. A token change only forces a reopen when there is no live stream yet
+ * (first connect) or the current stream has errored (post-remint recovery) — so
+ * a genuinely expired token still reaches the reopen path. The reconnect catch-up
+ * (`invalidateQueries()`) is gated on a ref-backed error flag that survives the
+ * effect rebuild, firing exactly once on the reopen and never on the first connect.
  */
 export function useEventSource(streamToken: string | null, onStreamError?: () => void) {
   const queryClient = useQueryClient();
   const esRef = useRef<EventSource | null>(null);
+  const hadErrorRef = useRef(false);
+  // Wall-clock timestamp of the last frame received on the current stream (any
+  // event, including the `hb` heartbeat). The watchdog compares it against
+  // `Date.now()` to detect a silent stream (#1798).
+  const lastFrameAtRef = useRef(0);
+  const tokenRef = useRef<string | null>(streamToken);
+  const onStreamErrorRef = useRef(onStreamError);
+  useEffect(() => { onStreamErrorRef.current = onStreamError; }, [onStreamError]);
+  const [reconnectKey, setReconnectKey] = useState(0);
 
   const handleEvent = useCallback((type: SSEEventType, data: SSEEventPayloads[typeof type]) => {
     const rule = CACHE_INVALIDATION_MATRIX[type];
@@ -167,60 +193,126 @@ export function useEventSource(streamToken: string | null, onStreamError?: () =>
     dispatchToasts(type, data);
   }, [queryClient]);
 
+  // Opens the stream on the current `reconnectKey`, reading the freshest token
+  // from the ref. Declared before the token effect so that on mount `esRef` is
+  // populated by the time the token effect runs (avoids a spurious reopen).
   useEffect(() => {
-    if (!streamToken) return;
+    const token = tokenRef.current;
+    if (!token) return;
 
-    const url = `${URL_BASE}/api/events?token=${encodeURIComponent(streamToken)}`;
+    const url = `${URL_BASE}/api/events?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
+    // Seed liveness at open time so a slow first frame doesn't trip the watchdog
+    // before the stream has had a chance to deliver anything.
+    lastFrameAtRef.current = Date.now();
+
+    // Any frame — domain event or `hb` heartbeat — proves the stream is live.
+    const refreshLiveness = () => { lastFrameAtRef.current = Date.now(); };
+
+    // Proactively tear down and reopen a stream the browser still believes is
+    // OPEN (#1798). Guarded so a watchdog tick and an `online`/`visibilitychange`
+    // fire in the same frame can't double-bump the reconnect generation. Mirrors
+    // the `onerror` path: set the ref-backed error flag BEFORE closing so the
+    // reopen's `onopen` fires the single catch-up invalidation.
+    let reconnecting = false;
+    const forceReconnect = () => {
+      if (reconnecting) return;
+      reconnecting = true;
+      setSseConnected(false);
+      hadErrorRef.current = true;
+      es.close();
+      esRef.current = null;
+      setReconnectKey((k) => k + 1);
+    };
+
+    const isStale = () => Date.now() - lastFrameAtRef.current > SSE_SILENCE_THRESHOLD_MS;
 
     es.onopen = () => {
+      refreshLiveness();
       setSseConnected(true);
+      if (hadErrorRef.current) {
+        // Reconnected after a drop — invalidate everything to catch up on any
+        // events missed while disconnected. Fires exactly once per reopen.
+        queryClient.invalidateQueries();
+        hadErrorRef.current = false;
+      }
     };
 
     es.onerror = () => {
       setSseConnected(false);
-      // Browser auto-reconnects with the same URL; if the token has expired that
-      // reconnect keeps failing, so ask the caller to re-mint (#1453). A fresh
-      // token changes the effect dependency and reopens the connection.
-      onStreamError?.();
+      hadErrorRef.current = true;
+      // Browser auto-reconnects the same instance; if the token has expired that
+      // reconnect keeps failing, so ask the caller to re-mint (#1453). The fresh
+      // token drives a reopen via the token effect above (which sees the error).
+      onStreamErrorRef.current?.();
     };
 
-    // Listen for each event type — derived from schema (single source of truth)
+    // Listen for each event type — derived from schema (single source of truth).
+    // Every domain listener refreshes liveness so any real traffic counts (AC #2).
     const eventTypes: SSEEventType[] = [...sseEventTypeSchema.options];
 
     for (const type of eventTypes) {
       es.addEventListener(type, (event: MessageEvent) => {
+        refreshLiveness();
         const parsed = safeParseSseEvent(type, event);
         if (parsed === null) return;
         handleEvent(type, parsed);
       });
     }
 
-    // On reconnect (detected via onopen after error), invalidate all queries
-    let hadError = false;
-    const origOnError = es.onerror;
-    es.onerror = (e) => {
-      hadError = true;
-      origOnError?.call(es, e);
+    // The named heartbeat (#1798) is not a domain event — it carries no payload and
+    // is absent from `sseEventTypeSchema`, and EventSource routes named events by
+    // name (not to `onmessage`), so it needs its own listener. It exists purely to
+    // refresh liveness on an otherwise idle stream.
+    es.addEventListener(SSE_HEARTBEAT_EVENT, refreshLiveness);
+
+    // Watchdog: a deaf stream (NAT flush, proxy restart, laptop sleep/wake with no
+    // RST) delivers no frames while `readyState` stays OPEN and `onerror` never
+    // fires. Poll on the heartbeat cadence; once silence exceeds the threshold,
+    // force the reopen so the recovery + catch-up path runs (AC #1).
+    const watchdog = setInterval(() => {
+      if (isStale()) forceReconnect();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Cheap adjunct (#1798): a sleep/wake or network flap often surfaces as an
+    // `online` or `visibilitychange` before the watchdog's next tick — check
+    // liveness immediately so recovery isn't delayed by up to a full interval.
+    const onOnline = () => { if (isStale()) forceReconnect(); };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isStale()) forceReconnect();
     };
-    const origOnOpen = es.onopen;
-    es.onopen = (e) => {
-      setSseConnected(true);
-      if (hadError) {
-        // Reconnected — invalidate everything to catch up
-        queryClient.invalidateQueries();
-        hadError = false;
-      }
-      origOnOpen?.call(es, e);
-    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       setSseConnected(false);
+      clearInterval(watchdog);
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       es.close();
       esRef.current = null;
     };
-  }, [streamToken, handleEvent, queryClient, onStreamError]);
+  }, [reconnectKey, handleEvent, queryClient]);
+
+  // Keep the freshest token in a ref and decide whether it warrants a reconnect
+  // by bumping the generation (which re-runs the connection effect above).
+  //  - (Re)open when there is a token but no live stream (first connect after a
+  //    null token) or the current one has errored (post-remint recovery). Never
+  //    on a healthy refresh, which would churn the connection.
+  //  - Close when the token is cleared to null while a stream is still open
+  //    (e.g. logout / token revocation) — the connection effect re-runs, its
+  //    cleanup closes the old EventSource, and the null token short-circuits the
+  //    reopen, leaving no dangling connection on the revoked token.
+  useEffect(() => {
+    tokenRef.current = streamToken;
+    const hasStream = esRef.current !== null;
+    const needsReopen = !!streamToken && (!hasStream || hadErrorRef.current);
+    const needsClose = !streamToken && hasStream;
+    if (needsReopen || needsClose) {
+      setReconnectKey((k) => k + 1);
+    }
+  }, [streamToken]);
 }
 
 function dispatchToasts(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {

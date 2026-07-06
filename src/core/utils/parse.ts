@@ -291,8 +291,11 @@ export interface MultiPartResult {
 const MULTI_PART_PATTERNS = [
   // Quoted: "28" of "30"
   /"(\d{1,3})"\s*of\s*"(\d{1,3})"/i,
-  // Unquoted word-bounded: 08 of 30
-  /\b(\d{1,3})\s+of\s+(\d{1,3})\b/i,
+  // Unquoted word-bounded: 08 of 30. Skips series-position naming (Book 1 of 14,
+  // Volume 2 of 7, Vol. 3 of 9, #1 of 14) via negative lookbehind — those are series
+  // numbering, not yEnc file-part signals. `part` is intentionally NOT skip-listed:
+  // "Part 2 of 5" is a genuine multi-part signal and must still match.
+  /(?<!\b(?:book|volume|vol\.?)\s*)(?<!#\s*)\b(\d{1,3})\s+of\s+(\d{1,3})\b/i,
   // Parenthesized slash: (8/30)
   /\((\d{1,3})\s*\/\s*(\d{1,3})\)/,
 ] as const;

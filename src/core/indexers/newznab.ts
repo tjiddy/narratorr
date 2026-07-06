@@ -9,6 +9,7 @@ import {
 } from './types.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { parseOptionalNumber } from './parse-attr.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { normalizeBaseUrl } from '../../shared/normalize-base-url.js';
@@ -191,7 +192,6 @@ export class NewznabIndexer implements IndexerAdapter {
     };
   }
 
-  // eslint-disable-next-line complexity -- field aggregation across attrs/enclosure with conditional-spread for omitting undefined optional fields
   private buildKeptResult(
     $item: ReturnType<cheerio.CheerioAPI>,
     $: cheerio.CheerioAPI,
@@ -211,9 +211,8 @@ export class NewznabIndexer implements IndexerAdapter {
         ? Number(attrs.size)
         : Number($item.find('enclosure').attr('length')) || undefined;
 
-    const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
     const finalSize = size || undefined;
-    const finalGrabs = grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined;
+    const finalGrabs = parseOptionalNumber(attrs.grabs);
     const language = normalizeLanguage(attrs.language);
     const newsgroup = attrs.group || undefined;
 

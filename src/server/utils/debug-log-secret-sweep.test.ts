@@ -17,11 +17,12 @@ import { serializeError } from './serialize-error.js';
 
 const SECRET_PATTERN = /apikey|api_key|password|session|mam_id|cookie|authorization|bearer/i;
 
-function makeLogger(): { logger: FastifyBaseLogger; debugCalls: unknown[] } {
+function makeLogger(): { logger: FastifyBaseLogger; debugCalls: unknown[]; infoCalls: unknown[] } {
   const debugCalls: unknown[] = [];
+  const infoCalls: unknown[] = [];
   const logger = {
     debug: vi.fn((arg: unknown, _msg?: string) => { debugCalls.push(arg); }),
-    info: vi.fn(),
+    info: vi.fn((arg: unknown, _msg?: string) => { infoCalls.push(arg); }),
     warn: vi.fn(),
     error: vi.fn(),
     fatal: vi.fn(),
@@ -30,7 +31,7 @@ function makeLogger(): { logger: FastifyBaseLogger; debugCalls: unknown[] } {
     silent: vi.fn(),
     level: 'debug',
   } as unknown as FastifyBaseLogger;
-  return { logger, debugCalls };
+  return { logger, debugCalls, infoCalls };
 }
 
 function makeUsenet(overrides: Partial<SearchResult> = {}): SearchResult {
@@ -75,23 +76,26 @@ describe('debug-log secret sweep (#932 AC7)', () => {
     }
   });
 
-  it('multi-part filter logs only title + reason + matchedPattern', () => {
-    const { logger, debugCalls } = makeLogger();
+  it('multi-part filter logs only title + reason + matchedPattern (at info level)', () => {
+    const { logger, infoCalls } = makeLogger();
     const results: SearchResult[] = [
       makeUsenet({ nzbName: 'Book "28" of "30" - apikey=SHOULD-NOT-LEAK' }),
     ];
 
+    // Mirror the production log site in applyMultiPartFilterAndRank, which emits at
+    // info (not debug) so a "wanted book stopped resolving" investigation has
+    // forensics without enabling debug logging (#1801).
     const { rejectedTitles } = filterMultiPartUsenet(results);
     for (const r of rejectedTitles) {
-      logger.debug({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
+      logger.info({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
     }
 
     // Title contains the secret-shaped string verbatim — this is the test's
     // adversarial input. The log surface here is title-scoped (title can echo
     // back what came over the wire), so we assert the log object's STRUCTURE
     // (no extra fields) rather than that the title literal is sanitized.
-    expect(debugCalls.length).toBe(1);
-    const fields = Object.keys(debugCalls[0] as object).sort();
+    expect(infoCalls.length).toBe(1);
+    const fields = Object.keys(infoCalls[0] as object).sort();
     expect(fields).toEqual(['matchedPattern', 'reason', 'title']);
   });
 

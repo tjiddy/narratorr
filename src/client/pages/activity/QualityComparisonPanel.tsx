@@ -61,6 +61,13 @@ function ProbeFailureMessage({ probeError, holdReasons }: { probeError: string |
       </p>
     );
   }
+  if (holdReasons.includes('unreadable_codec')) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {probeError ?? 'Audio files are present but their codec could not be read.'} — the format may be unsupported by this server&apos;s FFmpeg. Manual review required.
+      </p>
+    );
+  }
   return (
     <p className="text-sm text-muted-foreground">
       {probeError ? `${probeError} — ` : 'Audio probe failed — '}unable to determine download quality. Manual review required.

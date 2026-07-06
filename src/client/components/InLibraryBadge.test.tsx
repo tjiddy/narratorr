@@ -11,13 +11,8 @@ describe('InLibraryBadge', () => {
     expect(screen.getByText('In Library')).toBeInTheDocument();
   });
 
-  it('hides the text below sm breakpoint by default', () => {
+  it('hides the text below the sm breakpoint by default', () => {
     renderWithProviders(<InLibraryBadge bookId={1} />);
-    expect(screen.getByText('In Library')).toHaveClass('hidden', 'sm:inline');
-  });
-
-  it('always shows the text when textBreakpoint is omitted via prop default', () => {
-    renderWithProviders(<InLibraryBadge bookId={1} textBreakpoint="sm" />);
     expect(screen.getByText('In Library')).toHaveClass('hidden', 'sm:inline');
   });
 });

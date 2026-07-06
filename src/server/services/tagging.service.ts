@@ -7,6 +7,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { TagMode, RetagExcludableField } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
+import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 // Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
@@ -44,9 +45,14 @@ export interface TagMetadata {
   album?: string;        // book title
   title?: string;        // book title (for single-file) or chapter/part
   composer?: string;     // narrator
-  grouping?: string;     // series name
+  grouping?: string;     // series name (survives M4B; ABS series fallback)
   track?: number;        // track number (multi-file only)
   trackTotal?: number;   // total tracks
+  // ABS-survivable set (#1671): survives MP3 embedded tags; series*/subtitle/asin/
+  // publisher dropped by ffmpeg on M4B (ABS-via-OPF), date/genre/description survive.
+  // `seriesPart` is numeric so position 0 is preserved (`!= null`, not truthy).
+  series?: string; seriesPart?: number; subtitle?: string; asin?: string;
+  publisher?: string; description?: string; date?: string; genre?: string;
 }
 
 export interface TagFileResult {
@@ -61,7 +67,21 @@ export interface RetagResult {
   skipped: number;
   failed: number;
   warnings: string[];
+  /**
+   * Connector-refresh item built from the book's pre-tag-write state (title/author/path loaded
+   * before the irreversible in-place tag rewrite), so the caller can fire the `'metadata'` refresh
+   * without a post-mutation reload that could silently drop it. `null` only when there's no usable
+   * `libraryPath` (empty/missing) — see {@link enqueueRetagRefresh}.
+   */
+  refreshItem: BookRefreshItem | null;
 }
+
+/** String tag field → ffmpeg `-metadata` key. Numeric `seriesPart`/`track` are handled separately. */
+export const STRING_METADATA_TAGS: ReadonlyArray<readonly [keyof TagMetadata, string]> = [
+  ['artist', 'artist'], ['albumArtist', 'album_artist'], ['album', 'album'], ['title', 'title'],
+  ['composer', 'composer'], ['grouping', 'grouping'], ['series', 'series'], ['subtitle', 'subtitle'],
+  ['asin', 'asin'], ['publisher', 'publisher'], ['description', 'description'], ['date', 'date'], ['genre', 'genre'],
+];
 
 /**
  * Build ffmpeg args for writing metadata tags to an audio file.
@@ -90,13 +110,18 @@ export function buildFfmpegArgs(
   // Copy audio codec (no re-encode)
   args.push('-c:a', 'copy');
 
-  // Write metadata tags
-  if (tags.artist) args.push('-metadata', `artist=${tags.artist}`);
-  if (tags.albumArtist) args.push('-metadata', `album_artist=${tags.albumArtist}`);
-  if (tags.album) args.push('-metadata', `album=${tags.album}`);
-  if (tags.title) args.push('-metadata', `title=${tags.title}`);
-  if (tags.composer) args.push('-metadata', `composer=${tags.composer}`);
-  if (tags.grouping) args.push('-metadata', `grouping=${tags.grouping}`);
+  // Preserve chapters from the source. Without this ffmpeg drops the M4B chapter
+  // stream on re-tag (#1671); harmless for MP3, which has no chapter stream.
+  args.push('-map_chapters', '0');
+
+  // Write metadata tags. String fields (including the #1671 ABS-survivable set)
+  // are written via a table; the numeric `series-part`/`track` fields use `!= null`
+  // so a position/track of 0 is preserved (omit empties — no bare `key=`).
+  for (const [field, key] of STRING_METADATA_TAGS) {
+    const value = tags[field];
+    if (value) args.push('-metadata', `${key}=${value}`);
+  }
+  if (tags.seriesPart != null) args.push('-metadata', `series-part=${tags.seriesPart}`);
   if (tags.track != null && tags.trackTotal != null) {
     args.push('-metadata', `track=${tags.track}/${tags.trackTotal}`);
   }
@@ -237,6 +262,9 @@ export class TaggingService {
       narrator?: string | null | undefined;
       seriesName?: string | null | undefined;
       seriesPosition?: number | null | undefined;
+      asin?: string | null | undefined; subtitle?: string | null | undefined;
+      description?: string | null | undefined; publisher?: string | null | undefined;
+      publishedDate?: string | null | undefined; genres?: string[] | null | undefined;
       coverUrl?: string | null | undefined;
     },
     ffmpegPath: string,
@@ -244,7 +272,13 @@ export class TaggingService {
     embedCover: boolean,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
   ): Promise<RetagResult> {
-    const result: RetagResult = { bookId, tagged: 0, skipped: 0, failed: 0, warnings: [] };
+    // Build the refresh item from the pre-write state passed in (title/author/path) so a re-tag
+    // caller fires the connector refresh without a post-mutation reload. Guard the path truthiness
+    // (empty string → no item) rather than asserting it non-null.
+    const refreshItem: BookRefreshItem | null = bookPath
+      ? { bookId, title: metadata.title, authorName: metadata.authorName ?? null, libraryPath: bookPath }
+      : null;
+    const result: RetagResult = { bookId, tagged: 0, skipped: 0, failed: 0, warnings: [], refreshItem };
 
     const audioFiles = await collectAudioFiles(bookPath);
 
@@ -331,8 +365,9 @@ export class TaggingService {
         title: book.title,
         authorName: bookAuthorString(book),
         narrator: bookNarratorString(book),
-        seriesName: book.seriesName,
-        seriesPosition: book.seriesPosition,
+        seriesName: book.seriesName, seriesPosition: book.seriesPosition,
+        asin: book.asin, subtitle: book.subtitle, description: book.description,
+        publisher: book.publisher, publishedDate: book.publishedDate, genres: book.genres,
         coverUrl: book.coverUrl,
       },
       ffmpegPath,
@@ -361,7 +396,9 @@ export class TaggingService {
       title: book.title,
       authorName: bookAuthorString(book),
       narrator: bookNarratorString(book),
-      seriesName: book.seriesName,
+      seriesName: book.seriesName, seriesPosition: book.seriesPosition,
+      asin: book.asin, subtitle: book.subtitle, description: book.description,
+      publisher: book.publisher, publishedDate: book.publishedDate, genres: book.genres,
     });
 
     const audioFiles = await collectAudioFiles(book.path!);

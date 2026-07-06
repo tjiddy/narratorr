@@ -14,9 +14,9 @@ export const qbTorrentSchema = z.object({
   num_seeds: z.number().default(0),
   num_leechs: z.number().default(0),
   eta: z.number().default(0),
-  dlspeed: z.number().optional(),
+  dlspeed: z.number().nullish(),
   save_path: z.string().default(''),
-  content_path: z.string().optional(),
+  content_path: z.string().nullish(),
   added_on: z.number().default(0),
   completion_on: z.number().default(0),
 }).passthrough();
@@ -29,15 +29,15 @@ export const qbTorrentsResponseSchema = z.array(qbTorrentSchema);
 export const qbCategoriesResponseSchema = z.record(
   z.string(),
   z.object({
-    name: z.string().optional(),
-    savePath: z.string().optional(),
+    name: z.string().nullish(),
+    savePath: z.string().nullish(),
   }).passthrough(),
 );
 
 // Transmission RPC response schema
 export const transmissionRpcResponseSchema = z.object({
   result: z.string(),
-  arguments: z.record(z.string(), z.unknown()).optional(),
+  arguments: z.record(z.string(), z.unknown()).nullish(),
 }).passthrough();
 
 // Transmission torrent item — covers every field read by mapTorrent and mapStatus.
@@ -64,7 +64,7 @@ export const transmissionTorrentsArraySchema = z.array(transmissionTorrentSchema
 
 // Transmission session-get response — only `version` is read by test().
 export const transmissionSessionGetSchema = z.object({
-  version: z.string().optional(),
+  version: z.string().nullish(),
 }).passthrough();
 
 // SABnzbd queue/history response schemas — match only fields the code reads.
@@ -76,9 +76,9 @@ export const sabnzbdQueueSlotSchema = z.object({
   mbleft: z.string(),
   percentage: z.string(),
   timeleft: z.string(),
-  kbpersec: z.string().optional(),
+  kbpersec: z.string().nullish(),
   cat: z.string(),
-  storage: z.string().optional(),
+  storage: z.string().nullish(),
 }).passthrough();
 
 export const sabnzbdQueueResponseSchema = z.object({
@@ -122,7 +122,7 @@ export const sabnzbdCategoriesResponseSchema = z.object({
 // be present, but result may legitimately be `null` (e.g. label.set_torrent
 // returning success-with-no-payload). Use a refine instead of asserting both.
 export const delugeRpcResponseSchema = z.object({
-  id: z.number().optional(),
+  id: z.number().nullish(),
   result: z.unknown(),
   error: z.object({ message: z.string(), code: z.number() }).nullish(),
 }).passthrough().refine(
@@ -132,7 +132,7 @@ export const delugeRpcResponseSchema = z.object({
 
 // Deluge torrent-status — covers every field read by mapTorrent and mapState.
 export const delugeTorrentStatusSchema = z.object({
-  hash: z.string().optional(),
+  hash: z.string().nullish(),
   name: z.string(),
   state: z.string(),
   progress: z.number(),
@@ -143,10 +143,10 @@ export const delugeTorrentStatusSchema = z.object({
   num_seeds: z.number(),
   num_peers: z.number(),
   eta: z.number(),
-  download_rate: z.number().optional(),
+  download_rate: z.number().nullish(),
   save_path: z.string(),
   time_added: z.number(),
-  label: z.string().optional(),
+  label: z.string().nullish(),
   is_finished: z.boolean(),
 }).passthrough();
 
@@ -156,7 +156,7 @@ export const delugeTorrentsStatusMapSchema = z.record(z.string(), delugeTorrentS
 // At least one of result or a non-null error must be present. NZBGet returns an
 // explicit `error: null` on success, so use `.nullish()` (mirrors Deluge above).
 export const nzbgetRpcResponseSchema = z.object({
-  result: z.unknown().optional(),
+  result: z.unknown().nullish(),
   error: z.object({ name: z.string(), code: z.number(), message: z.string() }).nullish(),
 }).passthrough().refine(
   (data) => data.result !== undefined || data.error != null,
@@ -189,8 +189,8 @@ export const nzbgetHistorySchema = z.object({
   DestDir: z.string().default(''),
   HistoryTime: z.number().default(0),
   MinPostTime: z.number().default(0),
-  ParStatus: z.string().optional(),
-  UnpackStatus: z.string().optional(),
-  MoveStatus: z.string().optional(),
-  ScriptStatus: z.string().optional(),
+  ParStatus: z.string().nullish(),
+  UnpackStatus: z.string().nullish(),
+  MoveStatus: z.string().nullish(),
+  ScriptStatus: z.string().nullish(),
 }).passthrough();

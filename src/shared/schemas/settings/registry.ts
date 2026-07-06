@@ -66,7 +66,7 @@ export const settingsRegistry = {
   }),
   tagging: defineCategory({
     schema: taggingSettingsSchema,
-    defaults: { enabled: false, mode: 'populate_missing' as const, embedCover: false },
+    defaults: { enabled: false, mode: 'populate_missing' as const, embedCover: false, writeOpf: false },
   }),
   quality: defineCategory({
     schema: qualitySettingsSchema,

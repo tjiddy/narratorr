@@ -25,9 +25,15 @@ const path = require('node:path');
 
 const LOG_METHODS = new Set(['error', 'warn', 'info', 'debug']);
 
+// Receiver binding names recognized as a logger. `log` and `logger` are the two
+// conventions used across the codebase; both must be policed identically so a
+// raw `logger.error(err)` is flagged the same as `log.error(err)`.
+const LOG_RECEIVERS = new Set(['log', 'logger']);
+
 /**
- * Check if a node is a log method call like `log.error(...)`, `this.log.warn(...)`,
- * `request.log.error(...)`, `app.log.warn(...)`, `deps.log.warn(...)`.
+ * Check if a node is a log method call like `log.error(...)`, `logger.error(...)`,
+ * `this.log.warn(...)`, `this.logger.warn(...)`, `request.log.error(...)`,
+ * `app.log.warn(...)`, `deps.logger.warn(...)`.
  */
 function isLogCall(node) {
   if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression') {
@@ -37,11 +43,11 @@ function isLogCall(node) {
   if (property.type !== 'Identifier' || !LOG_METHODS.has(property.name)) {
     return false;
   }
-  if (object.type === 'Identifier' && object.name === 'log') return true;
+  if (object.type === 'Identifier' && LOG_RECEIVERS.has(object.name)) return true;
   if (
     object.type === 'MemberExpression' &&
     object.property.type === 'Identifier' &&
-    object.property.name === 'log'
+    LOG_RECEIVERS.has(object.property.name)
   ) {
     return true;
   }

@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, filterByLanguage, filterMultiPartUsenet } from '../../core/utils/index.js';
+import { calculateQuality, filterByLanguage, filterMultiPartUsenet, resolveBookQualityInputs } from '../../core/utils/index.js';
 import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
@@ -81,7 +81,7 @@ const EBOOK_FORMAT_RE = /(?<![a-zA-Z\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\d])/i;
 const AUDIO_FORMAT_RE = /(?<![a-zA-Z\d])(m4b|mp3|flac|aac|ogg)(?![a-zA-Z\d])/i;
 
 function buildQualityGates(
-  bookDuration: number | undefined,
+  bookDurationSeconds: number | undefined,
   durationUnknown: boolean,
   options: SearchFilterOptions,
 ): Gate[] {
@@ -139,7 +139,7 @@ function buildQualityGates(
       enabled: !durationUnknown && grabFloor > 0,
       evaluate: (r) => {
         if (!r.size || r.size <= 0) return { keep: true };
-        const quality = calculateQuality(r.size, bookDuration!);
+        const quality = calculateQuality(r.size, bookDurationSeconds!);
         if (!quality) return { keep: true };
         if (quality.mbPerHour >= grabFloor) return { keep: true };
         return { keep: false, logFields: { mbPerHour: quality.mbPerHour, grabFloor } };
@@ -180,17 +180,21 @@ function buildQualityGates(
  * When `log` is provided, emits a debug log per dropped result at each gate
  * and the critical "language-undetermined passed" line for results that
  * survive solely because we couldn't detect a language.
+ *
+ * `bookDurationSeconds` is the book's duration in SECONDS (the MB/hr grab floor
+ * and quality tiers are seconds-based). Callers holding the minutes-backed
+ * `books.duration` column must convert via `resolveBookQualityInputs` first.
  */
 export function filterAndRankResults(
   results: SearchResult[],
-  bookDuration: number | undefined,
+  bookDurationSeconds: number | undefined,
   options: SearchFilterOptions,
   log?: FastifyBaseLogger,
 ): { results: SearchResult[]; durationUnknown: boolean } {
   const { protocolPreference, languages, narratorPriority } = options;
-  const durationUnknown = !bookDuration || bookDuration <= 0;
+  const durationUnknown = !bookDurationSeconds || bookDurationSeconds <= 0;
 
-  const gates = buildQualityGates(bookDuration, durationUnknown, options);
+  const gates = buildQualityGates(bookDurationSeconds, durationUnknown, options);
   let filtered = results;
   for (const gate of gates) {
     if (!gate.enabled) continue;
@@ -216,9 +220,91 @@ export function filterAndRankResults(
   filtered = langPartition.kept;
 
   // Canonical ranking
-  filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, langs, narratorPriority));
+  filtered.sort((a, b) => canonicalCompare(a, b, bookDurationSeconds, durationUnknown, protocolPreference, langs, narratorPriority));
 
   return { results: filtered, durationUnknown };
+}
+
+/**
+ * Build a {@link SearchFilterOptions} from raw quality + metadata settings, the
+ * single home for the field-by-field mapping that used to be copied into
+ * display, retry, RSS, and the 4 `searchAndGrabForBook` callers. `narratorPriority`
+ * is optional (retry and RSS pass it; the display path does not) and is omitted
+ * from the result when undefined so `exactOptionalPropertyTypes` stays happy.
+ */
+export function buildSearchFilterOptions(
+  quality: {
+    grabFloor: number;
+    minSeeders: number;
+    protocolPreference: string;
+    rejectWords: string;
+    requiredWords: string;
+    minDownloadSize: number;
+    maxDownloadSize: number;
+  },
+  metadata: { languages?: readonly string[] | undefined },
+  opts?: { narratorPriority?: NarratorPriority | undefined },
+): SearchFilterOptions {
+  return {
+    grabFloor: quality.grabFloor,
+    minSeeders: quality.minSeeders,
+    protocolPreference: quality.protocolPreference,
+    rejectWords: quality.rejectWords,
+    requiredWords: quality.requiredWords,
+    languages: metadata.languages,
+    minDownloadSize: quality.minDownloadSize,
+    maxDownloadSize: quality.maxDownloadSize,
+    ...(opts?.narratorPriority !== undefined && { narratorPriority: opts.narratorPriority }),
+  };
+}
+
+/**
+ * Shared post-enrichment `multipart → rank` sub-chain, the single owner of the
+ * step that display and RSS applied but auto-grab and retry historically dropped
+ * (#1777). Runs {@link filterMultiPartUsenet} → emits one `multi-part-detected`
+ * info log per drop → runs {@link filterAndRankResults} → emits the quality-gate
+ * debug log when the count shrinks, and returns the ranked results plus the
+ * multipart rejections. `durationUnknown` is passed straight through from
+ * {@link filterAndRankResults} so the display path can keep exposing it on the
+ * SSE `search-complete` surface; the grab paths continue to ignore it.
+ *
+ * Every path (display, auto-grab, retry, RSS) is expected to call this after its
+ * own enrichment step so a future post-enrichment step lands on all four at once.
+ * This is a convention, not a construction: nothing in the type system forces a
+ * new path to route through here, so keeping all four converged still requires
+ * reviewer discipline — the shared helper only guarantees the paths that already
+ * call it stay in lockstep (this is what caused #1777, and the same shape let the
+ * duration-unit divergence fixed in #1797 slip in).
+ *
+ * `bookDurationSeconds` is the book's duration in SECONDS. The grab/retry/RSS
+ * callers hold the minutes-backed `books.duration` column and MUST normalize via
+ * `resolveBookQualityInputs` before calling; the display path already sends
+ * seconds from the client.
+ */
+export function applyMultiPartFilterAndRank(
+  results: SearchResult[],
+  bookDurationSeconds: number | undefined,
+  options: SearchFilterOptions,
+  log?: FastifyBaseLogger,
+): {
+  results: SearchResult[];
+  durationUnknown: boolean;
+  multipartRejections: Array<{ title: string; matchedPattern: string }>;
+} {
+  const { filtered, rejectedTitles } = filterMultiPartUsenet(results);
+  for (const r of rejectedTitles) {
+    // info (not debug): a multi-part rejection can silently make a wanted book
+    // unobtainable on all four paths, so keep forensics visible without debug logging.
+    log?.info({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
+  }
+
+  const inputCount = filtered.length;
+  const ranked = filterAndRankResults(filtered, bookDurationSeconds, options, log);
+  if (ranked.results.length < inputCount) {
+    log?.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
+  }
+
+  return { results: ranked.results, durationUnknown: ranked.durationUnknown, multipartRejections: rejectedTitles };
 }
 
 /**
@@ -286,34 +372,22 @@ export async function postProcessSearchResults(
   const lanAllowlist = await indexerService.getLanAllowlist();
   await enrichUsenetLanguages(filteredResults, logger, lanAllowlist);
 
-  // Filter multi-part Usenet posts (after enrichment so nzbName is available)
-  const { filtered: results, rejectedTitles: unsupportedRejections } = filterMultiPartUsenet(filteredResults);
-  for (const r of unsupportedRejections) {
-    logger.debug({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
-  }
-
-  // Quality filtering and ranking
+  // Multi-part filter + quality ranking (shared post-enrichment sub-chain, #1777).
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
-  const inputCount = results.length;
-  const ranked = filterAndRankResults(results, bookDuration, {
-    grabFloor: qualitySettings.grabFloor,
-    minSeeders: qualitySettings.minSeeders,
-    protocolPreference: qualitySettings.protocolPreference,
-    rejectWords: qualitySettings.rejectWords,
-    requiredWords: qualitySettings.requiredWords,
-    languages: metadataSettings.languages,
-    minDownloadSize: qualitySettings.minDownloadSize,
-    maxDownloadSize: qualitySettings.maxDownloadSize,
-  }, logger);
-  if (ranked.results.length < inputCount) logger.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
+  const { results, durationUnknown, multipartRejections } = applyMultiPartFilterAndRank(
+    filteredResults,
+    bookDuration,
+    buildSearchFilterOptions(qualitySettings, metadataSettings),
+    logger,
+  );
 
   // Preserve the legacy `unsupportedResults: { count, titles }` API surface — extract
   // titles only; matchedPattern stays internal to logging.
-  const unsupportedTitles = unsupportedRejections.map((r) => r.title);
+  const unsupportedTitles = multipartRejections.map((r) => r.title);
   return {
-    results: ranked.results,
-    durationUnknown: ranked.durationUnknown,
+    results,
+    durationUnknown,
     unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
   };
 }
@@ -434,9 +508,10 @@ async function runSearchAndGrab(
 
   await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
-  const inputCount = afterBlacklist.length;
-  const { results } = filterAndRankResults(afterBlacklist, book.duration ?? undefined, qualitySettings, log);
-  if (results.length < inputCount) log.debug({ inputCount, outputCount: results.length }, 'Quality gate filtering applied');
+  // book.duration is MINUTES; normalize to seconds (audioDuration ?? duration*60)
+  // before the seconds-based quality chain, or the MB/hr floor is inert (#1797).
+  const { durationSeconds } = resolveBookQualityInputs(book);
+  const { results } = applyMultiPartFilterAndRank(afterBlacklist, durationSeconds ?? undefined, qualitySettings, log);
 
   const best = results.find((r) => r.downloadUrl);
   if (!best) {

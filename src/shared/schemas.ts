@@ -13,6 +13,7 @@ export * from './schemas/discovery.js';
 export * from './schemas/book.js';
 export * from './schemas/library-book.js';
 export * from './schemas/library-scan.js';
+export * from './schemas/recording-verdict.js';
 export * from './schemas/blacklist.js';
 export * from './schemas/event-history.js';
 export * from './schemas/import-list.js';

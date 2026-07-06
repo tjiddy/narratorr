@@ -566,3 +566,51 @@ The `narratorr/no-raw-error-logging` rule traces values back to their catch-bind
 ---
 
 Node 24's `AbortSignal.timeout(ms)` schedules on an internal native timer, NOT the patchable `globalThis.setTimeout` (verified: a wrapped `globalThis.setTimeout` is not invoked when `AbortSignal.timeout` is created, and the signal still aborts with `TimeoutError`). Consequence for testing retry adapters that pair `fetchWithTimeout` (`src/core/utils/network-service.ts` — built on `AbortSignal.timeout`) with their own `setTimeout` backoff: `vi.spyOn(globalThis, 'setTimeout')` can capture the adapter's exact backoff delay AND redirect it to fire immediately (`return original(fn, 0)`) while the per-call request timeout keeps working against real MSW responses. This gives deterministic exact-delay assertions (honored `Retry-After`, fallback default, max-clamp, caller-abort-during-backoff) with no `vi.useFakeTimers` / `advanceTimersByTimeAsync` / MSW interleaving fragility. Exemplar: `src/core/download-clients/retry.test.ts` (503 retry suite; `attribution.test.ts` was removed with the earwitness cut, #1596). Exception/guardrail: this works ONLY because `AbortSignal.timeout` is native — a hand-rolled `AbortController` + `setTimeout` timeout WOULD be captured by the spy, so the pattern breaks for clients not built on `fetchWithTimeout`.
+
+## music-metadata-common-shapes-and-native-freeform
+
+**source:** #1671  
+**added:** 2026-06-29  
+**files:** src/server/services/retag-plan.ts  
+**tags:** music-metadata, audio-tags, tag-readback
+
+---
+
+music-metadata's `common` (ICommonTagsResult) returns these as `string[]` — read `?.[0]`: subtitle, publisher, description, genre, composer, label. These are scalars: artist, album, albumartist, grouping, asin (string), year (number), date (string). Freeform/custom tags (e.g. `series`, `series-part`) written via ffmpeg `-metadata key=value` do NOT appear in `common` at all — they only surface in `metadata.native` keyed by format, as `{ id, value }` arrays, with ids like `TXXX:series` (ID3v2), `----:com.apple.iTunes:series` (MP4), or a bare `series`; TXXX `value` can be a `{ description, text }` object rather than a plain string. Any tag-readback (populate_missing field-awareness, dedup, enrichment) must therefore handle: (1) array-vs-scalar per common field, and (2) a native-frame scan for freeform fields with no common mapping. retag-plan.ts splits this into readCommonCoreTags/readCommonAbsTags (common) + readNativeSeriesTags/readNativeFreeform (native), matching id by exact-equal or `:<key>` suffix, case-insensitive. Prior art for native ASIN scanning lives in src/core/utils/audio-scanner.ts (scanNativeForAsin).
+
+## book-duration-minutes-vs-quality-seconds
+
+**source:** #1797
+**added:** 2026-07-02
+**files:** src/core/utils/quality.ts, src/server/services/book-list.service.ts
+**tags:** quality, duration-units, audiobook, grab-floor, resolveBookQualityInputs
+
+---
+
+`books.duration` (DB column) is stored in MINUTES (Audible `runtime_length_min`); `books.audioDuration` is stored in SECONDS. The quality chain — `calculateQuality(sizeBytes, durationSeconds)`, `compareQuality`, and the MB-per-hour grab floor / quality tiers in `src/server/services/search-pipeline.ts` — is entirely SECONDS-based. Passing raw `book.duration` into that chain inflates MB/hr 60× and makes absolute thresholds (grabFloor, `NARRATOR_QUALITY_FLOOR_MBHR`) inert while leaving relative ranking unaffected (the 60× cancels within one book), so the bug is easy to miss. The single JS normalization home is `resolveBookQualityInputs(book)` in `src/core/utils/quality.ts`, precedence `audioDuration ?? duration*60`. Every grab/retry/RSS path and the display path must funnel duration through it; the display path already sends true seconds from the client (`SearchReleasesModal.tsx` now routes through `resolveBookQualityInputs`, not a manual multiply). Guard against reintroduction: `grep -rn "duration \* 60" src` (excluding tests/comments) must return exactly one production hit (quality.ts). When writing fixtures, remember a `duration` literal that looks like seconds (e.g. `36000`) in a minutes column is 600 hours, not 10 — pair `_SIZE = mbPerHour*hours*MB` fixtures with `duration` in minutes (`hours*60`).
+
+**Note (triage-verified, #1804):** there is a SECOND deliberate normalization home the grep-guard does not catch — the library list-sort path re-expresses the same conversion in SQL as `${books.duration} * 60` at `src/server/services/book-list.service.ts:355` (a Drizzle order-by can't call the JS helper), and it's DRY-3-commented there. So the guard's "exactly one production hit" counts only the JS `duration * 60` literal; the SQL twin is expected and must be kept in sync with the helper's precedence.
+
+## libsql-foreign-keys-on-by-default
+
+**source:** #1736
+**added:** 2026-06-30
+**files:** src/db/client.ts, src/db/schema.ts
+**tags:** libsql, sqlite, foreign-keys, drizzle
+
+---
+
+`@libsql/client` (used in `src/db/client.ts` `createDb`) enables `PRAGMA foreign_keys` by default — a fresh connection returns `foreign_keys=1` even though nothing in the codebase sets the pragma. This is the OPPOSITE of vanilla SQLite, which defaults FK enforcement OFF. Verified empirically. Implications: (1) every `onDelete: 'set null' | 'cascade'` clause in `src/db/schema.ts` is enforced at runtime — deleting a `books` row nulls `import_jobs.book_id`/`book_events.book_id` and cascade-deletes `book_authors`/`book_narrators`, which is why `BookService.delete` only deletes the `books` row and code can rely on FK set-null rather than manually nulling linkage columns (#1736); (2) inserting a child row that references an already-deleted parent throws a FK violation, so mind write ordering (e.g. record an event with `bookId: null` after deleting the book, never the dead id); (3) real-DB tests via `createDb`/`runMigrations` enforce FKs the same way. Don't add a `PRAGMA foreign_keys=ON` thinking it's missing, and don't assume schema FK clauses are inert.
+
+## new-books-column-breaks-inline-fixtures
+
+**source:** #1711
+**added:** 2026-06-30
+**files:** src/server/__tests__/factories.ts, src/server/services/types.ts
+**tags:** drizzle, inferselect, test-fixtures, schema-migration
+
+---
+
+Adding a nullable column to the `books` table (e.g. #1711 `edition_label`) breaks every hand-built `BookRow`/`BookWithAuthor` object literal in tests, because Drizzle's `$inferSelect` types a nullable column as a REQUIRED `string | null` property (plain nullable columns are not optional at the type level). The canonical fixture is `createMockDbBook` in `src/server/__tests__/factories.ts` — update it first — but several suites inline their own book literals that each need the new field: `quality-gate.service.test.ts`, `quality-gate.helpers.test.ts`, and `import-list.service.test.ts`. When adding a books column, grep for `productionType:`/`enrichmentAttempts:` to locate inline literals and run `pnpm typecheck` to enumerate the rest. The canonical narrowed Row types live in `src/server/services/types.ts`.
+
+**Note (triage-verified, #1718):** the canonical `createMockDbBook` factory is NOT a drop-in for every suite — `quality-gate`'s `baseBook` is a SUPERSET shape (it carries `narrators`/`language`/`rating`/`tags` the DB-row factory lacks), so it genuinely can't delegate to the factory and the inline-literal ripple there is unavoidable, not merely un-DRY debt. Related: `drizzle-enum-type-derivation` (same `$inferSelect` territory, different lesson).

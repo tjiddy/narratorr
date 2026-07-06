@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { cp, mkdir, readdir, rename as fsRename, rm, unlink } from 'node:fs/promises';
-import { basename, join } from 'node:path';
 import { and, eq, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -11,21 +9,19 @@ import type { TaggingService } from './tagging.service.js';
 import { RetagError } from './tagging.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
+import type { ConnectorService } from './connector.service.js';
+import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
+import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
+import { convertBook } from './bulk-convert.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
-import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
-import { extname } from 'node:path';
-import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
 // ============ Types ============
 
-export type BulkOpType = 'rename' | 'retag' | 'convert';
+export type BulkOpType = 'rename' | 'retag' | 'convert' | 'write_metadata_sidecars';
 
 export interface BulkJobStatus {
   jobId: string;
@@ -76,6 +72,7 @@ interface RenameEligibleRow {
   seriesName: string | null;
   seriesPosition: number | null;
   publishedDate: string | null;
+  editionLabel: string | null;
   authorName: string | null;
   narrators: Array<{ name: string }>;
 }
@@ -105,6 +102,7 @@ export class BulkOperationService {
     private settingsService: SettingsService,
     private bookService: BookService,
     private log: FastifyBaseLogger,
+    private connectorService?: ConnectorService,
   ) {}
 
   /**
@@ -179,6 +177,7 @@ export class BulkOperationService {
         seriesName: books.seriesName,
         seriesPosition: books.seriesPosition,
         publishedDate: books.publishedDate,
+        editionLabel: books.editionLabel,
         authorName: authors.name,
       })
       .from(books)
@@ -294,11 +293,7 @@ export class BulkOperationService {
       }
     }, () => this.onJobComplete(id));
 
-    this.jobs.set(id, job);
-    this.activeJobId = id;
-    job.start();
-    this.log.info({ jobId: id }, 'Bulk rename job started');
-    return id;
+    return this.launch(id, job, 'Bulk rename job started');
   }
 
   startRetagJob(): string {
@@ -314,7 +309,10 @@ export class BulkOperationService {
 
       for (const { id: bookId } of rows) {
         try {
-          await this.taggingService.retagBook(bookId);
+          const result = await this.taggingService.retagBook(bookId);
+          // Fire from the result's pre-mutation refresh item (built before the in-place tag rewrite)
+          // via the shared single-home helper — see the standalone route at books.ts.
+          enqueueRetagRefresh(this.connectorService, this.log, result);
         } catch (error: unknown) {
           if (error instanceof RetagError && error.code === 'NO_PATH') {
             tick(false); // skip silently
@@ -328,11 +326,23 @@ export class BulkOperationService {
       }
     }, () => this.onJobComplete(id));
 
-    this.jobs.set(id, job);
-    this.activeJobId = id;
-    job.start();
-    this.log.info({ jobId: id }, 'Bulk re-tag job started');
-    return id;
+    return this.launch(id, job, 'Bulk re-tag job started');
+  }
+
+  /**
+   * Library reconcile: (re)write the `metadata.opf` + folder cover sidecar for every imported book
+   * with a path, backfilling existing libraries and backstopping any drift. The per-book body and
+   * row loop live in `bulk-sidecar-reconcile.ts` (this file is at the line cap). No cancel — the
+   * bulk infra is start+poll only. Writes regardless of `tagging.writeOpf` (the button is the opt-in).
+   */
+  startWriteMetadataSidecarsJob(): string {
+    this.assertNoActiveJob();
+    const id = randomUUID();
+    const reconcileDeps = { db: this.db, bookService: this.bookService, log: this.log, jobId: id, where: this.retagEligibleWhere(), connectorService: this.connectorService };
+    const job = new BulkJob(id, 'write_metadata_sidecars', this.log,
+      (setTotal, tick) => runSidecarReconcile(reconcileDeps, setTotal, tick),
+      () => this.onJobComplete(id));
+    return this.launch(id, job, 'Bulk write-metadata-sidecars job started');
   }
 
   async startConvertJob(): Promise<string> {
@@ -362,7 +372,10 @@ export class BulkOperationService {
           continue;
         }
         try {
-          await this.convertBook(row.id, row.path, row.title, processingSettings);
+          await convertBook(
+            { db: this.db, bookService: this.bookService, log: this.log, connectorService: this.connectorService },
+            row.id, row.path, row.title, processingSettings,
+          );
         } catch (error: unknown) {
           this.log.warn({ bookId: row.id, jobId: id, error: serializeError(error) }, 'Bulk convert: book failed');
           tick(true); // failure
@@ -372,11 +385,7 @@ export class BulkOperationService {
       }
     }, () => this.onJobComplete(id));
 
-    this.jobs.set(id, job);
-    this.activeJobId = id;
-    job.start();
-    this.log.info({ jobId: id }, 'Bulk convert job started');
-    return id;
+    return this.launch(id, job, 'Bulk convert job started');
   }
 
   getJob(jobId: string): BulkJobStatus | null {
@@ -404,78 +413,13 @@ export class BulkOperationService {
     this.activeJobId = null;
   }
 
-  /** Move converted output files to the book directory and remove originals that weren't outputs. */
-  private async swapConvertedFiles(outputFiles: string[], originalFiles: string[], bookPath: string): Promise<void> {
-    if (outputFiles.length === 0) return;
-    const outputFileNames = new Set(outputFiles.map(f => basename(f)));
-    for (const outputFile of outputFiles) {
-      await fsRename(outputFile, join(bookPath, basename(outputFile)));
-    }
-    for (const file of originalFiles) {
-      if (!outputFileNames.has(file)) {
-        await unlink(join(bookPath, file)).catch(() => {});
-      }
-    }
-  }
-
-  private async convertBook(
-    bookId: number,
-    bookPath: string,
-    bookTitle: string,
-    processingSettings: { ffmpegPath: string; outputFormat?: 'm4b' | 'mp3'; mergeBehavior?: 'always' | 'multi-file-only' | 'never'; bitrate?: number | null },
-  ): Promise<void> {
-    const stagingDir = bookPath + '.convert-tmp';
-    const book = await this.bookService.getById(bookId);
-    const authorName = book?.authors?.[0]?.name ?? 'Unknown Author';
-    const sourceBitrateKbps = toSourceBitrateKbps(book?.audioBitrate);
-    const targetBitrateKbps = processingSettings.bitrate ?? undefined;
-    logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, this.log);
-
-    await mkdir(stagingDir, { recursive: true });
-    try {
-      // Copy audio files to staging
-      const entries = await readdir(bookPath);
-      const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
-      for (const file of audioFiles) {
-        await cp(join(bookPath, file), join(stagingDir, file));
-      }
-
-      const result = await processAudioFiles(
-        stagingDir,
-        {
-          ffmpegPath: processingSettings.ffmpegPath,
-          outputFormat: processingSettings.outputFormat ?? 'm4b',
-          mergeBehavior: processingSettings.mergeBehavior ?? 'always',
-          bitrate: targetBitrateKbps,
-          sourceBitrateKbps,
-        },
-        { author: authorName, title: bookTitle },
-      );
-
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      result.warnings?.forEach(w => this.log.warn({ bookId }, w));
-
-      await this.swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
-
-      // Refresh DB audio fields
-      const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
-      const enrichResult = await enrichBookFromAudio(
-        bookId,
-        bookPath,
-        book ?? { narrators: null, duration: null, coverUrl: null },
-        this.db,
-        this.log,
-        this.bookService,
-        ffprobePath,
-      );
-      if (!enrichResult.enriched) {
-        this.log.warn({ bookId }, 'Post-convert enrichment did not enrich — audio fields may be stale');
-      }
-    } finally {
-      await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
-    }
+  /** Register a freshly-built job as the active one, start it, log, and return its id. */
+  private launch(id: string, job: BulkJob, startedMsg: string): string {
+    this.jobs.set(id, job);
+    this.activeJobId = id;
+    job.start();
+    this.log.info({ jobId: id }, startedMsg);
+    return id;
   }
 
   private onJobComplete(jobId: string): void {

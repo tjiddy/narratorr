@@ -9,6 +9,7 @@ import type { LibrarySignals } from './discovery.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { findMatchingSeriesRef, type TargetSeriesIdentity } from '../utils/series-match.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 
 const FP_TOLERANCE = 1e-9;
@@ -232,7 +233,7 @@ function isTitleAuthorDuplicate(title: string, authorName: string, existing: Arr
 export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, reasonContext: string, score: number): ScoredCandidate {
   // `seriesPrimary` is the canonical primary-series ref (Audnexus-derived, #1088).
   // Fall back to `series?.[0]` for books whose enrichment didn't populate it.
-  const primary = book.seriesPrimary ?? book.series?.[0];
+  const primary = pickPrimarySeries(book);
   return {
     asin: book.asin!, title: book.title, authorName: book.authors?.[0]?.name ?? 'Unknown',
     authorAsin: book.authors?.[0]?.asin,

@@ -17,7 +17,7 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { RetrySearchDeps } from './retry-search.js';
-import { blacklistAndRetrySearch } from '../utils/rejection-helpers.js';
+import { blacklistAndRetrySearch } from './rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
 import { eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
@@ -208,11 +208,16 @@ export class QualityGateOrchestrator {
       return null;
     }
 
+    // Set when the scanner collects audio files but cannot determine a codec
+    // (e.g. an unsupported/corrupt format) — distinguishes "present but unreadable"
+    // from a genuinely-empty directory so the hold reason can be honest (#1667).
+    let filesPresentNoCodec = false;
     const scanOpts = {
       skipCover: true,
       ...(ffprobePath !== undefined && { ffprobePath }),
       onWarn: (msg: string, payload?: Record<string, unknown>) => this.log.warn(payload, msg),
       onDebug: (msg: string, payload?: Record<string, unknown>) => this.log.debug(payload, msg),
+      onFilesWithoutCodec: () => { filesPresentNoCodec = true; },
     };
 
     let scanResult;
@@ -231,6 +236,11 @@ export class QualityGateOrchestrator {
     let fallbackAttempted = false;
     if (!scanResult && outputPath && outputPath !== savePath) {
       fallbackAttempted = true;
+      // Reset the latch so the persisted hold reflects only the attempt that produced
+      // the terminal null. Without this, a stale codec signal from the primary scan
+      // leaks into the fallback's outcome — a fallback that scans genuinely empty
+      // (no onFilesWithoutCodec) would still be misreported as unreadable_codec (#1677).
+      filesPresentNoCodec = false;
       try {
         scanResult = await scanAudioDirectory(outputPath, scanOpts);
         if (scanResult) {
@@ -250,8 +260,13 @@ export class QualityGateOrchestrator {
         originalPath,
         outputPath,
         fallbackAttempted,
-      }, 'Quality gate: no audio files found');
-      await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
+        filesPresentNoCodec,
+      }, filesPresentNoCodec ? 'Quality gate: audio files present but codec unreadable' : 'Quality gate: no audio files found');
+      if (filesPresentNoCodec) {
+        await this.holdForProbeFailure(row.download, row.book, 'unreadable_codec', 'Audio files present but no readable codec — unsupported or corrupt format');
+      } else {
+        await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
+      }
       return null;
     }
 

@@ -152,6 +152,21 @@ describe('filterMultiPartUsenet', () => {
       const { filtered } = filterMultiPartUsenet(results);
       expect(filtered).toEqual(results);
     });
+
+    it('retains a series-titled usenet result (Book 1 of 14) and still rejects a genuine Part 2 of 5', () => {
+      const seriesTitled = makeUsenetResult({ title: 'The Eye of the World Book 1 of 14' });
+      const genuine = makeUsenetResult({ title: 'The Eye of the World Part 2 of 5' });
+      const { filtered, rejectedTitles } = filterMultiPartUsenet([seriesTitled, genuine]);
+      expect(filtered).toContain(seriesTitled);
+      expect(filtered).not.toContain(genuine);
+      expect(rejectedTitles).toEqual([{ title: 'The Eye of the World Part 2 of 5', matchedPattern: expect.any(String) }]);
+    });
+
+    it('passes through a non-usenet series-titled result unchanged (protocol short-circuit)', () => {
+      const results = [makeTorrentResult({ title: 'The Eye of the World Book 1 of 14' })];
+      const { filtered } = filterMultiPartUsenet(results);
+      expect(filtered).toEqual(results);
+    });
   });
 
   describe('field precedence (|| not ??)', () => {
@@ -182,13 +197,15 @@ describe('filterMultiPartUsenet', () => {
       const results = [
         makeUsenetResult({ title: 'Clean Title' }),
         makeUsenetResult({ nzbName: 'hp02.Harry Potter "28" of "30" yEnc', title: 'HP' }),
-        makeUsenetResult({ rawTitle: 'Book 08 of 30', title: 'Book' }),
+        // Bare unquoted "08 of 30" with no series-position word before the number
+        // still rejects (the tightening only skips book/vol/volume/#-prefixed forms).
+        makeUsenetResult({ rawTitle: 'hp02.The Chamber of Secrets 08 of 30', title: 'HP2' }),
       ];
       const { rejectedTitles } = filterMultiPartUsenet(results);
       expect(rejectedTitles).toHaveLength(2);
       expect(rejectedTitles[0]).toMatchObject({ title: 'hp02.Harry Potter "28" of "30" yEnc' });
       expect(rejectedTitles[0]!.matchedPattern).toBeDefined();
-      expect(rejectedTitles[1]).toMatchObject({ title: 'Book 08 of 30' });
+      expect(rejectedTitles[1]).toMatchObject({ title: 'hp02.The Chamber of Secrets 08 of 30' });
       expect(rejectedTitles[1]!.matchedPattern).toBeDefined();
     });
 

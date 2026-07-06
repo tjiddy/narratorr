@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { blacklistAndRetrySearch, type BlacklistAndRetryRequest } from './rejection-helpers.js';
-import type { BlacklistService } from '../services/blacklist.service.js';
-import type { SettingsService } from '../services/settings.service.js';
-import type { RetrySearchDeps } from '../services/retry-search.js';
+import type { BlacklistService } from './blacklist.service.js';
+import type { SettingsService } from './settings.service.js';
+import type { RetrySearchDeps } from './retry-search.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-vi.mock('../services/retry-search.js', () => ({
+vi.mock('./retry-search.js', () => ({
   retrySearch: vi.fn().mockResolvedValue({ outcome: 'retried' }),
 }));
 
-import { retrySearch } from '../services/retry-search.js';
+import { retrySearch } from './retry-search.js';
 
 function makeRequest(overrides?: Partial<BlacklistAndRetryRequest>): BlacklistAndRetryRequest {
   return {

@@ -4,9 +4,11 @@ import { queryKeys } from '@/lib/queryKeys';
 import { api } from '@/lib/api';
 import { useEventSource } from '@/hooks/useEventSource';
 
-// Re-mint the stream token before the server-side TTL (5 min, #1453) lapses so the
-// live EventSource connection is never dropped by expiry. The query refetches on
-// this interval; when the token changes, useEventSource reopens the stream.
+// Re-mint the stream token on this interval so a fresh token is always on hand to
+// authorize the next open/reconnect (#1453). A healthy live stream is authorized
+// connect-time-only and is NOT reopened just because the token refreshed; it stays
+// open until an error, logout/null token, unmount, or the server-side max-age close
+// (#1796), each of which drives useEventSource to reopen with the current token.
 const STREAM_TOKEN_REFRESH_MS = 4 * 60 * 1000;
 
 /**

@@ -59,7 +59,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       asin: 'B_OLD',
       seriesName: 'Old Series',
       seriesPosition: 1,
-      seriesAsin: 'OLD_SERIES_ID',
       duration: 600,
       publishedDate: '2020-01-01',
       genres: ['Old Genre'],
@@ -97,10 +96,8 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       publishedDate: '2024-05-01',
       seriesName: 'New Series',
       seriesPosition: 2,
-      seriesAsin: 'NEW_SERIES_ID',
       genres: ['Fantasy'],
       isbn: '9781234567890',
-      seriesProvider: 'audible',
     });
     expect(updated).not.toBeNull();
 
@@ -171,7 +168,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       coverUrl: 'https://example.com/solo.jpg',
       duration: 500,
       publishedDate: '2024-05-02',
-      // No seriesName / seriesPosition / seriesAsin
+      // No seriesName / seriesPosition
     });
     expect(updated).not.toBeNull();
 
