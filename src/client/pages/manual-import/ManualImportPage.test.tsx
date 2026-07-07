@@ -646,6 +646,44 @@ describe('ManualImportPage', () => {
     });
   });
 
+  describe('chunked register progress label (#1833)', () => {
+    it('multi-chunk register renders a non-zero first-chunk progress label', async () => {
+      // Big metadata blobs split the confirm run into 2 chunks (1 book each). The first chunk
+      // must render "Registering 1 of 2" while POSTing, never "Registering 0 of 2".
+      const bigDesc = 'x'.repeat(300 * 1024);
+      const books = [
+        makeDiscoveredBook({ path: '/a/B1', parsedTitle: 'B1' }),
+        makeDiscoveredBook({ path: '/a/B2', parsedTitle: 'B2' }),
+      ];
+      const { rerender } = await scanAndReview(books);
+      await simulateMatchResults(rerender, [
+        makeMatchResult({ path: '/a/B1', bestMatch: { title: 'B1', authors: [{ name: 'A' }], asin: 'A1', description: bigDesc } }),
+        makeMatchResult({ path: '/a/B2', bestMatch: { title: 'B2', authors: [{ name: 'A' }], asin: 'A2', description: bigDesc } }),
+      ]);
+
+      // Deferred confirm — chunk 1 stays in-flight so the pending progress label is observable.
+      mockConfirmImport.mockReturnValue(new Promise(() => {}));
+      await userEvent.click(screen.getByRole('button', { name: /Import 2/ }));
+
+      expect(await screen.findByText(/Registering 1 of 2/)).toBeInTheDocument();
+      expect(screen.queryByText(/Registering 0 of 2/)).not.toBeInTheDocument();
+    });
+
+    it('single-chunk register keeps the plain "Importing…" pending label', async () => {
+      const book = makeDiscoveredBook();
+      const { rerender } = await scanAndReview([book]);
+      await simulateMatchResults(rerender, [makeMatchResult()]);
+
+      // A single small item packs into one chunk — the multi-chunk "Registering X of Y" label
+      // is gated on chunks > 1, so the summary bar shows its default pending label instead.
+      mockConfirmImport.mockReturnValue(new Promise(() => {}));
+      await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
+
+      expect(await screen.findByText(/Importing\.\.\./)).toBeInTheDocument();
+      expect(screen.queryByText(/Registering/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('held-review panel (#1732)', () => {
     it('renders held titles and a re-confirm button instead of navigating away', async () => {
       mockConfirmImport.mockResolvedValueOnce({

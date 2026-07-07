@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runChunkedConfirm } from './confirm-chunk-runner.js';
 import { serializedItemBytes, MAX_SINGLE_ITEM_BYTES } from './confirm-chunks.js';
+import { ApiError } from '@/lib/api';
 import type { ImportConfirmItem, ImportMode, ImportResult } from '@/lib/api';
 
 /** Signature of the runner's `confirm` param — used to type each mock. */
@@ -31,7 +32,7 @@ describe('runChunkedConfirm (#1831)', () => {
     expect(res.aggregateResult.accepted).toBe(3);
     expect(res.aggregateResult.heldReview.map(h => h.path)).toEqual(['/a', '/b', '/c']);
     expect(res.submittedItems.map(i => i.path)).toEqual(['/a', '/b', '/c']);
-    expect(res.unsubmitted).toEqual({ count: 0, inFlight: 0, remainder: 0, reason: null });
+    expect(res.unsubmitted).toEqual({ count: 0, inFlight: 0, remainder: 0, reason: null, reasonKind: null });
     expect(res.tooLarge.count).toBe(0);
   });
 
@@ -44,8 +45,25 @@ describe('runChunkedConfirm (#1831)', () => {
 
     expect(confirm).toHaveBeenNthCalledWith(1, expect.any(Array), 'move');
     expect(confirm).toHaveBeenNthCalledWith(2, expect.any(Array), 'move');
+    // Intermediate progress reports items-ATTEMPTED, never "0 of N" while POSTing (#1833):
+    // chunk 1 in-flight → 1 of 2; chunk 2 in-flight → 2 of 2.
+    expect(onProgress).toHaveBeenNthCalledWith(1, { current: 1, total: 2, chunks: 2 });
+    expect(onProgress).toHaveBeenNthCalledWith(2, { current: 2, total: 2, chunks: 2 });
     // Final progress reports both items submitted of the total, across 2 chunks.
     expect(onProgress).toHaveBeenLastCalledWith({ current: 2, total: 2, chunks: 2 });
+  });
+
+  it('first chunk progress is never "0 of N" while POSTing (#1833)', async () => {
+    const items = [bigItem('/a'), bigItem('/b')];
+    const onProgress = vi.fn();
+    // A deferred confirm keeps chunk 1 in-flight; assert the progress emitted before the POST.
+    const confirm = vi.fn<ConfirmFn>(() => new Promise<ImportResult>(() => {}));
+
+    void runChunkedConfirm({ items, mode: undefined, confirm, onProgress });
+    await Promise.resolve();
+
+    expect(onProgress).toHaveBeenNthCalledWith(1, { current: 1, total: 2, chunks: 2 });
+    expect(onProgress).not.toHaveBeenCalledWith({ current: 0, total: 2, chunks: 2 });
   });
 
   it('mid-sequence failure returns submittedItems + the in-flight/remainder split', async () => {
@@ -62,8 +80,40 @@ describe('runChunkedConfirm (#1831)', () => {
     // Chunks 1–2 applied; chunk 3 in-flight; chunks 4–5 never sent.
     expect(res.aggregateResult.accepted).toBe(2);
     expect(res.submittedItems.map(i => i.path)).toEqual(['/a', '/b']);
-    expect(res.unsubmitted).toEqual({ count: 3, inFlight: 1, remainder: 2, reason: 'connection reset' });
+    expect(res.unsubmitted).toEqual({ count: 3, inFlight: 1, remainder: 2, reason: 'connection reset', reasonKind: 'transport' });
     expect(res.tooLarge.count).toBe(0);
+  });
+
+  it('a mid-run 413 marks the in-flight chunk too-large; a network reset marks it transport (#1833)', async () => {
+    const items = [bigItem('/a'), bigItem('/b'), bigItem('/c')];
+
+    const tooLargeConfirm = vi.fn<ConfirmFn>(async (chunk) => {
+      if (chunk[0]!.path === '/b') throw new ApiError(413, { error: 'Payload Too Large' });
+      return ok(chunk.length);
+    });
+    const tooLargeRes = await runChunkedConfirm({ items, mode: undefined, confirm: tooLargeConfirm });
+    expect(tooLargeRes.unsubmitted.reasonKind).toBe('too-large');
+    expect(tooLargeRes.unsubmitted.inFlight).toBe(1);
+
+    const transportConfirm = vi.fn<ConfirmFn>(async (chunk) => {
+      if (chunk[0]!.path === '/b') throw new ApiError(500, { error: 'Internal Server Error' });
+      return ok(chunk.length);
+    });
+    const transportRes = await runChunkedConfirm({ items, mode: undefined, confirm: transportConfirm });
+    expect(transportRes.unsubmitted.reasonKind).toBe('transport');
+
+    const resetConfirm = vi.fn<ConfirmFn>(async (chunk) => {
+      if (chunk[0]!.path === '/b') throw new Error('connection reset');
+      return ok(chunk.length);
+    });
+    const resetRes = await runChunkedConfirm({ items, mode: undefined, confirm: resetConfirm });
+    expect(resetRes.unsubmitted.reasonKind).toBe('transport');
+  });
+
+  it('rejects an empty-items run without calling confirm — never a phantom clean import (#1833)', async () => {
+    const confirm = vi.fn<ConfirmFn>(async () => ok(0));
+    await expect(runChunkedConfirm({ items: [], mode: undefined, confirm })).rejects.toThrow(/no books/i);
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('rejects on a first-chunk failure with nothing submitted and no tooLarge rows', async () => {

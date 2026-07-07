@@ -6,6 +6,7 @@ import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/com
 import { PageHeader } from '@/components/PageHeader.js';
 import { makeRelativePath } from '@/lib/pathUtils.js';
 import { useLibraryImport } from './useLibraryImport.js';
+import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
 export function LibraryImportPage() {
@@ -43,8 +44,7 @@ export function LibraryImportPage() {
   } = useLibraryImport();
 
   const [showExisting, setShowExisting] = useState(false);
-  const isDbDup = (r: typeof rows[number]) => r.book.isDuplicate && r.book.duplicateReason !== 'within-scan';
-  const displayedRows = rows.filter(r => showExisting || !isDbDup(r));
+  const displayedRows = rows.filter(r => showExisting || !isLibraryDbDuplicate(r.book));
   const rowIndexMap = new Map(rows.map((r, i) => [r, i]));
 
   return (
@@ -172,7 +172,7 @@ export function LibraryImportPage() {
                 {allSelected && <CheckIcon className="w-3 h-3" />}
               </button>
               <span className="text-xs font-medium text-muted-foreground">
-                {selectedCount} of {rows.filter(r => !isDbDup(r)).length} new selected
+                {selectedCount} of {rows.filter(r => !isLibraryDbDuplicate(r.book)).length} new selected
               </span>
               {duplicateCount > 0 && (
                 <button

@@ -873,6 +873,45 @@ describe('LibraryImportPage (#133)', () => {
     });
   });
 
+  describe('chunked register progress label (#1833)', () => {
+    it('renders a non-zero first-chunk progress label during a multi-chunk register', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+      // Big metadata blobs push each confirm item over half the chunk budget, so the runner
+      // splits the register into 2 chunks (1 book each). The first chunk must render
+      // "Registering 1 of 2" while POSTing — never "Registering 0 of 2".
+      const bigDesc = 'x'.repeat(300 * 1024);
+      mockApi.scanDirectory!.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/A/B1', parsedTitle: 'Book 1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+          { path: '/audiobooks/A/B2', parsedTitle: 'Book 2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        ],
+        totalFolders: 2,
+      });
+      mockApi.getMatchJob!.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 2, matched: 2,
+        results: [
+          { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'Book 1', authors: [{ name: 'A' }], asin: 'A1', description: bigDesc }, alternatives: [] },
+          { path: '/audiobooks/A/B2', confidence: 'high', bestMatch: { title: 'Book 2', authors: [{ name: 'A' }], asin: 'A2', description: bigDesc }, alternatives: [] },
+        ],
+      });
+      // Deferred confirm — chunk 1 stays in-flight so the pending progress label is observable.
+      mockApi.confirmImport!.mockReturnValue(new Promise(() => {}));
+
+      renderWithProviders(<LibraryImportPage />);
+      await waitFor(() => { expect(screen.getByText('Book 1')).toBeInTheDocument(); });
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await waitFor(() => { expect(screen.getByRole('button', { name: /import 2 books/i })).toBeEnabled(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /import 2 books/i }));
+
+      await waitFor(() => { expect(screen.getByText(/Registering 1 of 2/)).toBeInTheDocument(); });
+      expect(screen.queryByText(/Registering 0 of 2/)).not.toBeInTheDocument();
+
+      vi.useRealTimers();
+    });
+  });
+
   describe('relative path computation (AC1: uses segment-based pathUtils, not startsWith)', () => {
     it('passes relative portion as relativePath prop to ImportCard when book path is inside library root', async () => {
       mockApi.scanDirectory!.mockResolvedValue({

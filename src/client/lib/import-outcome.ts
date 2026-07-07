@@ -120,7 +120,13 @@ export function buildChunkedOutcomeToast(res: ChunkedConfirmResult, acceptedVerb
   if (agg.accepted > 0) parts.push(`${agg.accepted} ${acceptedVerb}`);
   if (agg.skipped.length > 0) parts.push(importSkipSummary(agg.skipped));
   if (agg.failed.length > 0) parts.push(`${agg.failed.length} failed`);
-  if (unsubmitted.inFlight > 0) parts.push(`${unsubmitted.inFlight} not confirmed — connection failed mid-request; resubmitting is safe`);
+  if (unsubmitted.inFlight > 0) {
+    // A deterministic 413 fails identically on every retry, so it must NOT claim
+    // resubmitting is safe — name the too-large cause with actionable wording instead (#1833).
+    parts.push(unsubmitted.reasonKind === 'too-large'
+      ? `${unsubmitted.inFlight} not sent — the import request was too large; select fewer books and try again`
+      : `${unsubmitted.inFlight} not confirmed — connection failed mid-request; resubmitting is safe`);
+  }
   if (unsubmitted.remainder > 0) parts.push(`${unsubmitted.remainder} not submitted`);
   if (tooLarge.count > 0) parts.push(`${tooLarge.count} too large to submit — remove or re-scan`);
 
