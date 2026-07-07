@@ -415,7 +415,8 @@ describe('ImportOrchestrator', () => {
       await orch.importDownload(1);
 
       expect(mergeService.enqueueMerge).toHaveBeenCalledTimes(1);
-      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1);
+      // Auto-merge records provenance so unattended merge events aren't mislabelled 'manual' (#1838).
+      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1, 'auto');
       // Admission reads the COMMITTED folder live — the ImportResult.targetPath.
       expect(readdir).toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings');
     });
@@ -459,7 +460,7 @@ describe('ImportOrchestrator', () => {
 
       await orch.importDownload(1);
 
-      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1);
+      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1, 'auto');
     });
 
     it('enqueues only after the awaited tag/OPF/script side effects, and not blocked on the fire-and-forget calls', async () => {

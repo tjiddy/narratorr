@@ -226,7 +226,7 @@ export class ImportOrchestrator {
         return;
       }
 
-      await this.mergeService.enqueueMerge(ctx.bookId);
+      await this.mergeService.enqueueMerge(ctx.bookId, 'auto');
       this.log.info({ bookId: ctx.bookId, topLevelAudioCount }, 'Auto-merge enqueued for multi-file download');
     } catch (mergeError: unknown) {
       // Idempotency: a duplicate completion / worker retry while a merge is queued or running
