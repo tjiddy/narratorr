@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   AMBER_STROKE,
@@ -46,6 +48,19 @@ describe('applyTitlePrefix', () => {
 });
 
 describe('recolorFaviconDataUri', () => {
+  // The recolor is a string replace of AMBER_STROKE in whatever SVG the live icon link
+  // serves. The literal lives in unlinked homes (this constant, the asset, the fixture
+  // above) — if the served favicon's stroke ever changes, the replace silently becomes an
+  // identity transform and the dev badge favicon reverts to prod-identical while every
+  // fixture-based test stays green. This assertion binds the constant to the real asset so
+  // that drift fails loudly instead of shipping.
+  it('AMBER_STROKE matches the served favicon asset', () => {
+    // path.join from cwd, not new URL(import.meta.url): under the jsdom test
+    // environment import.meta.url is not a file: URL and new URL() throws.
+    const svg = readFileSync(join(process.cwd(), 'src/client/public/favicon.svg'), 'utf8');
+    expect(svg).toContain(AMBER_STROKE);
+  });
+
   it('produces a valid data URI whose decoded SVG is recolored violet', () => {
     const uri = recolorFaviconDataUri(FAVICON_SVG);
     expect(uri.startsWith('data:image/svg+xml,')).toBe(true);
