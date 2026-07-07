@@ -59,6 +59,14 @@ vi.mock('../utils/opf-writer.js', () => ({
 import { writeOpfForImport } from '../utils/opf-writer.js';
 import type { BookService } from './book.service.js';
 
+// Mock node:fs/promises — the orchestrator's only fs use is the auto-merge admission readdir.
+vi.mock('node:fs/promises', () => ({
+  readdir: vi.fn().mockResolvedValue([]),
+}));
+import { readdir } from 'node:fs/promises';
+import type { MergeService } from './merge.service.js';
+import { MergeError } from './merge.service.js';
+
 function createMockImportService(overrides?: Partial<Record<string, unknown>>): ImportService {
   return inject<ImportService>({
     importDownload: vi.fn(),
@@ -105,6 +113,7 @@ describe('ImportOrchestrator', () => {
   let broadcaster: EventBroadcasterService;
   let connector: { notifyRefresh: ReturnType<typeof vi.fn> };
   let bookService: BookService;
+  let mergeService: MergeService;
   let orchestrator: ImportOrchestrator;
 
   beforeEach(() => {
@@ -122,8 +131,13 @@ describe('ImportOrchestrator', () => {
     broadcaster = inject<EventBroadcasterService>({ emit: vi.fn() });
     connector = { notifyRefresh: vi.fn().mockResolvedValue(undefined) };
     bookService = inject<BookService>({ getById: vi.fn().mockResolvedValue(null) });
+    mergeService = inject<MergeService>({
+      enqueueMerge: vi.fn().mockResolvedValue({ status: 'queued', bookId: 1 }),
+      cancelMerge: vi.fn().mockResolvedValue({ status: 'cancelled' }),
+    });
+    vi.mocked(readdir).mockResolvedValue([] as never);
 
-    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+    orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService, mergeService);
 
     // Default wire — most tests need wired deps. Tests that exercise the unwired
     // contract construct their own orchestrator and skip the wire() call.
@@ -382,6 +396,146 @@ describe('ImportOrchestrator', () => {
       expect(emitImportStatusSuccess).toHaveBeenCalled();
       expect(notifyImportComplete).toHaveBeenCalled();
       expect(recordImportEvent).toHaveBeenCalled();
+    });
+  });
+
+  // ── #1836 — opt-in auto-merge for multi-file downloads ──────────────────
+  describe('auto-merge multi-file downloads (#1836)', () => {
+    // Build an orchestrator whose settings have the toggle in the given state. The default
+    // settingsService (toggle off, from DEFAULT_SETTINGS) drives the toggle-off cases.
+    function withToggle(autoMergeDownloads: boolean): ImportOrchestrator {
+      const svc = createMockSettingsService({ processing: { autoMergeDownloads } });
+      return new ImportOrchestrator(importService, svc, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService, mergeService);
+    }
+
+    it('toggle ON + live top-level count ≥ 2 → enqueues exactly one merge for the book id', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3', '03.mp3', 'cover.jpg'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).toHaveBeenCalledTimes(1);
+      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1);
+      // Admission reads the COMMITTED folder live — the ImportResult.targetPath.
+      expect(readdir).toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings');
+    });
+
+    it('toggle ON + live top-level count 1 → does not enqueue (single-file download)', async () => {
+      vi.mocked(readdir).mockResolvedValue(['audiobook.m4b'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
+    });
+
+    it('toggle OFF → never enqueues, even with a multi-file committed folder', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
+      const orch = withToggle(false);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
+    });
+
+    it('counts a live top-level readdir, NOT the recursive source ImportResult.fileCount', async () => {
+      // fileCount is 12 (recursive source count) but the committed folder has 1 top-level audio
+      // file (nested layout) — the live count wins and no merge is enqueued.
+      vi.mocked(readdir).mockResolvedValue(['audiobook.m4b', 'disc1'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
+    });
+
+    it('enqueues on a live ≥2 count even when the persisted topLevelAudioFileCount is a stale 0 (enrichment-failure case)', async () => {
+      // The orchestrator never consults books.topLevelAudioFileCount — it reads the folder live.
+      // A stale-0 persisted field on the ctx book must not suppress a genuine multi-file merge.
+      bookService = inject<BookService>({ getById: vi.fn().mockResolvedValue({ id: 1, topLevelAudioFileCount: 0 }) });
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
+      const svc = createMockSettingsService({ processing: { autoMergeDownloads: true } });
+      const orch = new ImportOrchestrator(importService, svc, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService, mergeService);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1);
+    });
+
+    it('enqueues only after the awaited tag/OPF/script side effects, and not blocked on the fire-and-forget calls', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      const enqueueOrder = vi.mocked(mergeService.enqueueMerge).mock.invocationCallOrder[0]!;
+      // After the three awaited import side effects.
+      expect(enqueueOrder).toBeGreaterThan(vi.mocked(embedTagsForImport).mock.invocationCallOrder[0]!);
+      expect(enqueueOrder).toBeGreaterThan(vi.mocked(writeOpfForImport).mock.invocationCallOrder[0]!);
+      expect(enqueueOrder).toBeGreaterThan(vi.mocked(runImportPostProcessing).mock.invocationCallOrder[0]!);
+      // The fire-and-forget status/notification/event/connector calls are dispatched first (last
+      // awaited step), so the enqueue never delays them.
+      expect(enqueueOrder).toBeGreaterThan(vi.mocked(emitImportStatusSuccess).mock.invocationCallOrder[0]!);
+      expect(enqueueOrder).toBeGreaterThan(vi.mocked(recordImportEvent).mock.invocationCallOrder[0]!);
+    });
+
+    it('idempotent within a process lifetime — an ALREADY_QUEUED rejection is swallowed at debug, import unchanged', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
+      vi.mocked(mergeService.enqueueMerge).mockRejectedValueOnce(new MergeError('Merge already queued for this book', 'ALREADY_QUEUED'));
+      const orch = withToggle(true);
+
+      const result = await orch.importDownload(1);
+
+      expect(result).toEqual(mockResult);
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, code: 'ALREADY_QUEUED' }),
+        expect.stringContaining('idempotent'),
+      );
+      expect(log.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('Auto-merge enqueue failed'));
+    });
+
+    it('pre-enqueue admission rejection (ffmpeg unconfigured) is swallowed at warn, import result unchanged, no merge_failed recorded', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
+      vi.mocked(mergeService.enqueueMerge).mockRejectedValueOnce(new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED'));
+      const orch = withToggle(true);
+
+      const result = await orch.importDownload(1);
+
+      expect(result).toEqual(mockResult);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        expect.stringContaining('Auto-merge enqueue failed'),
+      );
+      // The orchestrator never records a merge_failed event — that surfaces only on MergeService's
+      // own mid-run path (recordImportEvent is the success event; assert no failure-event spy fired).
+      expect(recordImportFailedEvent).not.toHaveBeenCalled();
+    });
+
+    it('a generic enqueue rejection never fails or reverts the import', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
+      vi.mocked(mergeService.enqueueMerge).mockRejectedValueOnce(new Error('unexpected'));
+      const orch = withToggle(true);
+
+      await expect(orch.importDownload(1)).resolves.toEqual(mockResult);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        expect.stringContaining('Auto-merge enqueue failed'),
+      );
+    });
+
+    it('a readdir failure during admission is swallowed — import unaffected, no enqueue', async () => {
+      vi.mocked(readdir).mockRejectedValueOnce(new Error('EACCES'));
+      const orch = withToggle(true);
+
+      await expect(orch.importDownload(1)).resolves.toEqual(mockResult);
+      expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
+    });
+
+    it('no mergeService wired → auto-merge is a no-op (no crash, import succeeds)', async () => {
+      const svc = createMockSettingsService({ processing: { autoMergeDownloads: true } });
+      const orch = new ImportOrchestrator(importService, svc, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+
+      await expect(orch.importDownload(1)).resolves.toEqual(mockResult);
     });
   });
 
