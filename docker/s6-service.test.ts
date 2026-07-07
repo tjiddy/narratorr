@@ -114,6 +114,100 @@ describe('s6-overlay service definition', () => {
     });
   });
 
+  describe('init-narratorr-config oneshot (PUID/PGID /config chown fix)', () => {
+    const initServiceDir = path.join(
+      rootDir,
+      'etc',
+      's6-overlay',
+      's6-rc.d',
+      'init-narratorr-config',
+    );
+
+    it('type file contains "oneshot"', () => {
+      const content = fs.readFileSync(path.join(initServiceDir, 'type'), 'utf-8').trim();
+      expect(content).toBe('oneshot');
+    });
+
+    it('run and up scripts exist', () => {
+      expect(fs.existsSync(path.join(initServiceDir, 'run'))).toBe(true);
+      expect(fs.existsSync(path.join(initServiceDir, 'up'))).toBe(true);
+    });
+
+    it('up file points at the run script (LSIO oneshot indirection)', () => {
+      const content = fs.readFileSync(path.join(initServiceDir, 'up'), 'utf-8').trim();
+      expect(content).toBe('/etc/s6-overlay/s6-rc.d/init-narratorr-config/run');
+    });
+
+    it('run script is committed with executable permissions', () => {
+      const runPath = 'docker/root/etc/s6-overlay/s6-rc.d/init-narratorr-config/run';
+      const output = execFileSync('git', ['ls-tree', 'HEAD', '--', runPath], { encoding: 'utf-8' });
+      // Git tracks executable files as mode 100755 — s6 silently skips a non-executable run script
+      expect(output).toMatch(/^100755\s/);
+    });
+
+    it('run script uses the with-contenv bash shebang', () => {
+      const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
+      expect(content).toMatch(/^#!\/usr\/bin\/with-contenv bash/);
+    });
+
+    it('run script recursively chowns /config to the app user', () => {
+      const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
+      expect(content).toMatch(/lsiown|chown/);
+      expect(content).toContain('-R');
+      expect(content).toContain('abc');
+      expect(content).toContain('/config');
+    });
+
+    it('run script does NOT touch the media mounts (scope guard)', () => {
+      const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
+      expect(content).not.toContain('/audiobooks');
+      expect(content).not.toContain('/downloads');
+    });
+
+    it('run script fails gracefully — warns rather than hard-exiting on chown failure', () => {
+      const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
+      // A `|| <warn>` fallback keeps the s6-rc bring-up alive so the app still boots.
+      expect(content).toContain('||');
+      expect(content).not.toMatch(/^\s*exit\s+1\b/m);
+    });
+
+    it.skipIf(process.platform === 'win32')(
+      'run script exits 0 and warns when the chown cannot complete (graceful boot)',
+      () => {
+        const runPath = path.join(initServiceDir, 'run');
+        // In CI neither `lsiown` nor /config exist, so the chown fails — the `||`
+        // fallback must catch it, emit the warning, and exit 0 so the container boots.
+        const result = spawnSync('bash', [runPath], { encoding: 'utf-8', timeout: 5000 });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain('WARNING');
+        expect(result.stdout).toContain('/config');
+      },
+    );
+
+    it('depends on the base image init-adduser (runs after PUID/PGID remap)', () => {
+      const depPath = path.join(initServiceDir, 'dependencies.d', 'init-adduser');
+      expect(fs.existsSync(depPath)).toBe(true);
+    });
+
+    it('svc-narratorr depends on init-narratorr-config (app starts after chown)', () => {
+      const depPath = path.join(serviceDir, 'dependencies.d', 'init-narratorr-config');
+      expect(fs.existsSync(depPath)).toBe(true);
+    });
+
+    it('is registered in user/contents.d/', () => {
+      const registrationPath = path.join(
+        rootDir,
+        'etc',
+        's6-overlay',
+        's6-rc.d',
+        'user',
+        'contents.d',
+        'init-narratorr-config',
+      );
+      expect(fs.existsSync(registrationPath)).toBe(true);
+    });
+  });
+
   describe('Dockerfile LSIO base image', () => {
     it('runner stage uses ghcr.io/linuxserver/baseimage-alpine:3.23', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
