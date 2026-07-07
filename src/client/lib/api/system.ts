@@ -42,6 +42,8 @@ export interface SystemInfo {
 export interface SystemStatus {
   version: string;
   status: string;
+  /** Optional free-form instance badge (e.g. 'dev'); present only when configured (#1842). */
+  instanceBadge?: string;
 }
 
 export const systemApi = {

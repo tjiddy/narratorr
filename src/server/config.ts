@@ -46,6 +46,14 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
+  // Optional free-form instance badge (e.g. 'dev'). When set, the client recolors the
+  // favicon and prefixes the tab title so a dev instance is distinguishable from prod.
+  // Coalesce empty/whitespace-only to undefined (a `.default()` would NOT — see the
+  // zod-default-ignores-empty-string / zod-trim-min-one learnings); trim a set value.
+  INSTANCE_BADGE: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || undefined),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -73,4 +81,5 @@ export const config = {
   monitorIntervalCron: parsed.data.MONITOR_INTERVAL_CRON,
   trustedProxies: parsed.data.TRUSTED_PROXIES,
   logLevel: parsed.data.LOG_LEVEL,
+  instanceBadge: parsed.data.INSTANCE_BADGE as string | undefined,
 };

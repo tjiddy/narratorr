@@ -11,6 +11,7 @@ import { createTestApp, createMockServices, installMockAppLog, resetMockServices
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
 import { TaskRegistry, TaskRegistryError } from '../services/task-registry.js';
+import { config } from '../config.js';
 
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '0.1.0',
@@ -64,6 +65,24 @@ describe('system routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload).not.toHaveProperty('timestamp');
       expect(payload).not.toHaveProperty('update');
+    });
+
+    it('omits instanceBadge when unset, includes it when configured (#1842)', async () => {
+      const original = config.instanceBadge;
+
+      // Unset → payload byte-identical to today.
+      config.instanceBadge = undefined;
+      let res = await app.inject({ method: 'GET', url: '/api/system/status' });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('instanceBadge');
+
+      // Set → badge appears verbatim alongside the existing fields.
+      config.instanceBadge = 'dev';
+      try {
+        res = await app.inject({ method: 'GET', url: '/api/system/status' });
+        expect(JSON.parse(res.payload)).toEqual({ version: '0.1.0', status: 'ok', instanceBadge: 'dev' });
+      } finally {
+        config.instanceBadge = original;
+      }
     });
   });
 
