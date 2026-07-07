@@ -221,6 +221,7 @@ describe('settingsRegistry', () => {
         bitrate: 128,
         mergeBehavior: 'multi-file-only',
         maxConcurrentProcessing: 1,
+        autoMergeDownloads: false,
         postProcessingScript: '',
         postProcessingScriptTimeout: 300,
       });

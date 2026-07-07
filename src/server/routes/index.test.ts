@@ -39,6 +39,7 @@ vi.mock('../services', () => ({
   ReferenceReadService: vi.fn(),
 }));
 vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
+vi.mock('../services/merge.service.js', () => ({ MergeService: vi.fn() }));
 vi.mock('../services/import-orchestrator.js', () => ({
   ImportOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
 }));
@@ -484,5 +485,43 @@ describe('createServices', () => {
     const eventHistoryInstances = vi.mocked(EventHistoryService).mock.instances;
     expect(eventHistoryInstances).toHaveLength(1);
     expect(eventHistoryArg).toBe(eventHistoryInstances[0]);
+  });
+
+  // #1836 (F1) — ImportOrchestrator receives the composed MergeService as its 10th constructor
+  // argument so opt-in auto-merge is live in production. The service-level orchestrator tests
+  // inject a mock mergeService, so removing this constructor arg would leave them green while
+  // auto-merge silently becomes a no-op in the running app. This test guards the wiring: the
+  // orchestrator's 10th arg must be the SAME MergeService instance createServices constructed.
+  it('injects the composed MergeService instance into ImportOrchestrator as its 10th constructor arg', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    const { MergeService } = await import('../services/merge.service.js');
+    const { ImportOrchestrator } = await import('../services/import-orchestrator.js');
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    // ImportOrchestrator ctor signature: importService, settings, log, notifier, taggingService,
+    // eventHistory, eventBroadcaster, connector, book, mergeService — mergeService is index 9.
+    const orchestratorCalls = vi.mocked(ImportOrchestrator).mock.calls;
+    expect(orchestratorCalls).toHaveLength(1);
+    const mergeServiceArg = orchestratorCalls[0]![9];
+    const mergeInstances = vi.mocked(MergeService).mock.instances;
+    expect(mergeInstances).toHaveLength(1);
+    expect(mergeServiceArg).toBe(mergeInstances[0]);
   });
 });
