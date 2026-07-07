@@ -13,6 +13,10 @@ export const processingSettingsSchema = z.object({
   bitrate: z.number().int().min(32).max(512).default(128),
   mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
   maxConcurrentProcessing: z.number().int().min(1).max(8).default(1),
+  // Opt-in auto-merge (#1836): when a completed DOWNLOAD lands as a multi-file set, enqueue a
+  // merge into the existing bounded merge queue. Downloads only — never Library/Manual Import.
+  // Default OFF; absent from older payloads coerces to false via this default.
+  autoMergeDownloads: z.boolean().default(false),
   postProcessingScript: z.string().default(''),
   postProcessingScriptTimeout: z.number().int().min(1).default(300),
 });
@@ -28,6 +32,7 @@ export const processingFormSchema = z.object({
   bitrate: z.number().int().min(32).max(512),
   mergeBehavior: mergeBehaviorSchema,
   maxConcurrentProcessing: z.number().int().min(1).max(8),
+  autoMergeDownloads: z.boolean(),
   postProcessingScript: z.string(),
   postProcessingScriptTimeout: z.number().int().min(1).optional(),
 });

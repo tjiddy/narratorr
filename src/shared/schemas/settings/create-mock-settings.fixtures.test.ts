@@ -89,6 +89,7 @@ describe('createMockSettings', () => {
         bitrate: 64,
         mergeBehavior: 'always' as const,
         maxConcurrentProcessing: 4,
+        autoMergeDownloads: true,
         postProcessingScript: '/run.sh',
         postProcessingScriptTimeout: 600,
       };
