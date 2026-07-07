@@ -1009,6 +1009,7 @@ describe('#257 merge observability — merge service', () => {
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 42,
         eventType: 'merge_failed',
+        source: 'manual',
         reason: { error: 'Audio processing failed: ffmpeg error' },
       }));
     });
@@ -2277,5 +2278,144 @@ describe('#257 merge observability — merge service', () => {
       expect(failedEvents).toHaveLength(1);
       expect((failedEvents[0]!.payload as { reason: string }).reason).toBe('error');
     });
+  });
+});
+
+// ============================================================================
+// #1838 — merge event provenance: auto-merge events record source 'auto', not 'manual'
+// ============================================================================
+
+describe('#1838 merge origin — event provenance', () => {
+  /** eventHistory.create calls for a given bookId + eventType. */
+  function historyFor(create: Mock, bookId: number, eventType: string) {
+    return create.mock.calls
+      .map((c) => c[0] as { bookId: number; eventType: string; source: string })
+      .filter((e) => e.bookId === bookId && e.eventType === eventType);
+  }
+
+  /** Build a service with a captured eventHistory mock and a bookService keyed by the given books. */
+  function createServiceWithHistory(books: Array<{ id: number; title: string; path: string }>, maxConcurrentProcessing = 1) {
+    const db = createMockDb();
+    const byId = new Map(books.map((b) => [b.id, {
+      ...createMockDbBook({ id: b.id, title: b.title, path: b.path, status: 'imported' }),
+      authors: [mockAuthor], narrators: [],
+    }]));
+    const bookService = {
+      getById: vi.fn(async (id: number) => byId.get(id) ?? null),
+      update: vi.fn().mockResolvedValue(undefined),
+    };
+    const settingsService = createMockSettingsService({
+      processing: { ...processingOverrides.processing, maxConcurrentProcessing },
+    });
+    const create = vi.fn().mockResolvedValue(undefined);
+    const eventHistory = { create } as unknown as EventHistoryService;
+    const log = createMockLogger();
+    const service = new MergeService(
+      inject<Db>(db), inject<BookService>(bookService), settingsService,
+      inject<FastifyBaseLogger>(log), eventHistory, undefined,
+    );
+    return { service, bookService, create };
+  }
+
+  it('auto immediate-start success records merge_started and merged with source auto', async () => {
+    setupHappyPath();
+    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+
+    await service.enqueueMerge(42, 'auto');
+    await settle();
+
+    expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('auto');
+    expect(historyFor(create, 42, 'merged')[0]?.source).toBe('auto');
+  });
+
+  it('auto immediate-start failure records merge_failed with source auto', async () => {
+    (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+    (mkdir as Mock).mockResolvedValue(undefined);
+    (cp as Mock).mockResolvedValue(undefined);
+    (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
+    (rm as Mock).mockResolvedValue(undefined);
+    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+
+    await service.enqueueMerge(42, 'auto');
+    await settle();
+
+    const failed = historyFor(create, 42, 'merge_failed');
+    expect(failed[0]?.source).toBe('auto');
+  });
+
+  it('auto queued path carries source auto while a concurrent manual book stays manual', async () => {
+    setupHappyPath();
+    // Book 42 (manual) blocks the single worker; book 43 (auto) queues behind it.
+    let resolveFirst!: () => void;
+    const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+    (processAudioFiles as Mock)
+      .mockImplementationOnce(async () => { await firstPromise; return { success: true, outputFiles: [STAGING_DIR + '/out.m4b'] }; })
+      .mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/out.m4b'] });
+    const { service, create } = createServiceWithHistory(
+      [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
+    );
+
+    await service.enqueueMerge(42, 'manual');
+    const ack = await service.enqueueMerge(43, 'auto');
+    expect(ack.status).toBe('queued');
+
+    resolveFirst();
+    await settle();
+
+    // Per-bookId origin isolation across concurrent entries.
+    expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('manual');
+    expect(historyFor(create, 42, 'merged')[0]?.source).toBe('manual');
+    expect(historyFor(create, 43, 'merge_started')[0]?.source).toBe('auto');
+    expect(historyFor(create, 43, 'merged')[0]?.source).toBe('auto');
+  });
+
+  it('cancel of a queued auto merge emits merge_failed(cancelled) with source auto', async () => {
+    setupHappyPath();
+    // Book 42 (manual) never resolves so book 43 (auto) stays queued and cancellable.
+    (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {}));
+    const { service, create } = createServiceWithHistory(
+      [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
+    );
+
+    await service.enqueueMerge(42, 'manual');
+    await service.enqueueMerge(43, 'auto');
+
+    const result = await service.cancelMerge(43);
+    expect(result.status).toBe('cancelled');
+
+    const failed = historyFor(create, 43, 'merge_failed');
+    expect(failed[0]?.source).toBe('auto');
+    expect(failed[0]).toMatchObject({ reason: { error: 'Cancelled by user' } });
+  });
+
+  it('rejected auto enqueue leaves no stale origin — a later manual merge records source manual (F1)', async () => {
+    // Pre-flight NO_TOP_LEVEL_FILES: only one top-level audio file rejects validateBookForMerge.
+    (readdir as Mock).mockResolvedValue(['01.mp3']);
+    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+
+    await expect(service.enqueueMerge(42, 'auto')).rejects.toThrow(/No top-level audio files/);
+    expect(historyFor(create, 42, 'merge_started')).toHaveLength(0);
+    expect(historyFor(create, 42, 'merged')).toHaveLength(0);
+
+    // Fix the condition and enqueue a manual merge of the SAME book — it must not inherit 'auto'.
+    setupHappyPath();
+    await service.enqueueMerge(42);
+    await settle();
+
+    expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('manual');
+    expect(historyFor(create, 42, 'merged')[0]?.source).toBe('manual');
+  });
+
+  it('origin is cleared after a merge completes — a subsequent same-book merge uses the new origin', async () => {
+    setupHappyPath();
+    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+
+    await service.enqueueMerge(42, 'auto');
+    await settle();
+    await service.enqueueMerge(42, 'manual');
+    await settle();
+
+    // Two sequential merges of the same bookId record their OWN origin, in order.
+    expect(historyFor(create, 42, 'merged').map((e) => e.source)).toEqual(['auto', 'manual']);
   });
 });

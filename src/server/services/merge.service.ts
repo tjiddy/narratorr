@@ -19,6 +19,7 @@ import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
 import type { MergePhase, MergeFailedReason } from '../../shared/schemas/sse-events.js';
+import type { EventSource } from '../../shared/schemas/event-history.js';
 import { safeEmit } from '../utils/safe-emit.js';
 import { createStderrDeduplicator } from '../utils/stderr-deduplicator.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -36,6 +37,13 @@ import { serializeError } from '../utils/serialize-error.js';
 export function clampConcurrency(value: number | undefined): number {
   return Number.isInteger(value) && (value as number) >= 1 ? (value as number) : 1;
 }
+
+/**
+ * Provenance of a merge request. A narrow subset of the canonical {@link EventSource} union
+ * (derived from it, not a redeclared widened type), so merge events record whether the merge
+ * was user-initiated (the manual Merge button) or unattended (auto-merge after a download lands).
+ */
+export type MergeOrigin = Extract<EventSource, 'manual' | 'auto'>;
 
 export interface MergeResult {
   bookId: number;
@@ -69,6 +77,11 @@ export class MergeService {
   private readonly semaphore = new Semaphore(1);
   private abortControllers = new Map<number, AbortController>();
   private currentPhase = new Map<number, MergePhase>();
+  // Per-bookId merge provenance. Set in enqueueMerge (only after pre-flight succeeds, so a
+  // rejected enqueue leaves no stale entry) and read by the three event emitters, which take
+  // only a bookId. Its lifecycle mirrors `inProgress`/queue membership exactly: cleared in the
+  // immediate-start finally, the startQueuedMerge finally, and the queued-cancel splice path.
+  private origins = new Map<number, MergeOrigin>();
 
   constructor(
     private db: Db,
@@ -80,14 +93,19 @@ export class MergeService {
     private connectorService?: ConnectorService,
   ) {}
 
+  /** Resolve the recorded provenance for a book, defaulting to 'manual' on a lookup miss. */
+  private originFor(bookId: number): MergeOrigin {
+    return this.origins.get(bookId) ?? 'manual';
+  }
+
   private emitMergeStarted(bookId: number, bookTitle: string): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: 'manual' })
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: this.originFor(bookId) })
       .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_started event'));
     safeEmit(this.eventBroadcaster, 'merge_started', { book_id: bookId, book_title: bookTitle }, this.log);
   }
 
   private emitMergeFailed(bookId: number, bookTitle: string, error: string, reason: MergeFailedReason = 'error'): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: 'manual', reason: { error } })
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_failed', source: this.originFor(bookId), reason: { error } })
       .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merge_failed event'));
     safeEmit(this.eventBroadcaster, 'merge_failed', { book_id: bookId, book_title: bookTitle, error, reason }, this.log);
   }
@@ -98,7 +116,7 @@ export class MergeService {
   }
 
   private emitMergeComplete(bookId: number, bookTitle: string, message: string, enrichmentWarning?: string): void {
-    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: 'manual' })
+    this.eventHistory?.create({ bookId, bookTitle, eventType: 'merged', source: this.originFor(bookId) })
       .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record merged event'));
     safeEmit(this.eventBroadcaster, 'merge_complete', {
       book_id: bookId, book_title: bookTitle, success: true, message,
@@ -135,8 +153,12 @@ export class MergeService {
     return processingSettings;
   }
 
-  /** Public API: validate and enqueue a merge. Returns acknowledgement immediately. */
-  async enqueueMerge(bookId: number): Promise<MergeAcknowledgement> {
+  /**
+   * Public API: validate and enqueue a merge. Returns acknowledgement immediately.
+   * `origin` records provenance ('manual' for the Merge button, 'auto' for auto-merge after a
+   * download lands); it defaults to 'manual' so the existing merge route stays unchanged.
+   */
+  async enqueueMerge(bookId: number, origin: MergeOrigin = 'manual'): Promise<MergeAcknowledgement> {
     // Synchronous duplicate check — no await gap between check and mark prevents concurrent races
     if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
     if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
@@ -159,6 +181,12 @@ export class MergeService {
       throw error;
     }
 
+    // Record provenance ONLY after the pre-flight try block succeeds. Storing it here (rather than
+    // before the await) means the validation `catch` above has nothing to clean up, so a
+    // rejected-at-enqueue merge (NOT_FOUND / NO_PATH / NO_STATUS / FFMPEG_NOT_CONFIGURED /
+    // NO_TOP_LEVEL_FILES / settings-read failure) leaves no stale origin for a later merge to inherit.
+    this.origins.set(bookId, origin);
+
     // Start the new request immediately ONLY when nothing is queued ahead of it and a
     // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
     // the new request never grabs a freed slot ahead of older queued work.
@@ -169,6 +197,7 @@ export class MergeService {
         })
         .finally(() => {
           this.inProgress.delete(bookId);
+          this.origins.delete(bookId);
           this.processNext(); // Pass the slot or release if empty
         });
       return { status: 'started', bookId };
@@ -232,6 +261,7 @@ export class MergeService {
       })
       .finally(() => {
         this.inProgress.delete(bookId);
+        this.origins.delete(bookId);
         this.processNext(); // Pass the slot or release if empty
       });
   }
@@ -463,7 +493,10 @@ export class MergeService {
       this.queue.splice(queueIdx, 1);
       const book = await this.bookService.getById(bookId);
       const bookTitle = book?.title ?? `Book ${bookId}`;
+      // Emit BEFORE clearing the origin so the cancelled event carries the enqueued provenance,
+      // then clean up (this item never entered `inProgress`, so this is its only cleanup site).
       this.emitMergeFailed(bookId, bookTitle, 'Cancelled by user', 'cancelled');
+      this.origins.delete(bookId);
       this.emitQueuePositionUpdates().catch((error: unknown) => {
         this.log.debug({ error: serializeError(error) }, 'Failed to emit queue position updates after cancellation');
       });
