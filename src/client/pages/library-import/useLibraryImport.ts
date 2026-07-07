@@ -11,14 +11,11 @@ import { useHeldReview, toConfirmItem } from '@/components/held-review';
 import type { DiscoveredBook } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
-import { isCleanImport, buildOutcomeToast, acceptedItemPaths } from '@/lib/import-outcome.js';
+import { acceptedItemPaths, buildChunkedOutcomeToast, isChunkedCleanImport, confirmErrorMessage } from '@/lib/import-outcome.js';
+import { runChunkedConfirm } from '@/lib/confirm-chunk-runner.js';
+import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
 
 export type Step = 'scanning' | 'review' | 'error';
-
-/** Returns true for DB-backed duplicates (path/slug), false for within-scan duplicates and non-duplicates. */
-function isDbDuplicate(book: DiscoveredBook): boolean {
-  return book.isDuplicate && book.duplicateReason !== 'within-scan';
-}
 
 // eslint-disable-next-line max-lines-per-function -- orchestrates scan, match job, and slug-duplicate recheck
 export function useLibraryImport() {
@@ -31,6 +28,8 @@ export function useLibraryImport() {
   const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  // Progress across the sequential chunked confirm run (#1831) — drives "Registering X of Y…".
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number; chunks: number } | null>(null);
   // Items the server held for recording review (#1711) — surfaced for re-confirm.
   // Library always registers with mode `undefined`, so the snapshot is unused here.
   const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
@@ -68,7 +67,7 @@ export function useLibraryImport() {
     setRows(prev => prev.map(row => {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
-      if (isDbDuplicate(row.book)) return row;
+      if (isLibraryDbDuplicate(row.book)) return row;
       return mergeMatchIntoRow(row, match);
     }));
   }, []);
@@ -83,7 +82,7 @@ export function useLibraryImport() {
   const scanMutation = useMutation({
     mutationFn: (path: string) => api.scanDirectory(path),
     onSuccess: (result) => {
-      if (result.discoveries.length === 0 || result.discoveries.every(d => isDbDuplicate(d))) {
+      if (result.discoveries.length === 0 || result.discoveries.every(d => isLibraryDbDuplicate(d))) {
         setEmptyResult(true);
         setStep('review');
         return;
@@ -106,7 +105,7 @@ export function useLibraryImport() {
       setStep('review');
 
       const candidates = result.discoveries
-        .filter(d => !isDbDuplicate(d))
+        .filter(d => !isLibraryDbDuplicate(d))
         .map(d => ({
           path: d.path,
           title: d.parsedTitle,
@@ -122,40 +121,49 @@ export function useLibraryImport() {
   });
 
   const registerMutation = useMutation({
-    mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items, undefined),
-    onSuccess: (result, variables) => {
+    // Byte-budgeted chunked confirm (#1831). A large library exceeds the 1 MiB body
+    // limit in one request, so the runner packs the selection into sub-1-MiB chunks and
+    // POSTs them sequentially, resolving with the aggregate + the actually-submitted items.
+    mutationFn: (items: ImportConfirmItem[]) =>
+      runChunkedConfirm({ items, mode: undefined, confirm: api.confirmImport, onProgress: setChunkProgress }),
+    onSuccess: (res) => {
+      const { aggregateResult, submittedItems } = res;
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
 
-      // Held items (#1711): keep the user on the page so they can re-confirm them,
-      // instead of navigating. Surfaced separately from the outcome toast below so a
+      // Held items (#1711): keep the user on the page so they can re-confirm them, instead
+      // of navigating. Captured ONCE over the aggregate (#1831) — a per-chunk call would
+      // clobber earlier chunks' held items. Surfaced separately from the outcome toast so a
       // held + skipped/failed batch is never swallowed by an early return (#1822).
-      if (result.heldReview.length > 0) {
-        captureHeld(result.heldReview, undefined);
-        toast.warning(`${result.heldReview.length} held for recording review`);
+      if (aggregateResult.heldReview.length > 0) {
+        captureHeld(aggregateResult.heldReview, undefined);
+        toast.warning(`${aggregateResult.heldReview.length} held for recording review`);
       } else {
         clearHeld();
       }
 
-      // Report accepted/skipped/failed. Green fires ONLY on a fully-clean outcome
-      // (#1822) — a zero-accepted or partial batch shows amber/red naming the reason,
-      // never a green "0 registered" lie.
-      const outcome = buildOutcomeToast(result, 'registered');
+      // Report accepted/skipped/failed + the chunked transport splits (unsubmitted / too
+      // large). Green fires ONLY on a fully-clean, fully-submitted outcome (#1822/#1831).
+      const outcome = buildChunkedOutcomeToast(res, 'registered');
       if (outcome) toast[outcome.severity](outcome.message);
 
-      // Navigate only when everything landed as accepted; otherwise stay and deselect
-      // the accepted rows so a re-submit can't re-send them (#1822).
-      if (isCleanImport(result)) {
+      // Navigate only when the ENTIRE selection landed accepted (nothing held/skipped/
+      // failed/unsubmitted/too-large); otherwise stay and deselect the accepted rows over
+      // submittedItems — NOT the full selection — so the never-sent remainder stays selected.
+      if (isChunkedCleanImport(res)) {
         navigate('/library');
         return;
       }
-      const acceptedPaths = acceptedItemPaths(variables, result);
+      const acceptedPaths = acceptedItemPaths(submittedItems, aggregateResult);
       if (acceptedPaths.size > 0) {
         setRows(prev => prev.map(r => acceptedPaths.has(r.book.path) ? { ...r, selected: false } : r));
       }
     },
     onError: (error: Error) => {
-      toast.error(`Registration failed: ${getErrorMessage(error)}`);
+      // First-chunk failure (nothing submitted) rejects here, exactly as a single-request
+      // failure did. 413 (Fastify or the proxy hop) maps to import-domain wording (#1831).
+      toast.error(`Import failed: ${confirmErrorMessage(error)}`);
     },
+    onSettled: () => setChunkProgress(null),
   });
 
   // Auto-scan on mount once settings are loaded and we have a library path.
@@ -180,9 +188,9 @@ export function useLibraryImport() {
 
   const handleSelectAll = useCallback(() => {
     setRows(prev => {
-      const selectableRows = prev.filter(r => !isDbDuplicate(r.book));
+      const selectableRows = prev.filter(r => !isLibraryDbDuplicate(r.book));
       const allSelected = selectableRows.length > 0 && selectableRows.every(r => r.selected);
-      return prev.map(r => isDbDuplicate(r.book) ? r : { ...r, selected: !allSelected });
+      return prev.map(r => isLibraryDbDuplicate(r.book) ? r : { ...r, selected: !allSelected });
     });
   }, []);
 
@@ -236,7 +244,7 @@ export function useLibraryImport() {
 
   const handleRetryMatch = useCallback(() => {
     const candidates = rows
-      .filter(r => !isDbDuplicate(r.book))
+      .filter(r => !isLibraryDbDuplicate(r.book))
       .map(r => ({
         path: r.book.path,
         title: r.edited.title,
@@ -251,13 +259,13 @@ export function useLibraryImport() {
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
-  const readyCount = rows.filter(r => r.selected && !isDbDuplicate(r.book) && r.matchResult?.confidence === 'high').length;
+  const readyCount = rows.filter(r => r.selected && !isLibraryDbDuplicate(r.book) && r.matchResult?.confidence === 'high').length;
   const reviewCount = rows.filter(r => r.matchResult?.confidence === 'medium').length;
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
-  const pendingCount = rows.filter(r => !r.matchResult && !isDbDuplicate(r.book)).length;
-  const selectedPendingCount = rows.filter(r => r.selected && !r.matchResult && !isDbDuplicate(r.book)).length;
-  const duplicateCount = rows.filter(r => isDbDuplicate(r.book)).length;
-  const allSelected = rows.length > 0 && rows.filter(r => !isDbDuplicate(r.book)).every(r => r.selected);
+  const pendingCount = rows.filter(r => !r.matchResult && !isLibraryDbDuplicate(r.book)).length;
+  const selectedPendingCount = rows.filter(r => r.selected && !r.matchResult && !isLibraryDbDuplicate(r.book)).length;
+  const duplicateCount = rows.filter(r => isLibraryDbDuplicate(r.book)).length;
+  const allSelected = rows.length > 0 && rows.filter(r => !isLibraryDbDuplicate(r.book)).every(r => r.selected);
 
   // Library root path for relative-path computation
   const libraryRoot = settings?.library.path ?? '';
@@ -273,6 +281,7 @@ export function useLibraryImport() {
     setEditIndex,
     isMatching,
     progress,
+    chunkProgress,
     libraryRoot,
     heldReview,
 

@@ -308,6 +308,77 @@ describe('library-scan routes', () => {
     });
   });
 
+  // #1831 — per-route body-size headroom (defense-in-depth for un-proxied deployments).
+  // A body over the ~10 MiB confirm/match limit surfaces a 413 with an accurate message
+  // (via the scoped error-handler passthrough), while other routes still cap at 1 MiB.
+  describe('per-route bodyLimit (#1831)', () => {
+    it('confirm route 413s with an accurate message when the body exceeds ~10 MiB', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      const oversized = 'x'.repeat(11 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: { books: [{ path: '/a/b', title: 'Book', metadata: { blob: oversized } }] },
+      });
+      expect(res.statusCode).toBe(413);
+      // The scoped passthrough surfaces the framework message rather than a masked 500.
+      expect(JSON.parse(res.payload).error).toMatch(/too large/i);
+      expect(services.libraryScan.confirmImport).not.toHaveBeenCalled();
+    });
+
+    it('match route 413s when the body exceeds ~10 MiB', async () => {
+      const oversized = 'x'.repeat(11 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/match',
+        payload: { books: [{ path: '/a/b', title: oversized }] },
+      });
+      expect(res.statusCode).toBe(413);
+      expect(services.matchJob.createJob).not.toHaveBeenCalled();
+    });
+
+    // Positive boundary: without these, the raise is untestable — createTestApp's default
+    // 1 MiB cap would 413 the 11 MiB negatives above even if the route option were deleted.
+    it('confirm route accepts a ~3 MiB body (over the 1 MiB default, under the route limit)', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
+      const midsize = 'x'.repeat(3 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: { books: [{ path: '/a/b', title: 'Book', metadata: { blob: midsize } }] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.libraryScan.confirmImport).toHaveBeenCalled();
+    });
+
+    it('match route accepts a ~3 MiB body (over the 1 MiB default, under the route limit)', async () => {
+      (services.matchJob.createJob as ReturnType<typeof vi.fn>).mockReturnValue('job-3mib');
+      const midsize = 'x'.repeat(3 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/match',
+        payload: { books: [{ path: '/a/b', title: midsize }] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(services.matchJob.createJob).toHaveBeenCalled();
+    });
+
+    it('leaves the global 1 MiB default in place on other routes (scan 413s above 1 MiB)', async () => {
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ discoveries: [], totalFolders: 0 });
+      const overOneMib = 'x'.repeat(2 * 1024 * 1024);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/scan',
+        payload: { path: overOneMib },
+      });
+      expect(res.statusCode).toBe(413);
+      expect(services.libraryScan.scanDirectory).not.toHaveBeenCalled();
+    });
+  });
+
   // Wave 11.2 (#755) — single-book scan/import routes retired
   describe('removed routes', () => {
     it('POST /api/library/import/scan-single returns 404', async () => {

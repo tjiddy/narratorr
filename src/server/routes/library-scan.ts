@@ -23,6 +23,16 @@ import { serializeError } from '../utils/serialize-error.js';
 import { mintPreviewToken } from '../services/preview-token.js';
 
 
+/**
+ * Per-route body-size headroom for the confirm + match routes (#1831). Defense-in-depth
+ * for un-proxied *direct* deployments only: the byte-budgeted chunked client keeps every
+ * request it sends well under 1 MiB, so behind the default nginx proxy (`client_max_body_size
+ * 1m`) this raise is inert — the proxy emits its own 413 before Fastify sees the body. It is
+ * explicitly NOT the mechanism for a self-oversize confirm item (that is diverted pre-flight
+ * client-side). The global 1 MiB default stays on every other route.
+ */
+const CONFIRM_MATCH_BODY_LIMIT = 10 * 1024 * 1024; // 10 MiB
+
 type ScanDirectoryBody = z.infer<typeof scanDirectoryBodySchema>;
 type ImportConfirmBody = z.infer<typeof importConfirmBodySchema>;
 type MatchStartBody = z.infer<typeof matchStartBodySchema>;
@@ -102,7 +112,7 @@ export async function libraryScanRoutes(
   // success outcome (#1711): some items enqueued, some held for recording review.
   app.post<{ Body: ImportConfirmBody }>(
     '/api/library/import/confirm',
-    { schema: { body: importConfirmBodySchema } },
+    { schema: { body: importConfirmBodySchema }, bodyLimit: CONFIRM_MATCH_BODY_LIMIT },
     async (request, reply) => {
       const { books: items, mode } = request.body;
 
@@ -123,7 +133,7 @@ export async function libraryScanRoutes(
   // Start a match job for discovered books
   app.post<{ Body: MatchStartBody }>(
     '/api/library/import/match',
-    { schema: { body: matchStartBodySchema } },
+    { schema: { body: matchStartBodySchema }, bodyLimit: CONFIRM_MATCH_BODY_LIMIT },
     async (request) => {
       const { books: candidates } = request.body;
 
