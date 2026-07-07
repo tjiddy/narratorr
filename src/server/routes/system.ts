@@ -11,14 +11,18 @@ import { RestoreUploadError } from '../services/backup.service.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { serializeError } from '../utils/serialize-error.js';
+import { config } from '../config.js';
 
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status — public, minimal payload (#742): { version, status }.
+  // Adds `instanceBadge` only when configured (#1842) — the client uses it to recolor
+  // the favicon + prefix the tab title; an unset badge keeps the payload byte-identical.
   app.get('/api/system/status', async () => {
     return {
       version: getVersion(),
       status: 'ok',
+      ...(config.instanceBadge ? { instanceBadge: config.instanceBadge } : {}),
     };
   });
 

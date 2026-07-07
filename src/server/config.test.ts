@@ -269,4 +269,30 @@ describe('config', () => {
       expect(config.authBypass).toBe(false);
     });
   });
+
+  describe('instanceBadge (#1842)', () => {
+    it('is undefined when INSTANCE_BADGE is not set', async () => {
+      delete process.env.INSTANCE_BADGE;
+      const config = await loadConfig();
+      expect(config.instanceBadge).toBeUndefined();
+    });
+
+    it('coalesces an empty string to undefined (not a valid badge)', async () => {
+      process.env.INSTANCE_BADGE = '';
+      const config = await loadConfig();
+      expect(config.instanceBadge).toBeUndefined();
+    });
+
+    it('coalesces a whitespace-only value to undefined', async () => {
+      process.env.INSTANCE_BADGE = '   ';
+      const config = await loadConfig();
+      expect(config.instanceBadge).toBeUndefined();
+    });
+
+    it('trims a set value', async () => {
+      process.env.INSTANCE_BADGE = '  dev  ';
+      const config = await loadConfig();
+      expect(config.instanceBadge).toBe('dev');
+    });
+  });
 });
