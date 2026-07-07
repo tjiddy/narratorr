@@ -323,7 +323,15 @@ export function formatBytes(bytes?: number): string {
   if (!isFinite(bytes) || bytes < 0) return 'Unknown';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  let i = Math.floor(Math.log(bytes) / Math.log(k));
   if (i < 0 || i >= sizes.length) return 'Unknown';
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+  // Whole numbers through MB; decimals only where they carry weight (GB and up).
+  const atUnit = (unit: number) => parseFloat((bytes / Math.pow(k, unit)).toFixed(unit >= 3 ? 2 : 0));
+  let value = atUnit(i);
+  if (value >= k && i + 1 < sizes.length) {
+    // Rounding crossed the unit boundary (e.g. 1023.5 MB) — show "1 GB", not "1024 MB".
+    i += 1;
+    value = atUnit(i);
+  }
+  return `${value} ${sizes[i]}`;
 }

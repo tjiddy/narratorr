@@ -369,12 +369,22 @@ describe('formatBytes', () => {
     expect(formatBytes(1099511627776)).toBe('1 TB');
   });
 
-  it('formats fractional values', () => {
-    expect(formatBytes(1536)).toBe('1.5 KB');
+  it('rounds KB to whole numbers', () => {
+    expect(formatBytes(1536)).toBe('2 KB');
   });
 
-  it('rounds to 2 decimal places', () => {
-    expect(formatBytes(1234567)).toBe('1.18 MB');
+  it('rounds MB to whole numbers', () => {
+    expect(formatBytes(1234567)).toBe('1 MB');
+    expect(formatBytes(549049958)).toBe('524 MB');
+  });
+
+  it('keeps 2 decimal places at GB and up', () => {
+    expect(formatBytes(1438814182)).toBe('1.34 GB');
+    expect(formatBytes(1649267441664)).toBe('1.5 TB');
+  });
+
+  it('rolls into the next unit when rounding reaches 1024', () => {
+    expect(formatBytes(1073217536)).toBe('1 GB'); // 1023.5 MB rounds to 1024 MB → 1 GB
   });
 
   it('returns Unknown for negative input', () => {
