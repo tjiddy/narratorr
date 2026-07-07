@@ -242,6 +242,72 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  describe('auto-merge downloads toggle + card regroup (#1836)', () => {
+    it('renders both regrouped headings — Audio Tools and the download/import automation group', async () => {
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Audio Tools')).toBeInTheDocument();
+      });
+      expect(screen.getByText('After Download / Import')).toBeInTheDocument();
+    });
+
+    it('renders the auto-merge toggle with download-scoped copy that excludes Library and Manual Import', async () => {
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Merge multi-file downloads')).toBeInTheDocument();
+      });
+      // Copy must make it visibly download-scoped and exclude the two import paths.
+      expect(screen.getByText(/Applies to downloads only — never Library Import or Manual Import\./)).toBeInTheDocument();
+    });
+
+    it('defaults the toggle to off', async () => {
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Merge multi-file downloads')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Merge multi-file downloads')).not.toBeChecked();
+    });
+
+    it('reflects a persisted autoMergeDownloads:true on load', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({ processing: { autoMergeDownloads: true } }));
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Merge multi-file downloads')).toBeChecked();
+      });
+    });
+
+    it('round-trips autoMergeDownloads:true through save without disturbing the other regrouped values', async () => {
+      const user = userEvent.setup();
+      mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
+      mockApi.updateSettings.mockResolvedValue(configuredProcessingSettings);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Merge multi-file downloads')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Merge multi-file downloads'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            processing: expect.objectContaining({
+              autoMergeDownloads: true,
+              // Regroup is presentation-only — the sibling tool values still round-trip.
+              ffmpegPath: '/usr/bin/ffmpeg',
+              maxConcurrentProcessing: 1,
+            }),
+          }),
+        );
+      });
+    });
+  });
+
   it('renders max concurrent jobs field', async () => {
     mockApi.getSettings.mockResolvedValue(configuredProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
@@ -356,6 +422,7 @@ describe('ProcessingSettingsSection', () => {
           bitrate: 128,
           mergeBehavior: 'multi-file-only',
           maxConcurrentProcessing: 1,
+          autoMergeDownloads: false,
           postProcessingScript: '',
           postProcessingScriptTimeout: 300,
         },
