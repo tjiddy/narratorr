@@ -37,9 +37,12 @@ export interface PackResult {
   tooLarge: ImportConfirmItem[];
 }
 
+/** Reused across every item serialization instead of ~5k per-pack allocations (#1833). */
+const encoder = new TextEncoder();
+
 /** Serialized UTF-8 byte size of a single confirm item (what actually crosses the wire). */
 export function serializedItemBytes(item: ImportConfirmItem): number {
-  return new TextEncoder().encode(JSON.stringify(item)).length;
+  return encoder.encode(JSON.stringify(item)).length;
 }
 
 export function packConfirmChunks(items: ImportConfirmItem[]): PackResult {

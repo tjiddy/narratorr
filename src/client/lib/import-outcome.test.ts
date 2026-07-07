@@ -19,7 +19,7 @@ function submittedRun(aggregate: ImportResult): ChunkedConfirmResult {
   return {
     aggregateResult: aggregate,
     submittedItems: [],
-    unsubmitted: { count: 0, inFlight: 0, remainder: 0, reason: null },
+    unsubmitted: { count: 0, inFlight: 0, remainder: 0, reason: null, reasonKind: null },
     tooLarge: { count: 0 },
   };
 }
@@ -87,7 +87,7 @@ describe('buildOutcomeToast (#1822)', () => {
 describe('isChunkedCleanImport (#1831)', () => {
   it('is clean only when the aggregate is clean AND nothing is unsubmitted or too-large', () => {
     expect(isChunkedCleanImport(submittedRun({ ...base, accepted: 3 }))).toBe(true);
-    const withUnsubmitted: ChunkedConfirmResult = { ...submittedRun({ ...base, accepted: 3 }), unsubmitted: { count: 2, inFlight: 1, remainder: 1, reason: 'x' } };
+    const withUnsubmitted: ChunkedConfirmResult = { ...submittedRun({ ...base, accepted: 3 }), unsubmitted: { count: 2, inFlight: 1, remainder: 1, reason: 'x', reasonKind: 'transport' } };
     expect(isChunkedCleanImport(withUnsubmitted)).toBe(false);
     const withTooLarge: ChunkedConfirmResult = { ...submittedRun({ ...base, accepted: 3 }), tooLarge: { count: 1 } };
     expect(isChunkedCleanImport(withTooLarge)).toBe(false);
@@ -104,13 +104,26 @@ describe('buildChunkedOutcomeToast (#1831)', () => {
     const res: ChunkedConfirmResult = {
       aggregateResult: { ...base, accepted: 4 },
       submittedItems: [],
-      unsubmitted: { count: 3, inFlight: 1, remainder: 2, reason: 'connection reset' },
+      unsubmitted: { count: 3, inFlight: 1, remainder: 2, reason: 'connection reset', reasonKind: 'transport' },
       tooLarge: { count: 0 },
     };
     expect(buildChunkedOutcomeToast(res, 'registered')).toEqual({
       severity: 'error',
       message: '4 registered · 1 not confirmed — connection failed mid-request; resubmitting is safe · 2 not submitted',
     });
+  });
+
+  it('mid-sequence 413: red toast names the too-large cause and drops the resubmit-safe claim (#1833)', () => {
+    const res: ChunkedConfirmResult = {
+      aggregateResult: { ...base, accepted: 4 },
+      submittedItems: [],
+      unsubmitted: { count: 3, inFlight: 1, remainder: 2, reason: 'Payload Too Large', reasonKind: 'too-large' },
+      tooLarge: { count: 0 },
+    };
+    const toast = buildChunkedOutcomeToast(res, 'registered')!;
+    expect(toast.severity).toBe('error');
+    expect(toast.message).toContain('the import request was too large');
+    expect(toast.message).not.toContain('resubmitting is safe');
   });
 
   it('too-large only: amber toast naming the too-large rows, no green', () => {

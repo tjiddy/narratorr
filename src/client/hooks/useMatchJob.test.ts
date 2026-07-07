@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useMatchJob, packMatchCandidates } from './useMatchJob';
+import { useMatchJob, packMatchCandidates, MATCH_CHUNK_BYTE_BUDGET } from './useMatchJob';
 import type { MatchCandidate, MatchJobStatus } from '@/lib/api';
 
 const mockStartMatchJob = vi.fn();
@@ -414,6 +414,161 @@ describe('useMatchJob', () => {
       // The queued second chunk never starts.
       await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
       expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // #1833 — response-identity guard, cancelled-status semantics, envelope byte accounting
+  describe('poll identity + cancelled semantics (#1833)', () => {
+    // These tests use persistent + one-shot mock implementations (pending promises we resolve
+    // by hand). The file-level `clearAllMocks` does NOT drain the mockImplementationOnce queue
+    // or reset a persistent mockImplementation, so reset the two job mocks fully on both edges
+    // to keep this block hermetic and prevent queue pollution leaking in or out.
+    beforeEach(() => {
+      mockStartMatchJob.mockReset();
+      mockGetMatchJob.mockReset();
+    });
+    afterEach(() => {
+      mockStartMatchJob.mockReset();
+      mockGetMatchJob.mockReset();
+    });
+
+    /** A candidate padded above the byte budget → 1 per chunk (predictable 2-chunk queues). */
+    const bigCandidate = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(300 * 1024) });
+
+    it('overlapping completed polls for one job advance the queue exactly once', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      // getMatchJob returns pending promises we resolve by hand, so two polls can be in flight.
+      const resolvers: Array<() => void> = [];
+      mockGetMatchJob.mockImplementation((id: string) => new Promise<MatchJobStatus>((resolve) => {
+        resolvers.push(() => resolve({
+          id, status: 'completed', total: 1, matched: 1,
+          results: [{ path: '/a', confidence: 'high', bestMatch: null, alternatives: [] }],
+        }));
+      }));
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { await result.current.startMatching([{ path: '/a', title: 'A' }]); });
+
+      // Two interval ticks fire two overlapping getMatchJob calls before either resolves.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(mockGetMatchJob).toHaveBeenCalledTimes(2);
+
+      // Both resolve completed; only the first advances — the second is ignored by the id guard.
+      await act(async () => { resolvers[0]!(); resolvers[1]!(); });
+
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+      expect(result.current.progress).toEqual({ matched: 1, total: 1 });
+      expect(result.current.isMatching).toBe(false);
+    });
+
+    it('a stale completed poll from a superseded run (Retry Match) mutates nothing in the new queue', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      let resolveOld: (() => void) | undefined;
+      mockGetMatchJob
+        .mockImplementationOnce((id: string) => new Promise<MatchJobStatus>((resolve) => {
+          resolveOld = () => resolve({
+            id, status: 'completed', total: 1, matched: 1,
+            results: [{ path: '/old', confidence: 'high', bestMatch: null, alternatives: [] }],
+          });
+        }))
+        .mockImplementation(() => new Promise<MatchJobStatus>(() => {})); // job-2 poll never resolves
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { await result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // job-1 poll in-flight
+
+      // Retry Match supersedes with a fresh queue (job-2).
+      await act(async () => { await result.current.startMatching([{ path: '/b', title: 'B' }]); });
+
+      // The stale job-1 poll resolves — its result must not leak into the new run.
+      await act(async () => { resolveOld?.(); });
+
+      expect(result.current.results).toEqual([]);
+      expect(result.current.error).toBeNull();
+      expect(result.current.isMatching).toBe(true);
+    });
+
+    it('a stale poll rejection from a superseded run leaves the new run untouched', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      let rejectOld: (() => void) | undefined;
+      mockGetMatchJob
+        .mockImplementationOnce(() => new Promise<MatchJobStatus>((_, reject) => { rejectOld = () => reject(new Error('job-1 expired')); }))
+        .mockImplementation(() => new Promise<MatchJobStatus>(() => {}));
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { await result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // job-1 poll in-flight
+      await act(async () => { await result.current.startMatching([{ path: '/b', title: 'B' }]); }); // supersede → job-2
+
+      await act(async () => { rejectOld?.(); });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.isMatching).toBe(true);
+
+      // The new run's polling is still live.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(mockGetMatchJob).toHaveBeenCalledWith('job-2');
+    });
+
+    it('a stale start rejection from a superseded run does not error or stop the new run', async () => {
+      let rejectStartOld: (() => void) | undefined;
+      mockStartMatchJob
+        .mockImplementationOnce(() => new Promise<{ jobId: string }>((_, reject) => { rejectStartOld = () => reject(new Error('job-1 start failed')); }))
+        .mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob.mockImplementation(() => new Promise<MatchJobStatus>(() => {}));
+
+      const { result } = renderHook(() => useMatchJob());
+      // Run A's startChunk awaits a pending startMatchJob — do NOT await startMatching (it hangs).
+      act(() => { void result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      // Supersede with run B before A's start settles.
+      await act(async () => { await result.current.startMatching([{ path: '/b', title: 'B' }]); });
+
+      // Run A's start now rejects — it belongs to a cancelled queue and must be swallowed.
+      await act(async () => { rejectStartOld?.(); });
+
+      expect(result.current.error).toBeNull();
+      expect(result.current.isMatching).toBe(true);
+    });
+
+    it('a server cancelled status terminates the queue — no next chunk, partial results kept', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob.mockResolvedValueOnce({
+        id: 'job-1', status: 'cancelled', total: 1, matched: 1,
+        results: [{ path: '/a', confidence: 'high', bestMatch: null, alternatives: [] }],
+      } satisfies MatchJobStatus);
+
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { await result.current.startMatching([bigCandidate('/a'), bigCandidate('/b')]); });
+      // Chunk 1's poll returns cancelled.
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+
+      expect(result.current.isMatching).toBe(false);
+      // Chunk 2's job never launches, and partial results from chunk 1 are retained.
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+
+      // No further starts after more ticks.
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+    });
+
+    it('every emitted match chunk body — { books } with envelope — stays within the byte budget', () => {
+      // Two candidates each serializing to exactly half the byte budget. Summing the bare
+      // candidate array (pre-#1833) packs both into one chunk at exactly the budget — but the
+      // real { books } wire body (array brackets + a comma + the envelope) then spills one
+      // request past the limit. Envelope-aware accounting splits them instead.
+      const half = MATCH_CHUNK_BYTE_BUDGET / 2;
+      const mk = (path: string): MatchCandidate => {
+        const overhead = new TextEncoder().encode(JSON.stringify({ path, title: '' })).length;
+        return { path, title: 'x'.repeat(half - overhead) };
+      };
+      const chunks = packMatchCandidates([mk('/p0'), mk('/p1')]);
+      expect(chunks).toHaveLength(2);
+      for (const chunk of chunks) {
+        const body = new TextEncoder().encode(JSON.stringify({ books: chunk })).length;
+        expect(body).toBeLessThanOrEqual(MATCH_CHUNK_BYTE_BUDGET);
+      }
     });
   });
 

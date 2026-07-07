@@ -1,6 +1,17 @@
+import { ApiError } from '@/lib/api';
 import type { ImportConfirmItem, ImportMode, ImportResult } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { packConfirmChunks } from './confirm-chunks.js';
+
+/**
+ * Why a mid-run chunk did not land (#1833). `'transport'` is a network-level failure
+ * (connection reset) — the chunk was attempted, its fate is unknown, and resubmitting is
+ * safe (the server re-classifies an already-accepted item as skipped). `'too-large'` is a
+ * deterministic 413 (Fastify body limit or, more often, a proxy hop with a sub-900 KiB
+ * `client_max_body_size`) — it will fail identically on every retry, so the toast must NOT
+ * claim resubmitting is safe. `null` on a fully-submitted run.
+ */
+export type UnsubmittedReasonKind = 'transport' | 'too-large' | null;
 
 /**
  * Sequential chunk runner for the confirm POST (#1831). Packs the selected items
@@ -25,11 +36,13 @@ export interface ChunkedConfirmResult {
   /**
    * Items that did not land. `inFlight` is the failing chunk (attempted, unconfirmed —
    * resubmit-safe); `remainder` is the never-sent chunks after it; `count` is their sum.
-   * `reason` carries the transport error message (null on a fully-submitted run). The
-   * in-flight/remainder split lets the toast name both, which the base `{ count, reason }`
-   * shape cannot express.
+   * `reason` carries the transport error message (null on a fully-submitted run);
+   * `reasonKind` discriminates a deterministic 413 (`'too-large'`) from a retryable
+   * transport failure (`'transport'`) so the toast can drop the false "resubmitting is
+   * safe" claim for the too-large case (#1833). The in-flight/remainder split lets the
+   * toast name both, which the base `{ count, reason }` shape cannot express.
    */
-  unsubmitted: { count: number; inFlight: number; remainder: number; reason: string | null };
+  unsubmitted: { count: number; inFlight: number; remainder: number; reason: string | null; reasonKind: UnsubmittedReasonKind };
   /** Rows diverted pre-flight because their own serialized size exceeds the transport ceiling. */
   tooLarge: { count: number };
 }
@@ -51,6 +64,11 @@ const emptyResult = (): ImportResult => ({ accepted: 0, heldReview: [], skipped:
 
 export async function runChunkedConfirm(params: RunChunkedConfirmParams): Promise<ChunkedConfirmResult> {
   const { items, mode, confirm, onProgress } = params;
+  // An empty selection has nothing to POST. The old single-request path 400ed server-side;
+  // resolving as a clean empty result here would fire a phantom green toast + navigate away
+  // with no server call (#1833). Reject so the caller's onError path handles it — the UI
+  // gates the Import button on a non-empty selection, so this is a defensive guard.
+  if (items.length === 0) throw new Error('No books selected to import.');
   const { chunks, tooLarge } = packConfirmChunks(items);
 
   const aggregate = emptyResult();
@@ -60,7 +78,9 @@ export async function runChunkedConfirm(params: RunChunkedConfirmParams): Promis
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]!;
-    onProgress?.({ current: submittedItems.length, total, chunks: chunkCount });
+    // Report items-ATTEMPTED (previously-submitted + this in-flight chunk) so the first chunk
+    // renders "Registering N of M" while POSTing, never a stalled "0 of M" (#1833).
+    onProgress?.({ current: submittedItems.length + chunk.length, total, chunks: chunkCount });
 
     let result: ImportResult;
     try {
@@ -69,12 +89,15 @@ export async function runChunkedConfirm(params: RunChunkedConfirmParams): Promis
       // First-chunk failure with nothing to report → reject into the existing onError path.
       if (submittedItems.length === 0 && tooLarge.length === 0) throw error;
       // Otherwise resolve with the partial outcome, splitting the failing (in-flight) chunk
-      // from the never-sent remainder so the toast can name both.
+      // from the never-sent remainder so the toast can name both. Preserve error identity: a
+      // 413 is deterministic (too-large), a network reset is retryable (transport) — the toast
+      // wording branches on this (#1833).
       const remainder = chunks.slice(i + 1).reduce((n, c) => n + c.length, 0);
+      const reasonKind: UnsubmittedReasonKind = error instanceof ApiError && error.status === 413 ? 'too-large' : 'transport';
       return {
         aggregateResult: aggregate,
         submittedItems,
-        unsubmitted: { count: chunk.length + remainder, inFlight: chunk.length, remainder, reason: getErrorMessage(error) },
+        unsubmitted: { count: chunk.length + remainder, inFlight: chunk.length, remainder, reason: getErrorMessage(error), reasonKind },
         tooLarge: { count: tooLarge.length },
       };
     }
@@ -90,7 +113,7 @@ export async function runChunkedConfirm(params: RunChunkedConfirmParams): Promis
   return {
     aggregateResult: aggregate,
     submittedItems,
-    unsubmitted: { count: 0, inFlight: 0, remainder: 0, reason: null },
+    unsubmitted: { count: 0, inFlight: 0, remainder: 0, reason: null, reasonKind: null },
     tooLarge: { count: tooLarge.length },
   };
 }
