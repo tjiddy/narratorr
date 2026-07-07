@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync, spawnSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -152,10 +153,15 @@ describe('s6-overlay service definition', () => {
 
     it('run script recursively chowns /config to the app user', () => {
       const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
-      expect(content).toMatch(/lsiown|chown/);
-      expect(content).toContain('-R');
-      expect(content).toContain('abc');
-      expect(content).toContain('/config');
+      // Assert against the actual executable command, not raw content — the header
+      // comment also mentions chown/abc//config, so a token-only match would still
+      // pass if the real command were deleted or no-op'd. Strip comment/blank lines
+      // first so this fails when the load-bearing chown is removed or altered.
+      const executable = content
+        .split('\n')
+        .filter((line) => line.trim() !== '' && !line.trim().startsWith('#'))
+        .join('\n');
+      expect(executable).toMatch(/(?:lsiown|chown)\s+-R\s+abc:abc\s+\/config\b/);
     });
 
     it('run script does NOT touch the media mounts (scope guard)', () => {
@@ -175,12 +181,27 @@ describe('s6-overlay service definition', () => {
       'run script exits 0 and warns when the chown cannot complete (graceful boot)',
       () => {
         const runPath = path.join(initServiceDir, 'run');
-        // In CI neither `lsiown` nor /config exist, so the chown fails — the `||`
-        // fallback must catch it, emit the warning, and exit 0 so the container boots.
-        const result = spawnSync('bash', [runPath], { encoding: 'utf-8', timeout: 5000 });
-        expect(result.status).toBe(0);
-        expect(result.stdout).toContain('WARNING');
-        expect(result.stdout).toContain('/config');
+        // Determinism (F2): don't rely on the host lacking `lsiown` or `/config`.
+        // Invoke an absolute bash with a controlled PATH pointing at an empty temp
+        // dir, so the ownership command (lsiown/chown) is guaranteed unresolvable
+        // and the `||` fallback always fires. `echo` is a bash builtin, so the
+        // warning still emits under the stripped PATH. This proves the graceful
+        // path independent of ambient host state.
+        const bashBin = ['/bin/bash', '/usr/bin/bash'].find((p) => fs.existsSync(p));
+        expect(bashBin, 'no absolute bash found for deterministic invocation').toBeDefined();
+        const emptyPathDir = fs.mkdtempSync(path.join(os.tmpdir(), 'narratorr-nopath-'));
+        try {
+          const result = spawnSync(bashBin as string, [runPath], {
+            encoding: 'utf-8',
+            timeout: 5000,
+            env: { PATH: emptyPathDir },
+          });
+          expect(result.status).toBe(0);
+          expect(result.stdout).toContain('WARNING');
+          expect(result.stdout).toContain('/config');
+        } finally {
+          fs.rmSync(emptyPathDir, { recursive: true, force: true });
+        }
       },
     );
 
