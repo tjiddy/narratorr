@@ -6,6 +6,8 @@ import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh, type BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { buildBookNameTokens } from '../utils/paths.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -24,6 +26,15 @@ export interface ConvertProcessingSettings {
   outputFormat?: 'm4b' | 'mp3';
   mergeBehavior?: 'always' | 'multi-file-only' | 'never';
   bitrate?: number | null;
+  /**
+   * Library file-naming template + options, threaded from `startConvertJob` (which fetches
+   * `library` settings alongside `processing`). Empty/absent `fileFormat` keeps the original
+   * basename fallback; a non-empty format renders book-level tokens into each converted stem,
+   * disambiguated like the rename path. Sourced from `library`, not `processing`, but bundled
+   * here so the single settings bag threads through `convertBook` unchanged.
+   */
+  fileFormat?: string;
+  namingOptions?: NamingOptions;
 }
 
 /**
@@ -102,7 +113,14 @@ export async function convertBook(
         bitrate: targetBitrateKbps,
         sourceBitrateKbps,
       },
-      { author: authorName, title: bookTitle },
+      {
+        author: authorName,
+        title: bookTitle,
+        ...(book && { bookTokens: buildBookNameTokens(book, authorName) }),
+        ...(processingSettings.namingOptions && { namingOptions: processingSettings.namingOptions }),
+        // Empty fileFormat → omit so convertFiles keeps the original-basename fallback.
+        ...(processingSettings.fileFormat ? { fileFormat: processingSettings.fileFormat } : {}),
+      },
     );
 
     if (!result.success) {

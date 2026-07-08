@@ -97,6 +97,30 @@ export const compareAudioNames = (a: string, b: string): number => {
   return baseA < baseB ? -1 : baseA > baseB ? 1 : 0;
 };
 
+/**
+ * Disambiguate a list of rendered filename stems given in play order.
+ *
+ * When the stems do NOT all render distinct (any two collide case-insensitively —
+ * the format carries no per-file discriminator, e.g. `{author} - {title}`), a
+ * zero-padded sequential ordinal `<stem> (N)` is appended to *every* stem including
+ * the first, in the caller's order. The ordinal width is `String(count).length`
+ * (`padWidth`): 1 digit for 2–99 files, 3 digits from 100 files. A single stem is
+ * never numbered, and an already-unique set (a `{trackNumber}`/`{partName}` token is
+ * present) passes through untouched.
+ *
+ * Shared by `planFileRenames` (rename path) and the convert path (`convertFiles`) so
+ * both disambiguate colliding outputs byte-for-byte identically — a Rename All Books
+ * pass after a convert is a no-op. Assumes `stems` is already in `compareAudioNames`
+ * order so the ordinal matches the import-baked play position.
+ */
+export function disambiguateStems(stems: string[]): string[] {
+  if (stems.length <= 1) return [...stems];
+  const uniqueCount = new Set(stems.map((s) => s.toLowerCase())).size;
+  if (uniqueCount === stems.length) return [...stems];
+  const width = String(stems.length).length;
+  return stems.map((stem, i) => `${stem} (${String(i + 1).padStart(width, '0')})`);
+}
+
 /** Sort mode for collectSortedAudioFiles. */
 export type AudioFileSortMode = 'lexicographic' | 'locale' | 'locale-numeric';
 
