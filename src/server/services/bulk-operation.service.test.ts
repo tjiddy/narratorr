@@ -923,6 +923,43 @@ describe('BulkOperationService — convert batch', () => {
     expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
   });
 
+  // #1720 — startConvertJob now also fetches library naming settings and threads
+  // fileFormat + namingOptions + book-level tokens into the convert context, so a
+  // re-encode renders the same series/narrator/edition tokens the rename path bakes in.
+  it('threads library fileFormat + book-level tokens into the convert ProcessingContext', async () => {
+    setupConvertMocks();
+    const bookService = makeBookService({
+      seriesName: 'The Stormlight Archive',
+      seriesPosition: 1,
+      editionLabel: 'Full Cast',
+      narrators: [{ name: 'Michael Kramer' }],
+      publishedDate: '2010-08-31',
+    });
+    const { service, db } = createService({
+      bookService,
+      settingsOverrides: { library: { fileFormat: '{author} - {series} - {title} ({edition})' } },
+    });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      BOOK_PATH + '.convert-tmp',
+      expect.anything(),
+      expect.objectContaining({
+        fileFormat: '{author} - {series} - {title} ({edition})',
+        namingOptions: expect.objectContaining({ separator: 'space', case: 'default' }),
+        bookTokens: expect.objectContaining({
+          series: 'The Stormlight Archive',
+          seriesPosition: 1,
+          edition: 'Full Cast',
+          narrator: 'Michael Kramer',
+        }),
+      }),
+    );
+  });
+
   // #1707 — connector refresh after the irreversible convert swap
   it("enqueues one 'convert' refresh per converted book, after the swap", async () => {
     setupConvertMocks();

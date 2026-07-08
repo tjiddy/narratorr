@@ -12,7 +12,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { buildBookNameTokens, type RenameableBook } from '../utils/paths.js';
+import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
 import { toNamingOptions, type NamingOptions } from '../../core/utils/naming.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -417,11 +417,10 @@ export class MergeService {
     }, {
       author: authorName,
       title: book.title,
-      bookTokens: buildBookNameTokens(book, authorName || null),
-      namingOptions,
-      // Empty fileFormat (legacy/fixture) → omit so mergeFiles keeps the `${author} - ${title}`
+      // Thread the library fileFormat + book-level tokens so a merged filename matches the
+      // rest of the library. Empty fileFormat (legacy/fixture) omits it → `${author} - ${title}`
       // fallback; the settings form rejects an empty value, so this is non-empty in normal use.
-      ...(fileFormat ? { fileFormat } : {}),
+      ...buildNamingContext(book, authorName || null, fileFormat, namingOptions),
     }, {
       onProgress: (_phase, percentage) => {
         this.emitMergeProgress(bookId, bookTitle, 'processing', percentage);

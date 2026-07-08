@@ -155,6 +155,37 @@ export function padWidth(count: number): number {
  * `seriesPosition` uses `?? undefined` so a legitimate `0` survives (a `|| undefined`
  * would swallow it).
  */
+/**
+ * The naming half of a `ProcessingContext` (audio-processor) — the fields the convert/merge
+ * paths add on top of the required `author`/`title`. All optional so an empty result (missing
+ * book) or an empty `fileFormat` cleanly falls back inside audio-processor.
+ */
+export interface BookNamingContext {
+  bookTokens?: Record<string, string | number | undefined | null>;
+  namingOptions?: NamingOptions;
+  fileFormat?: string;
+}
+
+/**
+ * Assemble the naming half of the convert/merge `ProcessingContext` from a book row + library
+ * naming settings. Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor
+ * keeps its basename / `${author} - ${title}` fallback) and the null-book guard in ONE place,
+ * keeping both call sites (`convertBook`, `MergeService.runStaging`) below the complexity cap.
+ */
+export function buildNamingContext(
+  book: RenameableBook | null | undefined,
+  authorName: string | null,
+  fileFormat?: string,
+  namingOptions?: NamingOptions,
+): BookNamingContext {
+  if (!book) return {};
+  return {
+    bookTokens: buildBookNameTokens(book, authorName),
+    ...(namingOptions && { namingOptions }),
+    ...(fileFormat ? { fileFormat } : {}),
+  };
+}
+
 export function buildBookNameTokens(
   book: RenameableBook,
   authorName: string | null,

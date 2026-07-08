@@ -6,7 +6,7 @@ import type { BookService } from './book.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh, type BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import { buildBookNameTokens } from '../utils/paths.js';
+import { buildNamingContext } from '../utils/paths.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
@@ -116,10 +116,10 @@ export async function convertBook(
       {
         author: authorName,
         title: bookTitle,
-        ...(book && { bookTokens: buildBookNameTokens(book, authorName) }),
-        ...(processingSettings.namingOptions && { namingOptions: processingSettings.namingOptions }),
-        // Empty fileFormat → omit so convertFiles keeps the original-basename fallback.
-        ...(processingSettings.fileFormat ? { fileFormat: processingSettings.fileFormat } : {}),
+        // Book-level tokens + library fileFormat/namingOptions so a re-encode renders the same
+        // series/narrator/edition tokens the rename path bakes in. Empty fileFormat → omitted →
+        // convertFiles keeps the original-basename fallback.
+        ...buildNamingContext(book, authorName, processingSettings.fileFormat, processingSettings.namingOptions),
       },
     );
 

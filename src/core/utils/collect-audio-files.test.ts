@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { join } from 'node:path';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
-import { collectAudioFilePaths, collectSortedAudioFiles, compareAudioNames } from './collect-audio-files.js';
+import { collectAudioFilePaths, collectSortedAudioFiles, compareAudioNames, disambiguateStems } from './collect-audio-files.js';
 
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(),
@@ -363,5 +363,50 @@ describe('compareAudioNames', () => {
     for (const [a, b] of pairs) {
       expect(sign(compareAudioNames(a, b))).toBe(-sign(compareAudioNames(b, a)));
     }
+  });
+});
+
+describe('disambiguateStems', () => {
+  it('passes through a single stem un-numbered', () => {
+    expect(disambiguateStems(['Author - Title'])).toEqual(['Author - Title']);
+  });
+
+  it('passes through an empty list', () => {
+    expect(disambiguateStems([])).toEqual([]);
+  });
+
+  it('leaves already-unique stems untouched (a per-file token is present)', () => {
+    const stems = ['01 - Intro', '02 - Journey', '03 - End'];
+    expect(disambiguateStems(stems)).toEqual(stems);
+  });
+
+  it('numbers every colliding stem including the first, single-digit width for 2–3 files', () => {
+    // padWidth(3) === 1 — no leading zeros (mirrors planFileRenames paths.test.ts:411-425).
+    expect(disambiguateStems(['A - B', 'A - B', 'A - B'])).toEqual([
+      'A - B (1)', 'A - B (2)', 'A - B (3)',
+    ]);
+  });
+
+  it('collides case-insensitively', () => {
+    expect(disambiguateStems(['A - B', 'a - b'])).toEqual(['A - B (1)', 'a - b (2)']);
+  });
+
+  it('pads to 3 digits only once the count reaches 100 (width tracks padWidth, not hard-coded)', () => {
+    const out = disambiguateStems(Array.from({ length: 100 }, () => 'Same'));
+    expect(out[0]).toBe('Same (001)');
+    expect(out[99]).toBe('Same (100)');
+    expect(out.every((s) => /\(\d{3}\)$/.test(s))).toBe(true);
+  });
+
+  it('assigns ordinals in the caller-provided order (play order, not lexicographic)', () => {
+    // Caller sorts with compareAudioNames first: Track1, Track2, Track10.
+    const ordered = ['Track1.mp3', 'Track2.mp3', 'Track10.mp3'].sort(compareAudioNames);
+    // Render collapses all to the same book-only stem; the ordinal follows play order.
+    const stems = ordered.map(() => 'Author - Title');
+    expect(disambiguateStems(stems)).toEqual([
+      'Author - Title (1)', 'Author - Title (2)', 'Author - Title (3)',
+    ]);
+    // Sanity: the sort put Track2 before Track10 (numeric), so ordinal 2 maps to Track2.
+    expect(ordered).toEqual(['Track1.mp3', 'Track2.mp3', 'Track10.mp3']);
   });
 });
