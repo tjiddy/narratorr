@@ -14,7 +14,7 @@ import { enqueueRetagRefresh } from '../utils/enqueue-book-refresh.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { BulkJob } from './bulk-job.js';
 import { runSidecarReconcile } from './bulk-sidecar-reconcile.js';
-import { convertBook } from './bulk-convert.js';
+import { convertBook, type ConvertProcessingSettings } from './bulk-convert.js';
 import { toNamingOptions } from '../../core/utils/naming.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -351,6 +351,15 @@ export class BulkOperationService {
     if (!processingSettings.ffmpegPath?.trim()) {
       throw new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED');
     }
+    // Fetch library naming settings too, so converted filenames render the same book-level
+    // tokens (series/narrator/year/edition) the rename path bakes in — otherwise a re-encode
+    // silently drops them (#1720). Same for all rows, so read once outside the loop.
+    const librarySettings = await this.settingsService.get('library');
+    const convertSettings: ConvertProcessingSettings = {
+      ...processingSettings,
+      fileFormat: librarySettings.fileFormat,
+      namingOptions: toNamingOptions(librarySettings),
+    };
     const targetFormat = processingSettings.outputFormat ?? 'm4b';
     const id = randomUUID();
     const job = new BulkJob(id, 'convert', this.log, async (setTotal, tick) => {
@@ -374,7 +383,7 @@ export class BulkOperationService {
         try {
           await convertBook(
             { db: this.db, bookService: this.bookService, log: this.log, connectorService: this.connectorService },
-            row.id, row.path, row.title, processingSettings,
+            row.id, row.path, row.title, convertSettings,
           );
         } catch (error: unknown) {
           this.log.warn({ bookId: row.id, jobId: id, error: serializeError(error) }, 'Bulk convert: book failed');

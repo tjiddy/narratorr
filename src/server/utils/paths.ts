@@ -2,7 +2,7 @@ import { readdir, rename, rmdir, realpath } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
-import { compareAudioNames } from '../../core/utils/collect-audio-files.js';
+import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
 import { serializeError } from './serialize-error.js';
@@ -140,6 +140,74 @@ export function padWidth(count: number): number {
 }
 
 /**
+ * Build the book-LEVEL naming token map from a book row and its resolved author.
+ *
+ * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
+ * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`),
+ * merge time (`MergeService.runStaging`), and convert time (`convertBook`). Keeping the
+ * book→tokens decision in ONE place stops the three paths from drifting on how a book row
+ * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
+ * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
+ * intentionally NOT built here.
+ *
+ * A null/empty `authorName` falls back to `'Unknown Author'` (matches the rename path).
+ * Missing optional fields render as absent (undefined), not literal `null`/`undefined`.
+ * `seriesPosition` uses `?? undefined` so a legitimate `0` survives (a `|| undefined`
+ * would swallow it).
+ */
+/**
+ * The naming half of a `ProcessingContext` (audio-processor) — the fields the convert/merge
+ * paths add on top of the required `author`/`title`. All optional so an empty result (missing
+ * book) or an empty `fileFormat` cleanly falls back inside audio-processor.
+ */
+export interface BookNamingContext {
+  bookTokens?: Record<string, string | number | undefined | null>;
+  namingOptions?: NamingOptions;
+  fileFormat?: string;
+}
+
+/**
+ * Assemble the naming half of the convert/merge `ProcessingContext` from a book row + library
+ * naming settings. Centralizes the "omit empty `fileFormat`" fallback rule (so audio-processor
+ * keeps its basename / `${author} - ${title}` fallback) and the null-book guard in ONE place,
+ * keeping both call sites (`convertBook`, `MergeService.runStaging`) below the complexity cap.
+ */
+export function buildNamingContext(
+  book: RenameableBook | null | undefined,
+  authorName: string | null,
+  fileFormat?: string,
+  namingOptions?: NamingOptions,
+): BookNamingContext {
+  if (!book) return {};
+  return {
+    bookTokens: buildBookNameTokens(book, authorName),
+    ...(namingOptions && { namingOptions }),
+    ...(fileFormat ? { fileFormat } : {}),
+  };
+}
+
+export function buildBookNameTokens(
+  book: RenameableBook,
+  authorName: string | null,
+): Record<string, string | number | undefined | null> {
+  const author = authorName || 'Unknown Author';
+  const primaryNarrator = book.narrators?.[0]?.name;
+  return {
+    author,
+    authorLastFirst: toLastFirst(author),
+    title: book.title,
+    titleSort: toSortTitle(book.title),
+    series: book.seriesName || undefined,
+    seriesPosition: book.seriesPosition ?? undefined,
+    narrator: primaryNarrator || undefined,
+    narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
+    year: extractYear(book.publishedDate),
+    // Stored edition_label (#1712); null/empty renders nothing via stripEmptyWrappers.
+    edition: book.editionLabel ?? undefined,
+  };
+}
+
+/**
  * Pure planner: list audio files in `targetPath` and compute the `{from, to}[]`
  * filename pairs the apply path would produce, without touching disk.
  *
@@ -173,21 +241,7 @@ export async function planFileRenames(
 
   if (audioFiles.length === 0) return [];
 
-  const author = authorName || 'Unknown Author';
-  const primaryNarrator = book.narrators?.[0]?.name;
-  const baseTokens: Record<string, string | number | undefined | null> = {
-    author,
-    authorLastFirst: toLastFirst(author),
-    title: book.title,
-    titleSort: toSortTitle(book.title),
-    series: book.seriesName || undefined,
-    seriesPosition: book.seriesPosition ?? undefined,
-    narrator: primaryNarrator || undefined,
-    narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
-    year: extractYear(book.publishedDate),
-    // Stored edition_label (#1712); null/empty renders nothing via stripEmptyWrappers.
-    edition: book.editionLabel ?? undefined,
-  };
+  const baseTokens = buildBookNameTokens(book, authorName);
 
   const isMultiFile = audioFiles.length > 1;
 
@@ -207,22 +261,16 @@ export async function planFileRenames(
     return renderFilename(fileFormat, tokens, options);
   });
 
-  // Forced sequential numbering is keyed off rendered-stem *collisions*, not the
-  // absence of {trackNumber}. If any two stems collide (case-insensitive), the
-  // format does not disambiguate the book's files — number them all.
-  const uniqueStemCount = new Set(stems.map(s => s.toLowerCase())).size;
-  const stemsCollide = isMultiFile && uniqueStemCount !== stems.length;
-  const width = padWidth(audioFiles.length);
+  // Forced sequential numbering is keyed off rendered-stem *collisions* (the shared
+  // helper appends an ordinal to every file when any two stems collide), NOT the
+  // absence of {trackNumber} — same disambiguation the convert path uses.
+  const finalStems = disambiguateStems(stems);
 
   const renames: { from: string; to: string }[] = [];
   for (let i = 0; i < audioFiles.length; i++) {
     const fileName = audioFiles[i]!;
     const ext = extname(fileName);
-    const newStem = stemsCollide
-      ? `${stems[i]!} (${String(i + 1).padStart(width, '0')})`
-      : stems[i]!;
-
-    const newName = `${newStem}${ext}`;
+    const newName = `${finalStems[i]!}${ext}`;
     if (newName !== fileName) {
       renames.push({ from: fileName, to: newName });
     }

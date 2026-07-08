@@ -188,6 +188,43 @@ describe('MergeService', () => {
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
     });
 
+    // #1720 — the merge context now carries the library fileFormat + book-level naming
+    // tokens (series/seriesPosition/narrator/year/edition), so a merged filename matches
+    // the rest of the library instead of collapsing to `${author} - ${title}`.
+    it('threads library fileFormat + book-level tokens into the processAudioFiles context', async () => {
+      setupHappyPath();
+      const { service, bookService } = createService();
+      bookService.getById.mockResolvedValue({
+        ...mockBook,
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 1,
+        editionLabel: 'Full Cast',
+        narrators: [{ name: 'Michael Kramer' }],
+        publishedDate: '2010-08-31',
+      });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(processAudioFiles).toHaveBeenCalledWith(
+        STAGING_DIR,
+        expect.anything(),
+        expect.objectContaining({
+          fileFormat: '{author} - {title}', // default library format, threaded (was previously dropped)
+          namingOptions: expect.objectContaining({ separator: 'space', case: 'default' }),
+          bookTokens: expect.objectContaining({
+            series: 'The Stormlight Archive',
+            seriesPosition: 1,
+            edition: 'Full Cast',
+            narrator: 'Michael Kramer',
+            year: '2010',
+          }),
+        }),
+        expect.anything(),
+        expect.any(AbortSignal),
+      );
+    });
+
     // #1418 — marker convergence runs on bookPath before any staging work
     it('converges the commit-pending marker on bookPath before staging', async () => {
       setupHappyPath();

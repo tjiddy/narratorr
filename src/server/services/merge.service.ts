@@ -12,6 +12,8 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
+import { toNamingOptions, type NamingOptions } from '../../core/utils/naming.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -337,7 +339,10 @@ export class MergeService {
       }
 
       this.emitMergeProgress(bookId, book.title, 'staging');
-      const stagedOutput = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title, controller.signal);
+      const stagedOutput = await this.runStaging(
+        stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings,
+        bookId, book.title, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
+      );
 
       // Check abort signal before committing (cooperative cancel during verifying)
       if (controller.signal.aborted) {
@@ -374,11 +379,13 @@ export class MergeService {
   /** Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension follows outputFormat). */
   private async runStaging(
     stagingDir: string,
-    book: { path: string; title: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
+    book: RenameableBook & { path: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
     audioFiles: string[],
     processingSettings: { ffmpegPath: string; outputFormat?: 'm4b' | 'mp3'; keepOriginalBitrate?: boolean; bitrate?: number },
     bookId: number,
     bookTitle: string,
+    fileFormat: string,
+    namingOptions: NamingOptions,
     signal?: AbortSignal,
   ): Promise<string> {
     await mkdir(stagingDir, { recursive: true });
@@ -410,6 +417,10 @@ export class MergeService {
     }, {
       author: authorName,
       title: book.title,
+      // Thread the library fileFormat + book-level tokens so a merged filename matches the
+      // rest of the library. Empty fileFormat (legacy/fixture) omits it → `${author} - ${title}`
+      // fallback; the settings form rejects an empty value, so this is non-empty in normal use.
+      ...buildNamingContext(book, authorName || null, fileFormat, namingOptions),
     }, {
       onProgress: (_phase, percentage) => {
         this.emitMergeProgress(bookId, bookTitle, 'processing', percentage);

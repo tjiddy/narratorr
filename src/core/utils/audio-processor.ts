@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import { rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
-import { collectSortedAudioFiles } from './collect-audio-files.js';
+import { collectSortedAudioFiles, compareAudioNames, disambiguateStems } from './collect-audio-files.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
@@ -346,6 +346,44 @@ async function mergeFiles(
 }
 
 /**
+ * Compute the output stem for every convert source file, keyed by filePath.
+ *
+ * Honors `fileFormat` + book/per-file tokens and disambiguates colliding stems with a
+ * zero-padded ordinal — byte-for-byte matching `planFileRenames` (same shared
+ * `disambiguateStems` width/ordering) so a later Rename All Books is a no-op. Per-file
+ * tokens/ordinals are assigned in `compareAudioNames` order (NOT the lexicographic order
+ * the convert path collects with), matching the rename path's play-order numbering.
+ * When `fileFormat` is empty, falls back to the original basename (already unique).
+ */
+function computeConvertStems(
+  audioFiles: string[],
+  sourceMap: Map<string, ChapterSource>,
+  context: ProcessingContext,
+): Map<string, string> {
+  if (!context.fileFormat) {
+    return new Map(audioFiles.map(f => [f, basename(f, extname(f))]));
+  }
+
+  const trackTotal = audioFiles.length;
+  // Re-sort into play order so trackNumber + collision ordinals match planFileRenames,
+  // which sorts with compareAudioNames rather than the lexicographic collect order.
+  const ordered = [...audioFiles].sort(compareAudioNames);
+
+  const baseTokens = { author: context.author, title: context.title, ...context.bookTokens };
+  const stems = ordered.map((filePath, i) => {
+    const source = sourceMap.get(filePath);
+    return renderFilename(context.fileFormat!, {
+      ...baseTokens,
+      trackNumber: i + 1, trackTotal,
+      partName: source ? resolveChapterTitle(source, i) : undefined,
+    }, context.namingOptions);
+  });
+
+  const finalStems = disambiguateStems(stems);
+  return new Map(ordered.map((filePath, i) => [filePath, finalStems[i]!]));
+}
+
+/**
  * Convert individual files to the target format/bitrate without merging.
  */
 async function convertFiles(
@@ -357,24 +395,14 @@ async function convertFiles(
   callbacks?: ProcessingCallbacks,
   signal?: AbortSignal,
 ): Promise<ProcessingResult> {
-  const trackTotal = audioFiles.length;
-
   // Build a map from filePath → ChapterSource for quick lookup
   const sourceMap = new Map(chapterSources.map(s => [s.filePath, s]));
+  const stemFor = computeConvertStems(audioFiles, sourceMap, context);
 
   const encodeFn = async (): Promise<string[]> => {
     const results: string[] = [];
-    for (let i = 0; i < audioFiles.length; i++) {
-      const filePath = audioFiles[i]!;
-      const source = sourceMap.get(filePath);
-
-      const stem = context.fileFormat
-        ? renderFilename(context.fileFormat, {
-            author: context.author, title: context.title, ...context.bookTokens,
-            trackNumber: i + 1, trackTotal,
-            partName: source ? resolveChapterTitle(source, i) : undefined,
-          }, context.namingOptions)
-        : basename(filePath, extname(filePath));
+    for (const filePath of audioFiles) {
+      const stem = stemFor.get(filePath)!;
 
       const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
       const sameFile = filePath === outputPath;

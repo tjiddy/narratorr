@@ -1799,3 +1799,199 @@ describe('#424 cover art temp file cleanup', () => {
     });
   });
 });
+
+// #1720 — convert/merge now render the configured fileFormat + book-level tokens, with the
+// convert path disambiguating colliding stems byte-for-byte like planFileRenames.
+describe('processAudioFiles — fileFormat token threading (#1720)', () => {
+  /** Seed a multi-file directory for the convert path. `names` are bare basenames. */
+  function setupConvertMulti(names: string[]): void {
+    mockReaddir.mockResolvedValue(
+      names.map(n => ({ name: n, isFile: () => true, isDirectory: () => false })) as never,
+    );
+    mockReadChapterSources.mockResolvedValue(
+      names.map(n => ({ filePath: join('/lib/book', n), title: n })),
+    );
+    mockResolveChapterTitle.mockImplementation((_s, i) => `Chapter ${i + 1}`);
+    seedNoCoverFfprobe();
+    mockSpawn.mockImplementation(() => {
+      const child = new MockChildProcess();
+      process.nextTick(() => child.emit('close', 0));
+      return child as never;
+    });
+  }
+
+  const neverMerge: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
+
+  describe('convert collision disambiguation', () => {
+    it('numbers colliding book-only stems with single-digit ordinals — all distinct, no clobber', async () => {
+      setupConvertMulti(['01.mp3', '02.mp3', '03.mp3']);
+      const ctx: ProcessingContext = { author: 'Author', title: 'Title', fileFormat: '{author} - {title}' };
+
+      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      // padWidth(3) === 1 → single-digit ordinals (mirrors paths.test.ts:411-425).
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', 'Author - Title (1).m4b'),
+        join('/lib/book', 'Author - Title (2).m4b'),
+        join('/lib/book', 'Author - Title (3).m4b'),
+      ]);
+      expect(new Set(result.outputFiles).size).toBe(3); // no output overwrites another
+      // Every original is removed only because a distinct replacement exists (no data loss).
+      for (const n of ['01.mp3', '02.mp3', '03.mp3']) {
+        expect(mockUnlink).toHaveBeenCalledWith(join('/lib/book', n));
+      }
+    });
+
+    it('pads ordinals to 3 digits at 100 files (width tracks padWidth, not hard-coded)', async () => {
+      const names = Array.from({ length: 100 }, (_, i) => `${String(i + 1).padStart(3, '0')}.mp3`);
+      setupConvertMulti(names);
+      const ctx: ProcessingContext = { author: 'A', title: 'B', fileFormat: '{author} - {title}' };
+
+      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.outputFiles).toHaveLength(100);
+      expect(new Set(result.outputFiles).size).toBe(100);
+      expect(result.outputFiles[0]).toBe(join('/lib/book', 'A - B (001).m4b'));
+      expect(result.outputFiles[99]).toBe(join('/lib/book', 'A - B (100).m4b'));
+      expect(result.outputFiles.every(f => /\(\d{3}\)\.m4b$/.test(f))).toBe(true);
+    });
+
+    it('assigns per-file tokens in compareAudioNames order, not lexicographic collect order', async () => {
+      // Lexicographic collect order is Track1, Track10, Track2; numeric play order is Track1, Track2, Track10.
+      setupConvertMulti(['Track1.mp3', 'Track2.mp3', 'Track10.mp3']);
+      // Discriminating format ({trackNumber}) → unique stems, NO collision ordinal appended.
+      const ctx: ProcessingContext = { author: 'A', title: 'Book', fileFormat: '{trackNumber:00} - {title}' };
+
+      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      // No ordinal suffix — discriminating format renders unique stems already.
+      expect(result.outputFiles.every(f => !/\(\d+\)\.m4b$/.test(f))).toBe(true);
+      // Track10 is 2nd in the (lexicographic) encode/output order, but gets trackNumber 03 —
+      // proving the ordinal follows compareAudioNames play order (Track1→01, Track2→02, Track10→03),
+      // matching the numbers planFileRenames would assign. A lexicographic assignment would give Track10→02.
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', '01 - Book.m4b'), // Track1
+        join('/lib/book', '03 - Book.m4b'), // Track10 (encoded 2nd, numbered 3rd)
+        join('/lib/book', '02 - Book.m4b'), // Track2
+      ]);
+    });
+
+    it('renders {series}/{edition} book tokens into each converted stem', async () => {
+      setupConvertMulti(['01.mp3', '02.mp3']);
+      const ctx: ProcessingContext = {
+        author: 'Brandon Sanderson',
+        title: 'The Way of Kings',
+        fileFormat: '{author} - {series} - {title} ({edition}) - {trackNumber:00}',
+        bookTokens: { series: 'The Stormlight Archive', edition: 'Full Cast' },
+      };
+
+      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - The Way of Kings (Full Cast) - 01.m4b'),
+        join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - The Way of Kings (Full Cast) - 02.m4b'),
+      ]);
+    });
+
+    it('falls back to the original basename when fileFormat is empty', async () => {
+      setupConvertMulti(['alpha.mp3', 'beta.mp3']);
+      const ctx: ProcessingContext = { author: 'A', title: 'B' }; // no fileFormat
+
+      const result = await processAudioFiles('/lib/book', neverMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', 'alpha.m4b'),
+        join('/lib/book', 'beta.m4b'),
+      ]);
+    });
+  });
+
+  describe('merge book-level token rendering', () => {
+    const alwaysMerge: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'always' };
+
+    it('renders {series}/{seriesPosition}/{edition} into the collapsed merged filename', async () => {
+      setupMergeFiles([120, 120]);
+      mockSpawnSuccess();
+      const ctx: ProcessingContext = {
+        author: 'Brandon Sanderson',
+        title: 'The Way of Kings',
+        fileFormat: '{author} - {series} - {seriesPosition:00} - {title} ({edition})',
+        bookTokens: { series: 'The Stormlight Archive', seriesPosition: 1, edition: 'Full Cast' },
+      };
+
+      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).m4b'),
+      ]);
+    });
+
+    it('drops the absent per-file token cleanly under the Detailed preset (no trailing " - ", no empty "()")', async () => {
+      setupMergeFiles([120, 120]);
+      mockSpawnSuccess();
+      const ctx: ProcessingContext = {
+        author: 'Brandon Sanderson',
+        title: 'The Way of Kings',
+        // Detailed preset (#1829): conditional per-file `{ - ?trackNumber:000}` wrapper.
+        fileFormat: '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}',
+        bookTokens: { series: 'The Stormlight Archive', seriesPosition: 1, edition: 'Full Cast' },
+      };
+
+      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      // The absent trackNumber wrapper disappears — no ' - ' artifact, no empty parens.
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).m4b'),
+      ]);
+    });
+
+    it('bare (non-conditional) per-file separator parity — residual " - " matches planFileRenames single-file output (F3)', async () => {
+      setupMergeFiles([120, 120]);
+      mockSpawnSuccess();
+      // Hand-written non-conditional per-file separator: partName absent → residual ' - '.
+      const ctx: ProcessingContext = {
+        author: 'Author',
+        title: 'Title',
+        fileFormat: '{author} - {partName} - {title}',
+      };
+
+      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      // stripEmptyWrappers collapses the doubled space but keeps the bare ' - ' literals —
+      // byte-for-byte what planFileRenames produces for the same single-file book (not a defect here).
+      expect(result.outputFiles).toEqual([join('/lib/book', 'Author - - Title.m4b')]);
+    });
+
+    it('falls back to `${author} - ${title}` when fileFormat is empty', async () => {
+      setupMergeFiles([120, 120]);
+      mockSpawnSuccess();
+      const ctx: ProcessingContext = {
+        author: 'Tolkien',
+        title: 'The Hobbit',
+        bookTokens: { series: 'Ignored', edition: 'Ignored' }, // present but unused on the fallback path
+      };
+
+      const result = await processAudioFiles('/lib/book', alwaysMerge, ctx);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.outputFiles).toEqual([join('/lib/book', 'Tolkien - The Hobbit.m4b')]);
+    });
+  });
+});
