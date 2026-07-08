@@ -140,22 +140,6 @@ export function padWidth(count: number): number {
 }
 
 /**
- * Build the book-LEVEL naming token map from a book row and its resolved author.
- *
- * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
- * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`),
- * merge time (`MergeService.runStaging`), and convert time (`convertBook`). Keeping the
- * book→tokens decision in ONE place stops the three paths from drifting on how a book row
- * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
- * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
- * intentionally NOT built here.
- *
- * A null/empty `authorName` falls back to `'Unknown Author'` (matches the rename path).
- * Missing optional fields render as absent (undefined), not literal `null`/`undefined`.
- * `seriesPosition` uses `?? undefined` so a legitimate `0` survives (a `|| undefined`
- * would swallow it).
- */
-/**
  * The naming half of a `ProcessingContext` (audio-processor) — the fields the convert/merge
  * paths add on top of the required `author`/`title`. All optional so an empty result (missing
  * book) or an empty `fileFormat` cleanly falls back inside audio-processor.
@@ -186,6 +170,22 @@ export function buildNamingContext(
   };
 }
 
+/**
+ * Build the book-LEVEL naming token map from a book row and its resolved author.
+ *
+ * The single shared source of the `{author}`/`{title}`/`{series}`/`{narrator}`/`{year}`/
+ * `{edition}` (+ sort variants) tokens consumed at rename time (`planFileRenames`),
+ * merge time (`MergeService.runStaging`), and convert time (`convertBook`). Keeping the
+ * book→tokens decision in ONE place stops the three paths from drifting on how a book row
+ * maps to filename tokens (the anti-drift consistency-test target). Per-FILE tokens
+ * (`trackNumber`/`trackTotal`/`partName`) are computed per file by each caller and are
+ * intentionally NOT built here.
+ *
+ * A null/empty `authorName` falls back to `'Unknown Author'` (matches the rename path).
+ * Missing optional fields render as absent (undefined), not literal `null`/`undefined`.
+ * `seriesPosition` uses `?? undefined` so a legitimate `0` survives (a `|| undefined`
+ * would swallow it).
+ */
 export function buildBookNameTokens(
   book: RenameableBook,
   authorName: string | null,

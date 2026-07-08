@@ -391,6 +391,13 @@ describe('disambiguateStems', () => {
     expect(disambiguateStems(['A - B', 'a - b'])).toEqual(['A - B (1)', 'a - b (2)']);
   });
 
+  it('pads to 2 digits for 10–99 files', () => {
+    const out = disambiguateStems(Array.from({ length: 12 }, () => 'Same'));
+    expect(out[0]).toBe('Same (01)');
+    expect(out[11]).toBe('Same (12)');
+    expect(out.every((s) => /\(\d{2}\)$/.test(s))).toBe(true);
+  });
+
   it('pads to 3 digits only once the count reaches 100 (width tracks padWidth, not hard-coded)', () => {
     const out = disambiguateStems(Array.from({ length: 100 }, () => 'Same'));
     expect(out[0]).toBe('Same (001)');

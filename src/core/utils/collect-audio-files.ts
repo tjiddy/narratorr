@@ -103,8 +103,8 @@ export const compareAudioNames = (a: string, b: string): number => {
  * When the stems do NOT all render distinct (any two collide case-insensitively —
  * the format carries no per-file discriminator, e.g. `{author} - {title}`), a
  * zero-padded sequential ordinal `<stem> (N)` is appended to *every* stem including
- * the first, in the caller's order. The ordinal width is `String(count).length`
- * (`padWidth`): 1 digit for 2–99 files, 3 digits from 100 files. A single stem is
+ * the first, in the caller's order. The ordinal width is `String(count).length`:
+ * 1 digit for 2–9 files, 2 digits for 10–99, 3 digits from 100. A single stem is
  * never numbered, and an already-unique set (a `{trackNumber}`/`{partName}` token is
  * present) passes through untouched.
  *
