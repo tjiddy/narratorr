@@ -225,10 +225,16 @@ export async function resolveFileDuration(
 }
 
 /**
- * Diagnose a fully-rejected duration. When a rejected value can actually be *named* — a
- * present-but-implausible mm or ffprobe value — emit a warn naming the value(s) and implied
- * bitrate(s). When neither source produced a value to name (mm missing + ffprobe null/spawn
- * failure), there is nothing to report as rejected, so it degrades to a debug diagnostic.
+ * Diagnose a fully-rejected duration. When a source actually *returned* a value that the
+ * predicate then rejected — a present-but-implausible mm value (`metadataDuration !==
+ * undefined`, including `0` / negative / `NaN` / `Infinity`) or a present-but-implausible
+ * ffprobe value (`ffprobeDuration !== null`) — emit a warn naming the rejected value(s) and,
+ * where computable, their implied bitrate(s). Only when NEITHER source produced a value to
+ * name (mm absent AND ffprobe null/spawn-failure) does it degrade to a debug diagnostic.
+ *
+ * "Present" here means the source returned a value, aligning with `isPlausibleDuration`'s
+ * treatment of `0`/negative/non-finite as present-but-implausible: a value mm actually read
+ * is a rejected value worth surfacing at warn, even when its implied bitrate is undefined.
  */
 function reportRejectedDuration(args: {
   filePath: string;
@@ -247,9 +253,7 @@ function reportRejectedDuration(args: {
     metadataImpliedBitrateBps: impliedBitrateBps(metadataDuration, fileSize),
     ffprobeImpliedBitrateBps: impliedBitrateBps(ffprobeDuration ?? undefined, fileSize),
   };
-  const hasNamedRejection =
-    (typeof metadataDuration === 'number' && Number.isFinite(metadataDuration) && metadataDuration > 0) ||
-    (ffprobeDuration !== null && ffprobeDuration > 0);
+  const hasNamedRejection = metadataDuration !== undefined || ffprobeDuration !== null;
   if (hasNamedRejection) {
     onWarn?.('duration omitted: no plausible value from music-metadata or ffprobe', payload);
   } else {

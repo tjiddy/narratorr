@@ -1136,6 +1136,25 @@ describe('scanAudioDirectory', () => {
         expect(onWarn).not.toHaveBeenCalled();
       });
 
+      // F1: a present-but-invalid mm value (0 / negative / NaN / Infinity) is present-but-implausible
+      // per the predicate, so a full rejection must WARN (naming the rejected value), not degrade to
+      // debug — even when ffprobe is null. Only a genuinely absent mm (undefined) + null ffprobe debugs.
+      it.each([
+        ['0', 0],
+        ['negative', -5],
+        ['NaN', Number.NaN],
+        ['Infinity', Number.POSITIVE_INFINITY],
+      ])('warns (not debug) when a present-but-invalid mm value (%s) is rejected and ffprobe is null', async (_label, mmValue) => {
+        mockExecFileError(new Error('spawn ENOENT'));
+        const result = await resolveFileDuration('/a/book.m4b', mmValue as number, PLAUSIBLE_SIZE, FFPROBE_PATH, onWarn, onDebug);
+        expect(result).toBeUndefined();
+        expect(onWarn).toHaveBeenCalledWith(
+          expect.stringContaining('omitted'),
+          expect.objectContaining({ metadataDuration: mmValue, ffprobeDuration: null }),
+        );
+        expect(onDebug).not.toHaveBeenCalled();
+      });
+
       it('returns a plausible mm duration without spawning when no ffprobePath is configured', async () => {
         const result = await resolveFileDuration('/a/book.m4b', 3600, PLAUSIBLE_SIZE, undefined, onWarn, onDebug);
         expect(result).toBe(3600);
