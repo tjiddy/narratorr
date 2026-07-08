@@ -81,6 +81,18 @@ export async function refreshScanBook(
     ? scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0)
     : undefined;
 
+  // Skip-write guard: an all-rejected scan yields totalDuration 0 (every file's duration was
+  // omitted as implausible). Writing that zero would silently clobber a correct provider/prior
+  // duration and poison the baseline future quality-gate durationDelta comparisons run against,
+  // so preserve the stored duration/audioDuration in that case. Other fields refresh as today.
+  const durationFields =
+    scanResult.totalDuration === 0
+      ? {}
+      : { audioDuration: Math.round(scanResult.totalDuration), duration: durationMinutes };
+  if (scanResult.totalDuration === 0) {
+    log.warn({ bookId }, 'Refresh scan produced 0 total duration; preserving existing duration/audioDuration');
+  }
+
   // bookService.update() wraps narrator sync + book row update in a single transaction
   await bookService.update(bookId, {
     audioCodec: scanResult.codec,
@@ -92,10 +104,9 @@ export async function refreshScanBook(
     audioFileCount: scanResult.fileCount,
     topLevelAudioFileCount,
     audioTotalSize: scanResult.totalSize,
-    audioDuration: Math.round(scanResult.totalDuration),
     size: directorySize,
-    duration: durationMinutes,
     enrichmentStatus: 'file-enriched',
+    ...durationFields,
     ...(narrators !== undefined ? { narrators } : {}),
   });
 

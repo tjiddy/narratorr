@@ -121,32 +121,140 @@ export async function getFFprobeStreamInfo(ffprobePath: string, filePath: string
 }
 
 /**
- * Resolve the duration for a single file: ffprobe if available, music-metadata fallback.
- * Logs diagnostics when the two sources disagree or ffprobe fails.
+ * A duration claim below this implied bitrate (bps) is implausible — but only once the
+ * claimed duration exceeds MIN_GUARDED_DURATION_SECONDS (see the floor's gate below). The
+ * lie class this catches claims *hours* for minutes-long files (The Rise of Endymion:
+ * 2,882,020 bytes claiming 27,868 s ⇒ 827 bps). Library observed minimum is 32 kbps, so 8
+ * kbps leaves generous headroom; measured false-rejection count on the live library is 0.
+ * music-metadata reports bitrate in bps, so this constant is bps (never kbps — #see the
+ * bitrate-bps-kbps-boundary learning).
+ */
+export const MIN_PLAUSIBLE_BITRATE_BPS = 8000;
+/**
+ * The floor (min-bitrate) check fires only when the *claimed* duration exceeds this many
+ * seconds (30 min). Short low-bitrate files are legitimate — the tracked e2e fixture
+ * `e2e/assets/silent.m4b` (4,297 bytes, ~10 s ⇒ ~3.4 kbps implied) and real-library
+ * stingers/intros are the same shape; gating the floor on claimed duration lets them pass.
+ */
+export const MIN_GUARDED_DURATION_SECONDS = 1800;
+/**
+ * A duration claim above this implied bitrate (bps) is implausible unconditionally — it
+ * catches gross too-SHORT lies (a source claiming seconds for a whole book: 1 GB @ 60 s ⇒
+ * 133 Mbps). Deliberately generous: embedded cover art inflates a short file's implied
+ * bitrate (10 s + 2 MB art ⇒ ~1.6 Mbps — honest, passes), and no real audio class in this
+ * library approaches 10 Mbps.
+ */
+export const MAX_PLAUSIBLE_BITRATE_BPS = 10_000_000;
+
+/**
+ * Is a duration claim plausible for a file of `fileSize` bytes?
+ *
+ * Single home for both music-metadata and ffprobe duration values (mm can return
+ * `undefined`/`0`, ffprobe can yield `NaN`); the two input validations run first and
+ * unconditionally, so `NaN`/`Infinity`/`0`/negative for either input resolve to
+ * implausible without any division-by-zero and without slipping past the duration-gated
+ * floor. A claim is implausible iff any of:
+ *   - `duration` is not a finite number, or `duration <= 0`;
+ *   - `fileSize` is not a finite number, or `fileSize <= 0`;
+ *   - implied bitrate `fileSize * 8 / duration` < MIN_PLAUSIBLE_BITRATE_BPS AND the claimed
+ *     `duration` > MIN_GUARDED_DURATION_SECONDS (duration-gated floor);
+ *   - implied bitrate > MAX_PLAUSIBLE_BITRATE_BPS (unconditional ceiling).
+ *
+ * Honest limitation: this catches *gross* lies only. A subtle error inside both bounds —
+ * e.g. a 2× halving recurrence on a normal-bitrate file (128 kbps read as an apparent 256
+ * kbps) — is undetectable by any bitrate check; a downstream duration-mismatch comparison
+ * (where one exists) is the backstop for that class.
+ */
+export function isPlausibleDuration(duration: number | undefined, fileSize: number): boolean {
+  if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) return false;
+  if (!Number.isFinite(fileSize) || fileSize <= 0) return false;
+  const impliedBitrateBps = (fileSize * 8) / duration;
+  if (impliedBitrateBps < MIN_PLAUSIBLE_BITRATE_BPS && duration > MIN_GUARDED_DURATION_SECONDS) return false;
+  if (impliedBitrateBps > MAX_PLAUSIBLE_BITRATE_BPS) return false;
+  return true;
+}
+
+/**
+ * Implied bitrate (bps) for a duration claim, or `undefined` when it can't be computed
+ * (non-finite / non-positive inputs). Used only to enrich the rejected-duration diagnostic.
+ */
+function impliedBitrateBps(duration: number | undefined, fileSize: number): number | undefined {
+  if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) return undefined;
+  if (!Number.isFinite(fileSize) || fileSize <= 0) return undefined;
+  return (fileSize * 8) / duration;
+}
+
+/**
+ * Resolve the duration for a single file: music-metadata primary, ffprobe fallback/arbiter.
+ *
+ * music-metadata's duration is already parsed (for tags) on every file and — since the
+ * v11.13.0 bump fixed the 64-bit atom halving (#434) — trusted: when it is present and
+ * plausible we return it and spawn NO ffprobe (the perf contract). ffprobe is consulted
+ * only when mm's value is missing or implausible; a plausible ffprobe answer wins, and
+ * when NEITHER source is plausible the file's duration is omitted (`undefined`) rather than
+ * resurrecting a known-implausible mm value. Logs diagnostics on disagreement and omission.
  */
 export async function resolveFileDuration(
   filePath: string,
   metadataDuration: number | undefined,
+  fileSize: number,
   ffprobePath: string | undefined,
   onWarn: AudioScanOptions['onWarn'],
   onDebug: AudioScanOptions['onDebug'],
 ): Promise<number | undefined> {
-  if (!ffprobePath) return metadataDuration ?? undefined;
+  // Happy path: mm duration present and plausible → return it, no ffprobe spawn.
+  if (isPlausibleDuration(metadataDuration, fileSize)) return metadataDuration;
 
-  const ffprobeDuration = await getFFprobeDuration(ffprobePath, filePath);
-  if (ffprobeDuration === null) {
-    onDebug?.('ffprobe failed for file, falling back to music-metadata duration', { filePath });
-    return metadataDuration ?? undefined;
-  }
-
-  // Warn if ffprobe and music-metadata differ significantly
-  if (metadataDuration && metadataDuration > 0) {
-    const diff = Math.abs(ffprobeDuration - metadataDuration) / metadataDuration;
-    if (diff > 0.1) {
-      onWarn?.('ffprobe/music-metadata duration mismatch (>10%)', { filePath, ffprobeDuration, metadataDuration });
+  const ffprobeDuration = ffprobePath ? await getFFprobeDuration(ffprobePath, filePath) : null;
+  if (ffprobeDuration !== null && isPlausibleDuration(ffprobeDuration, fileSize)) {
+    // ffprobe arbitrated: retain the existing >10% disagreement diagnostic, guarded on a
+    // positive mm value so an mm value of 0 never produces a division-by-zero warn payload.
+    if (metadataDuration && metadataDuration > 0) {
+      const diff = Math.abs(ffprobeDuration - metadataDuration) / metadataDuration;
+      if (diff > 0.1) {
+        onWarn?.('ffprobe/music-metadata duration mismatch (>10%)', { filePath, ffprobeDuration, metadataDuration });
+      }
     }
+    return ffprobeDuration;
   }
-  return ffprobeDuration;
+
+  // Neither source produced a plausible duration — omit it. An honestly-absent duration is
+  // better than summing a known lie; the implausible mm value is never resurrected.
+  reportRejectedDuration({ filePath, metadataDuration, ffprobeDuration, fileSize, onWarn, onDebug });
+  return undefined;
+}
+
+/**
+ * Diagnose a fully-rejected duration. When a rejected value can actually be *named* — a
+ * present-but-implausible mm or ffprobe value — emit a warn naming the value(s) and implied
+ * bitrate(s). When neither source produced a value to name (mm missing + ffprobe null/spawn
+ * failure), there is nothing to report as rejected, so it degrades to a debug diagnostic.
+ */
+function reportRejectedDuration(args: {
+  filePath: string;
+  metadataDuration: number | undefined;
+  ffprobeDuration: number | null;
+  fileSize: number;
+  onWarn: AudioScanOptions['onWarn'];
+  onDebug: AudioScanOptions['onDebug'];
+}): void {
+  const { filePath, metadataDuration, ffprobeDuration, fileSize, onWarn, onDebug } = args;
+  const payload = {
+    filePath,
+    metadataDuration,
+    ffprobeDuration,
+    fileSize,
+    metadataImpliedBitrateBps: impliedBitrateBps(metadataDuration, fileSize),
+    ffprobeImpliedBitrateBps: impliedBitrateBps(ffprobeDuration ?? undefined, fileSize),
+  };
+  const hasNamedRejection =
+    (typeof metadataDuration === 'number' && Number.isFinite(metadataDuration) && metadataDuration > 0) ||
+    (ffprobeDuration !== null && ffprobeDuration > 0);
+  if (hasNamedRejection) {
+    onWarn?.('duration omitted: no plausible value from music-metadata or ffprobe', payload);
+  } else {
+    onDebug?.('duration omitted: neither music-metadata nor ffprobe produced a duration', payload);
+  }
 }
 
 /**

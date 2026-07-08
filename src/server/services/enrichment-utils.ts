@@ -29,6 +29,30 @@ export interface AudioEnrichmentBook {
  * Tag data only fills empty fields; technical info is always written.
  * Narrator writes go through the junction table via bookService.
  */
+/**
+ * Apply the two duration writes to the enrichment update, honoring the zero-total skip-write
+ * guard (#1846). An all-rejected scan yields totalDuration 0; writing that zero would silently
+ * clobber a correct stored `audioDuration`, so it is omitted (logged at warn) and the existing
+ * value stands. The fill-empty `duration` behavior is preserved (it already skips a 0 total).
+ */
+function applyDurationFields(
+  update: Record<string, unknown>,
+  totalDuration: number,
+  existingDurationMinutes: number | null,
+  log: FastifyBaseLogger,
+  bookId: number,
+  targetPath: string,
+): void {
+  if (totalDuration === 0) {
+    log.warn({ bookId, targetPath }, 'Audio scan produced 0 total duration; omitting audioDuration to preserve existing value');
+  } else {
+    update.audioDuration = Math.round(totalDuration);
+  }
+  if (!existingDurationMinutes && totalDuration) {
+    update.duration = Math.round(totalDuration / 60);
+  }
+}
+
 export async function enrichBookFromAudio(
   bookId: number,
   targetPath: string,
@@ -67,19 +91,17 @@ export async function enrichBookFromAudio(
       audioFileCount: scanResult.fileCount,
       topLevelAudioFileCount,
       audioTotalSize: scanResult.totalSize,
-      audioDuration: Math.round(scanResult.totalDuration),
       enrichmentStatus: 'file-enriched',
       updatedAt: new Date(),
     };
+
+    applyDurationFields(update, scanResult.totalDuration, book.duration, log, bookId, targetPath);
 
     // Tag data: only fill empty fields (don't overwrite user edits)
     // Narrator writes go through the junction table via bookService
     if (!book.narrators?.length && scanResult.tagNarrator && bookService) {
       const narratorNames = scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0);
       await bookService.update(bookId, { narrators: narratorNames });
-    }
-    if (!book.duration && scanResult.totalDuration) {
-      update.duration = Math.round(scanResult.totalDuration / 60);
     }
 
     // Save embedded cover art when no cover URL exists

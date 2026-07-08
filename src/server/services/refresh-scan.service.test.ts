@@ -186,6 +186,25 @@ describe('refreshScanBook', () => {
     );
   });
 
+  // Zero-duration skip-write guard: an all-rejected scan (every file's duration omitted as
+  // implausible) yields totalDuration 0 and must NOT clobber the stored duration/audioDuration.
+  it('does not write duration/audioDuration when totalDuration is 0 (skip-write guard)', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ totalDuration: 0 }));
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+    expect(updateArg).not.toHaveProperty('duration');
+    expect(updateArg).not.toHaveProperty('audioDuration');
+    // Other technical fields still refresh.
+    expect(updateArg).toEqual(expect.objectContaining({ audioCodec: 'mp3', audioTotalSize: 300_000_000 }));
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('writes duration/audioDuration when totalDuration is > 0 (guard not triggered)', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+    expect(updateArg).toEqual(expect.objectContaining({ duration: 120, audioDuration: 7200 }));
+  });
+
   // Narrator overwrite semantics
   it('overwrites narrator from tags even when book already has narrators', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'New Narrator' }));
