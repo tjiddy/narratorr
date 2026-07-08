@@ -16,10 +16,13 @@ Narratorr is the automation layer for your audiobook library: it searches your i
 - **Automated Pipeline** — Scheduled search for wanted books, RSS polling for wanted books, retry with blacklisting.
 - **Quality Gate** — Auto-import the first qualifying release for a wanted book and hold questionable ones for manual review. Imported books are never automatically replaced — re-importing a better version is a deliberate, manual choice.
 - **Library Management** — Configurable folder/file naming, audio enrichment from file tags, grid and list views with filtering and bulk actions.
+- **Multiple Narrations** — Keep more than one recording of the same book: different narrators or editions import side by side with edition labels and edition-aware naming, never overwriting each other.
 - **Discovery** — Personalized book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
-- **Audio Processing** — Optional FFmpeg-based conversion, merging, cover art embedding, and metadata tag embedding (author, title, narrator, series, plus the media-server set: subtitle, ASIN, publisher, description, year, and genre).
-- **Notifications** — Discord, Slack, Telegram, Pushover, Gotify, Ntfy, email, and generic webhooks.
-- **Import Lists** — Sync wanted books from external sources.
+- **Audio Processing** — Optional FFmpeg-based conversion, merging (on demand, or automatically for multi-file downloads), cover art embedding, and metadata tag embedding (author, title, narrator, series, plus the media-server set: subtitle, ASIN, publisher, description, year, and genre).
+- **Connectors** — Trigger an Audiobookshelf or Plex library refresh automatically after imports land, so your media server picks up new books without waiting for its next scan.
+- **Public API** — Versioned REST API (`/api/v1`) with API-key auth for scripting and third-party integrations.
+- **Notifications** — Discord, Slack, Telegram, Pushover, Gotify, Ntfy, email, generic webhooks, and custom scripts.
+- **Import Lists** — Sync wanted books from external sources like the NYT bestseller lists and Hardcover.
 - **Security** — Forms or Basic auth with CSRF defenses, rate-limited login, AES-256-GCM credential encryption at rest, CSP with nonce-based script execution, SSRF protection on attacker-influenced fetches, library-root ancestry checks on filesystem mutations.
 - **Docker** — Multi-arch images (amd64/arm64) with linuxserver.io base and s6-overlay.
 
@@ -57,15 +60,15 @@ volumes:
   - /path/to/downloads:/downloads       # Download client save path
 ```
 
-Open `http://localhost:3000` and follow the setup wizard.
+Open `http://localhost:3000` — a welcome screen points you at the three settings to configure (see [Configuration](#configuration) below).
 
 **Image tags:**
 
 | Tag | Description |
 |-----|-------------|
 | `latest` | Most recent release |
-| `1.0.0` | Specific version |
-| `1.0` | Latest patch for a major.minor series |
+| `0.9.4` | Specific version |
+| `0.9` | Latest patch for a major.minor series |
 
 ### Bare Metal
 
@@ -128,6 +131,7 @@ src/
 | `LOG_LEVEL` | `info` | Log verbosity: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent` |
 | `MONITOR_INTERVAL_CRON` | `*/30 * * * * *` | Download-monitor poll cadence (cron expression) |
 | `NARRATORR_SECRET_KEY` | (auto-generated) | 32-byte hex key encrypting credentials at rest |
+| `INSTANCE_BADGE` | (unset) | Label for non-production instances: recolors the favicon and prefixes the tab title (e.g. `DEV`) so two instances are distinguishable at a glance |
 
 ## Development
 

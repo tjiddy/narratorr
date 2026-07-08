@@ -38,7 +38,7 @@ The app works end-to-end without a downstream media server. Some users will trea
 Narratorr must not be coupled to any specific media server. The user could be running Audiobookshelf, Plex, Jellyfin, or nothing at all. Integration with downstream services happens through:
 
 - **The library folder** — the shared contract. Narratorr writes files to a configured path; the media server watches that path.
-- **Notifications / Connect** — generic webhooks, Discord, custom scripts. If a user wants Narratorr to trigger an ABS library scan after import, they configure a webhook notifier. Narratorr doesn't need to know it's ABS.
+- **Notifications / Connect** — generic webhooks, Discord, custom scripts for anything event-shaped, plus first-class **connectors** (Audiobookshelf, Plex) that trigger a targeted library refresh after imports — the one integration where knowing the downstream server earns its keep. Connectors are optional; the folder contract above remains the baseline that works with any server.
 - **Configurable naming templates** — the folder structure is user-defined (`{author}/{title}`, `{author}/{series}/{title}`, etc.), not hardcoded to any platform's conventions.
 
 ### Follow *arr conventions

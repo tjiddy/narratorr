@@ -70,7 +70,7 @@ All sensitive configuration values (API keys, passwords, proxy URLs) are encrypt
 - **Key management:** 32-byte encryption key loaded from (in priority order):
   1. `NARRATORR_SECRET_KEY` environment variable
   2. `secret.key` file in the config directory (auto-generated on first run with `0600` permissions)
-- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts`): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover/Gotify tokens)
+- **Encrypted entities** (the canonical list lives in `SECRET_FIELDS` at `src/server/utils/secret-codec.ts` — the enumeration here is illustrative, not exhaustive): indexer API keys, indexer base URLs (`apiUrl` may embed `user:pass@host` credentials for Prowlarr-managed indexers), indexer FlareSolverr URLs, and MyAnonamouse session IDs (`mamId`); download client passwords/API keys; connector URLs and API keys/tokens (ABS, Plex); import list API keys; the Hardcover metadata API key; proxy URLs; the application's own API key and the forms-auth session secret; notifier secrets (webhook URLs/headers, Discord/Slack webhook URLs, Telegram bot tokens, SMTP passwords, Pushover user keys, Gotify tokens, ntfy topics and access tokens)
 - **Sentinel pattern:** API responses mask secrets with `********`. Updates that include the sentinel value preserve the existing encrypted value (no re-encryption of unchanged secrets)
 - **Storage format:** `$ENC$<base64(iv + authTag + ciphertext)>` — encrypted values are distinguishable from plaintext
 
@@ -170,11 +170,12 @@ The `/api/filesystem/browse` endpoint allows authenticated users to browse the h
 
 ## Outbound Fetch (SSRF Protection)
 
-Three outbound code paths follow attacker-influenced URLs and route through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made):
+Four outbound code paths follow attacker-influenced URLs and route through the SSRF helpers in `src/core/utils/network-service.ts` (a custom Undici DNS lookup function that rejects unsafe destinations before the connection is made):
 
 - **Cover-download** — cover art URLs from indexer responses or manually-pasted release URLs (`src/server/services/cover-download.ts`)
 - **Torrent / NZB download** — download URLs from indexer search results, including 302 redirects to magnet links (`src/core/utils/download-url.ts`)
 - **NZB content fetch** — NZB URLs from indexer XML during language enrichment, including 302 redirects to CDN-hosted content (`src/server/utils/enrich-usenet-languages.ts`)
+- **Blackhole download client** — indexer-supplied artifact URLs fetched when saving `.torrent`/`.nzb` files into the watch folder (`src/core/download-clients/blackhole.ts`)
 
 **Blocked destinations:**
 - RFC 1918 private networks (10/8, 172.16/12, 192.168/16)
@@ -186,6 +187,8 @@ Three outbound code paths follow attacker-influenced URLs and route through the 
 - Unspecified addresses (0.0.0.0, ::)
 - IPv4-mapped IPv6 forms (e.g., `::ffff:169.254.169.254`)
 - Hostname allowlist for known metadata names (e.g., `metadata.google.internal`) as a belt-and-suspenders check on top of the IP filter
+
+**LAN-allowlist carve-out:** a private/loopback destination is permitted **iff the URL's host:port exactly matches a configured indexer's `apiUrl` host:port** (`resolveAndValidate`'s `lanAllowlist`, threaded into all four paths above). This exists because a legitimately LAN-hosted indexer (e.g. Prowlarr in the same compose stack) serves its download/cover URLs from the same private host:port the operator already configured — blocking those would break the operator's own setup while providing no protection (the operator configured that destination). Attacker-influenced URLs pointing at any *other* private address remain blocked.
 
 **DNS rebinding mitigation:** the lookup function runs once per request and the connection is made to the resolved IP. A malicious DNS server that returns a public IP on first lookup and a private IP on a second cannot bypass the check. Per-redirect-hop revalidation re-runs the policy on each socket open, so 302→internal pivots are also caught.
 

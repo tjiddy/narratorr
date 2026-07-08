@@ -55,6 +55,9 @@ src/
     indexers/     — Search adapter implementations (IndexerAdapter interface)
     download-clients/  — Download client implementations (DownloadClientAdapter interface)
     metadata/     — Metadata provider implementations (MetadataProvider interface)
+    connectors/   — Media-server refresh adapters (ABS, Plex)
+    import-lists/ — Import-list source adapters (NYT, Hardcover)
+    notifiers/    — Notification adapters (Discord, Slack, webhooks, …)
     utils/        — Shared utilities (parsing, naming, magnets)
   db/
     schema.ts     — Drizzle ORM schema (SQLite)
