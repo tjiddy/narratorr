@@ -105,6 +105,20 @@ describe('buildQualityAssessment — existing audio metadata fields', () => {
     const result = buildQualityAssessment(baseScan, book);
     expect(result.existingChannels).toBeNull();
   });
+
+  // Accepted-trade guard (#1846): under duration omission, a partial-omission scan keeps its
+  // full totalSize but a reduced totalDuration (only plausible files summed), so newMbPerHour
+  // is INFLATED relative to the true value — the gate still evaluates, and the error bias
+  // moves toward permissive. This test pins that direction so it can't silently regress further.
+  it('still evaluates and inflates mbPerHour when a partial-omission scan reduces totalDuration', () => {
+    const fullScan = { ...baseScan, totalSize: 600_000_000, totalDuration: 36000 };
+    // One file's duration omitted → same bytes, ~10% less duration.
+    const partialScan = { ...baseScan, totalSize: 600_000_000, totalDuration: 32400 };
+    const full = buildQualityAssessment(fullScan, baseBook);
+    const partial = buildQualityAssessment(partialScan, baseBook);
+    expect(partial.mbPerHour).not.toBeNull();
+    expect(partial.mbPerHour!).toBeGreaterThan(full.mbPerHour!);
+  });
 });
 
 describe('buildQualityAssessment — narrator_mismatch (#1655 5A/5B surface checks)', () => {
