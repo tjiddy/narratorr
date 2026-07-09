@@ -306,6 +306,17 @@ describe('refreshScanBook', () => {
     );
   });
 
+  it('#1852: excludes a born-hidden temp from topLevelAudioFileCount', async () => {
+    vi.mocked(readdir).mockResolvedValue(
+      ['002.mp3', '.002.tmp.mp3', 'cover.jpg'] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ topLevelAudioFileCount: 1 }),
+    );
+  });
+
   // Error paths
   it('throws RefreshScanError NOT_FOUND when book does not exist', async () => {
     vi.mocked(mockBookService.getById).mockResolvedValue(null);
