@@ -1,7 +1,7 @@
 import { readdir, rename, rmdir, realpath } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative, isAbsolute } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
 import { compareAudioNames, disambiguateStems } from '../../core/utils/collect-audio-files.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { extractYear } from './import-helpers.js';
@@ -235,7 +235,7 @@ export async function planFileRenames(
 ): Promise<{ from: string; to: string }[]> {
   const entries = await readdir(targetPath, { withFileTypes: true });
   const audioFiles = entries
-    .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
+    .filter(e => e.isFile() && !isHiddenName(e.name) && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
     .map(e => e.name)
     .sort(compareAudioNames);
 

@@ -4,7 +4,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { join, extname, basename, dirname } from 'node:path';
 import {
-  renderTemplate, templateHasToken, toLastFirst, toSortTitle, AUDIO_EXTENSIONS,
+  renderTemplate, templateHasToken, toLastFirst, toSortTitle, AUDIO_EXTENSIONS, isHiddenName,
   sanitizeEditionDiscriminator, composeEditionSuffixLeaf, PATH_SEGMENT_LIMIT,
 } from '../../core/utils/index.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
@@ -215,12 +215,14 @@ export async function getPathSize(path: string): Promise<number> {
 export async function getAudioPathSize(path: string): Promise<number> {
   const stats = await stat(path);
   if (stats.isFile()) {
-    return AUDIO_EXTENSIONS.has(extname(path).toLowerCase()) ? stats.size : 0;
+    // Direct-file branch: a hidden file is never book audio (F32) — `getAudioPathSize('/x/.foo.mp3')` is 0.
+    return !isHiddenName(basename(path)) && AUDIO_EXTENSIONS.has(extname(path).toLowerCase()) ? stats.size : 0;
   }
 
   let total = 0;
   const entries = await readdir(path, { withFileTypes: true });
   for (const entry of entries) {
+    if (isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees at every depth
     const entryPath = join(path, entry.name);
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       const s = await stat(entryPath);
@@ -232,10 +234,43 @@ export async function getAudioPathSize(path: string): Promise<number> {
   return total;
 }
 
+/**
+ * Recursively total the bytes of **visible** (non-hidden) entries — ALL files, not just audio.
+ *
+ * Skips leading-dot files and leading-dot directory subtrees at every depth, so a born-hidden
+ * transient (`.merge-tmp/`, `.x.tmp.mp3`) never inflates the total AND an unreadable hidden
+ * subtree is never traversed (no `readdir`/`stat` on it — so it can't abort the walk with
+ * EACCES/ENOENT). The root itself is taken by identity: a hidden *directory* root is still
+ * descended (its visible children count), matching the F38 root policy.
+ *
+ * Backs refresh `size` and `checkDiskSpace`'s directory-source estimate. Distinct from the
+ * audio-only, exact-all-entry {@link getPathSize} used by import verification, which is
+ * intentionally left unchanged.
+ */
+export async function getVisiblePathSize(path: string): Promise<number> {
+  const stats = await stat(path);
+  if (stats.isFile()) return stats.size;
+
+  let total = 0;
+  const entries = await readdir(path, { withFileTypes: true });
+  for (const entry of entries) {
+    if (isHiddenName(entry.name)) continue;
+    const entryPath = join(path, entry.name);
+    if (entry.isFile()) {
+      const s = await stat(entryPath);
+      total += s.size;
+    } else if (entry.isDirectory()) {
+      total += await getVisiblePathSize(entryPath);
+    }
+  }
+  return total;
+}
+
 /** Check if a path contains audio files (recursively). */
 export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   const entries = await readdir(dirPath, { withFileTypes: true });
   for (const entry of entries) {
+    if (isHiddenName(entry.name)) continue; // hidden files aren't audio; dot-dir subtrees are skipped whole
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       return true;
     }
@@ -267,7 +302,10 @@ async function collectAudioFiles(
   // locale-numeric so unpadded source filenames (Track1…Track10) order numerically
   // before collectMultiDiscFiles assigns sequential padded names — 'locale' alone
   // would mis-order Track10 ahead of Track2 (#1192).
-  const paths = await collectSortedAudioFiles(dir, { recursive: true, sort: 'locale-numeric' });
+  // skipHidden so a dot-dir subtree nested under a visible source folder (e.g.
+  // `Visible/.hidden/track.mp3`) is skipped at depth, not just at the source root (F37) —
+  // covers ordinary/multi-disc copyAudioFiles and copyDiscGroup, which all funnel here.
+  const paths = await collectSortedAudioFiles(dir, { recursive: true, skipHidden: true, sort: 'locale-numeric' });
   return paths.map(p => ({ srcPath: p, name: basename(p) }));
 }
 
@@ -419,6 +457,7 @@ export async function copyAudioFiles(
   const looseFiles: AudioFile[] = [];
 
   for (const entry of rootEntries) {
+    if (isHiddenName(entry.name)) continue; // dot-dir subtree / dot-file: never a disc, other, or loose source
     const fullPath = join(source, entry.name);
     if (entry.isDirectory() && isDiscFolderName(entry.name)) {
       discFolders.push({ name: entry.name, path: fullPath });
@@ -481,6 +520,10 @@ export async function reconstructDiscGroup(memberPath: string): Promise<string[]
   // so the set fed to discGroupGuardsPass matches discovery's audio-bearing `audioChildren`.
   const audioBearingNames: string[] = [];
   for (const entry of entries) {
+    // Skip a leading-dot sibling subtree (F42): a `.Book Disc 2/` born-hidden staging or
+    // orphan is never probed as a coalesced disc member — parity with discovery, which
+    // skips dot-dirs before building `audioChildren`.
+    if (isHiddenName(entry.name)) continue;
     if (entry.isDirectory() && await isAudioBearingDir(join(parent, entry.name))) {
       audioBearingNames.push(entry.name);
     }
@@ -516,6 +559,7 @@ export async function countAudioFiles(dirPath: string): Promise<number> {
   let count = 0;
   const entries = await readdir(dirPath, { withFileTypes: true });
   for (const entry of entries) {
+    if (isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees at every depth
     if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       count++;
     } else if (entry.isDirectory()) {

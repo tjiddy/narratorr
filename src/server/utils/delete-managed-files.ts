@@ -1,7 +1,7 @@
 import { readdir, readFile, rm, rmdir, lstat } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
 import { OPF_FILE_REGEX, hasNarratorrMarker } from '../../core/utils/opf-regex.js';
 import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
@@ -115,6 +115,9 @@ async function sweepDir(dir: string, rootDir: string, result: DeleteManagedFiles
   const atRoot = dir === rootDir;
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
+    // Skip a leading-dot entry entirely (never recursed, classified, or removed): preserves an
+    // active born-hidden temp (`.merge-tmp/`, `.x.tmp.mp3`) another step is mid-writing.
+    if (isHiddenName(entry.name)) continue;
     const fullPath = join(dir, entry.name);
     if (atRoot && OPF_FILE_REGEX.test(entry.name)) {
       // Content-aware: ownership of a root metadata.opf is decided by the marker, not the name.

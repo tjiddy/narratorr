@@ -11,7 +11,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { MergeService } from './merge.service.js';
 import { MergeError } from './merge.service.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import {
   emitDownloadImporting, emitBookImporting, emitImportStatusSuccess,
@@ -220,7 +220,7 @@ export class ImportOrchestrator {
       if (!processing.autoMergeDownloads) return;
 
       const entries = await readdir(result.targetPath);
-      const topLevelAudioCount = entries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase())).length;
+      const topLevelAudioCount = entries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase())).length;
       if (topLevelAudioCount < 2) {
         this.log.debug({ bookId: ctx.bookId, topLevelAudioCount }, 'Auto-merge skipped — fewer than 2 top-level audio files');
         return;

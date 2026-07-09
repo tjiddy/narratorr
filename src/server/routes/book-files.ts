@@ -132,7 +132,7 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
 
       let audioPaths: string[];
       try {
-        audioPaths = await collectAudioFilePaths(book.path, { recursive: true });
+        audioPaths = await collectAudioFilePaths(book.path, { recursive: true, skipHidden: true });
       } catch {
         request.log.warn({ bookId: id, path: book.path }, 'Could not read book directory');
         return [];

@@ -16,7 +16,8 @@ import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
 import { toNamingOptions, type NamingOptions } from '../../core/utils/naming.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 import { Semaphore } from '../utils/semaphore.js';
@@ -150,7 +151,7 @@ export class MergeService {
     const processingSettings = await this.settingsService.get('processing');
     if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
-    const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const topLevelAudioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
     return processingSettings;
   }
@@ -292,7 +293,7 @@ export class MergeService {
     const processingSettings = await this.settingsService.get('processing');
     if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
-    const audioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const audioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (audioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
   }
 
@@ -311,7 +312,10 @@ export class MergeService {
     this.abortControllers.set(bookId, controller);
 
     this.emitMergeStarted(bookId, book.title);
-    const stagingDir = bookPath + '.merge-tmp';
+    // Born-hidden staging dir (AC11): `.<book>.merge-tmp` — dot-led basename so its populated
+    // multi-GB audio is invisible to ABS/scanners for the whole merge, yet stays a sibling on the
+    // same filesystem (atomic finalize rename preserved). Its owner still enumerates it by identity.
+    const stagingDir = dotPrefixBasename(bookPath + '.merge-tmp');
 
     try {
       // Converge any interrupted commit-pending marker at bookPath BEFORE any staging
@@ -328,7 +332,7 @@ export class MergeService {
       // and commitMerge's originals-deletion. Reading it before recovery would stage/delete
       // a stale file list.
       const allEntries = await readdir(bookPath);
-      const topLevelAudioFiles = allEntries.filter((f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+      const topLevelAudioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
 
       // Re-validate the merge minimum on the CONVERGED folder (F9): recovery can shrink a
       // previously-valid queued merge below two top-level audio files, and processAudioFiles
@@ -388,6 +392,12 @@ export class MergeService {
     namingOptions: NamingOptions,
     signal?: AbortSignal,
   ): Promise<string> {
+    // Reset the deterministic staging dir to empty before copying (Change 4 / F25). A prior kill
+    // can leave stale (non-dot) audio inside this exact path; the owning merge reopens it by
+    // identity and would otherwise fold that residue into the result. A failure to empty it throws
+    // here → routed by executeMerge's catch to `merge_failed` (ordinary failure path, no new error).
+    // It only ever touches this merge's OWN staging dir, never one another active op could own.
+    await rm(stagingDir, { recursive: true, force: true });
     await mkdir(stagingDir, { recursive: true });
 
     for (const file of audioFiles) {

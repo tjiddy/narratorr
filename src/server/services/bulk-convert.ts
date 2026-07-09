@@ -10,7 +10,8 @@ import { buildNamingContext } from '../utils/paths.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 
 /** Deps for a single bulk-convert step. Extracted from `BulkOperationService` (it is at the line cap). */
@@ -88,18 +89,25 @@ export async function convertBook(
   processingSettings: ConvertProcessingSettings,
 ): Promise<void> {
   const { db, bookService, log, connectorService } = deps;
-  const stagingDir = bookPath + '.convert-tmp';
+  // Born-hidden staging dir (AC10): `.<book>.convert-tmp` — dot-led basename so its populated audio
+  // is invisible to ABS/scanners while converting, on the same filesystem (atomic swap preserved).
+  const stagingDir = dotPrefixBasename(bookPath + '.convert-tmp');
   const book = await bookService.getById(bookId);
   const authorName = book?.authors?.[0]?.name ?? 'Unknown Author';
   const sourceBitrateKbps = toSourceBitrateKbps(book?.audioBitrate);
   const targetBitrateKbps = processingSettings.bitrate ?? undefined;
   logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, log);
 
+  // Reset the deterministic staging dir to empty before copying (Change 4 / F25): a prior kill can
+  // leave stale (non-dot) audio in this exact path that the owning convert reopens by identity and
+  // would fold into the result. A failure to empty it throws → the bulk op's per-item failure path
+  // (ordinary handling, no new error). Only ever touches this convert's OWN staging dir.
+  await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
   try {
     // Copy audio files to staging
     const entries = await readdir(bookPath);
-    const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+    const audioFiles = entries.filter(f => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     for (const file of audioFiles) {
       await cp(join(bookPath, file), join(stagingDir, file));
     }
