@@ -10,7 +10,6 @@ import type { BookService } from './book.service.js';
 import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
-import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 // Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
 import { sanitizedEnv } from '../../core/utils/sanitized-env.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
@@ -161,9 +160,9 @@ export async function tagFile(
   }
 
   const dir = dirname(filePath);
-  // Born-hidden temp (AC9): dot-led basename so a scanner/ABS never folds `<stem>.tmp<ext>` in as
-  // a garbage track for its on-disk life. `rename(tmpPath, filePath)` below still finalizes atomically.
-  const tmpPath = dotPrefixBasename(join(dir, `${basename(filePath, ext)}.tmp${ext}`));
+  // Born-hidden temp (#1852 AC9): dot-led basename (like the `.cover-*.tmp` precedent) so a scan/ABS
+  // never folds it in mid-write; the `rename(tmpPath, filePath)` finalize below stays atomic.
+  const tmpPath = join(dir, `.${basename(filePath, ext)}.tmp${ext}`);
 
   try {
     const ffmpegArgs = buildFfmpegArgs(
