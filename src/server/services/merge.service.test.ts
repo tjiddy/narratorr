@@ -949,6 +949,31 @@ describe('MergeService', () => {
       await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
     });
 
+    // #1852 F5 — pre-enqueue eligibility must not count a born-hidden temp as the second file.
+    // Load-bearing: one visible + one hidden → still ineligible. Reverting the isHiddenName filter
+    // would count 2 and let this book through.
+    it('#1852 F5: one visible + one hidden top-level file rejects NO_TOP_LEVEL_FILES at pre-enqueue', async () => {
+      (readdir as Mock).mockResolvedValue(['01.mp3', '.02.tmp.mp3']); // 1 real + 1 born-hidden temp
+      const { service } = createService();
+
+      await expect(service.enqueueMerge(42)).rejects.toMatchObject({ code: 'NO_TOP_LEVEL_FILES' });
+    });
+
+    it('#1852 F5 positive twin: two visible files plus a hidden temp is eligible (started), temp never staged', async () => {
+      setupHappyPath();
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
+        return ['01.mp3', '02.mp3', '.03.tmp.mp3'];
+      });
+      const { service } = createService();
+
+      const ack = await service.enqueueMerge(42);
+      await settle();
+
+      expect(ack).toEqual({ status: 'started', bookId: 42 });
+      expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('.03.tmp.mp3'), expect.anything());
+    });
+
     it('throws MergeError FFMPEG_NOT_CONFIGURED when ffmpegPath is not set', async () => {
       // Override settings to have empty ffmpegPath
       const noFfmpegService = new MergeService(
@@ -1581,6 +1606,55 @@ describe('#257 merge observability — merge service', () => {
       const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
       const failedEvents = emitCalls.filter((c: unknown[]) => c[0] === 'merge_failed');
       expect(failedEvents.some((c: unknown[]) => (c[1] as { book_id: number }).book_id === 43)).toBe(true);
+    });
+
+    // #1852 F6 — dequeue-time revalidation (validateDequeueTime) is an independent eligibility gate.
+    // A book that qualified at enqueue (2 visible) but is one-visible-plus-one-hidden by the time it
+    // is promoted must fail there. Reverting the isHiddenName filter would count the hidden temp as a
+    // second file, so book 43 would proceed (merge_started, no merge_failed) — this pins that it does not.
+    it('#1852 F6: a queued book that becomes one-visible-plus-one-hidden fails dequeue-time revalidation', async () => {
+      const { service, bookService, eventBroadcaster } = createServiceWithBroadcaster();
+      const book42 = { ...createMockDbBook({ id: 42, title: 'Book A', path: '/lib/A', status: 'imported' }), authors: [mockAuthor], narrators: [] };
+      const book43 = { ...createMockDbBook({ id: 43, title: 'Book B', path: '/lib/B', status: 'imported' }), authors: [mockAuthor], narrators: [] };
+      bookService.getById.mockImplementation(async (id: number) => (id === 42 ? book42 : id === 43 ? book43 : null));
+
+      // At enqueue, /lib/B has two real files (43 queues legitimately).
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        return ['01.mp3', '02.mp3'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      let resolveFirst!: () => void;
+      const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
+      (processAudioFiles as Mock).mockImplementationOnce(async () => { await firstPromise; return { success: true, outputFiles: ['/staging/out.m4b'] }; })
+        .mockResolvedValue({ success: true, outputFiles: ['/staging/out.m4b'] });
+
+      await service.enqueueMerge(42); // starts
+      await service.enqueueMerge(43); // queues (2 visible at enqueue)
+
+      // Before 43 dequeues, /lib/B loses a real file and gains a born-hidden temp → 1 visible left.
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['out.m4b'];
+        if (dir === '/lib/B') return ['02.mp3', '.03.tmp.mp3'];
+        return ['01.mp3', '02.mp3'];
+      });
+
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const emitCalls = (eventBroadcaster as unknown as { emit: Mock }).emit.mock.calls;
+      const startedFor = (id: number) => emitCalls.some((c: unknown[]) => c[0] === 'merge_started' && (c[1] as { book_id: number }).book_id === id);
+      const failedFor = (id: number) => emitCalls.some((c: unknown[]) => c[0] === 'merge_failed' && (c[1] as { book_id: number }).book_id === id);
+      expect(failedFor(43)).toBe(true);   // dequeue-time gate rejected it
+      expect(startedFor(43)).toBe(false); // it never proceeded to actual merge work
     });
   });
 
