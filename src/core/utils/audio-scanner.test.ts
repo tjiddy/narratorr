@@ -816,6 +816,33 @@ describe('scanAudioDirectory', () => {
       expect(mockReaddir).not.toHaveBeenCalled();
     });
 
+    it('#1852: returns null for a direct hidden audio file (born-hidden temp)', async () => {
+      mockStat.mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never);
+
+      const result = await scanAudioDirectory('/complete/.BookTitle.tmp.m4b');
+
+      expect(result).toBeNull();
+      expect(mockReaddir).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('#1852 dot-led temp beside a real file', () => {
+    it('counts only the real file: 002.mp3 + .002.tmp.mp3 → fileCount 1, single-file totals', async () => {
+      mockReaddir.mockResolvedValue([
+        makeDirent('002.mp3', true),
+        makeDirent('.002.tmp.mp3', true), // duplicated born-hidden temp from a tagging op
+      ] as never);
+      mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 35_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata() as never);
+
+      const result = await scanAudioDirectory('/audiobooks/test');
+
+      expect(result).not.toBeNull();
+      expect(result!.fileCount).toBe(1);        // the temp is invisible to the scan
+      expect(result!.totalSize).toBe(35_000_000);
+      expect(result!.totalDuration).toBe(3600); // one file's duration, not double-counted
+    });
+
     it('returns valid AudioScanResult for single audio file with uppercase extension', async () => {
       mockReaddir.mockRejectedValue(Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }));
       mockStat

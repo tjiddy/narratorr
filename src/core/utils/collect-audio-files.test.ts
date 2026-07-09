@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { join } from 'node:path';
-import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 import { collectAudioFilePaths, collectSortedAudioFiles, compareAudioNames, disambiguateStems } from './collect-audio-files.js';
 
 vi.mock('node:fs/promises', () => ({
@@ -167,6 +167,68 @@ describe('collectAudioFilePaths', () => {
       expect(result).toEqual([join('/dir', 'track.mp3')]);
       expect(mockReaddir).toHaveBeenCalledTimes(1);
     });
+  });
+
+  // #1852 AC2: dot-FILES are never collected, regardless of skipHidden (which gates only
+  // directory recursion). Independent of the dot-DIRECTORY skip above.
+  describe('hidden file skipping (#1852)', () => {
+    it('excludes a born-hidden temp file but keeps the real file (non-recursive)', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('real.mp3', true, false),
+        makeDirent('.real.tmp.mp3', true, false),
+      ] as never);
+
+      const result = await collectAudioFilePaths('/dir');
+      expect(result).toEqual([join('/dir', 'real.mp3')]);
+    });
+
+    it('excludes dot-files even when skipHidden is false (recursive, dot-file inside a dot-dir)', async () => {
+      mockReaddir
+        .mockResolvedValueOnce([makeDirent('.merge-tmp', false, true)] as never)
+        .mockResolvedValueOnce([
+          makeDirent('track.mp3', true, false),   // visible file inside the dot-dir → still collected under default
+          makeDirent('.stray.tmp.mp3', true, false), // dot-file → dropped by the file-level rule
+        ] as never);
+
+      const result = await collectAudioFilePaths('/dir', { recursive: true });
+      expect(result).toEqual([join('/dir', '.merge-tmp', 'track.mp3')]);
+    });
+
+    it('keeps an interior-dot name like My.Book.mp3', async () => {
+      mockReaddir.mockResolvedValueOnce([makeDirent('My.Book.mp3', true, false)] as never);
+      expect(await collectAudioFilePaths('/dir')).toEqual([join('/dir', 'My.Book.mp3')]);
+    });
+
+    it('custom extension set (AC4): collects a.xyz, excludes hidden .a.xyz', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('a.xyz', true, false),
+        makeDirent('.a.xyz', true, false),
+        makeDirent('b.mp3', true, false), // not in the custom set → excluded
+      ] as never);
+
+      const result = await collectAudioFilePaths('/dir', { extensions: new Set(['.xyz']) });
+      expect(result).toEqual([join('/dir', 'a.xyz')]);
+    });
+
+    it('identity root (F38): a hidden dir passed as the root still yields its visible children', async () => {
+      // The root basename is never self-filtered — only DISCOVERED children are.
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('track.mp3', true, false),
+        makeDirent('.half.tmp.mp3', true, false),
+      ] as never);
+
+      const result = await collectAudioFilePaths('/x/.merge-tmp', { recursive: true, skipHidden: true });
+      expect(result).toEqual([join('/x/.merge-tmp', 'track.mp3')]);
+    });
+  });
+});
+
+describe('isHiddenName (#1852)', () => {
+  it('is true only for a leading-dot basename', () => {
+    expect(isHiddenName('.x.mp3')).toBe(true);
+    expect(isHiddenName('.merge-tmp')).toBe(true);
+    expect(isHiddenName('x.mp3')).toBe(false);
+    expect(isHiddenName('My.Book.mp3')).toBe(false);
   });
 });
 
