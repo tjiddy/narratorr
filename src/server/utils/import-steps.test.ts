@@ -130,6 +130,25 @@ describe('validateSource', () => {
     expect(result.fileCount).toBe(1);
   });
 
+  it('#1852 F28: rejects a direct hidden audio file before assigning fileCount', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as unknown as Stats);
+    await expect(validateSource('/downloads/.x.mp3', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/.x.mp3', undefined, null)).rejects.toThrow(/hidden/);
+  });
+
+  it('#1852 F28: rejects a direct non-audio (unsupported) file before disk work', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as unknown as Stats);
+    await expect(validateSource('/downloads/book.txt', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/book.txt', undefined, null)).rejects.toThrow('not a supported audio format');
+  });
+
+  it('#1852 F38: rejects a hidden source DIRECTORY before contains/count/disk work', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true } as unknown as Stats);
+    // readdir intentionally left unmocked — a correct reject happens before containsAudioFiles.
+    await expect(validateSource('/downloads/.incomplete', undefined, null)).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(validateSource('/downloads/.incomplete', undefined, null)).rejects.toThrow(/hidden/);
+  });
+
   it('throws ENOENT with mapping hint when remote mappings exist', async () => {
     const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     vi.mocked(stat).mockRejectedValue(enoent);
@@ -217,6 +236,32 @@ describe('checkDiskSpace', () => {
       sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 100 } as unknown as Stats,
       libraryPath: '/lib', minFreeSpaceGB: 1,
     })).rejects.toThrow('Disk space check failed');
+  });
+
+  it('#1852 F40: a directory source sizes only visible bytes and never traverses a .hidden/ subtree', async () => {
+    vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+    // getVisiblePathSize (real, from ...actual) walks the mocked fs: root has a real file + a
+    // `.hidden` dir. readdir REJECTS for the hidden subtree to prove it is never entered.
+    vi.mocked(stat).mockImplementation(async (p: unknown) =>
+      String(p).endsWith('/src')
+        ? ({ isFile: () => false, isDirectory: () => true } as never)
+        : ({ isFile: () => true, isDirectory: () => false, size: 100 } as never));
+    vi.mocked(readdir).mockImplementation(async (p: unknown) => {
+      if (String(p).endsWith('/src')) {
+        return [
+          { name: 'real.mp3', isFile: () => true, isDirectory: () => false },
+          { name: '.hidden', isFile: () => false, isDirectory: () => true },
+        ] as never;
+      }
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); // the hidden subtree — must never be read
+    });
+
+    // Does not throw despite the unreadable hidden subtree; the estimate reflects only visible bytes.
+    await expect(checkDiskSpace({
+      sourcePath: '/src', sourceStats: { isDirectory: () => true } as unknown as Stats,
+      libraryPath: '/lib', minFreeSpaceGB: 1,
+    })).resolves.toBeDefined();
+    expect(statfs).toHaveBeenCalledWith('/lib');
   });
 });
 

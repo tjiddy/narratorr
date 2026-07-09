@@ -61,6 +61,24 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(true);
   }));
 
+  it('#1852: preserves a born-hidden temp file AND a .merge-tmp/ subtree (never deleted, never classified)', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'chapter1.mp3'), 'a');
+    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b'); // active born-hidden temp
+    await mkdir(join(book, '.merge-tmp'), { recursive: true });
+    await writeFile(join(book, '.merge-tmp', 'staged.m4b'), 'c'); // active staging subtree
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    // Only the real managed audio is deleted; the hidden entries are neither deleted nor
+    // reported as foreign — they are skipped entirely and survive on disk.
+    expect(base(result.deletedManaged)).toEqual(['chapter1.mp3']);
+    expect(base(result.preservedForeign)).toEqual([]);
+    expect(await pathExists(join(book, '.chapter1.tmp.mp3'))).toBe(true);
+    expect(await pathExists(join(book, '.merge-tmp', 'staged.m4b'))).toBe(true);
+  }));
+
   it('is case-insensitive for audio and cover extensions', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });
