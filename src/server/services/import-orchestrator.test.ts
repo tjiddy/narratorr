@@ -430,6 +430,27 @@ describe('ImportOrchestrator', () => {
       expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
     });
 
+    // #1852 F4 — auto-merge admission must not count a born-hidden temp as the second file.
+    // Load-bearing: reverting the isHiddenName predicate would count 2 here and wrongly enqueue.
+    it('#1852 F4: toggle ON + one visible + one hidden top-level file → does not enqueue', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '.02.tmp.mp3'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
+    });
+
+    it('#1852 F4 positive twin: toggle ON + two visible + one hidden → enqueues exactly one merge', async () => {
+      vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3', '.03.tmp.mp3'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).toHaveBeenCalledTimes(1);
+      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1, 'auto');
+    });
+
     it('toggle OFF → never enqueues, even with a multi-file committed folder', async () => {
       vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
       const orch = withToggle(false);

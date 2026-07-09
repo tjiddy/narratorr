@@ -2,9 +2,9 @@ import { stat, readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { getPathSize } from '../utils/import-helpers.js';
+import { getVisiblePathSize } from '../utils/import-helpers.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 
@@ -64,14 +64,15 @@ export async function refreshScanBook(
     throw new RefreshScanError('NO_AUDIO_FILES', 'No audio files found in book directory');
   }
 
-  // Count top-level (non-recursive) audio files
+  // Count top-level (non-recursive) audio files — exclude born-hidden transients (`.002.tmp.mp3`)
   const topLevelEntries = await readdir(book.path);
   const topLevelAudioFileCount = topLevelEntries.filter(
-    (f) => AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
+    (f) => !isHiddenName(String(f)) && AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
   ).length;
 
-  // Total directory size (all files, not just audio)
-  const directorySize = await getPathSize(book.path);
+  // Total directory size (all visible files, not just audio) — the visibility-aware walk skips
+  // leading-dot files and dot-dir subtrees so a mid-op `.merge-tmp/` never inflates stored `size`.
+  const directorySize = await getVisiblePathSize(book.path);
 
   const durationMinutes = Math.round(scanResult.totalDuration / 60);
   const narratorsUpdated = !!scanResult.tagNarrator;

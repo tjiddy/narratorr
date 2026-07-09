@@ -492,12 +492,12 @@ describe('tagFile', () => {
     expect(result.reason).toContain('suspiciously small');
   });
 
-  it('uses temp file strategy: writes to .tmp.ext, then atomically renames', async () => {
+  it('uses temp file strategy: writes to a born-hidden .tmp.ext, then atomically renames (#1852 AC9)', async () => {
     await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', { artist: 'Author' }, 'overwrite');
 
-    // Should atomically rename tmp over original (no separate delete)
+    // Temp basename is dot-led (born hidden) AND the finalize is still an atomic rename-over-original.
     expect(rename).toHaveBeenCalledWith(
-      expect.stringContaining('file.tmp.mp3'),
+      expect.stringMatching(/\/\.file\.tmp\.mp3$/),
       '/books/file.mp3',
     );
     // Original should NOT be unlinked — rename overwrites atomically on POSIX
@@ -895,6 +895,24 @@ describe('TaggingService', () => {
       // Should log warnings for each unsupported file
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ file: 'book.ogg' }),
+        'Tag write skipped',
+      );
+    });
+
+    it('#1852 F34: does not warn about a hidden unsupported file (.hidden.flac)', async () => {
+      _readdirFiles = ['visible.ogg', '.hidden.flac', 'cover.jpg'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const log = createMockLog();
+      const service = new TaggingService(db as never, settings as never, log as never, mockBookService as never);
+
+      const result = await service.tagBook(1, '/books/test', { title: 'Test' }, '/usr/bin/ffmpeg', 'overwrite', false);
+
+      expect(result.skipped).toBe(1); // only the visible unsupported file
+      expect(result.warnings).toContainEqual(expect.stringContaining('visible.ogg'));
+      expect(result.warnings.some(w => w.includes('.hidden.flac'))).toBe(false);
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.objectContaining({ file: '.hidden.flac' }),
         'Tag write skipped',
       );
     });

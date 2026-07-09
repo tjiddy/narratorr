@@ -13,7 +13,7 @@ vi.mock('../../core/utils/ffprobe-path.js', () => ({
 }));
 
 vi.mock('../utils/import-helpers.js', () => ({
-  getPathSize: vi.fn().mockResolvedValue(1_000_000),
+  getVisiblePathSize: vi.fn().mockResolvedValue(1_000_000),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -23,7 +23,7 @@ vi.mock('node:fs/promises', () => ({
 
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
-import { getPathSize } from '../utils/import-helpers.js';
+import { getVisiblePathSize } from '../utils/import-helpers.js';
 import { readdir } from 'node:fs/promises';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
 
@@ -160,10 +160,10 @@ describe('refreshScanBook', () => {
     );
   });
 
-  it('updates size field with total recursive directory size via getPathSize', async () => {
-    vi.mocked(getPathSize).mockResolvedValue(5_000_000);
+  it('updates size field with total recursive directory size via getVisiblePathSize', async () => {
+    vi.mocked(getVisiblePathSize).mockResolvedValue(5_000_000);
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    expect(getPathSize).toHaveBeenCalledWith('/library/author/book');
+    expect(getVisiblePathSize).toHaveBeenCalledWith('/library/author/book');
     expect(mockBookService.update).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ size: 5_000_000 }),
@@ -303,6 +303,17 @@ describe('refreshScanBook', () => {
     expect(mockBookService.update).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ topLevelAudioFileCount: 2 }),
+    );
+  });
+
+  it('#1852: excludes a born-hidden temp from topLevelAudioFileCount', async () => {
+    vi.mocked(readdir).mockResolvedValue(
+      ['002.mp3', '.002.tmp.mp3', 'cover.jpg'] as unknown as Awaited<ReturnType<typeof readdir>>,
+    );
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ topLevelAudioFileCount: 1 }),
     );
   });
 

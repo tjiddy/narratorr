@@ -3,6 +3,7 @@ import { rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { collectSortedAudioFiles, compareAudioNames, disambiguateStems } from './collect-audio-files.js';
+import { dotPrefixBasename } from './hidden-staging.js';
 import { getErrorMessage } from '../../shared/error-message.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
@@ -406,8 +407,11 @@ async function convertFiles(
 
       const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
       const sameFile = filePath === outputPath;
+      // Defense-in-depth (AC12): the same-file convert temp is born hidden (`.<stem>_tmp.<ext>`) so a
+      // concurrent scan/ABS never sees a half-written encode. `rename(writePath, outputPath)` below
+      // still finalizes atomically over the original.
       const writePath = sameFile
-        ? join(targetDir, `${stem}_tmp.${config.outputFormat}`)
+        ? dotPrefixBasename(join(targetDir, `${stem}_tmp.${config.outputFormat}`))
         : outputPath;
 
       const args = ['-y', '-i', filePath, '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame'];

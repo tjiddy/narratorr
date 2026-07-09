@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { extname, basename } from 'node:path';
 import { parseFile, type ICommonTagsResult } from 'music-metadata';
-import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 import { collectAudioFilePaths } from './collect-audio-files.js';
 // ffprobe-backed media probing lives in audio-probe (imported by path; Node-only).
 import { resolveFileDuration, fillTechnicalViaFFprobe, getFFprobeStreamDuration } from './audio-probe.js';
@@ -492,7 +492,8 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
   try {
     const pathStat = await stat(dirPath);
     if (pathStat.isFile()) {
-      return AUDIO_EXTENSIONS.has(extname(dirPath).toLowerCase()) ? [dirPath] : [];
+      // Direct-file branch: a hidden file (`.foo.mp3`) is a born-hidden transient, never scanned.
+      return !isHiddenName(basename(dirPath)) && AUDIO_EXTENSIONS.has(extname(dirPath).toLowerCase()) ? [dirPath] : [];
     }
     const files = await collectAudioFilePaths(dirPath, { recursive: true, skipHidden: true });
     return files.sort();

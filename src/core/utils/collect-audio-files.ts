@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
-import { AUDIO_EXTENSIONS } from './audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 
 export interface CollectAudioFileOptions {
   /** Recurse into subdirectories (default: false). */
@@ -28,10 +28,13 @@ export async function collectAudioFilePaths(
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
-    if (entry.isFile() && extensions.has(extname(entry.name).toLowerCase())) {
+    // Dot-FILES are never book audio, regardless of `skipHidden` (which gates only directory
+    // recursion). Mirrors ABS's `shouldIgnoreFile` dotfile rule so a born-hidden transient
+    // (`.002.tmp.mp3`) is never collected as a real track. `My.Book.mp3` (interior dot) stays.
+    if (entry.isFile() && !isHiddenName(entry.name) && extensions.has(extname(entry.name).toLowerCase())) {
       results.push(fullPath);
     } else if (recursive && entry.isDirectory()) {
-      if (skipHidden && entry.name.startsWith('.')) continue;
+      if (skipHidden && isHiddenName(entry.name)) continue;
       results.push(...await collectAudioFilePaths(fullPath, options));
     }
   }

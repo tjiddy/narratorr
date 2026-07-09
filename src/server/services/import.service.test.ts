@@ -1101,10 +1101,13 @@ describe('ImportService', () => {
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
+      // Audio-extension source name so validateSource (#1852 F28: rejects a non-audio direct file)
+      // passes and the throw-under-test still originates in checkDiskSpace, as intended.
+      (mockAdapter.getDownload as Mock).mockResolvedValueOnce({ ...defaultDownloadItem, name: 'book.m4b' });
 
       // Marker present AS A FILE (#1341: a real marker is a regular file → preflight passes,
       // markerPresent reads present); source is a single FILE so checkDiskSpace uses
-      // sourceStats.size and never walks the (self-referential) readdir mock via getPathSize.
+      // sourceStats.size and never walks the (self-referential) readdir mock via getVisiblePathSize.
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
           ? ({ isFile: () => true, isDirectory: () => false } as never)

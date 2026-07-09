@@ -1,8 +1,8 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { extname, basename } from 'node:path';
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { collectAudioFilePaths } from '../../core/utils/collect-audio-files.js';
 
 const AUDIO_MIME_MAP: Record<string, string> = {
@@ -75,7 +75,8 @@ export async function resolvePreviewAudioFile(inputPath: string): Promise<string
     return null;
   }
   if (s.isFile()) {
-    return AUDIO_EXTENSIONS.has(extname(inputPath).toLowerCase()) ? inputPath : null;
+    // Direct-file branch: a hidden file (`.foo.mp3`) is a born-hidden transient, never previewable.
+    return !isHiddenName(basename(inputPath)) && AUDIO_EXTENSIONS.has(extname(inputPath).toLowerCase()) ? inputPath : null;
   }
   if (s.isDirectory()) {
     let files: string[];

@@ -12,9 +12,11 @@ import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import { downloadRemoteCover } from './cover-download.js';
 import { cp, mkdir, rename, rm, readdir, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { RenameService } from './rename.service.js';
@@ -63,6 +65,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 const BOOK_PATH = '/library/Author/Title';
+// Convert staging is now born-hidden (#1852 AC10): `.<book>.convert-tmp`, dot-led basename.
+const CONVERT_STAGING = dotPrefixBasename(BOOK_PATH + '.convert-tmp');
 
 function makeRenameService() {
   return inject<RenameService>({
@@ -916,11 +920,47 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', mergeBehavior: 'always' }),
       expect.objectContaining({ title: 'Title' }),
     );
     expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
+  });
+
+  it('#1852: a born-hidden temp beside the originals is never copied into staging', async () => {
+    setupConvertMocks();
+    (readdir as Mock).mockResolvedValue(['book.mp3', '.book.tmp.mp3']);
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+
+    expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, 'book.mp3'), join(CONVERT_STAGING, 'book.mp3'));
+    expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('.book.tmp.mp3'), expect.anything());
+  });
+
+  it('#1852 Change 4/F25: resets the staging dir (rm before the first copy)', async () => {
+    setupConvertMocks();
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+
+    expect(rm).toHaveBeenCalledWith(CONVERT_STAGING, { recursive: true, force: true });
+    expect((rm as Mock).mock.invocationCallOrder[0]!).toBeLessThan((cp as Mock).mock.invocationCallOrder[0]!);
+  });
+
+  it('#1852 F25: an un-emptyable staging dir fails the item (never copies) via the ordinary failure path', async () => {
+    setupConvertMocks();
+    (rm as Mock).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' })); // reset fails
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+
+    expect(cp).not.toHaveBeenCalled();
+    expect(processAudioFiles).not.toHaveBeenCalled();
+    expect(service.getJob(id)?.failures).toBe(1);
   });
 
   // #1720 — startConvertJob now also fetches library naming settings and threads
@@ -945,7 +985,7 @@ describe('BulkOperationService — convert batch', () => {
     await waitForJob(service, id);
 
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.anything(),
       expect.objectContaining({
         fileFormat: '{author} - {series} - {title} ({edition})',
@@ -1038,7 +1078,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ outputFormat: 'mp3', mergeBehavior: 'multi-file-only' }),
       expect.any(Object),
     );
@@ -1087,7 +1127,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ sourceBitrateKbps: 64 }),
       expect.any(Object),
     );
@@ -1103,7 +1143,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ sourceBitrateKbps: undefined }),
       expect.any(Object),
     );

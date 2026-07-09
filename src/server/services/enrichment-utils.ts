@@ -5,7 +5,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';
@@ -77,7 +77,7 @@ export async function enrichBookFromAudio(
     // readdir returns strings; use String() to be safe with non-string entries
     const topLevelEntries = await readdir(targetPath).catch(() => [] as string[]);
     const topLevelAudioFileCount = topLevelEntries.filter(
-      (f) => AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
+      (f) => !isHiddenName(String(f)) && AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
     ).length;
 
     // Build update: always write technical info

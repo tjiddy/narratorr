@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
 import type { DiscoveredBook } from '../../shared/schemas/library-scan.js';
 import { serializeError } from '../utils/serialize-error.js';
 
@@ -15,9 +15,10 @@ export async function getAudioStats(path: string, log: FastifyBaseLogger): Promi
     return { fileCount: 0, totalSize: 0 };
   }
 
-  // Single-file path: count it as one audio file (or zero for non-audio).
+  // Single-file path (direct-file branch): a hidden file is a born-hidden transient, not real
+  // content — count it as zero (parity with the scanner/preview direct-file branches).
   if (stats.isFile()) {
-    if (AUDIO_EXTENSIONS.has(extname(path).toLowerCase())) {
+    if (!isHiddenName(basename(path)) && AUDIO_EXTENSIONS.has(extname(path).toLowerCase())) {
       return { fileCount: 1, totalSize: stats.size };
     }
     return { fileCount: 0, totalSize: 0 };
@@ -29,6 +30,7 @@ export async function getAudioStats(path: string, log: FastifyBaseLogger): Promi
   try {
     const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries) {
+      if (isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees (fileCount + totalSize)
       const entryPath = join(path, entry.name);
       if (entry.isFile()) {
         if (AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
