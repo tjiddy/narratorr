@@ -132,6 +132,31 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
 
+  it('#1852 F11: a hidden target ROOT is an identity root — its visible audio is enumerated, backed up, and replaced', async () => {
+    // The owning operation may hand `stagedAudioReplace` a born-hidden target path (Root Policy:
+    // identity roots are descended, never self-rejected). listAudioFilesRecursive must therefore
+    // enumerate the hidden root's VISIBLE children so the stale edition is backed up and replaced.
+    // A regression that self-rejected a hidden root would back up nothing → old.m4b would survive
+    // alongside new.mp3 (mixed edition), failing the not.toContain assertion below.
+    const hiddenTarget = join(libraryRoot, 'Author', '.Title'); // hidden ROOT basename
+    await mkdir(hiddenTarget, { recursive: true });
+    await writeFile(join(hiddenTarget, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    await stagedAudioReplace({
+      targetPath: hiddenTarget,
+      libraryRoot,
+      log: makeLog(),
+      sourceAudioSize: await getAudioPathSize(source),
+      stage: (stagingPath) => copyAudioFiles(source, stagingPath),
+    });
+
+    const files = await listAllFiles(hiddenTarget);
+    expect(files).toContain('new.mp3');     // staged edition swapped in
+    expect(files).not.toContain('old.m4b'); // stale audio under the hidden root was enumerated + replaced
+    expect(await pathExists(`${hiddenTarget}.import-bak`)).toBe(false);
+  });
+
   it('AC4: a byte-identical re-import yields a single clean copy — no dupe, no throw', async () => {
     const bytes = Buffer.alloc(400, 7);
     await writeFile(join(target, 'book.mp3'), bytes);
