@@ -10,6 +10,7 @@ import type { BookService } from './book.service.js';
 import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 // Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
 import { sanitizedEnv } from '../../core/utils/sanitized-env.js';
 import { COVER_FILE_REGEX } from '../../core/utils/cover-regex.js';
@@ -159,10 +160,10 @@ export async function tagFile(
     return { file: fileName, status: 'skipped', reason: 'All tags already populated' };
   }
 
-  const dir = dirname(filePath);
-  // Born-hidden temp (#1852 AC9): dot-led basename (like the `.cover-*.tmp` precedent) so a scan/ABS
-  // never folds it in mid-write; the `rename(tmpPath, filePath)` finalize below stays atomic.
-  const tmpPath = join(dir, `.${basename(filePath, ext)}.tmp${ext}`);
+  // Born-hidden temp (#1852 AC9): the shared dotPrefixBasename dot-prefixes the basename (like the
+  // `.cover-*.tmp` precedent) so a scan/ABS never folds it in mid-write; the `rename(tmpPath, filePath)`
+  // finalize below stays atomic. One home for the born-hidden path decision (shared with merge/bulk/convert).
+  const tmpPath = dotPrefixBasename(join(dirname(filePath), `${basename(filePath, ext)}.tmp${ext}`));
 
   try {
     const ffmpegArgs = buildFfmpegArgs(
