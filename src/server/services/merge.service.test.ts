@@ -242,6 +242,63 @@ describe('MergeService', () => {
       expect(recoverOrder).toBeLessThan(cpOrder);
     });
 
+    // #1852 — a born-hidden temp beside the real files is never eligibility evidence, never
+    // copied to staging, and never in originalsToDelete.
+    it('#1852: a dot-led temp beside the originals is not copied or deleted', async () => {
+      (readdir as Mock).mockImplementation(async (dir: string) => {
+        if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
+        return ['01.mp3', '02.mp3', '.02.tmp.mp3', 'cover.jpg'];
+      });
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'] });
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 500_000_000 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      const { service } = createService();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('.02.tmp.mp3'), expect.anything());
+      expect(unlink).not.toHaveBeenCalledWith(join(BOOK_PATH, '.02.tmp.mp3'));
+      // Only the two real originals were staged and deleted.
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
+    });
+
+    // #1852 Change 4 / F25 — the deterministic staging dir is reset to empty before copying,
+    // so crash-residue can't be folded into the merge; a failed reset aborts via merge_failed.
+    it('#1852: resets the staging dir (rm before the first copy)', async () => {
+      setupHappyPath();
+      const { service } = createService();
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      const firstResetRm = (rm as Mock).mock.invocationCallOrder[0]!;
+      const firstCp = (cp as Mock).mock.invocationCallOrder[0]!;
+      expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
+      expect(firstResetRm).toBeLessThan(firstCp); // reset happens before any staging copy
+    });
+
+    it('#1852: an un-emptyable staging dir aborts the merge via merge_failed (no copy/merge)', async () => {
+      setupHappyPath();
+      (rm as Mock).mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' })); // reset fails
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      await service.enqueueMerge(42);
+      await settle();
+
+      expect(cp).not.toHaveBeenCalled();
+      expect(processAudioFiles).not.toHaveBeenCalled();
+      expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', expect.objectContaining({ book_id: 42, reason: 'error' }));
+    });
+
     // #1418 — a recovery failure aborts before any ffmpeg work and emits merge_failed
     it('aborts the merge (no staging, merge_failed) when recovery throws', async () => {
       setupHappyPath();

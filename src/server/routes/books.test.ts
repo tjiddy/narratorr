@@ -1613,6 +1613,19 @@ describe('books routes', () => {
       expect(body[1]).toEqual({ name: 'Chapter 02.m4b', size: 48234496 });
     });
 
+    it('#1852: excludes a born-hidden temp file (skipHidden)', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(
+        ['Chapter 01.m4b', '.Chapter 01.tmp.m4b', 'cover.jpg'].map(asFile),
+      );
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      const body = JSON.parse(res.payload) as { name: string }[];
+      expect(body.map(f => f.name)).toEqual(['Chapter 01.m4b']);
+    });
+
     it('sorts files numerically (ch2 before ch10)', async () => {
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
       (readdir as Mock).mockResolvedValue(
