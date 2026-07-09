@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { dotPrefixBasename } from './hidden-staging.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   probeFfmpeg,
@@ -409,7 +410,7 @@ describe('processAudioFiles', () => {
     }
     expect(mockSpawn).toHaveBeenCalled();
     expect(mockRename).toHaveBeenCalledWith(
-      join('/lib/book', 'book_tmp.mp3'),
+      dotPrefixBasename(join('/lib/book', 'book_tmp.mp3')), // born-hidden convert temp (#1852 AC12)
       join('/lib/book', 'book.mp3'),
     );
     // Original must NOT be unlinked on the same-file path — rename atomically replaces it.

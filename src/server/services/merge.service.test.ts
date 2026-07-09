@@ -14,6 +14,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -52,7 +53,8 @@ vi.mock('../utils/recover-interrupted-commit.js', () => ({
 }));
 
 const BOOK_PATH = '/library/Author/Title';
-const STAGING_DIR = BOOK_PATH + '.merge-tmp';
+// Staging is now born-hidden (#1852 AC11): `.<book>.merge-tmp` — dot-led basename, same parent.
+const STAGING_DIR = dotPrefixBasename(BOOK_PATH + '.merge-tmp');
 
 const mockAuthor = createMockDbAuthor();
 const mockBook = {
@@ -582,7 +584,9 @@ describe('MergeService', () => {
 
       it('still enqueues the refresh when the staging rm cleanup throws AFTER the swap', async () => {
         setupHappyPath();
-        (rm as Mock).mockRejectedValue(new Error('rm failed'));
+        // The pre-copy staging reset (#1852 Change 4) is the FIRST rm call — let it succeed so the
+        // merge proceeds to the swap; only the LATE post-swap cleanup rm throws (what this asserts).
+        (rm as Mock).mockResolvedValueOnce(undefined).mockRejectedValue(new Error('rm failed'));
         const notifyRefresh = vi.fn().mockResolvedValue(undefined);
         const { service } = createService({ connector: { notifyRefresh } });
 

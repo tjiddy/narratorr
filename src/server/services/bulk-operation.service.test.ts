@@ -12,6 +12,7 @@ import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import { downloadRemoteCover } from './cover-download.js';
 import { cp, mkdir, rename, rm, readdir, unlink } from 'node:fs/promises';
@@ -63,6 +64,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 const BOOK_PATH = '/library/Author/Title';
+// Convert staging is now born-hidden (#1852 AC10): `.<book>.convert-tmp`, dot-led basename.
+const CONVERT_STAGING = dotPrefixBasename(BOOK_PATH + '.convert-tmp');
 
 function makeRenameService() {
   return inject<RenameService>({
@@ -916,7 +919,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', mergeBehavior: 'always' }),
       expect.objectContaining({ title: 'Title' }),
     );
@@ -945,7 +948,7 @@ describe('BulkOperationService — convert batch', () => {
     await waitForJob(service, id);
 
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.anything(),
       expect.objectContaining({
         fileFormat: '{author} - {series} - {title} ({edition})',
@@ -1038,7 +1041,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ outputFormat: 'mp3', mergeBehavior: 'multi-file-only' }),
       expect.any(Object),
     );
@@ -1087,7 +1090,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ sourceBitrateKbps: 64 }),
       expect.any(Object),
     );
@@ -1103,7 +1106,7 @@ describe('BulkOperationService — convert batch', () => {
     const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
-      BOOK_PATH + '.convert-tmp',
+      CONVERT_STAGING,
       expect.objectContaining({ sourceBitrateKbps: undefined }),
       expect.any(Object),
     );
