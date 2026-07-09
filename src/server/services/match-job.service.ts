@@ -217,7 +217,7 @@ class MatchJob {
       // Pass 1 — tag-derived search (#984). Fires when both tagTitle and tagAuthor
       // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
       // tag.title and tag.albumartist are structurally distinct fields.
-      const tagMatch = await this.tryTagDerivedMatch(book, audioResult, duration);
+      const tagMatch = await this.tryTagDerivedMatch(book, audioResult);
       if (tagMatch) {
         ({ result: resolved, ctx: capCtx } = tagMatch);
       } else {
@@ -283,11 +283,14 @@ class MatchJob {
           // stays high (absent data does not demote). `durationVerified` is derived
           // independently (a missing-runtime single is high-but-unverified, NOT
           // disproven) — never inferred from the resolved confidence.
-          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, duration, topScored.score) };
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, duration, topScored.score) };
+          // Unrounded scanned seconds (#1850) — the tolerance check compares
+          // full-precision seconds (the minute-rounded `duration` is logging only).
+          resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...resolveSingleResultConfidence(topScored.meta, audioResult?.totalDuration) };
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, audioResult?.totalDuration) };
         } else {
-          // Multiple results — use duration to determine confidence (not to override winner)
-          const { confidence, reason } = resolveConfidenceFromDuration(scored, duration);
+          // Multiple results — use duration to determine confidence (not to override winner).
+          // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
+          const { confidence, reason } = resolveConfidenceFromDuration(scored, audioResult?.totalDuration);
           this.log.debug(
             {
               path: book.path,
@@ -341,10 +344,12 @@ class MatchJob {
   private async tryTagDerivedMatch(
     book: MatchCandidate,
     audioResult: AudioScanResult | null,
-    duration: number | undefined,
   ): Promise<{ result: MatchResult; ctx: NarratorCapContext } | null> {
     const tagQuery = deriveTagQuery(audioResult);
     if (!tagQuery || !audioResult) return null;
+    // Unrounded scanned seconds (#1850) — the confidence helpers compare in
+    // seconds against the provider's `runtimeLengthMin × 60`, not minutes.
+    const scannedSeconds = audioResult.totalDuration;
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
     const outcome = await this.runTagSearch(book, audioResult, tagQuery);
     if (!outcome) return null;
@@ -357,7 +362,7 @@ class MatchJob {
     // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
     // only governs the strip-attempt cap bypass — an exact/ASIN attempt
     // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
-    const durationVerified = isDurationVerified(top.meta, duration, top.score);
+    const durationVerified = isDurationVerified(top.meta, scannedSeconds);
     // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
     const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
     const cap = (raw: Confidence, reason: string | undefined): { confidence: Confidence; reason?: string } =>
@@ -369,7 +374,7 @@ class MatchJob {
     // below: a mismatch → raw `medium` survives (durationVerified false, so
     // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
     // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const { confidence, reason } = single ? resolveSingleResultConfidence(top.meta, duration, top.score) : resolveConfidenceFromDuration(scored, duration);
+    const { confidence, reason } = single ? resolveSingleResultConfidence(top.meta, scannedSeconds) : resolveConfidenceFromDuration(scored, scannedSeconds);
     const result: MatchResult = { path: book.path, ...cap(confidence, reason), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }

@@ -88,9 +88,17 @@ export async function applyLibraryDuplicate(
   return result;
 }
 
-const DURATION_THRESHOLD_STRICT = 0.05;
-const DURATION_THRESHOLD_RELAXED = 0.15;
-const COMBINED_SCORE_GATE = 0.95;
+/**
+ * Absolute duration-match tolerance in SECONDS (#1850). A same-edition scanned
+ * runtime and the provider's `runtimeLengthMin × 60` differ by a *fixed-size*
+ * amount — the "This is Audible" intro + end credits (~40s) plus the provider's
+ * whole-minute runtime granularity (±30s) — that does NOT scale with book length
+ * (212 ASIN-verified same-edition pairs, 2026-07-07: max Δ 69s at any length,
+ * correlation with length ≈ 0.096). 90s = the 69s observed ceiling + ~21s
+ * headroom, and passes 100% of that set. UAT-tunable: raise it if live UAT shows
+ * too many false Reviews rather than reintroducing a relative/score tier.
+ */
+const DURATION_TOLERANCE_SECONDS = 90;
 const CAPPED_ATTEMPT_REASON = 'Low confidence match. Please verify.';
 
 /**
@@ -117,54 +125,64 @@ export interface DurationConfidenceResult {
   reason?: string;
 }
 
-/** Format minutes as hours with 1 decimal place. */
+/** Format minutes as hours with 1 decimal place (provider `runtimeLengthMin` side). */
 function formatHours(minutes: number): string {
   return (minutes / 60).toFixed(1);
+}
+
+/** Format seconds as hours with 1 decimal place (scanned `totalDuration` side). */
+function formatSecondsAsHours(seconds: number): string {
+  return (seconds / 3600).toFixed(1);
 }
 
 /**
  * Single source of truth for "does the scanned runtime independently corroborate
  * this candidate?". Returns true only when both the scanned duration and the
- * candidate's metadata duration are present and positive AND the relative
- * distance is within tolerance. The strict 5% band relaxes to 15% once the
- * combined similarity score clears `COMBINED_SCORE_GATE` (a strong textual match
- * earns a wider runtime tolerance).
+ * candidate's metadata duration are present and positive AND the absolute gap is
+ * within `DURATION_TOLERANCE_SECONDS` (#1850). The two runtimes carry different
+ * units — `scannedSeconds` is the unrounded scanner value in SECONDS,
+ * `meta.duration` is the provider `runtimeLengthMin` in MINUTES — so the minutes
+ * side is multiplied by 60 before the comparison. There is no relative %/score
+ * tier: the result is identical regardless of title/author score, because a
+ * duration gap answers the orthogonal "is this the complete edition I expect?"
+ * question, on which high title confidence makes a gap MORE diagnostic, not less.
  *
- * Guard hygiene (#1266): both the falsy and `<= 0` checks are load-bearing — a
- * bare `!scannedDuration` or `meta.duration > 0` alone misbehaves on the
- * `0`/`undefined` boundaries.
+ * Guard hygiene (#1266/#1821): both the falsy and `<= 0` checks are load-bearing —
+ * a bare `!scannedSeconds` or `meta.duration > 0` alone misbehaves on the
+ * `0`/`undefined` boundaries. A MISSING/zero runtime on either side is NOT a
+ * disagreement (returns false so the single-result path keeps `high`; absent data
+ * must not demote).
  */
 export function isDurationVerified(
   meta: BookMetadata,
-  scannedDuration: number | undefined,
-  score: number,
+  scannedSeconds: number | undefined,
 ): boolean {
-  if (!scannedDuration || scannedDuration <= 0) return false;
+  if (!scannedSeconds || scannedSeconds <= 0) return false;
   if (!meta.duration || meta.duration <= 0) return false;
-  const distance = Math.abs(meta.duration - scannedDuration) / scannedDuration;
-  const threshold = score >= COMBINED_SCORE_GATE ? DURATION_THRESHOLD_RELAXED : DURATION_THRESHOLD_STRICT;
-  return distance <= threshold;
+  return Math.abs(meta.duration * 60 - scannedSeconds) <= DURATION_TOLERANCE_SECONDS;
 }
 
 /**
  * Determines confidence from duration data without overriding the similarity-ranked winner.
  * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
- * The high-vs-medium decision is delegated to `isDurationVerified` so the
- * strict/relaxed-threshold logic lives in exactly one place (#1266).
+ * The high-vs-medium decision is delegated to `isDurationVerified` so the single
+ * absolute band lives in exactly one place (#1266/#1850). `scannedSeconds` is the
+ * unrounded scanner runtime in SECONDS; the mismatch reason renders it from
+ * seconds and the provider side from minutes.
  */
 export function resolveConfidenceFromDuration(
-  scored: { meta: BookMetadata; score: number }[],
-  duration: number | undefined,
+  scored: { meta: BookMetadata }[],
+  scannedSeconds: number | undefined,
 ): DurationConfidenceResult {
-  if (!duration || duration <= 0) {
+  if (!scannedSeconds || scannedSeconds <= 0) {
     return { confidence: 'medium', reason: 'Multiple results — no duration data to disambiguate' };
   }
   const topResult = scored[0]!;
   if (topResult.meta.duration && topResult.meta.duration > 0) {
-    if (isDurationVerified(topResult.meta, duration, topResult.score)) return { confidence: 'high' };
+    if (isDurationVerified(topResult.meta, scannedSeconds)) return { confidence: 'high' };
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatHours(duration)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
+      reason: `Duration mismatch — scanned ${formatSecondsAsHours(scannedSeconds)}hrs vs expected ${formatHours(topResult.meta.duration)}hrs`,
     };
   }
   return { confidence: 'medium', reason: 'Best match missing duration — cannot verify' };
@@ -185,14 +203,13 @@ export function resolveConfidenceFromDuration(
  */
 export function resolveSingleResultConfidence(
   meta: BookMetadata,
-  scannedDuration: number | undefined,
-  score: number,
+  scannedSeconds: number | undefined,
 ): DurationConfidenceResult {
-  const bothPresent = !!scannedDuration && scannedDuration > 0 && !!meta.duration && meta.duration > 0;
-  if (bothPresent && !isDurationVerified(meta, scannedDuration, score)) {
+  const bothPresent = !!scannedSeconds && scannedSeconds > 0 && !!meta.duration && meta.duration > 0;
+  if (bothPresent && !isDurationVerified(meta, scannedSeconds)) {
     return {
       confidence: 'medium',
-      reason: `Duration mismatch — scanned ${formatHours(scannedDuration)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
+      reason: `Duration mismatch — scanned ${formatSecondsAsHours(scannedSeconds)}hrs vs expected ${formatHours(meta.duration!)}hrs`,
     };
   }
   return { confidence: 'high' };
