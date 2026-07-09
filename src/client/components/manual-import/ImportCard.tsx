@@ -11,6 +11,7 @@ import {
 } from '@/components/icons';
 import { Badge } from '@/components/Badge';
 import { AudioPreview } from '@/pages/book/AudioPreview';
+import { pickPrimarySeries } from '../../../shared/pick-primary-series.js';
 export type { ImportRow } from './types.js';
 
 interface ImportCardProps {
@@ -95,6 +96,12 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const displayNarrator = row.edited.narrators?.length
     ? row.edited.narrators.join(', ')
     : row.edited.metadata?.narrators?.join(', ');
+  // Matched series/#position — from the RESOLVED match metadata (auto-match bestMatch or a user
+  // Fix-Match pick), NOT edited.series (which is folder-parsed at scan time and would show the
+  // parsed series before any match). Only present once matched, so an unmatched row shows nothing
+  // here; the parsed series still shows in the left path. Disambiguates same-titled series entries
+  // (e.g. Fablehaven) at a glance.
+  const matchedSeries = pickPrimarySeries(row.edited.metadata);
   // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
@@ -156,6 +163,11 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         <p className="text-sm text-muted-foreground truncate">
           {displayAuthor || <span className="italic text-muted-foreground/40">Unknown</span>}
         </p>
+        {matchedSeries?.name && (
+          <p className="text-xs text-muted-foreground/50 truncate">
+            {matchedSeries.name}{matchedSeries.position != null ? ` #${matchedSeries.position}` : ''}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground/50 truncate">
           {displayNarrator
             ? <span className="inline-flex items-center gap-1"><HeadphonesIcon className="w-2.5 h-2.5 shrink-0" />{displayNarrator} &middot; {formatBytes(row.book.totalSize)}</span>
