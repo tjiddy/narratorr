@@ -34,7 +34,7 @@ export async function collectAudioFilePaths(
     if (entry.isFile() && !isHiddenName(entry.name) && extensions.has(extname(entry.name).toLowerCase())) {
       results.push(fullPath);
     } else if (recursive && entry.isDirectory()) {
-      if (skipHidden && entry.name.startsWith('.')) continue;
+      if (skipHidden && isHiddenName(entry.name)) continue;
       results.push(...await collectAudioFilePaths(fullPath, options));
     }
   }
