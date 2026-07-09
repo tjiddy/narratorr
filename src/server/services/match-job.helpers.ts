@@ -202,6 +202,10 @@ export interface TagQuery {
   title: string;
   author: string;
   year?: string;
+  /** Wanted series position from the audio tags (#1849), threaded to the
+   * shared position tiebreaker in `rankResultsCleaned`. Position 0 is valid
+   * (#1028) — preserved with `!== undefined`, never `||`. */
+  seriesPosition?: number;
 }
 
 /**
@@ -223,7 +227,9 @@ export function cleanTagAuthor(s: string): string {
  * the scan lacks usable tags (missing title or author after cleaning) — caller
  * falls through to Pass 2. `year` is carried through (when present in tags)
  * for use by the rankResultsCleaned tiebreaker; missing tagYear is fine —
- * tiebreaker no-ops.
+ * tiebreaker no-ops. `seriesPosition` is likewise carried through (when the
+ * scan tagged one) for the shared position tiebreaker; a genuine position `0`
+ * survives via the `!== undefined` guard (#1849/#1028).
  */
 export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | null {
   if (!audioResult) return null;
@@ -235,7 +241,12 @@ export function deriveTagQuery(audioResult: AudioScanResult | null): TagQuery | 
   const searchTitle = resolveTagSearchTitle(rawTitle, audioResult.tagAlbum);
   if (!searchTitle) return null;
   const tagYear = audioResult.tagYear?.trim();
-  return { title: searchTitle, author: cleanedAuthor, ...(tagYear ? { year: tagYear } : {}) };
+  return {
+    title: searchTitle,
+    author: cleanedAuthor,
+    ...(tagYear ? { year: tagYear } : {}),
+    ...(audioResult.tagSeriesPosition !== undefined && { seriesPosition: audioResult.tagSeriesPosition }),
+  };
 }
 
 /** Normalize a title for the album-vs-prefix difference check: lowercase, trim, collapse internal whitespace. */
@@ -341,6 +352,30 @@ export function tagTitleScore(input: string, result: BookMetadata): number {
 }
 
 /**
+ * Shared position-agreement tiebreaker (#1849), consumed by BOTH `rankResults`
+ * (folder pass) and `rankResultsCleaned` (tag pass) so the two rankers can't
+ * drift (DRY-3). On a score tie between identically-titled series entries
+ * (the whole Fablehaven series is just "Fablehaven"), prefer the candidate
+ * whose primary-series position equals the wanted (parsed/tagged) position.
+ *
+ * Semantics:
+ *  - `wanted == null` → returns `0` (strict no-op); ranking falls through to
+ *    the year tiebreaker byte-for-byte, exactly as before this existed.
+ *  - Uses `pickPrimarySeries` (the one shared series resolver, #1088/#1097)
+ *    and `===` so a genuine position `0` (#1028) is respected, never coerced.
+ *  - A candidate with no position — or a differing one — is a non-match: it
+ *    loses ONLY to a candidate whose position equals `wanted`, and ties every
+ *    other non-match (returns `0`), so ordering among non-matches is unchanged.
+ *    Absence never demotes a candidate below another non-match and never throws.
+ */
+export function positionTiebreak(a: BookMetadata, b: BookMetadata, wanted: number | undefined): number {
+  if (wanted == null) return 0;
+  const aMatch = pickPrimarySeries(a)?.position === wanted ? 1 : 0;
+  const bMatch = pickPrimarySeries(b)?.position === wanted ? 1 : 0;
+  return bMatch - aMatch;
+}
+
+/**
  * Tag-pass scoring: composes the result-side title from `result.title` +
  * the canonical primary-series ref via `tagTitleScore`, removing the
  * cleanName-derived symmetry assumption from #984. Author side is preserved exactly from #995 —
@@ -351,9 +386,10 @@ export function tagTitleScore(input: string, result: BookMetadata): number {
  * `src/core/utils/similarity.ts:62-84`; we re-derive the combined score
  * inline because we no longer call `scoreResult` for the title side.
  *
- * Year tiebreaker (#995): when dice scores are tied within 0.001 and tagQuery
- * carries a year hint from the audio tags, candidates whose publishedDate year
- * matches tagYear rank first. Tag-derived only — folder year is NOT consulted
+ * Tiebreakers (score tie within 0.001): the shared `positionTiebreak` (#1849)
+ * runs first — series position is the stronger series-disambiguation signal —
+ * then the year tiebreaker (#995): candidates whose publishedDate year matches
+ * tagYear rank first. Both are tag-derived only; folder year is NOT consulted
  * here (Pass 2's signal stays out of Pass 1).
  */
 export function rankResultsCleaned(
@@ -378,12 +414,19 @@ export function rankResultsCleaned(
 
   const tagYear = tagQuery.year ? parseInt(tagQuery.year, 10) : undefined;
   scored.sort((a, b) => {
-    if (Math.abs(a.score - b.score) < 0.001 && tagYear) {
-      const aYear = parsePublishedYear(a.meta.publishedDate);
-      const bYear = parsePublishedYear(b.meta.publishedDate);
-      const aMatch = aYear === tagYear ? 1 : 0;
-      const bMatch = bYear === tagYear ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
+    if (Math.abs(a.score - b.score) < 0.001) {
+      // Series position is the stronger series-disambiguation signal (#1849),
+      // so it runs before the year tiebreaker; when positions tie or the wanted
+      // position is absent it no-ops and year decides exactly as before.
+      const posCmp = positionTiebreak(a.meta, b.meta, tagQuery.seriesPosition);
+      if (posCmp !== 0) return posCmp;
+      if (tagYear) {
+        const aYear = parsePublishedYear(a.meta.publishedDate);
+        const bYear = parsePublishedYear(b.meta.publishedDate);
+        const aMatch = aYear === tagYear ? 1 : 0;
+        const bMatch = bYear === tagYear ? 1 : 0;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+      }
     }
     return b.score - a.score;
   });
@@ -406,12 +449,18 @@ export function rankResults(
 
   const folderYear = extractYear(basename(book.path));
   scored.sort((a, b) => {
-    if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
-      const aYear = parsePublishedYear(a.meta.publishedDate);
-      const bYear = parsePublishedYear(b.meta.publishedDate);
-      const aMatch = aYear === folderYear ? 1 : 0;
-      const bMatch = bYear === folderYear ? 1 : 0;
-      if (aMatch !== bMatch) return bMatch - aMatch;
+    if (Math.abs(a.score - b.score) < 0.001) {
+      // Position agreement (#1849) outranks the folder-year tiebreaker; it
+      // no-ops when the wanted position is absent so year decides as before.
+      const posCmp = positionTiebreak(a.meta, b.meta, book.seriesPosition);
+      if (posCmp !== 0) return posCmp;
+      if (folderYear) {
+        const aYear = parsePublishedYear(a.meta.publishedDate);
+        const bYear = parsePublishedYear(b.meta.publishedDate);
+        const aMatch = aYear === folderYear ? 1 : 0;
+        const bMatch = bYear === folderYear ? 1 : 0;
+        if (aMatch !== bMatch) return bMatch - aMatch;
+      }
     }
     return b.score - a.score;
   });

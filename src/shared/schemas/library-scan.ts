@@ -139,6 +139,10 @@ export const matchCandidateSchema = z.object({
   path: z.string().trim().min(1),
   title: z.string().trim().min(1),
   author: z.string().optional(),
+  // Wanted series position parsed from the folder name (#1849). Zod strips
+  // unknown keys by default, so without this the client-sent position is
+  // silently discarded before it reaches MatchJobService's ranker.
+  seriesPosition: z.number().optional(),
 });
 
 export const matchStartBodySchema = z.object({

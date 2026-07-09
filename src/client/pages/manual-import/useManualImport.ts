@@ -103,6 +103,9 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
           path: d.path,
           title: d.parsedTitle,
           ...(d.parsedAuthor && { author: d.parsedAuthor }),
+          // Thread the parsed series position (#1849) so the ranker can break
+          // same-title series ties. `!== undefined` (never `||`) so position 0 survives.
+          ...(d.parsedSeriesPosition !== undefined && { seriesPosition: d.parsedSeriesPosition }),
         }));
       if (candidates.length > 0) {
         startMatching(candidates);
