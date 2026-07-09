@@ -144,6 +144,20 @@ describe('matchCandidateSchema — trim behavior', () => {
       expect(result.data.title).toBe('My Book');
     }
   });
+
+  // #1849 — the wanted series position must survive the Zod boundary (object
+  // schemas strip unknown keys), including a genuine position 0 (#1028).
+  it('retains seriesPosition through the parse', () => {
+    const result = matchCandidateSchema.safeParse({ ...validCandidate, seriesPosition: 3 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.seriesPosition).toBe(3);
+  });
+
+  it('retains a seriesPosition of 0 (not stripped as falsy)', () => {
+    const result = matchCandidateSchema.safeParse({ ...validCandidate, seriesPosition: 0 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.seriesPosition).toBe(0);
+  });
 });
 
 describe('jobIdParamSchema — trim behavior', () => {

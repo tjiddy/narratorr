@@ -22,6 +22,10 @@ export interface MatchCandidate {
   path: string;
   title: string;
   author?: string | undefined;
+  /** Wanted series position parsed from the folder name (#1849), threaded
+   * from the scan API body through to the shared position tiebreaker in
+   * `rankResults`. Position 0 is valid (#1028); preserved via `!== undefined`. */
+  seriesPosition?: number | undefined;
 }
 
 export interface MatchResult {
@@ -449,7 +453,10 @@ class MatchJob {
     const detailed = await this.fetchDetails(candidates);
     if (detailed.length === 0) return null;
 
-    const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}) };
+    // Re-thread the wanted series position (#1849) — the attempt loop rebuilds
+    // TagQuery from `attempt`, so without this the position never reaches
+    // `rankResultsCleaned` on the real tag path. `!== undefined` so position 0 survives.
+    const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}), ...(tagQuery.seriesPosition !== undefined && { seriesPosition: tagQuery.seriesPosition }) };
     const scored = rankResultsCleaned(detailed, attemptQuery);
     const top = scored[0];
     if (!top) return null;

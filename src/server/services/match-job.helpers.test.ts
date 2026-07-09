@@ -4,6 +4,7 @@ import type { AudioScanResult } from '../../core/utils/audio-scanner.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import type { MatchCandidate, MatchResult } from './match-job.service.js';
 import type * as FolderParsing from '../utils/folder-parsing.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 // Spy on cleanTagTitle so a single test can force the empty-cleaned-title path
 // (the deriveTagQuery guard at match-job.helpers.ts is otherwise unreachable
@@ -24,6 +25,7 @@ import {
   narratorMismatchReason,
   rankResultsCleaned,
   rankResults,
+  positionTiebreak,
   resolveConfidenceFromDuration,
   resolveSingleResultConfidence,
   parsePublishedYear,
@@ -55,6 +57,11 @@ function makeBook(overrides: Partial<BookMetadata> = {}): BookMetadata {
     authors: [{ name: 'Sample Author' }],
     ...overrides,
   };
+}
+
+/** Resolve a book's primary-series position the same way the ranker does. */
+function pickPos(meta: BookMetadata): number | undefined {
+  return pickPrimarySeries(meta)?.position;
 }
 
 // ============================================================================
@@ -112,6 +119,23 @@ describe('deriveTagQuery', () => {
     const scan = makeAudioScan({ tagTitle: 'Mistborn', tagAuthor: 'Brandon Sanderson', tagYear: '   ' });
     const result = deriveTagQuery(scan);
     expect(result).not.toHaveProperty('year');
+  });
+
+  it('carries tagSeriesPosition into seriesPosition when present (#1849)', () => {
+    const scan = makeAudioScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull', tagSeriesPosition: 1 });
+    expect(deriveTagQuery(scan)).toEqual({ title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
+  });
+
+  it('preserves a genuine tagSeriesPosition of 0 (#1849/#1028 — not swallowed by ||)', () => {
+    const scan = makeAudioScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull', tagSeriesPosition: 0 });
+    expect(deriveTagQuery(scan)).toEqual({ title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 0 });
+  });
+
+  it('omits seriesPosition when the scan has no tagSeriesPosition', () => {
+    const scan = makeAudioScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull' });
+    const result = deriveTagQuery(scan);
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('seriesPosition');
   });
 
   it('returns null when cleanTagTitle reduces title to empty', () => {
@@ -536,6 +560,155 @@ describe('rankResults', () => {
     const ranked = rankResults([a, b], candidate);
     // No folder year — input order survives stable sort
     expect(ranked[0]!.meta.publishedDate).toBe('2008-04-15');
+  });
+});
+
+// ============================================================================
+// positionTiebreak — shared comparator (#1849)
+// ============================================================================
+
+describe('positionTiebreak', () => {
+  const p1 = makeBook({ series: [{ name: 'Fablehaven', position: 1 }] });
+  const p2 = makeBook({ series: [{ name: 'Fablehaven', position: 2 }] });
+  const noPos = makeBook({ series: [{ name: 'Fablehaven' }] });
+  const noSeries = makeBook({ series: [] });
+
+  it('returns 0 (no-op) when wanted is undefined', () => {
+    expect(positionTiebreak(p1, p2, undefined)).toBe(0);
+  });
+
+  it('ranks the position-matching candidate ahead (negative → a first)', () => {
+    expect(positionTiebreak(p1, p2, 1)).toBeLessThan(0);
+    expect(positionTiebreak(p2, p1, 1)).toBeGreaterThan(0);
+  });
+
+  it('respects a genuine position 0 via === (#1028)', () => {
+    const p0 = makeBook({ series: [{ name: 'Fablehaven', position: 0 }] });
+    expect(positionTiebreak(p0, p1, 0)).toBeLessThan(0);
+  });
+
+  it('prefers the canonical seriesPrimary over series[0] (#1088/#1097)', () => {
+    const primary1 = makeBook({
+      series: [{ name: 'Cosmere', position: 4 }],
+      seriesPrimary: { name: 'Stormlight', position: 1 },
+    });
+    expect(positionTiebreak(primary1, p2, 1)).toBeLessThan(0);
+  });
+
+  it('treats a candidate with no position as a non-match (ties another non-match, never throws)', () => {
+    expect(positionTiebreak(noPos, noSeries, 1)).toBe(0);
+    // A non-match loses only to a genuine match
+    expect(positionTiebreak(noPos, p1, 1)).toBeGreaterThan(0);
+    expect(positionTiebreak(p1, noPos, 1)).toBeLessThan(0);
+  });
+
+  it('two matching positions tie (returns 0)', () => {
+    const anotherP1 = makeBook({ series: [{ name: 'Other', position: 1 }] });
+    expect(positionTiebreak(p1, anotherP1, 1)).toBe(0);
+  });
+});
+
+// ============================================================================
+// Position-agreement tiebreaker in the rankers (#1849)
+// ============================================================================
+
+describe('rankResults position tiebreaker', () => {
+  const fablehaven1 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }] });
+  const fablehaven2 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }] });
+
+  it('Fablehaven regression: wanted position 1 makes the position-1 candidate bestMatch', () => {
+    const candidate: MatchCandidate = { path: '/audiobooks/01 - Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    // Provider returned #2 first; the tiebreaker must promote #1.
+    const ranked = rankResults([fablehaven2, fablehaven1], candidate);
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('the disagreeing candidate is not penalized beyond losing the tiebreak', () => {
+    const candidate: MatchCandidate = { path: '/audiobooks/01 - Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    const ranked = rankResults([fablehaven2, fablehaven1], candidate);
+    // Both still present; #2 simply drops to second.
+    expect(pickPos(ranked[1]!.meta)).toBe(2);
+  });
+
+  it('respects wanted position 0 (#1028)', () => {
+    const p0 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 0 }] });
+    const candidate: MatchCandidate = { path: '/audiobooks/00 - Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 0 };
+    const ranked = rankResults([fablehaven1, p0], candidate);
+    expect(pickPos(ranked[0]!.meta)).toBe(0);
+  });
+
+  it('wanted position absent → falls through to the folder-year tiebreaker unchanged', () => {
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    // No seriesPosition on the candidate; folder year 2006 must still decide.
+    const candidate: MatchCandidate = { path: '/audiobooks/Fablehaven (2006)', title: 'Fablehaven', author: 'Brandon Mull' };
+    const ranked = rankResults([a, b], candidate);
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('position tie → falls through to the folder-year tiebreaker', () => {
+    // Both share position 1, so position no-ops; folder year 2006 breaks it.
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    const candidate: MatchCandidate = { path: '/audiobooks/Fablehaven (2006)', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    const ranked = rankResults([a, b], candidate);
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('candidate missing a position is neutral: does not win, does not demote below another non-match, does not throw', () => {
+    const noPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2008' });
+    const alsoNoPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2006' });
+    const candidate: MatchCandidate = { path: '/audiobooks/Fablehaven', title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 };
+    // Neither matches wanted=1 → position no-ops, no year → stable input order.
+    const ranked = rankResults([noPos, alsoNoPos], candidate);
+    expect(ranked[0]!.meta.publishedDate).toBe('2008');
+    expect(ranked[1]!.meta.publishedDate).toBe('2006');
+  });
+});
+
+describe('rankResultsCleaned position tiebreaker', () => {
+  const fablehaven1 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }] });
+  const fablehaven2 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }] });
+
+  it('wanted position promotes the agreeing candidate on a score tie', () => {
+    const ranked = rankResultsCleaned([fablehaven2, fablehaven1], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('respects wanted position 0 (#1028)', () => {
+    const p0 = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 0 }] });
+    const ranked = rankResultsCleaned([fablehaven1, p0], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 0 });
+    expect(pickPos(ranked[0]!.meta)).toBe(0);
+  });
+
+  it('position tiebreaker runs before the year tiebreaker', () => {
+    // #1 has the WRONG year, #2 has the right year. Position must still win.
+    const p1WrongYear = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2008' });
+    const p2RightYear = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([p2RightYear, p1WrongYear], { title: 'Fablehaven', author: 'Brandon Mull', year: '2006', seriesPosition: 1 });
+    expect(pickPos(ranked[0]!.meta)).toBe(1);
+  });
+
+  it('wanted position absent → year tiebreaker still decides (unchanged behavior)', () => {
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([a, b], { title: 'Fablehaven', author: 'Brandon Mull', year: '2006' });
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('position tie → falls through to the year tiebreaker', () => {
+    const a = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2008' });
+    const b = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([a, b], { title: 'Fablehaven', author: 'Brandon Mull', year: '2006', seriesPosition: 1 });
+    expect(ranked[0]!.meta.publishedDate).toBe('2006');
+  });
+
+  it('candidate missing a position is neutral among non-matches (no throw, no demotion)', () => {
+    const noPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2008' });
+    const alsoNoPos = makeBook({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven' }], publishedDate: '2006' });
+    const ranked = rankResultsCleaned([noPos, alsoNoPos], { title: 'Fablehaven', author: 'Brandon Mull', seriesPosition: 1 });
+    expect(ranked[0]!.meta.publishedDate).toBe('2008');
+    expect(ranked[1]!.meta.publishedDate).toBe('2006');
   });
 });
 

@@ -365,6 +365,29 @@ describe('useLibraryImport hook (#133)', () => {
     ]));
   });
 
+  // #1849 — handleRetryMatch threads the (possibly user-edited) seriesPosition into
+  // the re-match candidate so the position tiebreaker survives a retry. Pins position 0
+  // (regression guard, #1028): deleting the spread at useLibraryImport.ts would drop it.
+  it('handleRetryMatch: threads edited seriesPosition (including 0) into retry candidates (#1849)', async () => {
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    // Seed a genuine position-0 via edit so the retry builder must carry it.
+    act(() => {
+      result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Fablehaven', seriesPosition: 0 });
+    });
+
+    // Isolate the retry call from the initial auto-scan match job.
+    mockStartMatchJob.mockClear();
+    act(() => { result.current.handleRetryMatch(); });
+    await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
+
+    const retryCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string; seriesPosition?: number }>;
+    const seeded = retryCandidates.find(c => c.path === '/audiobooks/AuthorA/Book1');
+    expect(seeded?.seriesPosition).toBe(0);
+  });
+
   it('path-duplicate row: no edit-triggered recheck, row stays locked', async () => {
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Two', authorName: 'Author B', authorSlug: 'author-b' },
@@ -1525,6 +1548,30 @@ describe('empty result edge case', () => {
       expect(paths).toContain('/audiobooks/Author/Book');
       expect(paths).toContain('/audiobooks/Copy/Author/Book');
       expect(paths).not.toContain('/audiobooks/DbDup/Book');
+    });
+
+    // #1849 — the parsed series position (including 0) must reach the match-start
+    // candidate so the server-side position tiebreaker can run.
+    it('threads parsedSeriesPosition (including 0) into the match candidate', async () => {
+      const scanWithPositions: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Fablehaven/01', parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: 'Fablehaven', parsedSeriesPosition: 1, fileCount: 1, totalSize: 100, isDuplicate: false },
+          { path: '/audiobooks/Fablehaven/00', parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: 'Fablehaven', parsedSeriesPosition: 0, fileCount: 1, totalSize: 100, isDuplicate: false },
+          { path: '/audiobooks/Standalone', parsedTitle: 'Standalone', parsedAuthor: 'Someone', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
+        ],
+        totalFolders: 3,
+      };
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithPositions);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
+
+      const candidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string; seriesPosition?: number }>;
+      const byPath = (p: string) => candidates.find(c => c.path === p);
+      expect(byPath('/audiobooks/Fablehaven/01')?.seriesPosition).toBe(1);
+      expect(byPath('/audiobooks/Fablehaven/00')?.seriesPosition).toBe(0);
+      expect(byPath('/audiobooks/Standalone')).not.toHaveProperty('seriesPosition');
     });
 
     it('mergeMatchResults applies match data to within-scan row and seeds edited metadata', async () => {

@@ -36,6 +36,9 @@ export interface MatchCandidate {
   path: string;
   title: string;
   author?: string;
+  /** Wanted series position parsed from the folder name (#1849), sent to the
+   * match-start endpoint so the ranker can break same-title series ties. */
+  seriesPosition?: number;
 }
 
 export interface MatchResult {

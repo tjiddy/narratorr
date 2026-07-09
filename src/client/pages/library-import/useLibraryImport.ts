@@ -110,6 +110,9 @@ export function useLibraryImport() {
           path: d.path,
           title: d.parsedTitle,
           ...(d.parsedAuthor && { author: d.parsedAuthor }),
+          // Thread the parsed series position (#1849) so the ranker can break
+          // same-title series ties. `!== undefined` (never `||`) so position 0 survives.
+          ...(d.parsedSeriesPosition !== undefined && { seriesPosition: d.parsedSeriesPosition }),
         }));
       if (candidates.length > 0) {
         startMatching(candidates);
@@ -249,6 +252,9 @@ export function useLibraryImport() {
         path: r.book.path,
         title: r.edited.title,
         ...(r.edited.author && { author: r.edited.author }),
+        // Carry the (possibly user-edited) series position (#1849) into the
+        // re-match too, so the tiebreaker works on retry. Guard preserves 0.
+        ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
       }));
     if (candidates.length > 0) {
       prevMatchCountRef.current = 0;

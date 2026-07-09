@@ -350,7 +350,9 @@ function assignTagFields(
   const tagPublisher = common.label?.[0];
   if (tagPublisher !== undefined) result.tagPublisher = tagPublisher;
 
-  if (common.track?.no && common.grouping) {
+  // Null-check (not truthy) so a genuine track/position `0` is preserved as
+  // tagSeriesPosition: 0 (#1849/#1028) instead of being dropped by a falsy gate.
+  if (common.track?.no != null && common.grouping) {
     result.tagSeriesPosition = common.track.no;
   }
 }
