@@ -1020,6 +1020,40 @@ describe('reconstructDiscGroup', () => {
     expect(norm(result)).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
   });
 
+  // #1852 F7 — the hidden guard must PREVENT PROBING the sibling, not merely exclude it from the
+  // output. A hidden sibling's parsed stem already differs (leading dot), so it's excluded from the
+  // returned set with OR without the guard — the load-bearing behavior is that its subtree is never
+  // readdir'd. Deleting the `isHiddenName` guard would probe it (readdir), failing this assertion.
+  it('#1852 F7: never probes (readdir) a hidden audio-bearing sibling subtree', async () => {
+    const hiddenSibling = '/downloads/.Author - Book Disc 2 of 3';
+    const tree: Record<string, TreeEntry[]> = {
+      '/downloads': [
+        { name: 'Author - Book Disc 1 of 3', isFile: false },
+        { name: 'Author - Book Disc 2 of 3', isFile: false },
+        { name: 'Author - Book Disc 3 of 3', isFile: false },
+        { name: '.Author - Book Disc 2 of 3', isFile: false }, // born-hidden orphan/staging sibling
+      ],
+      '/downloads/Author - Book Disc 1 of 3': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Author - Book Disc 2 of 3': [{ name: 'a.mp3', isFile: true }],
+      '/downloads/Author - Book Disc 3 of 3': [{ name: 'a.mp3', isFile: true }],
+      [hiddenSibling]: [{ name: 'a.mp3', isFile: true }],
+    };
+    setupTree(tree);
+
+    const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
+
+    // Correct member set: only the three visible discs.
+    expect(norm(result)).toEqual([
+      '/downloads/Author - Book Disc 1 of 3',
+      '/downloads/Author - Book Disc 2 of 3',
+      '/downloads/Author - Book Disc 3 of 3',
+    ]);
+    // The visible siblings WERE probed; the hidden sibling's subtree was NEVER readdir'd.
+    const probed = vi.mocked(readdir).mock.calls.map(c => String(c[0]).split('\\').join('/'));
+    expect(probed).toContain('/downloads/Author - Book Disc 2 of 3');
+    expect(probed).not.toContain(hiddenSibling);
+  });
+
   it('does NOT reconstruct a set with inconsistent "of M" totals (mirrors discovery guard)', async () => {
     const tree: Record<string, TreeEntry[]> = {
       '/downloads': [

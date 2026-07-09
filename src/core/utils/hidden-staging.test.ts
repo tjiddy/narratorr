@@ -3,10 +3,14 @@ import { basename, join } from 'node:path';
 import { dotPrefixBasename } from './hidden-staging.js';
 
 describe('dotPrefixBasename (#1852)', () => {
+  // dotPrefixBasename composes `join`, which emits backslashes on Windows; normalize the actual
+  // to POSIX before comparing to a POSIX literal (repo cross-platform test rule).
+  const norm = (p: string): string => p.split('\\').join('/');
+
   it('dot-prefixes the final segment, leaving the parent untouched (same filesystem)', () => {
-    expect(dotPrefixBasename('/lib/Author/Book.merge-tmp')).toBe('/lib/Author/.Book.merge-tmp');
-    expect(dotPrefixBasename('/lib/Author/Book.convert-tmp')).toBe('/lib/Author/.Book.convert-tmp');
-    expect(dotPrefixBasename(join('/lib/Book', '002.tmp.mp3'))).toBe(join('/lib/Book', '.002.tmp.mp3'));
+    expect(norm(dotPrefixBasename(join('/lib/Author', 'Book.merge-tmp')))).toBe('/lib/Author/.Book.merge-tmp');
+    expect(norm(dotPrefixBasename(join('/lib/Author', 'Book.convert-tmp')))).toBe('/lib/Author/.Book.convert-tmp');
+    expect(norm(dotPrefixBasename(join('/lib/Book', '002.tmp.mp3')))).toBe('/lib/Book/.002.tmp.mp3');
   });
 
   it('is idempotent for an already-hidden basename', () => {

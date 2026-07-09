@@ -115,6 +115,23 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
 
+  it('#1852 F8: the staged swap never backs up or removes a hidden target temp or a hidden subtree (backup enumeration skips them)', async () => {
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));                 // stale visible audio → replaced
+    await writeFile(join(target, '.active.tmp.mp3'), Buffer.alloc(300, 9));         // active born-hidden temp → must survive
+    await mkdir(join(target, '.staging'), { recursive: true });
+    await writeFile(join(target, '.staging', 'ghost.mp3'), Buffer.alloc(200, 8));   // hidden subtree at depth → never descended
+    await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
+
+    await replaceFromSource();
+
+    const files = await listAllFiles(target);
+    expect(files).toContain('new.mp3');            // new edition swapped in
+    expect(files).not.toContain('old.m4b');        // stale visible audio replaced
+    expect(files).toContain('.active.tmp.mp3');    // hidden temp untouched (never enumerated as backup audio)
+    expect(files).toContain('.staging/ghost.mp3'); // hidden subtree never descended
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
   it('AC4: a byte-identical re-import yields a single clean copy — no dupe, no throw', async () => {
     const bytes = Buffer.alloc(400, 7);
     await writeFile(join(target, 'book.mp3'), bytes);
@@ -265,6 +282,22 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     await recover();
 
     expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
+    expect(await pathExists(backup)).toBe(false);
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it('#1852 F8: recovery restores visible backed-up audio but never restores a hidden entry stranded in .import-bak', async () => {
+    const originalBytes = Buffer.alloc(400, 9);
+    await mkdir(backup, { recursive: true });
+    await writeFile(join(backup, 'old.m4b'), originalBytes);
+    await writeFile(join(backup, '.ghost.tmp.mp3'), Buffer.alloc(100, 7)); // hidden entry in the backup
+    await writeFile(marker, '');
+
+    await recover();
+
+    // Visible backed-up audio is restored; the hidden entry is NOT (recovery enumeration skips it).
+    expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
+    expect(await pathExists(join(target, '.ghost.tmp.mp3'))).toBe(false);
     expect(await pathExists(backup)).toBe(false);
     expect(await pathExists(marker)).toBe(false);
   });
