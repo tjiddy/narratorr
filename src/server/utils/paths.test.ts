@@ -410,6 +410,18 @@ describe('planFileRenames', () => {
     vi.mocked(readdir).mockResolvedValue(names.map(n => makeDirent(n, true)) as never);
   }
 
+  it('#1852: never plans a rename for a dot-led temp and never lets it shift numbering', async () => {
+    await mockFiles(['01.mp3', '.01.tmp.mp3', '02.mp3']);
+
+    const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+
+    // The hidden temp is absent from the plan; the two real files number 001, 002 (unshifted).
+    expect(renames.some(r => r.from.startsWith('.'))).toBe(false);
+    const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
+    expect(byFrom['01.mp3']).toBe('001.mp3');
+    expect(byFrom['02.mp3']).toBe('002.mp3');
+  });
+
   describe('colliding format → number all', () => {
     it('numbers every file including the first, zero-padded, with no bare file', async () => {
       await mockFiles(['x.mp3', 'y.mp3', 'z.mp3']);
