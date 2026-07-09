@@ -1018,6 +1018,31 @@ describe('useManualImport', () => {
       expect(items[0]!.seriesPosition).toBe(2.5);
     });
 
+    // #1849 — the parsed series position (including 0) must reach the match-start
+    // candidate so the server-side position tiebreaker can run.
+    it('threads parsedSeriesPosition (including 0) into the match candidate', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/Fablehaven/01', parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: 'Fablehaven', parsedSeriesPosition: 1, fileCount: 1, totalSize: 100, isDuplicate: false },
+          { path: '/audiobooks/Fablehaven/00', parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: 'Fablehaven', parsedSeriesPosition: 0, fileCount: 1, totalSize: 100, isDuplicate: false },
+          { path: '/audiobooks/Standalone', parsedTitle: 'Standalone', parsedAuthor: 'Someone', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
+        ],
+        totalFolders: 3,
+      });
+      vi.mocked(api.startMatchJob).mockClear().mockResolvedValue({ jobId: 'job-123' });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(api.startMatchJob).toHaveBeenCalled(); });
+
+      const candidates = vi.mocked(api.startMatchJob).mock.calls[0]![0];
+      const byPath = (p: string) => candidates.find(c => c.path === p);
+      expect(byPath('/audiobooks/Fablehaven/01')?.seriesPosition).toBe(1);
+      expect(byPath('/audiobooks/Fablehaven/00')?.seriesPosition).toBe(0);
+      expect(byPath('/audiobooks/Standalone')).not.toHaveProperty('seriesPosition');
+    });
+
     it('parser-seeded parsedSeriesPosition survives a no-position best match merge (#1042)', async () => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {

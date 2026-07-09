@@ -1527,6 +1527,30 @@ describe('empty result edge case', () => {
       expect(paths).not.toContain('/audiobooks/DbDup/Book');
     });
 
+    // #1849 — the parsed series position (including 0) must reach the match-start
+    // candidate so the server-side position tiebreaker can run.
+    it('threads parsedSeriesPosition (including 0) into the match candidate', async () => {
+      const scanWithPositions: ScanResult = {
+        discoveries: [
+          { path: '/audiobooks/Fablehaven/01', parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: 'Fablehaven', parsedSeriesPosition: 1, fileCount: 1, totalSize: 100, isDuplicate: false },
+          { path: '/audiobooks/Fablehaven/00', parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: 'Fablehaven', parsedSeriesPosition: 0, fileCount: 1, totalSize: 100, isDuplicate: false },
+          { path: '/audiobooks/Standalone', parsedTitle: 'Standalone', parsedAuthor: 'Someone', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
+        ],
+        totalFolders: 3,
+      };
+      mockScanDirectory.mockReset().mockResolvedValue(scanWithPositions);
+      mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
+      renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+      await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
+
+      const candidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string; seriesPosition?: number }>;
+      const byPath = (p: string) => candidates.find(c => c.path === p);
+      expect(byPath('/audiobooks/Fablehaven/01')?.seriesPosition).toBe(1);
+      expect(byPath('/audiobooks/Fablehaven/00')?.seriesPosition).toBe(0);
+      expect(byPath('/audiobooks/Standalone')).not.toHaveProperty('seriesPosition');
+    });
+
     it('mergeMatchResults applies match data to within-scan row and seeds edited metadata', async () => {
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });

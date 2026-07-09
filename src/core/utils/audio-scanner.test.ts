@@ -134,6 +134,33 @@ describe('scanAudioDirectory', () => {
     expect(result!.tagSeries).toBe('Test Series');
     expect(result!.tagYear).toBe('2020');
     expect(result!.tagPublisher).toBe('Test Publisher');
+    expect(result!.tagSeriesPosition).toBe(1);
+  });
+
+  // #1849/#1028 — a genuine position-0 tag must survive the extraction gate.
+  // Pre-fix the truthy `common.track?.no` gate dropped a falsy 0.
+  it('emits tagSeriesPosition: 0 for a track/position 0 with a grouping', async () => {
+    mockReaddir.mockResolvedValue([makeDirent('chapter1.mp3', true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+    mockParseFile.mockResolvedValue(makeMetadata({
+      common: { title: 'Test Book', albumartist: 'Test Author', grouping: 'Test Series', track: { no: 0, of: 10 } },
+    }) as never);
+
+    const result = await scanAudioDirectory('/audiobooks/test');
+
+    expect(result!.tagSeriesPosition).toBe(0);
+  });
+
+  it('omits tagSeriesPosition when there is no grouping', async () => {
+    mockReaddir.mockResolvedValue([makeDirent('chapter1.mp3', true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
+    mockParseFile.mockResolvedValue(makeMetadata({
+      common: { title: 'Test Book', albumartist: 'Test Author', grouping: undefined, track: { no: 3, of: 10 } },
+    }) as never);
+
+    const result = await scanAudioDirectory('/audiobooks/test');
+
+    expect(result!.tagSeriesPosition).toBeUndefined();
   });
 
   it('aggregates duration across multiple files', async () => {

@@ -7,6 +7,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
+import { pickPrimarySeries } from '../../shared/pick-primary-series.js';
 
 // Mock audio scanner
 vi.mock('../../core/utils/audio-scanner.js', () => ({
@@ -1566,6 +1567,32 @@ describe('MatchJobService', () => {
     });
   });
 
+  // #1849 — folder-pass position-agreement tiebreaker end-to-end: the candidate's
+  // seriesPosition reaches rankResults and selects the agreeing same-title entry.
+  describe('position tiebreaker (folder pass, #1849)', () => {
+    it('selects the position-matching entry as bestMatch on a same-title series tie', async () => {
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/Fablehaven/01 - Fablehaven',
+        title: 'Fablehaven',
+        author: 'Brandon Mull',
+        seriesPosition: 1,
+      };
+      // Provider returned #2 first; tied title/author scores. Position must promote #1.
+      const results = [
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], providerId: undefined, series: [{ name: 'Fablehaven', position: 2 }], asin: 'B2' }),
+        makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], providerId: undefined, series: [{ name: 'Fablehaven', position: 1 }], asin: 'B1' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result!.bestMatch!.asin).toBe('B1');
+      expect(pickPrimarySeries(result!.bestMatch!)?.position).toBe(1);
+    });
+  });
+
   describe('structured search params', () => {
     it('sends structured title and author via options when parsed data available', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -2300,6 +2327,29 @@ describe('MatchJobService', () => {
           'Dune Frank Herbert',
           { title: 'Dune', author: 'Frank Herbert' },
         );
+      });
+
+      // #1849 — the wanted series position must survive the per-attempt
+      // `attemptQuery` rebuild (match-job.service.ts) and reach rankResultsCleaned
+      // on the REAL tag path, so a same-title series tie resolves to the right entry.
+      it('threads tagSeriesPosition through attemptQuery so the tag-pass tiebreaker picks the right entry', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue({
+          ...makeTaggedScan('Fablehaven', 'Brandon Mull'),
+          tagSeriesPosition: 1,
+        });
+        // Provider returns #2 first; scores tie (same title/author). Both carry a
+        // full asin so fetchDetails passes them through without a getBook call.
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([
+          makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], asin: 'B2' }),
+          makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], asin: 'B1' }),
+        ]);
+
+        const id = service.createJob([taggedCandidate]);
+        await waitForJob(service, id);
+
+        const result = service.getJob(id)!.results[0];
+        expect(result!.bestMatch?.asin).toBe('B1');
+        expect(pickPrimarySeries(result!.bestMatch!)?.position).toBe(1);
       });
 
       it('does NOT fall through to Pass 2 when tag-derived match is accepted', async () => {
