@@ -1613,17 +1613,26 @@ describe('books routes', () => {
       expect(body[1]).toEqual({ name: 'Chapter 02.m4b', size: 48234496 });
     });
 
-    it('#1852: excludes a born-hidden temp file (skipHidden)', async () => {
+    it('#1852: excludes a hidden staging subtree — never descends `.merge-tmp/` (skipHidden wiring)', async () => {
+      // A hidden DIRECTORY holding a VISIBLE audio file: the file-level dot rule can't catch this
+      // (the inner file is not dot-led), so this pins the route's `skipHidden: true` wiring — the
+      // dot-dir is never descended. Removing `skipHidden: true` would fold `staged.m4b` in and fail.
+      const readdirCalls: string[] = [];
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (readdir as Mock).mockResolvedValue(
-        ['Chapter 01.m4b', '.Chapter 01.tmp.m4b', 'cover.jpg'].map(asFile),
-      );
+      (readdir as Mock).mockImplementation((dir: string) => {
+        readdirCalls.push(dir);
+        if (dir === '/library/book1') return Promise.resolve([asFile('Chapter 01.m4b'), asDir('.merge-tmp')]);
+        if (dir.endsWith('.merge-tmp')) return Promise.resolve([asFile('staged.m4b')]);
+        return Promise.resolve([]);
+      });
       (stat as Mock).mockResolvedValue({ size: 1000 });
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
 
       const body = JSON.parse(res.payload) as { name: string }[];
       expect(body.map(f => f.name)).toEqual(['Chapter 01.m4b']);
+      // The hidden subtree was never entered (no readdir on it), not merely filtered post-scan.
+      expect(readdirCalls.some(d => d.endsWith('.merge-tmp'))).toBe(false);
     });
 
     it('sorts files numerically (ch2 before ch10)', async () => {
