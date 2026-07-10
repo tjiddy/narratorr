@@ -667,12 +667,9 @@ describe('settingsApi', () => {
     }));
   });
 
-  it('probeFfmpeg → POST /settings/ffmpeg-probe with path', async () => {
-    await settingsApi.probeFfmpeg('/usr/bin/ffmpeg');
-    expect(mockFetchApi).toHaveBeenCalledWith('/settings/ffmpeg-probe', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ path: '/usr/bin/ffmpeg' }),
-    }));
+  it('getFfmpegStatus → GET /settings/ffmpeg-status', async () => {
+    await settingsApi.getFfmpegStatus();
+    expect(mockFetchApi).toHaveBeenCalledWith('/settings/ffmpeg-status');
   });
 
 });

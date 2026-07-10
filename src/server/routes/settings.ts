@@ -37,10 +37,6 @@ function maskSettingsResponse(all: AppSettings): AppSettings {
   return masked;
 }
 
-const ffmpegProbeSchema = z.object({
-  path: z.string().trim().min(1, 'Path is required'),
-});
-
 const testProxySchema = z.object({
   proxyUrl: z.string().trim().min(1, 'Proxy URL is required').refine((val) => {
     if (isSentinel(val)) return true;
@@ -117,32 +113,14 @@ export async function settingsRoutes(
     }
   );
 
-  // POST /api/settings/ffmpeg-probe
-  app.post<{ Body: z.infer<typeof ffmpegProbeSchema> }>(
-    '/api/settings/ffmpeg-probe',
-    {
-      schema: {
-        body: ffmpegProbeSchema,
-      },
-    },
-    async (request, reply) => {
-      try {
-        const { path } = request.body;
-        const version = await healthCheckService!.probeFfmpeg(path);
-        request.log.info({ version, path }, 'ffmpeg probe successful');
-        return { version };
-      } catch (error: unknown) {
-        request.log.warn({ error: serializeError(error) }, 'ffmpeg probe failed');
-        return reply.status(400).send({
-          error: getErrorMessage(error),
-        });
-      }
-    }
-  );
-
   // GET /api/settings/ffmpeg-status — auto-detected ffmpeg (the editable path field was
   // removed in favor of auto-detection + the FFMPEG_PATH override). Powers the Audio Tools
   // status row and the ffmpeg-gated Post Processing toggles.
+  //
+  // NOTE (deliberate divergence): this route runs a fresh probe (path exists AND runs),
+  // while the service gates (merge/tagging/bulk) check only resolveFfmpegPath() truthiness.
+  // Intentional — ffmpeg does not appear/disappear at runtime inside the container, so the
+  // richer status here is display-only and the cheaper gate is enough for admission.
   app.get('/api/settings/ffmpeg-status', async (request) => {
     const path = await resolveFfmpegPath();
     if (!path) return { detected: false };

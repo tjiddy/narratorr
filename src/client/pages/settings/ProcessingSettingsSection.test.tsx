@@ -54,10 +54,17 @@ describe('ProcessingSettingsSection', () => {
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
     expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
     // Both gated rows point the user at Audio Tools.
-    expect(screen.getAllByText(/set it up in Audio Tools/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/see ffmpeg requirements in Audio Tools/).length).toBeGreaterThanOrEqual(2);
     // ffmpeg-free automations stay available.
     expect(screen.getByLabelText('OPF metadata sidecar')).toBeEnabled();
     expect(screen.getByLabelText('Post-Processing Script')).toBeEnabled();
+  });
+
+  it('fails safe — gates auto-merge + Tag Embedding when the status query errors', async () => {
+    mockApi.getFfmpegStatus.mockRejectedValue(new Error('network down'));
+    renderWithProviders(<ProcessingSettingsSection />);
+    await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
+    expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
   });
 
   it('reveals tag mode + embed cover only while Tag Embedding is on', async () => {

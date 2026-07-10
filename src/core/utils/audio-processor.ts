@@ -88,20 +88,17 @@ export async function detectFfmpegPath(): Promise<string | null> {
   return null;
 }
 
-// ffmpeg is baked into the container image and does not appear/disappear at
-// runtime, so a *successful* detection is memoized for the process lifetime; a
-// miss stays uncached and is retried (cheap, rare). Services call resolveFfmpegPath()
-// instead of reading a user-configured setting — the path field was removed in favor
-// of auto-detection + the FFMPEG_PATH override.
+// ffmpeg is baked into the container and doesn't change at runtime, so a *successful*
+// detect is memoized for the process lifetime; a miss stays uncached (retried, rare).
 let cachedFfmpegPath: string | null = null;
 
-/** Resolve ffmpeg's absolute path (cached on success), or null if unavailable. */
+/** Resolve ffmpeg's absolute path (cached on success, retried on a miss), or null if unavailable. */
 export async function resolveFfmpegPath(): Promise<string | null> {
-  if (cachedFfmpegPath) return cachedFfmpegPath;
-  cachedFfmpegPath = await detectFfmpegPath();
-  return cachedFfmpegPath;
+  return (cachedFfmpegPath ??= await detectFfmpegPath());
 }
 
+/** Test-only: clear the memoized ffmpeg path between cases. */
+export function resetFfmpegPathCache(): void { cachedFfmpegPath = null; }
 
 /**
  * Probe an ffmpeg binary at the given path. Returns the version string on success.

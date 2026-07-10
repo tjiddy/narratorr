@@ -17,7 +17,6 @@ vi.mock('@/lib/api', () => ({
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
     testProxy: vi.fn(),
-    probeFfmpeg: vi.fn(),
   },
 }));
 

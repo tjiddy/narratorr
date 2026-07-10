@@ -8,6 +8,10 @@ import { detectFfmpegPath, probeFfmpeg } from '../core/utils/audio-processor.js'
 export interface FfmpegVersionProbeDeps {
   detectFfmpegPath: () => Promise<string | null>;
   probeFfmpeg: (path: string) => Promise<string>;
+  /** The FFMPEG_PATH override value, if set (injected so boot tests don't read ambient env). */
+  getFfmpegOverride?: () => string | undefined;
+  /** The RAW stored ffmpegPath from an older version, if any (the removed setting). */
+  getLegacyFfmpegPath?: () => Promise<string | undefined>;
 }
 
 /**
@@ -34,7 +38,26 @@ export async function logFfmpegVersionAtBoot(
     const ffmpegPath = await deps.detectFfmpegPath();
     if (!ffmpegPath) {
       log.warn('ffmpeg not found on the system; audio import/processing and xHE-AAC decode will be unavailable');
+      // Guided migration for the bare-metal cohort: the editable ffmpeg path setting was
+      // removed in favor of auto-detection, so a previously-configured custom path is now
+      // dropped silently. Point the operator at the FFMPEG_PATH env override.
+      const legacy = await deps.getLegacyFfmpegPath?.();
+      if (legacy) {
+        log.warn(
+          { legacyFfmpegPath: legacy },
+          'A custom ffmpeg path was configured in an older version but is no longer used — set the FFMPEG_PATH environment variable if you need a specific binary',
+        );
+      }
       return;
+    }
+    // The operator set FFMPEG_PATH but it did not win (it failed to probe, so detection fell
+    // through). Surface the silent fallback rather than leaving a 3am "why is my override ignored".
+    const override = deps.getFfmpegOverride?.();
+    if (override && override !== ffmpegPath) {
+      log.warn(
+        { ffmpegPath: override, resolved: ffmpegPath },
+        'FFMPEG_PATH was set but did not probe — using the auto-detected ffmpeg instead',
+      );
     }
     const ffmpegVersion = await deps.probeFfmpeg(ffmpegPath);
     const ffprobePath = deriveFfprobePath(ffmpegPath);
@@ -64,6 +87,14 @@ export async function logFfmpegVersionAtBoot(
  * never-rethrow contract are unit-testable without booting the server; the call
  * site in `index.ts` stays a single TypeScript-checked line.
  */
-export async function checkFfmpegVersionAtBoot(log: FastifyBaseLogger): Promise<void> {
-  await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
+export async function checkFfmpegVersionAtBoot(
+  log: FastifyBaseLogger,
+  settingsService?: { getLegacyFfmpegPath: () => Promise<string | undefined> },
+): Promise<void> {
+  await logFfmpegVersionAtBoot({
+    detectFfmpegPath,
+    probeFfmpeg,
+    getFfmpegOverride: () => process.env.FFMPEG_PATH?.trim() || undefined,
+    ...(settingsService && { getLegacyFfmpegPath: () => settingsService.getLegacyFfmpegPath() }),
+  }, log);
 }

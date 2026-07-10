@@ -11,7 +11,7 @@ import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
 import { tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-import { useFfmpegStatus } from './useFfmpegStatus';
+import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
 // Post Processing = the "when": automations that fire after a download. The merge/convert
 // ENGINE config (the "how") lives on the Audio Tools page. This form owns the processing
@@ -71,7 +71,7 @@ function GateNote() {
     <span className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-destructive">
       <AlertTriangleIcon className="w-3.5 h-3.5" />
       ffmpeg not found —{' '}
-      <Link to="/settings/audio-tools" className="underline underline-offset-2">set it up in Audio Tools</Link>
+      <Link to="/settings/audio-tools" className="underline underline-offset-2">see ffmpeg requirements in Audio Tools</Link>
     </span>
   );
 }
@@ -125,9 +125,11 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
 
 export function ProcessingSettingsSection() {
   const ffmpegStatus = useFfmpegStatus();
-  // Optimistic while the status query loads — avoids a flash of "needs ffmpeg" on a
-  // normal (ffmpeg-present) install.
-  const ffmpegAvailable = ffmpegStatus.data?.detected !== false;
+  // Optimistic while the status query LOADS — avoids a flash of "needs ffmpeg" on a
+  // normal (ffmpeg-present) install — but fail SAFE on a query error: an errored status
+  // fetch gates the toggles (disabled) rather than leaving them enabled on a box where
+  // ffmpeg may be absent. Real enforcement is still the backend FFMPEG_NOT_CONFIGURED gate.
+  const ffmpegAvailable = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
   const { form, mutation, onSubmit } = useSettingsForm<ProcessingFormData>({
     schema: processingFormSchema,

@@ -555,7 +555,7 @@ describe('SettingsService', () => {
   });
 });
 
-describe('SettingsService.bootstrapProcessingDefaults', () => {
+describe('SettingsService.get(processing) — forward-compat', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: SettingsService;
 
@@ -567,6 +567,20 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
 
   afterEach(() => {
     _resetKey();
+  });
+
+  it('getLegacyFfmpegPath returns a non-empty stored ffmpegPath, undefined otherwise', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { ffmpegPath: '/opt/custom/ffmpeg', outputFormat: 'm4b' } }]));
+    expect(await service.getLegacyFfmpegPath()).toBe('/opt/custom/ffmpeg');
+
+    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { ffmpegPath: '   ', outputFormat: 'm4b' } }]));
+    expect(await service.getLegacyFfmpegPath()).toBeUndefined();
+
+    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { outputFormat: 'm4b' } }]));
+    expect(await service.getLegacyFfmpegPath()).toBeUndefined();
+
+    db.select.mockReturnValueOnce(mockDbChain([]));
+    expect(await service.getLegacyFfmpegPath()).toBeUndefined();
   });
 
 

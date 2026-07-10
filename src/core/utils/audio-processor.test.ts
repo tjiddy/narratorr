@@ -5,6 +5,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   probeFfmpeg,
   detectFfmpegPath,
+  resolveFfmpegPath,
+  resetFfmpegPathCache,
   processAudioFiles,
   buildChapterMetadata,
   type ProcessingConfig,
@@ -144,8 +146,37 @@ describe('probeFfmpeg', () => {
 });
 
 describe('detectFfmpegPath', () => {
+  // Isolate the ambient FFMPEG_PATH override: a dev box with it set would otherwise probe
+  // the override first and break the '/usr/bin/ffmpeg' expectations (passes on CI, flakes locally).
+  let savedFfmpegPathEnv: string | undefined;
+  beforeEach(() => { savedFfmpegPathEnv = process.env.FFMPEG_PATH; delete process.env.FFMPEG_PATH; });
+  afterEach(() => {
+    if (savedFfmpegPathEnv === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = savedFfmpegPathEnv;
+  });
+
   it('returns /usr/bin/ffmpeg when probe succeeds at known path', async () => {
     mockExecFileSuccess('ffmpeg version 6.1.1 Copyright');
+    const result = await detectFfmpegPath();
+    expect(result).toBe('/usr/bin/ffmpeg');
+  });
+
+  it('honors FFMPEG_PATH when the override probes successfully', async () => {
+    process.env.FFMPEG_PATH = '/custom/ffmpeg';
+    mockExecFileSuccess('ffmpeg version 8.0.1');
+    const result = await detectFfmpegPath();
+    expect(result).toBe('/custom/ffmpeg');
+  });
+
+  it('falls THROUGH to /usr/bin/ffmpeg when FFMPEG_PATH is set but does not probe', async () => {
+    process.env.FFMPEG_PATH = '/bad/ffmpeg';
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
+      if (file === '/bad/ffmpeg') cb(new Error('spawn ENOENT')); // override rejected
+      else cb(null, { stdout: 'ffmpeg version 8.0.1' }); // /usr/bin/ffmpeg wins
+      return {} as never;
+    });
     const result = await detectFfmpegPath();
     expect(result).toBe('/usr/bin/ffmpeg');
   });
@@ -170,6 +201,32 @@ describe('detectFfmpegPath', () => {
     mockExecFileFailure('spawn ENOENT');
     const result = await detectFfmpegPath();
     expect(result).toBeNull();
+  });
+});
+
+describe('resolveFfmpegPath (memoization)', () => {
+  let savedFfmpegPathEnv: string | undefined;
+  beforeEach(() => { savedFfmpegPathEnv = process.env.FFMPEG_PATH; delete process.env.FFMPEG_PATH; resetFfmpegPathCache(); });
+  afterEach(() => {
+    resetFfmpegPathCache();
+    if (savedFfmpegPathEnv === undefined) delete process.env.FFMPEG_PATH;
+    else process.env.FFMPEG_PATH = savedFfmpegPathEnv;
+  });
+
+  it('caches a successful resolution — detection runs once across two calls', async () => {
+    mockExecFileSuccess('ffmpeg version 8.0.1');
+    expect(await resolveFfmpegPath()).toBe('/usr/bin/ffmpeg');
+    const callsAfterFirst = mockExecFile.mock.calls.length;
+    expect(await resolveFfmpegPath()).toBe('/usr/bin/ffmpeg');
+    expect(mockExecFile.mock.calls.length).toBe(callsAfterFirst); // served from cache, no re-detect
+  });
+
+  it('does NOT cache a miss — re-detects on the next call', async () => {
+    mockExecFileFailure('spawn ENOENT');
+    expect(await resolveFfmpegPath()).toBeNull();
+    const callsAfterFirst = mockExecFile.mock.calls.length;
+    expect(await resolveFfmpegPath()).toBeNull();
+    expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsAfterFirst); // miss re-detected
   });
 });
 

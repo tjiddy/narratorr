@@ -147,6 +147,19 @@ export class SettingsService {
   }
 
   /**
+   * Boot helper: read the RAW stored `ffmpegPath` from the processing blob, bypassing Zod
+   * (which now strips the removed field). Returns the trimmed legacy value if an operator set
+   * a custom path in an older version, else undefined — used to warn when that value was
+   * silently dropped by the auto-detection migration (the operator should use FFMPEG_PATH).
+   */
+  async getLegacyFfmpegPath(): Promise<string | undefined> {
+    const row = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
+    const raw = row[0]?.value as Record<string, unknown> | undefined;
+    const val = raw?.ffmpegPath;
+    return typeof val === 'string' && val.trim() ? val.trim() : undefined;
+  }
+
+  /**
    * Run once at startup: migrate quality.preferredLanguage to metadata.languages.
    * Idempotent — skips if metadata.languages already exists in the raw blob.
    */

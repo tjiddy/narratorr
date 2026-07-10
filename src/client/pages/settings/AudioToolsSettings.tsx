@@ -8,11 +8,14 @@ import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { FORMAT_LABELS, MERGE_LABELS } from '@/lib/constants';
 import { outputFormatSchema, mergeBehaviorSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-import { useFfmpegStatus } from './useFfmpegStatus';
+import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
 // Only the shared merge/convert ENGINE fields live here (the "how"). Automations (the
 // "when") stay on Post Processing. Each page saves ONLY its own subset of `processing`;
-// the backend patch-merges, so the two pages never clobber each other's fields.
+// the backend patch-merges, so the two pages never clobber each other's fields. The
+// engine/automation field partition is enforced by processing-field-partition.test.ts.
+// (Bounds mirror processingSettingsSchema; deriving via .pick() conflicts with the form's
+// exactOptionalPropertyTypes contract — the partition test is the drift guard instead.)
 const audioToolsSchema = z.object({
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
