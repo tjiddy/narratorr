@@ -6,6 +6,7 @@ import type { BookMetadata } from '../../core/metadata/index.js';
 import type { DuplicateReason, RecordingVerdict } from '../../shared/schemas.js';
 import { scanAudioDirectory, type AudioScanResult } from '../../core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import type { SettingsService } from './settings.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { diceCoefficient, normalizeNarrator } from '../../core/utils/similarity.js';
@@ -125,14 +126,13 @@ class MatchJob {
     private books: MatchCandidate[],
     private metadataService: MetadataService,
     private log: FastifyBaseLogger,
-    private settingsService: SettingsService,
+    _settingsService: SettingsService,
     private bookService: BookService,
     private onComplete: () => void,
   ) {}
 
   private async resolveFfprobePath(): Promise<string | undefined> {
-    const s = await this.settingsService.get('processing');
-    return resolveFfprobePathFromSettings(s?.ffmpegPath);
+    return resolveFfprobePathFromSettings(await resolveFfmpegPath());
   }
 
   getStatus(): MatchJobStatus {

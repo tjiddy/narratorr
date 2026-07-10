@@ -13,17 +13,20 @@ vi.mock('@/lib/api', () => ({
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
     probeFfmpeg: vi.fn(),
+    getFfmpegStatus: vi.fn(),
   },
 }));
 
 const { api } = await import('@/lib/api');
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
+  getFfmpegStatus: ReturnType<typeof vi.fn>;
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockApi.getSettings.mockResolvedValue(createMockSettings());
+  mockApi.getFfmpegStatus.mockResolvedValue({ detected: true });
 });
 
 describe('PostProcessingSettings', () => {
@@ -33,7 +36,8 @@ describe('PostProcessingSettings', () => {
     await waitFor(() => {
       expect(screen.getByText('Post Processing')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
+    // Engine fields (incl. the ffmpeg path field) moved to Audio Tools; automations remain here.
+    expect(screen.getByText(/Tag Embedding/i)).toBeInTheDocument();
   });
 
   // Detailed progressive disclosure, form behavior, and payload tests are in

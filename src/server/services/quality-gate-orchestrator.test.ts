@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 import type { FastifyBaseLogger } from 'fastify';
 import { QualityGateOrchestrator, type QualityGateOrchestratorOptionalDeps } from './quality-gate-orchestrator.js';
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
@@ -281,7 +287,8 @@ describe('QualityGateOrchestrator', () => {
       expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
-    it('passes ffprobePath as undefined when settingsService has no ffmpegPath', async () => {
+    it('passes ffprobePath as undefined when ffmpeg is not detected', async () => {
+      ffmpegState.resolves = false;
       const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
 
@@ -291,6 +298,7 @@ describe('QualityGateOrchestrator', () => {
         '/downloads/test',
         { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
+      ffmpegState.resolves = true;
     });
 
     it('emits SSE and records probeFailure event on probe failure', async () => {

@@ -9,6 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import { collectSortedAudioFiles } from '../../core/utils/collect-audio-files.js';
 import { dotPrefixBasename } from '../../core/utils/hidden-staging.js';
 // Imported by path, not via the core/utils barrel (Node-only; barrel feeds the Vite client build).
@@ -499,14 +500,13 @@ export class TaggingService {
     ffmpegPath: string;
     taggingSettings: { mode: TagMode; embedCover: boolean };
   }> {
-    const [processingSettings, taggingSettings] = await Promise.all([
-      this.settingsService.get('processing'),
+    const [taggingSettings, ffmpegPath] = await Promise.all([
       this.settingsService.get('tagging'),
+      resolveFfmpegPath(),
     ]);
 
-    const ffmpegPath = processingSettings.ffmpegPath;
-    if (!ffmpegPath?.trim()) {
-      throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured. Set the ffmpeg path in Settings > Post Processing.');
+    if (!ffmpegPath) {
+      throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not available on this system.');
     }
 
     const book = await this.bookService!.getById(bookId);

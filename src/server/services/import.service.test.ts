@@ -1,4 +1,9 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
+});
+
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
@@ -1611,7 +1616,6 @@ describe('ImportService', () => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0 });
         if (key === 'processing') return Promise.resolve({
-          ffmpegPath: '/usr/bin/ffmpeg',
           outputFormat: 'm4b',
           keepOriginalBitrate: false,
           bitrate: 128,
@@ -1907,8 +1911,7 @@ describe('ImportService', () => {
       return createMockSettingsService({
         import: { minSeedTime: 0, minFreeSpaceGB: overrides?.minFreeSpaceGB ?? 5 },
         processing: {
-          ffmpegPath: '/usr/bin/ffmpeg',
-        },
+          },
       });
     }
 

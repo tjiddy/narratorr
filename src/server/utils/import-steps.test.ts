@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 
+// embedTagsForImport auto-detects ffmpeg now (resolveFfmpegPath). Plain-arrow toggle mock
+// (survives vi.clearAllMocks); default detected, flip false for the not-detected test.
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 // Mock dependencies before imports
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
@@ -278,8 +286,7 @@ describe('embedTagsForImport', () => {
     const taggingService = { tagBook } as never;
 
     await embedTagsForImport({
-      taggingService, taggingEnabled: true, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
 
@@ -289,8 +296,7 @@ describe('embedTagsForImport', () => {
   it('skips when taggingService is null', async () => {
     const log = createMockLog();
     await embedTagsForImport({
-      taggingService: undefined, taggingEnabled: true, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: undefined, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     // No error, no log — just a no-op
@@ -301,31 +307,30 @@ describe('embedTagsForImport', () => {
     const log = createMockLog();
     const tagBook = vi.fn();
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: false, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: { tagBook } as never, taggingEnabled: false, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(tagBook).not.toHaveBeenCalled();
   });
 
-  it('skips with debug log when ffmpegPath is empty/whitespace', async () => {
+  it('skips with debug log when ffmpeg is not detected', async () => {
+    ffmpegState.resolves = false;
     const log = createMockLog();
     const tagBook = vi.fn();
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, ffmpegPath: '  ',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(tagBook).not.toHaveBeenCalled();
     expect(log.debug).toHaveBeenCalled();
+    ffmpegState.resolves = true;
   });
 
   it('logs warning and continues when tagBook throws', async () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockRejectedValue(new Error('tag failed'));
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, ffmpegPath: '/usr/bin/ffmpeg',
-      taggingMode: 'overwrite', embedCover: true,
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(log.warn).toHaveBeenCalled();
@@ -335,15 +340,14 @@ describe('embedTagsForImport', () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
     await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, ffmpegPath: '/ffmpeg',
-      taggingMode: 'populate_missing', embedCover: false,
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'populate_missing', embedCover: false,
       bookId: 42, targetPath: '/lib/book', book: bookMeta, log,
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
       // publisher + seriesPosition reach tagBook → proves caller propagation (#1671).
       { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
-      '/ffmpeg', 'populate_missing', false,
+      '/usr/bin/ffmpeg', 'populate_missing', false,
     );
   });
 });

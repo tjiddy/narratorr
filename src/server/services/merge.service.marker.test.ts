@@ -27,7 +27,7 @@ import type { FastifyBaseLogger } from 'fastify';
  */
 
 // Only the audio engine + enrichment are mocked — fs and the recovery sequence are real.
-vi.mock('../../core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn() }));
+vi.mock('../../core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn(), resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') }));
 vi.mock('../../core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
 vi.mock('./enrichment-utils.js', () => ({ enrichBookFromAudio: vi.fn() }));
 
@@ -102,7 +102,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
 
   function buildService(): MergeService {
     const settingsService = createMockSettingsService({
-      processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, keepOriginalBitrate: false, maxConcurrentProcessing: 1 },
+      processing: { outputFormat: 'm4b', bitrate: 128, keepOriginalBitrate: false, maxConcurrentProcessing: 1 },
       library: { path: libraryRoot },
     });
     return new MergeService(

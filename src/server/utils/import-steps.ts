@@ -11,6 +11,7 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
 import { serializeError } from './serialize-error.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 
 // Re-export side-effect functions for backwards compatibility
 export {
@@ -289,7 +290,6 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
 export interface EmbedTagsArgs {
   taggingService: TaggingService | undefined;
   taggingEnabled: boolean;
-  ffmpegPath: string;
   taggingMode: 'populate_missing' | 'overwrite';
   embedCover: boolean;
   bookId: number;
@@ -313,11 +313,12 @@ export interface EmbedTagsArgs {
 
 /** Embed audio tags into imported files. Awaited but nonfatal. */
 export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
-  const { taggingService, taggingEnabled, ffmpegPath, taggingMode, embedCover, bookId, targetPath, book, log } = args;
+  const { taggingService, taggingEnabled, taggingMode, embedCover, bookId, targetPath, book, log } = args;
   if (!taggingService) return;
   if (!taggingEnabled) return;
-  if (!ffmpegPath?.trim()) {
-    log.debug({ bookId }, 'Tag embedding enabled but ffmpeg path not configured — skipping');
+  const ffmpegPath = await resolveFfmpegPath();
+  if (!ffmpegPath) {
+    log.debug({ bookId }, 'Tag embedding enabled but ffmpeg not available — skipping');
     return;
   }
 

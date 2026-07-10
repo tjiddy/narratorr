@@ -293,34 +293,6 @@ describe('createServices', () => {
     expect(callOrder).toEqual(['v2', 'maxConcurrent']);
   });
 
-  it('invokes bootstrapProcessingDefaults with detectFfmpegPath on startup', async () => {
-    const { SettingsService } = await import('../services/index.js');
-    const { detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
-
-    // Capture the bootstrap mock so we can assert on it
-    const mockBootstrap = vi.fn().mockResolvedValue(undefined);
-  
-    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
-      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
-      this.bootstrapProcessingDefaults = mockBootstrap;
-      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
-      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
-      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
-      this.migrateMaxConcurrentProcessingDefaults = vi.fn().mockResolvedValue(undefined);
-    } as never);
-
-    const { createServices } = await import('./index.js');
-    const db = {} as unknown as Db;
-    const log = {
-      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
-      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
-    } as unknown as FastifyBaseLogger;
-
-    await createServices(db, log);
-
-    expect(mockBootstrap).toHaveBeenCalledOnce();
-    expect(mockBootstrap).toHaveBeenCalledWith(detectFfmpegPath);
-  });
 
   // #739 (originally #504) — required-wiring contract via wire(deps) instead of setter injection
   it('calls wire() once on each required-wiring service with the correct cyclic deps', async () => {

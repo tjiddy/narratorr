@@ -10,6 +10,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
+import { resolveFfmpegPath, probeFfmpeg } from '../../core/utils/audio-processor.js';
 
 
 function redactProxyUrl(proxyUrl: string): string {
@@ -138,6 +139,21 @@ export async function settingsRoutes(
       }
     }
   );
+
+  // GET /api/settings/ffmpeg-status — auto-detected ffmpeg (the editable path field was
+  // removed in favor of auto-detection + the FFMPEG_PATH override). Powers the Audio Tools
+  // status row and the ffmpeg-gated Post Processing toggles.
+  app.get('/api/settings/ffmpeg-status', async (request) => {
+    const path = await resolveFfmpegPath();
+    if (!path) return { detected: false };
+    try {
+      const version = await probeFfmpeg(path);
+      return { detected: true, version, path };
+    } catch (error: unknown) {
+      request.log.warn({ error: serializeError(error) }, 'ffmpeg detected but failed to probe');
+      return { detected: false };
+    }
+  });
 
   // POST /api/settings/test-proxy
   app.post<{ Body: z.infer<typeof testProxySchema> }>(

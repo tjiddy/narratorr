@@ -1,4 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, capConfidence, type MatchCandidate, type MatchResult } from './match-job.service.js';
 import { RECORDING_REVIEW_REASON } from './match-job.helpers.js';
@@ -926,7 +932,6 @@ describe('MatchJobService', () => {
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
-      expect(settingsService.get).toHaveBeenCalledWith('processing');
       expect(scanAudioDirectory).toHaveBeenCalledWith(
         sampleCandidate.path,
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
@@ -940,8 +945,8 @@ describe('MatchJobService', () => {
       expect(log.debug).toHaveBeenCalledWith({ debugPayload: 2 }, 'debug-msg');
     });
 
-    it('passes ffprobePath as undefined when ffmpegPath is empty', async () => {
-      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '' });
+    it('passes ffprobePath as undefined when ffmpeg is not detected', async () => {
+      ffmpegState.resolves = false;
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ providerId: undefined }),
@@ -954,10 +959,11 @@ describe('MatchJobService', () => {
         sampleCandidate.path,
         { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+      ffmpegState.resolves = true;
     });
 
-    it('passes ffprobePath as undefined when ffmpegPath is whitespace-only', async () => {
-      (settingsService.get as ReturnType<typeof vi.fn>).mockResolvedValue({ ffmpegPath: '   ' });
+    it('passes ffprobePath as undefined when ffmpeg detection returns null (variant)', async () => {
+      ffmpegState.resolves = false;
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 3600 });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ providerId: undefined }),
@@ -970,6 +976,7 @@ describe('MatchJobService', () => {
         sampleCandidate.path,
         { skipCover: true, ffprobePath: undefined, onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
+      ffmpegState.resolves = true;
     });
   });
 

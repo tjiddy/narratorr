@@ -182,7 +182,7 @@ describe('settings routes', () => {
     it('saves processing settings with valid ffmpeg path', async () => {
       const updated = {
         ...mockSettings,
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+        processing: { outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 

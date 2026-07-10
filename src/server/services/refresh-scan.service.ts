@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '../../core/utils/audio-constants.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -30,7 +31,7 @@ export class RefreshScanError extends Error {
 export async function refreshScanBook(
   bookId: number,
   bookService: BookService,
-  settingsService: SettingsService,
+  _settingsService: SettingsService,
   log: FastifyBaseLogger,
 ): Promise<RefreshScanResult> {
   const book = await bookService.getById(bookId);
@@ -51,8 +52,7 @@ export async function refreshScanBook(
     throw error;
   }
 
-  const processingSettings = await settingsService.get('processing');
-  const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+  const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
 
   const scanResult = await scanAudioDirectory(book.path, {
     skipCover: true,

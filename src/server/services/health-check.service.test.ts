@@ -17,6 +17,14 @@ vi.mock('../jobs/version-check.js', () => ({
   checkForUpdate: vi.fn(),
 }));
 
+// ffmpeg is auto-detected now; checkFfmpeg calls resolveFfmpegPath(). Plain-arrow mock over a
+// hoisted toggle (survives vi.clearAllMocks); default detected, flip false for the not-found path.
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 function createService(overrides?: {
   indexer?: Partial<IndexerService>;
   downloadClient?: Partial<DownloadClientService>;
@@ -40,7 +48,7 @@ function createService(overrides?: {
     ...overrides?.downloadClient,
   };
   const settings = overrides?.settings ?? createMockSettingsService({
-    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    processing: {},
   });
   const notifier = {
     notify: vi.fn().mockResolvedValue(undefined),
@@ -383,25 +391,25 @@ describe('HealthCheckService', () => {
       expect(check!.message).toContain('/usr/bin/ffmpeg');
     });
 
-    it('skips check and returns no result when ffmpeg path is empty/unset', async () => {
-      const { service } = createService({
-        settings: createMockSettingsService({ processing: { ffmpegPath: '' } }),
-      });
+    it('reports an error when ffmpeg is not detected', async () => {
+      ffmpegState.resolves = false;
+      const { service } = createService();
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'ffmpeg');
-      expect(check).toBeUndefined();
+      expect(check).toMatchObject({ state: 'error' });
+      ffmpegState.resolves = true;
     });
 
     it('populates target settings:post-processing on healthy and error paths', async () => {
       const { service: healthy } = createService();
       const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
-      expect(healthyCheck?.target).toEqual({ kind: 'settings', path: 'post-processing' });
+      expect(healthyCheck?.target).toEqual({ kind: 'settings', path: 'audio-tools' });
 
       const { service: error } = createService({
         probeFfmpeg: vi.fn().mockRejectedValue(new Error('spawn ENOENT')),
       });
       const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
-      expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'post-processing' });
+      expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'audio-tools' });
     });
   });
 

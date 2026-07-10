@@ -12,6 +12,7 @@ import { HardcoverClient } from '../../core/metadata/hardcover.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';
@@ -348,19 +349,18 @@ export class HealthCheckService {
   }
 
   private async checkFfmpeg(): Promise<HealthCheckResult[]> {
-    const target: HealthCheckTarget = { kind: 'settings', path: 'post-processing' };
-    const processingSettings = await this.settingsService.get('processing');
-    const ffmpegPath = processingSettings?.ffmpegPath;
+    const target: HealthCheckTarget = { kind: 'settings', path: 'audio-tools' };
+    const ffmpegPath = await resolveFfmpegPath();
 
-    if (!ffmpegPath?.trim()) {
-      return []; // Skip check if not configured
+    if (!ffmpegPath) {
+      return [{ checkName: 'ffmpeg', state: 'error', message: 'ffmpeg not found — install it or set FFMPEG_PATH', target }];
     }
 
     try {
       await this.deps.probeFfmpeg(ffmpegPath);
       return [{ checkName: 'ffmpeg', state: 'healthy', target }];
     } catch {
-      return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not found at: ${ffmpegPath}`, target }];
+      return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not usable at: ${ffmpegPath}`, target }];
     }
   }
 

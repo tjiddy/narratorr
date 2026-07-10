@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
+});
+
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService, BookWithAuthor } from './book.service.js';
@@ -359,7 +364,6 @@ describe('refreshScanBook', () => {
   // ffprobePath
   it('resolves ffprobePath from processing settings before calling scan', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    expect(mockSettingsService.get).toHaveBeenCalledWith('processing');
     expect(resolveFfprobePathFromSettings).toHaveBeenCalledWith('/usr/bin/ffmpeg');
     expect(scanAudioDirectory).toHaveBeenCalledWith(
       '/library/author/book',

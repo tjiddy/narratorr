@@ -11,7 +11,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { ConnectorService } from './connector.service.js';
 import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { processAudioFiles, resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
 import { toNamingOptions, type NamingOptions } from '../../core/utils/naming.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
@@ -149,7 +149,7 @@ export class MergeService {
     if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
     if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
     const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    if (!(await resolveFfmpegPath())) throw new MergeError('ffmpeg is not available', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
     const topLevelAudioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (topLevelAudioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
@@ -290,8 +290,7 @@ export class MergeService {
     if (!book) throw new MergeError('Book not found', 'NOT_FOUND');
     if (!book.path) throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
     if (book.status !== 'imported') throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
-    const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) throw new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED');
+    if (!(await resolveFfmpegPath())) throw new MergeError('ffmpeg is not available', 'FFMPEG_NOT_CONFIGURED');
     const allEntries = await readdir(book.path);
     const audioFiles = allEntries.filter((f) => !isHiddenName(f) && AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
     if (audioFiles.length < 2) throw new MergeError('No top-level audio files to merge (requires ≥2)', 'NO_TOP_LEVEL_FILES');
@@ -304,7 +303,8 @@ export class MergeService {
     const bookPath = book.path;
 
     const processingSettings = await this.settingsService.get('processing');
-    if (!processingSettings?.ffmpegPath?.trim()) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not configured' };
+    const ffmpegPath = await resolveFfmpegPath();
+    if (!ffmpegPath) return { bookId, outputFile: '', filesReplaced: 0, message: 'ffmpeg not available' };
 
     const librarySettings = await this.settingsService.get('library');
 
@@ -344,7 +344,7 @@ export class MergeService {
 
       this.emitMergeProgress(bookId, book.title, 'staging');
       const stagedOutput = await this.runStaging(
-        stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings,
+        stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, { ...processingSettings, ffmpegPath },
         bookId, book.title, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
       );
 
@@ -356,7 +356,7 @@ export class MergeService {
       this.emitMergeProgress(bookId, book.title, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
-      const ffprobePath = resolveFfprobePathFromSettings(processingSettings.ffmpegPath);
+      const ffprobePath = resolveFfprobePathFromSettings(ffmpegPath);
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {

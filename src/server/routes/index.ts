@@ -147,10 +147,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const discovery = new DiscoveryService(db, log, metadata, settings);
   const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector);
 
-  // Bootstrap processing defaults on first run (no-op if row exists)
-  const { probeFfmpeg, detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
-  await settings.bootstrapProcessingDefaults(detectFfmpegPath);
-
   // Migrate quality.preferredLanguage → metadata.languages (one-time, idempotent)
   await settings.migrateLanguageSettings();
 
@@ -167,6 +163,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   // Health check service with system deps
   const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
+  const { probeFfmpeg } = await import('../../core/utils/audio-processor.js');
   const healthCheck = new HealthCheckService(
     indexer, downloadClient, settings, notifier, db, log,
     { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, resolveProxyIp },

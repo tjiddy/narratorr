@@ -127,10 +127,9 @@ export class ImportOrchestrator {
     // Best-effort: tagging
     try {
       const taggingSettings = await this.settingsService.get('tagging');
-      const processingSettings = await this.settingsService.get('processing');
       await embedTagsForImport({
         taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
-        ffmpegPath: processingSettings.ffmpegPath, taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
+        taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
         bookId: ctx.bookId, targetPath: result.targetPath,
         book: {
           title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr,

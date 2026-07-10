@@ -9,6 +9,12 @@ export interface FfmpegProbeResult {
   version: string;
 }
 
+export interface FfmpegStatus {
+  detected: boolean;
+  version?: string;
+  path?: string;
+}
+
 export interface ProxyTestResult {
   success: boolean;
   ip?: string;
@@ -32,6 +38,7 @@ export const settingsApi = {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
+  getFfmpegStatus: () => fetchApi<FfmpegStatus>('/settings/ffmpeg-status'),
   testProxy: (proxyUrl: string) =>
     fetchApi<ProxyTestResult>('/settings/test-proxy', {
       method: 'POST',

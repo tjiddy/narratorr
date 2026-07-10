@@ -36,8 +36,11 @@ vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn(),
 }));
 
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
+  // Plain arrow over a hoisted toggle — survives vi.clearAllMocks; flip false for the not-detected test.
+  resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
 }));
 
 // #1670 — the reconcile job composes the OPF writer + cover downloader; mock them at their module
@@ -106,7 +109,7 @@ function createService(opts?: {
   const bookService = opts?.bookService ?? makeBookService();
   const settingsService = createMockSettingsService({
     library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
-    processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    processing: { outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
     ...opts?.settingsOverrides,
   });
   const connectorService = opts?.connectorService;
@@ -628,13 +631,15 @@ describe('BulkOperationService — pre-flight validation', () => {
     await expect(service.startRenameJob()).rejects.toThrow(expect.objectContaining({ code: 'LIBRARY_NOT_CONFIGURED' }));
   });
 
-  it('startConvertJob throws FFMPEG_NOT_CONFIGURED when ffmpegPath is empty', async () => {
+  it('startConvertJob throws FFMPEG_NOT_CONFIGURED when ffmpeg is not detected', async () => {
+    ffmpegState.resolves = false;
     const { service } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'FFMPEG_NOT_CONFIGURED' }));
+    ffmpegState.resolves = true;
   });
 });
 
@@ -921,7 +926,7 @@ describe('BulkOperationService — convert batch', () => {
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
       CONVERT_STAGING,
-      expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', mergeBehavior: 'always' }),
+      expect.objectContaining({ outputFormat: 'm4b', mergeBehavior: 'always' }),
       expect.objectContaining({ title: 'Title' }),
     );
     expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything(), '/usr/bin/ffprobe');
@@ -1069,7 +1074,7 @@ describe('BulkOperationService — convert batch', () => {
     setupConvertMocks();
     const { service, db } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     db.select.mockReturnValueOnce(mockDbChain([
@@ -1103,7 +1108,7 @@ describe('BulkOperationService — convert batch', () => {
     setupConvertMocks();
     const { service, db } = createService({
       settingsOverrides: {
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        processing: { outputFormat: 'mp3' as const, bitrate: 128, mergeBehavior: 'always' as const, keepOriginalBitrate: false, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       },
     });
     const chain = mockDbChain([{ id: 1, path: BOOK_PATH, title: 'Title' }]);

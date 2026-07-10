@@ -31,8 +31,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
+  // Plain arrow over a hoisted toggle so vi.clearAllMocks() never wipes it; flip false for the
+  // not-detected gate test. Default detected — merge gates on a resolvable ffmpeg path.
+  resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null),
 }));
 
 vi.mock('../../core/utils/audio-scanner.js', () => ({
@@ -974,8 +978,8 @@ describe('MergeService', () => {
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('.03.tmp.mp3'), expect.anything());
     });
 
-    it('throws MergeError FFMPEG_NOT_CONFIGURED when ffmpegPath is not set', async () => {
-      // Override settings to have empty ffmpegPath
+    it('throws MergeError FFMPEG_NOT_CONFIGURED when ffmpeg is not detected', async () => {
+      ffmpegState.resolves = false;
       const noFfmpegService = new MergeService(
         inject<Db>(createMockDb()),
         inject<BookService>({ getById: vi.fn().mockResolvedValue(mockBook) } as unknown as BookService),
@@ -984,6 +988,7 @@ describe('MergeService', () => {
       );
 
       await expect(noFfmpegService.enqueueMerge(42)).rejects.toMatchObject({ code: 'FFMPEG_NOT_CONFIGURED' });
+      ffmpegState.resolves = true;
     });
 
     it('throws MergeError ALREADY_IN_PROGRESS when same book is already being merged', async () => {

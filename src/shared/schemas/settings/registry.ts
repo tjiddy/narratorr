@@ -53,7 +53,6 @@ export const settingsRegistry = {
   processing: defineCategory({
     schema: processingSettingsSchema,
     defaults: {
-      ffmpegPath: '',
       outputFormat: 'm4b' as const,
       keepOriginalBitrate: true,
       bitrate: 128,

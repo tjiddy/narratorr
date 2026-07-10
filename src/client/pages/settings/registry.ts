@@ -11,8 +11,10 @@ import {
   ListIcon,
   ZapIcon,
   RefreshIcon,
+  HeadphonesIcon,
 } from '@/components/icons';
 import { GeneralSettings } from './GeneralSettings.js';
+import { AudioToolsSettings } from './AudioToolsSettings.js';
 import { PostProcessingSettings } from './PostProcessingSettings.js';
 import { IndexersSettings } from './IndexersSettings.js';
 import { DownloadClientsSettings } from './DownloadClientsSettings.js';
@@ -36,6 +38,7 @@ export interface SettingsPageEntry {
 
 export const settingsPageRegistry: readonly SettingsPageEntry[] = [
   { path: '', label: 'General', icon: SettingsIcon, component: GeneralSettings, end: true },
+  { path: 'audio-tools', label: 'Audio Tools', icon: HeadphonesIcon, component: AudioToolsSettings },
   { path: 'post-processing', label: 'Post Processing', icon: ZapIcon, component: PostProcessingSettings },
   { path: 'indexers', label: 'Indexers', icon: SearchIcon, component: IndexersSettings },
   { path: 'download-clients', label: 'Download Clients', icon: ServerIcon, component: DownloadClientsSettings },

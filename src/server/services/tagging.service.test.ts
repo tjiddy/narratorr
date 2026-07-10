@@ -3,6 +3,15 @@ import { buildFfmpegArgs, tagFile, TaggingService, RetagError, STRING_METADATA_T
 import { buildCanonicalTags, readExistingTags, resolveTags, SIMPLE_EXCLUDABLE_FIELDS } from './retag-plan.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
+// ffmpeg is auto-detected now (the path setting was removed). Mock the resolver as a plain
+// arrow reading a hoisted toggle so vi.clearAllMocks() never wipes it; flip to `false` in the
+// not-detected tests. Default detected so the retag/tag success paths are deterministic.
+const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+vi.mock('../../core/utils/audio-processor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/utils/audio-processor.js')>();
+  return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
+});
+
 // Mock child_process — the callback is the LAST arg, which may be the 3rd (cmd, args, cb)
 // or the 4th (cmd, args, options, cb) once an options object like `{ env }` is passed.
 vi.mock('node:child_process', () => ({
@@ -496,8 +505,10 @@ describe('tagFile', () => {
     await tagFile('/books/file.mp3', '/usr/bin/ffmpeg', { artist: 'Author' }, 'overwrite');
 
     // Temp basename is dot-led (born hidden) AND the finalize is still an atomic rename-over-original.
+    // Separator-agnostic: path.join yields '\' on Windows, '/' elsewhere (pre-existing #1852 test,
+    // normalized here per the repo's Windows path-assertion convention).
     expect(rename).toHaveBeenCalledWith(
-      expect.stringMatching(/\/\.file\.tmp\.mp3$/),
+      expect.stringMatching(/[\\/]\.file\.tmp\.mp3$/),
       '/books/file.mp3',
     );
     // Original should NOT be unlinked — rename overwrites atomically on POSIX
@@ -660,7 +671,7 @@ describe('TaggingService', () => {
 
   /** Default tagging-ready settings: ffmpeg configured + tagging enabled. */
   const taggingDefaults = {
-    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    processing: {},
     tagging: { enabled: true, mode: 'overwrite' as const },
   };
 
@@ -682,13 +693,15 @@ describe('TaggingService', () => {
     it('throws FFMPEG_NOT_CONFIGURED when ffmpeg path is empty', async () => {
       const db = createMockDb();
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '' },
+        processing: {},
         tagging: { enabled: true, mode: 'overwrite' },
       });
 
       const service = new TaggingService(db as never, settings as never, createMockLog() as never, mockBookService as never);
+      ffmpegState.resolves = false;
       await expect(service.retagBook(1)).rejects.toThrow(RetagError);
-      await expect(service.retagBook(1)).rejects.toThrow(/ffmpeg is not configured/);
+      await expect(service.retagBook(1)).rejects.toThrow(/ffmpeg is not available/);
+      ffmpegState.resolves = true;
     });
 
     it('throws NOT_FOUND when book does not exist', async () => {
@@ -732,7 +745,7 @@ describe('TaggingService', () => {
         coverUrl: 'https://example.com/cover.jpg',
       }));
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'populate_missing', embedCover: true },
       });
       (stat as Mock).mockResolvedValue({ size: 1000 });
@@ -1097,7 +1110,7 @@ describe('TaggingService', () => {
           .mockResolvedValueOnce({ common: { title: 'Existing Chapter 1' }, format: {} })
           .mockResolvedValueOnce({ common: { title: 'Existing Chapter 2' }, format: {} });
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'populate_missing' as const },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1116,7 +1129,7 @@ describe('TaggingService', () => {
         _readdirFiles = ['001 - Track Name.mp3', '002 - Another Track.mp3'];
         // No existing title → readExistingTags returns empty; resolveTags writes desired
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'populate_missing' as const },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1334,7 +1347,7 @@ describe('TaggingService', () => {
       });
       setupBook({ title: 'New Title', authors: [{ name: 'New Artist' }] });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'populate_missing' },
       });
       const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1362,7 +1375,7 @@ describe('TaggingService', () => {
       });
       setupBook({ title: 'B', authors: [{ name: 'A' }], narrators: [{ name: 'C' }], seriesName: 'G' });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'populate_missing' },
       });
       const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1420,7 +1433,7 @@ describe('TaggingService', () => {
       _readdirFiles = ['book.mp3'];
       setupBook({ title: 'X', authors: [{ name: 'A' }] });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'overwrite', embedCover: true },
       });
       const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1435,7 +1448,7 @@ describe('TaggingService', () => {
       (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
       setupBook({ title: 'X', authors: [{ name: 'A' }] });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'populate_missing', embedCover: true },
       });
       const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1486,12 +1499,14 @@ describe('TaggingService', () => {
     it('throws FFMPEG_NOT_CONFIGURED when ffmpeg path is empty', async () => {
       setupBook({ title: 'X' });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '' },
+        processing: {},
         tagging: { enabled: true, mode: 'overwrite' },
       });
       const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
 
-      await expect(service.planRetag(1)).rejects.toThrow(/ffmpeg is not configured/);
+      ffmpegState.resolves = false;
+      await expect(service.planRetag(1)).rejects.toThrow(/ffmpeg is not available/);
+      ffmpegState.resolves = true;
     });
 
     describe('per-file title (#1090)', () => {
@@ -1539,7 +1554,7 @@ describe('TaggingService', () => {
           .mockResolvedValueOnce({ common: { title: 'Existing 2' }, format: {} });
         setupBook({ title: 'Book Title', authors: [{ name: 'Author' }] });
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'populate_missing' as const },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1554,7 +1569,7 @@ describe('TaggingService', () => {
         // Default mock: empty common → no existing title
         setupBook({ title: 'Book Title', authors: [{ name: 'Author' }] });
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'populate_missing' as const },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1604,7 +1619,7 @@ describe('TaggingService', () => {
         });
         setupBook({ title: 'New Title', authors: [{ name: 'New Artist' }] });
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'populate_missing' },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1623,7 +1638,7 @@ describe('TaggingService', () => {
         (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
         setupBook({ title: 'X', authors: [{ name: 'A' }] });
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'overwrite', embedCover: false },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1640,7 +1655,7 @@ describe('TaggingService', () => {
         (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
         setupBook({ title: 'X', authors: [{ name: 'A' }] });
         const settings = createMockSettingsService({
-          processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+          processing: {},
           tagging: { enabled: true, mode: 'overwrite', embedCover: true },
         });
         const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
@@ -1696,7 +1711,7 @@ describe('TaggingService', () => {
         format: {},
       });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'populate_missing' },
       });
       const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1713,7 +1728,7 @@ describe('TaggingService', () => {
       _readdirFiles = ['book.mp3', 'cover.jpg'];
       (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'overwrite', embedCover: false },
       });
       const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1728,7 +1743,7 @@ describe('TaggingService', () => {
     it('embedCover override false suppresses cover even when settings.embedCover=true', async () => {
       _readdirFiles = ['book.mp3', 'cover.jpg'];
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'overwrite', embedCover: true },
       });
       const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1747,7 +1762,7 @@ describe('TaggingService', () => {
         format: {},
       });
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'populate_missing' },
       });
       const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1806,7 +1821,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       const dirContents = embedCover ? ['ch01.mp3', 'ch02.mp3', 'bonus.ogg', 'cover.jpg'] : ['ch01.mp3', 'ch02.mp3', 'bonus.ogg'];
       _readdirFiles = [...dirContents];
       const settings = createMockSettingsService({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: {},
         tagging: { enabled: true, mode: 'overwrite', embedCover },
       });
       const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1846,7 +1861,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
       .mockResolvedValueOnce({ common: {}, format: {} })
       .mockResolvedValueOnce({ common: { title: 'Existing 3' }, format: {} });
     const settings = createMockSettingsService({
-      processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+      processing: {},
       tagging: { enabled: true, mode: 'overwrite' as const },
     });
     const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1888,7 +1903,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
   it('preview will-tag set matches apply tagged set (embedCover on with cover file)', async () => {
     _readdirFiles = ['ch01.mp3', 'cover.jpg'];
     const settings = createMockSettingsService({
-      processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+      processing: {},
       tagging: { enabled: true, mode: 'overwrite', embedCover: true },
     });
     const service = new TaggingService({ select: vi.fn() } as never, settings as never, createLog() as never, mockBookService as never);
@@ -1908,7 +1923,7 @@ describe('TaggingService — preview/apply parity (#1086)', () => {
 
 describe('TaggingService — multi-value serialization (#71, #79)', () => {
   const taggingDefaults = {
-    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    processing: {},
     tagging: { enabled: true, mode: 'overwrite' as const },
   };
 
@@ -1977,7 +1992,7 @@ describe('TaggingService — multi-value serialization (#71, #79)', () => {
 
 describe('TaggingService.retagBook() via BookService.getById() (issue #79)', () => {
   const taggingDefaults = {
-    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    processing: {},
     tagging: { enabled: true, mode: 'overwrite' as const },
   };
 

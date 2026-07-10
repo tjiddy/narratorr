@@ -59,6 +59,18 @@ export interface ProcessingCallbacks {
  * Tries /usr/bin/ffmpeg first, then falls back to `which ffmpeg`.
  */
 export async function detectFfmpegPath(): Promise<string | null> {
+  // Operator override for non-standard installs (bare-metal, custom image). Honored
+  // first, but a non-probing override falls through to auto-detection rather than
+  // hard-failing — so a stale FFMPEG_PATH never bricks a working container binary.
+  const override = process.env.FFMPEG_PATH?.trim();
+  if (override) {
+    try {
+      await probeFfmpeg(override);
+      return override;
+    } catch {
+      // override didn't probe — fall through to auto-detection
+    }
+  }
   const knownPath = '/usr/bin/ffmpeg';
   try {
     await probeFfmpeg(knownPath);
@@ -75,6 +87,21 @@ export async function detectFfmpegPath(): Promise<string | null> {
   }
   return null;
 }
+
+// ffmpeg is baked into the container image and does not appear/disappear at
+// runtime, so a *successful* detection is memoized for the process lifetime; a
+// miss stays uncached and is retried (cheap, rare). Services call resolveFfmpegPath()
+// instead of reading a user-configured setting — the path field was removed in favor
+// of auto-detection + the FFMPEG_PATH override.
+let cachedFfmpegPath: string | null = null;
+
+/** Resolve ffmpeg's absolute path (cached on success), or null if unavailable. */
+export async function resolveFfmpegPath(): Promise<string | null> {
+  if (cachedFfmpegPath) return cachedFfmpegPath;
+  cachedFfmpegPath = await detectFfmpegPath();
+  return cachedFfmpegPath;
+}
+
 
 /**
  * Probe an ffmpeg binary at the given path. Returns the version string on success.

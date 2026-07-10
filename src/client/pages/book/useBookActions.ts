@@ -71,12 +71,14 @@ export function useBookActions(bookId: number) {
     },
   });
 
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
+  const { data: ffmpegStatus } = useQuery({
+    queryKey: ['ffmpeg-status'],
+    queryFn: () => api.getFfmpegStatus(),
+    staleTime: 5 * 60_000,
   });
 
-  const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
+  // Optimistic while loading (ffmpeg is present on the normal Docker install).
+  const ffmpegConfigured = ffmpegStatus?.detected !== false;
 
   const deleteMutation = useMutation({
     mutationFn: ({ deleteFiles }: { deleteFiles: boolean }) =>

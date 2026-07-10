@@ -6,6 +6,7 @@ import { downloads } from '../../db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '../../core/utils/ffprobe-path.js';
+import { resolveFfmpegPath } from '../../core/utils/audio-processor.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
@@ -140,10 +141,9 @@ export class ImportService {
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
       this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath }, 'Resolved save path');
-      const [librarySettings, importSettings, processingSettings] = await Promise.all([
+      const [librarySettings, importSettings] = await Promise.all([
         this.settingsService.get('library'),
         this.settingsService.get('import'),
-        this.settingsService.get('processing'),
       ]);
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
@@ -211,7 +211,7 @@ export class ImportService {
       // transaction rolled back. No-op for first import / same-path re-import.
       await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
 
-      const ffprobePath = resolveFfprobePathFromSettings(processingSettings?.ffmpegPath);
+      const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
       await notifyPhase(callbacks, 'fetching_metadata');
       await this.enrichAfterImport(book.id, targetPath!, book, ffprobePath);
 

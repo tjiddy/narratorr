@@ -20,15 +20,14 @@ describe('createMockSettings', () => {
     });
 
     it('single-field override preserves all sibling defaults in the same category', () => {
-      const settings = createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg' } });
-      expect(settings.processing.ffmpegPath).toBe('/usr/bin/ffmpeg');
+      const settings = createMockSettings({ processing: { postProcessingScript: '/x/script.sh' } });
+      expect(settings.processing.postProcessingScript).toBe('/x/script.sh');
       // All other processing fields should remain at defaults
       expect(settings.processing.outputFormat).toBe(DEFAULT_SETTINGS.processing.outputFormat);
       expect(settings.processing.bitrate).toBe(DEFAULT_SETTINGS.processing.bitrate);
       expect(settings.processing.keepOriginalBitrate).toBe(DEFAULT_SETTINGS.processing.keepOriginalBitrate);
       expect(settings.processing.mergeBehavior).toBe(DEFAULT_SETTINGS.processing.mergeBehavior);
       expect(settings.processing.maxConcurrentProcessing).toBe(DEFAULT_SETTINGS.processing.maxConcurrentProcessing);
-      expect(settings.processing.postProcessingScript).toBe(DEFAULT_SETTINGS.processing.postProcessingScript);
       expect(settings.processing.postProcessingScriptTimeout).toBe(DEFAULT_SETTINGS.processing.postProcessingScriptTimeout);
     });
 
@@ -50,14 +49,14 @@ describe('createMockSettings', () => {
 
   describe('boundary / edge cases', () => {
     it('override with undefined value does not strip the default', () => {
-      const settings = createMockSettings({ processing: { ffmpegPath: undefined } });
-      expect(settings.processing.ffmpegPath).toBe(DEFAULT_SETTINGS.processing.ffmpegPath);
+      const settings = createMockSettings({ processing: { postProcessingScript: undefined } });
+      expect(settings.processing.postProcessingScript).toBe(DEFAULT_SETTINGS.processing.postProcessingScript);
     });
 
     it('DeepPartial accepts explicit-undefined at every nesting level (compile-time)', () => {
       // Category-level undefined
       const a = createMockSettings({ processing: undefined });
-      // Nested-leaf undefined (siblings to the existing ffmpegPath case)
+      // Nested-leaf undefined (siblings to the existing postProcessingScript case)
       const b = createMockSettings({ processing: { maxConcurrentProcessing: undefined } });
       const c = createMockSettings({ search: { enabled: undefined } });
       // Runtime sanity: each call returns full defaults (undefined doesn't strip)
@@ -83,7 +82,6 @@ describe('createMockSettings', () => {
 
     it('override with all fields for a category returns exact override values', () => {
       const customProcessing = {
-        ffmpegPath: '/custom/ffmpeg',
         outputFormat: 'mp3' as const,
         keepOriginalBitrate: true,
         bitrate: 64,
@@ -101,16 +99,16 @@ describe('createMockSettings', () => {
   describe('schema validation consistency', () => {
     it('factory output satisfies all category Zod schemas', () => {
       const settings = createMockSettings({
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        processing: { postProcessingScript: '/x/script.sh' },
       });
       for (const category of SETTINGS_CATEGORIES) {
         expect(() => CATEGORY_SCHEMAS[category].parse(settings[category])).not.toThrow();
       }
     });
 
-    it('factory defaults have an empty ffmpegPath', () => {
+    it('factory defaults have an empty postProcessingScript', () => {
       const settings = createMockSettings();
-      expect(settings.processing.ffmpegPath).toBe('');
+      expect(settings.processing.postProcessingScript).toBe('');
     });
   });
 
@@ -141,7 +139,7 @@ describe('createMockSettings', () => {
   describe('returns a fresh copy', () => {
     it('does not mutate DEFAULT_SETTINGS when overrides are provided', () => {
       const before = JSON.stringify(DEFAULT_SETTINGS);
-      const settings = createMockSettings({ processing: { ffmpegPath: '/usr/bin/ffmpeg' } });
+      const settings = createMockSettings({ processing: { postProcessingScript: '/x/script.sh' } });
       settings.processing.bitrate = 999;
       expect(JSON.stringify(DEFAULT_SETTINGS)).toBe(before);
     });
@@ -149,7 +147,7 @@ describe('createMockSettings', () => {
     it('does not mutate DEFAULT_SETTINGS when no overrides are provided', () => {
       const before = JSON.stringify(DEFAULT_SETTINGS);
       const settings = createMockSettings();
-      settings.processing.ffmpegPath = '/usr/bin/ffmpeg';
+      settings.processing.postProcessingScript = '/x/script.sh';
       settings.processing.bitrate = 999;
       expect(JSON.stringify(DEFAULT_SETTINGS)).toBe(before);
     });
@@ -157,8 +155,8 @@ describe('createMockSettings', () => {
     it('returns independent copies on successive calls', () => {
       const a = createMockSettings();
       const b = createMockSettings();
-      a.processing.ffmpegPath = '/custom';
-      expect(b.processing.ffmpegPath).toBe('');
+      a.processing.postProcessingScript = '/custom';
+      expect(b.processing.postProcessingScript).toBe('');
     });
   });
 });

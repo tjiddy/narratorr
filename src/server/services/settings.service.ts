@@ -147,20 +147,6 @@ export class SettingsService {
   }
 
   /**
-   * Run once at startup: if no processing row exists and ffmpeg can be found,
-   * pre-fill ffmpegPath with the detected path.
-   */
-  async bootstrapProcessingDefaults(detectFfmpegPath: () => Promise<string | null>): Promise<void> {
-    const existing = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
-    if (existing.length > 0) return;
-
-    const ffmpegPath = await detectFfmpegPath();
-    if (!ffmpegPath) return;
-
-    await this.set('processing', { ...DEFAULT_SETTINGS.processing, ffmpegPath });
-  }
-
-  /**
    * Run once at startup: migrate quality.preferredLanguage to metadata.languages.
    * Idempotent — skips if metadata.languages already exists in the raw blob.
    */
