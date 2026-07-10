@@ -9,7 +9,7 @@ import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
-import { tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
@@ -20,7 +20,7 @@ import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 const processingFormSchema = z.object({
   autoMergeDownloads: z.boolean(),
   postProcessingScript: z.string(),
-  postProcessingScriptTimeout: z.number().int().min(1).optional(),
+  postProcessingScriptTimeout: postProcessingScriptTimeoutField.optional(),
   taggingEnabled: z.boolean(),
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
@@ -141,6 +141,7 @@ export function ProcessingSettingsSection() {
 
   const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
   const taggingEnabled = watch('taggingEnabled');
+  const autoMergeDownloads = watch('autoMergeDownloads');
 
   return (
     <SettingsSection
@@ -156,7 +157,7 @@ export function ProcessingSettingsSection() {
             description={<AutoMergeDescription gated={!ffmpegAvailable} />}
             muted={!ffmpegAvailable}
           >
-            <ToggleSwitch id="autoMergeDownloads" disabled={!ffmpegAvailable} {...register('autoMergeDownloads')} />
+            <ToggleSwitch id="autoMergeDownloads" disabled={!ffmpegAvailable && !autoMergeDownloads} {...register('autoMergeDownloads')} />
           </SettingsRow>
 
           <SettingsRow
@@ -165,7 +166,7 @@ export function ProcessingSettingsSection() {
             description={<>Write book metadata into the audio file’s tags on import. Series, series part, subtitle, ASIN, and publisher survive on MP3 but are dropped on M4B by the container.{!ffmpegAvailable && <GateNote />}</>}
             muted={!ffmpegAvailable}
           >
-            <ToggleSwitch id="taggingEnabled" disabled={!ffmpegAvailable} {...register('taggingEnabled')} />
+            <ToggleSwitch id="taggingEnabled" disabled={!ffmpegAvailable && !taggingEnabled} {...register('taggingEnabled')} />
           </SettingsRow>
 
           {taggingEnabled && ffmpegAvailable && (

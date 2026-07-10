@@ -67,6 +67,30 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
   });
 
+  it('lets an ALREADY-ENABLED automation be switched off when ffmpeg is missing (finding 4)', async () => {
+    mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
+      processing: { autoMergeDownloads: true },
+      tagging: { enabled: true },
+    }));
+    renderWithProviders(<ProcessingSettingsSection />);
+    // ffmpeg gone but the automation was ON — the toggle stays interactive so it can be turned OFF
+    // (only false→true is blocked, never true→false; otherwise the setting is stuck-on forever).
+    await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeEnabled());
+    expect(screen.getByLabelText(/Tag Embedding/)).toBeEnabled();
+  });
+
+  it('keeps a DISABLED automation locked off when ffmpeg is missing (finding 4)', async () => {
+    mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
+      processing: { autoMergeDownloads: false },
+      tagging: { enabled: false },
+    }));
+    renderWithProviders(<ProcessingSettingsSection />);
+    await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
+    expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
+  });
+
   it('reveals tag mode + embed cover only while Tag Embedding is on', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);

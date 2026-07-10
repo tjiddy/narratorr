@@ -54,61 +54,10 @@ export interface ProcessingCallbacks {
   onStderr?: (line: string) => void;
 }
 
-/**
- * Discover ffmpeg on the system. Returns the absolute path if found, null otherwise.
- * Tries /usr/bin/ffmpeg first, then falls back to `which ffmpeg`.
- */
-export async function detectFfmpegPath(): Promise<string | null> {
-  // Operator override for non-standard installs (bare-metal, custom image). Honored
-  // first, but a non-probing override falls through to auto-detection rather than
-  // hard-failing — so a stale FFMPEG_PATH never bricks a working container binary.
-  const override = process.env.FFMPEG_PATH?.trim();
-  if (override) {
-    try {
-      await probeFfmpeg(override);
-      return override;
-    } catch {
-      // override didn't probe — fall through to auto-detection
-    }
-  }
-  const knownPath = '/usr/bin/ffmpeg';
-  try {
-    await probeFfmpeg(knownPath);
-    return knownPath;
-  } catch {
-    // fall through to which
-  }
-  try {
-    const { stdout } = await execFileAsync('which', ['ffmpeg'], { env: sanitizedEnv() });
-    const resolved = stdout.trim();
-    if (resolved) return resolved;
-  } catch {
-    // not found
-  }
-  return null;
-}
-
-// ffmpeg is baked into the container and doesn't change at runtime, so a *successful*
-// detect is memoized for the process lifetime; a miss stays uncached (retried, rare).
-let cachedFfmpegPath: string | null = null;
-
-/** Resolve ffmpeg's absolute path (cached on success, retried on a miss), or null if unavailable. */
-export async function resolveFfmpegPath(): Promise<string | null> {
-  return (cachedFfmpegPath ??= await detectFfmpegPath());
-}
-
-/** Test-only: clear the memoized ffmpeg path between cases. */
-export function resetFfmpegPathCache(): void { cachedFfmpegPath = null; }
-
-/**
- * Probe an ffmpeg binary at the given path. Returns the version string on success.
- */
-export async function probeFfmpeg(ffmpegPath: string): Promise<string> {
-  const { stdout } = await execFileAsync(ffmpegPath, ['-version'], { env: sanitizedEnv() });
-  const firstLine = stdout.split('\n')[0]!;
-  const versionMatch = firstLine.match(/ffmpeg version (\S+)/);
-  return versionMatch ? versionMatch[1]! : firstLine.trim();
-}
+// ffmpeg detection / probing / resolution live in ./ffmpeg-resolver.ts to keep this file under the
+// max-lines cap. Re-exported so existing importers (merge/tagging/bulk services, boot, and the
+// resolver's own test suite) keep importing them from audio-processor unchanged.
+export { detectFfmpegPath, probeFfmpeg, resolveFfmpegPath, resetFfmpegPathCache } from './ffmpeg-resolver.js';
 
 /**
  * Process audio files in a directory: merge and/or convert based on config.

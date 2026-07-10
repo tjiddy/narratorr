@@ -4,7 +4,7 @@ export { searchSettingsSchema, searchPrioritySchema, searchFormSchema } from './
 export { importSettingsSchema } from './import.js';
 export { logLevelSchema, type LogLevel, generalSettingsSchema, generalFormSchema } from './general.js';
 export { audibleRegionSchema, type AudibleRegion, metadataSettingsSchema, metadataFormSchema, filteringFormSchema } from './metadata.js';
-export { outputFormatSchema, type OutputFormat, mergeBehaviorSchema, type MergeBehavior, processingSettingsSchema, processingFormSchema } from './processing.js';
+export { outputFormatSchema, type OutputFormat, mergeBehaviorSchema, type MergeBehavior, bitrateField, maxConcurrentProcessingField, postProcessingScriptTimeoutField, processingSettingsSchema, processingFormSchema } from './processing.js';
 export { tagModeSchema, type TagMode, taggingSettingsSchema } from './tagging.js';
 export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchema, qualityFormSchema, qualityFilteringFormSchema, newBookDefaultsFormSchema } from './quality.js';
 export { networkSettingsSchema, networkFormSchema } from './network.js';

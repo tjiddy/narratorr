@@ -173,7 +173,7 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
     expect(legacyWarn![1] as string).toMatch(/FFMPEG_PATH/);
   });
 
-  it('does NOT consult or warn about a legacy path when ffmpeg IS found (P2-3)', async () => {
+  it('warns about a dropped legacy path even when a DIFFERENT ffmpeg is found (finding 1)', async () => {
     const log = inject<FastifyBaseLogger>(createMockLogger());
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
     const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
@@ -181,7 +181,23 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
 
-    expect(getLegacyFfmpegPath).not.toHaveBeenCalled();
+    // The dangerous case is a SILENT binary swap: a configured custom path is dropped while a
+    // different system ffmpeg is used. It must warn (naming both paths + FFMPEG_PATH), not stay quiet.
+    expect(getLegacyFfmpegPath).toHaveBeenCalledTimes(1);
+    const legacyWarn = calls(log.warn).find(([p]) => (p as Record<string, unknown>)?.legacyFfmpegPath);
+    expect(legacyWarn).toBeDefined();
+    expect(legacyWarn![0]).toMatchObject({ legacyFfmpegPath: '/opt/custom/ffmpeg', resolvedFfmpegPath: '/usr/bin/ffmpeg' });
+    expect(legacyWarn![1] as string).toMatch(/FFMPEG_PATH/);
+  });
+
+  it('does NOT warn when the legacy path equals the resolved binary (finding 1)', async () => {
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+    const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
+    const getLegacyFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg'); // same as resolved → no swap
+
+    await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
+
     expect(log.warn).not.toHaveBeenCalled();
   });
 });

@@ -36,12 +36,15 @@ export async function logFfmpegVersionAtBoot(
 ): Promise<void> {
   try {
     const ffmpegPath = await deps.detectFfmpegPath();
+    // Read the legacy stored path REGARDLESS of detection outcome. The editable ffmpeg-path
+    // setting was removed in favor of auto-detection, so a previously-configured custom path
+    // is now silently dropped — and the dangerous case is not "ffmpeg missing" but "a
+    // *different* system ffmpeg was detected", which swaps binaries with no signal.
+    const legacy = await deps.getLegacyFfmpegPath?.();
+    const override = deps.getFfmpegOverride?.();
+
     if (!ffmpegPath) {
       log.warn('ffmpeg not found on the system; audio import/processing and xHE-AAC decode will be unavailable');
-      // Guided migration for the bare-metal cohort: the editable ffmpeg path setting was
-      // removed in favor of auto-detection, so a previously-configured custom path is now
-      // dropped silently. Point the operator at the FFMPEG_PATH env override.
-      const legacy = await deps.getLegacyFfmpegPath?.();
       if (legacy) {
         log.warn(
           { legacyFfmpegPath: legacy },
@@ -50,9 +53,17 @@ export async function logFfmpegVersionAtBoot(
       }
       return;
     }
+    // Guided migration: a stored custom path that differs from the resolved binary (and isn't
+    // the active FFMPEG_PATH override) was dropped on upgrade — it may have been a newer or
+    // purpose-built binary. Surface the swap rather than changing binaries invisibly.
+    if (legacy && legacy !== ffmpegPath && legacy !== override) {
+      log.warn(
+        { legacyFfmpegPath: legacy, resolvedFfmpegPath: ffmpegPath },
+        'A custom ffmpeg path was configured in an older version but is no longer used — narratorr resolved a different binary; set the FFMPEG_PATH environment variable to keep using the custom one',
+      );
+    }
     // The operator set FFMPEG_PATH but it did not win (it failed to probe, so detection fell
     // through). Surface the silent fallback rather than leaving a 3am "why is my override ignored".
-    const override = deps.getFfmpegOverride?.();
     if (override && override !== ffmpegPath) {
       log.warn(
         { ffmpegPath: override, resolved: ffmpegPath },

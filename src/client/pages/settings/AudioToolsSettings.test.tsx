@@ -64,6 +64,15 @@ describe('AudioToolsSettings', () => {
     expect(screen.getByText(/FFMPEG_PATH/)).toBeInTheDocument();
   });
 
+  it('shows a distinct "unable to check" state when the status query errors — not "not found" (finding 6)', async () => {
+    mockApi.getFfmpegStatus.mockRejectedValue(new Error('network down'));
+    renderWithProviders(<AudioToolsSettings />);
+    await waitFor(() => expect(screen.getByText(/Unable to check ffmpeg status/)).toBeInTheDocument());
+    // A failed status query is a connection/auth problem, not a missing binary — don't send the
+    // operator chasing an install.
+    expect(screen.queryByText(/ffmpeg not found/)).not.toBeInTheDocument();
+  });
+
   it('disables Target bitrate while Keep original is on', async () => {
     const user = userEvent.setup();
     renderWithProviders(<AudioToolsSettings />);

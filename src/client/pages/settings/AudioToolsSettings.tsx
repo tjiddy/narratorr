@@ -6,7 +6,7 @@ import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { FORMAT_LABELS, MERGE_LABELS } from '@/lib/constants';
-import { outputFormatSchema, mergeBehaviorSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { outputFormatSchema, mergeBehaviorSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
@@ -14,14 +14,14 @@ import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 // "when") stay on Post Processing. Each page saves ONLY its own subset of `processing`;
 // the backend patch-merges, so the two pages never clobber each other's fields. The
 // engine/automation field partition is enforced by processing-field-partition.test.ts.
-// (Bounds mirror processingSettingsSchema; deriving via .pick() conflicts with the form's
-// exactOptionalPropertyTypes contract — the partition test is the drift guard instead.)
+// Numeric bounds are the shared field validators from processing.ts, so the UI can't drift from
+// the backend schema; the partition test additionally guards the engine/automation field split.
 const audioToolsSchema = z.object({
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
-  bitrate: z.number().int().min(32).max(512),
+  bitrate: bitrateField,
   mergeBehavior: mergeBehaviorSchema,
-  maxConcurrentProcessing: z.number().int().min(1).max(8),
+  maxConcurrentProcessing: maxConcurrentProcessingField,
 });
 type AudioToolsFormData = z.infer<typeof audioToolsSchema>;
 
@@ -40,7 +40,7 @@ function toPayload(data: AudioToolsFormData) {
 }
 
 function FfmpegStatusRow() {
-  const { data, isLoading } = useFfmpegStatus();
+  const { data, isLoading, isError } = useFfmpegStatus();
   if (isLoading) return null;
 
   if (data?.detected) {
@@ -50,6 +50,20 @@ function FfmpegStatusRow() {
         <span className="font-semibold">ffmpeg</span>
         <span className="text-muted-foreground">Detected · v{data.version}</span>
         {data.path && <span className="ml-auto font-mono text-xs text-muted-foreground/70 truncate">{data.path}</span>}
+      </div>
+    );
+  }
+
+  // A failed status *query* (network/auth/server) is NOT the same as a real "ffmpeg absent"
+  // answer — don't send the operator chasing an install when the check itself didn't run.
+  if (isError) {
+    return (
+      <div className="flex items-start gap-2 rounded-xl border border-border bg-card/40 px-4 py-3 text-sm">
+        <AlertCircleIcon className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+        <span>
+          <span className="font-semibold">Unable to check ffmpeg status</span>
+          <span className="text-muted-foreground"> — the server didn’t respond. This is usually a connection or auth problem, not a missing binary; reload to retry.</span>
+        </span>
       </div>
     );
   }

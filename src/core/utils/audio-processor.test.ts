@@ -189,6 +189,7 @@ describe('detectFfmpegPath', () => {
       const file = args[0] as string;
       const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
       if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+      else if (file === '/usr/local/bin/ffmpeg') cb(null, { stdout: 'ffmpeg version 8.0.1' }); // which candidate probes OK
       else cb(new Error('spawn ENOENT'));
       return {} as never;
     });
@@ -199,6 +200,21 @@ describe('detectFfmpegPath', () => {
 
   it('returns null when both probe and which fail', async () => {
     mockExecFileFailure('spawn ENOENT');
+    const result = await detectFfmpegPath();
+    expect(result).toBeNull();
+  });
+
+  it('returns null when the `which` candidate resolves but fails to probe (finding 2)', async () => {
+    // `which` finds a PATH entry, but running it as `-version` fails (broken/partial install).
+    // An unprobed candidate must NOT be trusted — otherwise service gates admit work the status
+    // route's fresh probe reports unavailable (the two-definitions-of-available gap).
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
+      if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+      else cb(new Error('spawn ENOENT')); // every probe (incl the which candidate) fails
+      return {} as never;
+    });
     const result = await detectFfmpegPath();
     expect(result).toBeNull();
   });
@@ -221,12 +237,35 @@ describe('resolveFfmpegPath (memoization)', () => {
     expect(mockExecFile.mock.calls.length).toBe(callsAfterFirst); // served from cache, no re-detect
   });
 
-  it('does NOT cache a miss — re-detects on the next call', async () => {
+  it('coalesces concurrent callers onto ONE detection — single-flight (finding 7)', async () => {
+    mockExecFileSuccess('ffmpeg version 8.0.1');
+    const [a, b] = await Promise.all([resolveFfmpegPath(), resolveFfmpegPath()]);
+    expect(a).toBe('/usr/bin/ffmpeg');
+    expect(b).toBe('/usr/bin/ffmpeg');
+    expect(mockExecFile.mock.calls.length).toBe(1); // both shared one in-flight probe
+  });
+
+  it('holds a miss under the negative TTL — does NOT re-spawn within the window (finding 7)', async () => {
     mockExecFileFailure('spawn ENOENT');
     expect(await resolveFfmpegPath()).toBeNull();
     const callsAfterFirst = mockExecFile.mock.calls.length;
     expect(await resolveFfmpegPath()).toBeNull();
-    expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsAfterFirst); // miss re-detected
+    // The whole point: a degraded library scan must not re-probe `which`+`/usr/bin/ffmpeg` per book.
+    expect(mockExecFile.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it('re-detects a miss after the negative TTL expires (finding 7)', async () => {
+    vi.useFakeTimers();
+    try {
+      mockExecFileFailure('spawn ENOENT');
+      expect(await resolveFfmpegPath()).toBeNull();
+      const callsAfterFirst = mockExecFile.mock.calls.length;
+      vi.advanceTimersByTime(31_000); // past FFMPEG_MISS_TTL_MS (30s)
+      expect(await resolveFfmpegPath()).toBeNull();
+      expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsAfterFirst); // window elapsed → re-detected
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -261,6 +300,7 @@ describe('media-tool env sanitization', () => {
       const file = args[0] as string;
       const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
       if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+      else if (file === '/usr/local/bin/ffmpeg') cb(null, { stdout: 'ffmpeg version 8.0.1' }); // which candidate probes OK
       else cb(new Error('spawn ENOENT'));
       return {} as never;
     });
