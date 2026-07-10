@@ -353,7 +353,25 @@ export class HealthCheckService {
     const ffmpegPath = await resolveFfmpegPath();
 
     if (!ffmpegPath) {
-      return [{ checkName: 'ffmpeg', state: 'error', message: 'ffmpeg not found — install it or set FFMPEG_PATH', target }];
+      // ffmpeg is OPTIONAL — it only matters when an automation that runs on its own needs it.
+      // Manual merge/retag are UI-gated and surface the miss inline (Audio Tools status row), so an
+      // absent binary with no enabled automation stays SILENT here rather than firing a
+      // restart-persistent on_health_issue alarm on every bare-metal install that never uses audio
+      // processing. Only auto-merge and tag embedding fire unattended and would fail — alarm on those.
+      const [processing, tagging] = await Promise.all([
+        this.settingsService.get('processing'),
+        this.settingsService.get('tagging'),
+      ]);
+      const automationNeedsFfmpeg = processing?.autoMergeDownloads === true || tagging?.enabled === true;
+      if (!automationNeedsFfmpeg) {
+        return [];
+      }
+      return [{
+        checkName: 'ffmpeg',
+        state: 'error',
+        message: 'ffmpeg not found but an audio automation (auto-merge or tag embedding) needs it — install it or set FFMPEG_PATH',
+        target,
+      }];
     }
 
     try {

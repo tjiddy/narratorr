@@ -391,9 +391,33 @@ describe('HealthCheckService', () => {
       expect(check!.message).toContain('/usr/bin/ffmpeg');
     });
 
-    it('reports an error when ffmpeg is not detected', async () => {
+    it('stays silent when ffmpeg is absent and no automation needs it (ffmpeg is optional)', async () => {
       ffmpegState.resolves = false;
+      // Default mock settings: autoMergeDownloads off, tagging.enabled off.
       const { service } = createService();
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'ffmpeg');
+      expect(check).toBeUndefined();
+      ffmpegState.resolves = true;
+    });
+
+    it('reports an error when ffmpeg is absent and auto-merge is enabled', async () => {
+      ffmpegState.resolves = false;
+      const { service } = createService({
+        settings: createMockSettingsService({ processing: { autoMergeDownloads: true } }),
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'ffmpeg');
+      expect(check).toMatchObject({ state: 'error' });
+      expect(check!.message).toContain('auto-merge');
+      ffmpegState.resolves = true;
+    });
+
+    it('reports an error when ffmpeg is absent and tag embedding is enabled', async () => {
+      ffmpegState.resolves = false;
+      const { service } = createService({
+        settings: createMockSettingsService({ tagging: { enabled: true } }),
+      });
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'ffmpeg');
       expect(check).toMatchObject({ state: 'error' });

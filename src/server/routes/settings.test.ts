@@ -180,20 +180,41 @@ describe('settings routes', () => {
   });
 
   describe('PUT /api/settings (processing)', () => {
-    it('saves processing settings with valid ffmpeg path', async () => {
+    it('saves the processing engine subset and forwards the exact payload to the service', async () => {
       const updated = {
         ...mockSettings,
-        processing: { outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+        processing: { ...mockSettings.processing, outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({
         method: 'PUT',
         url: '/api/settings',
-        payload: { processing: { ffmpegPath: '/usr/bin/ffmpeg' } },
+        payload: { processing: { outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' } },
       });
 
       expect(res.statusCode).toBe(200);
+      // The removed editable ffmpegPath field is gone — assert the service receives exactly the
+      // engine fields sent, and nothing more, so a silently-dropped or injected field is caught.
+      expect(services.settings.update).toHaveBeenCalledWith({
+        processing: { outputFormat: 'mp3', bitrate: 256, mergeBehavior: 'always' },
+      });
+      expect(JSON.parse(res.payload).processing.bitrate).toBe(256);
+    });
+
+    it('strips the removed ffmpegPath field before it reaches the service', async () => {
+      (services.settings.update as Mock).mockResolvedValue(mockSettings);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { processing: { bitrate: 192, ffmpegPath: '/usr/bin/ffmpeg' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const payload = (services.settings.update as Mock).mock.calls[0]![0];
+      expect(payload.processing).not.toHaveProperty('ffmpegPath');
+      expect(payload.processing.bitrate).toBe(192);
     });
   });
 
