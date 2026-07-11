@@ -327,7 +327,7 @@ describe('Search → Grab flow E2E', () => {
     });
 
     it('returns 500 without crashing when orchestrator throws null', async () => {
-      vi.spyOn(e2e.services.downloadOrchestrator, 'grab').mockRejectedValueOnce(null);
+      vi.spyOn(e2e.services.downloadOrchestrator, 'grabInternal').mockRejectedValueOnce(null);
       const res = await e2e.app.inject({
         method: 'POST',
         url: '/api/search/grab',
@@ -338,7 +338,7 @@ describe('Search → Grab flow E2E', () => {
     });
 
     it('returns 500 without crashing when orchestrator throws a plain string', async () => {
-      vi.spyOn(e2e.services.downloadOrchestrator, 'grab').mockRejectedValueOnce('unexpected failure');
+      vi.spyOn(e2e.services.downloadOrchestrator, 'grabInternal').mockRejectedValueOnce('unexpected failure');
       const res = await e2e.app.inject({
         method: 'POST',
         url: '/api/search/grab',
@@ -349,7 +349,7 @@ describe('Search → Grab flow E2E', () => {
     });
 
     it('returns 500 without crashing when orchestrator throws a plain object without a code property', async () => {
-      vi.spyOn(e2e.services.downloadOrchestrator, 'grab').mockRejectedValueOnce({ message: 'no code here' });
+      vi.spyOn(e2e.services.downloadOrchestrator, 'grabInternal').mockRejectedValueOnce({ message: 'no code here' });
       const res = await e2e.app.inject({
         method: 'POST',
         url: '/api/search/grab',
