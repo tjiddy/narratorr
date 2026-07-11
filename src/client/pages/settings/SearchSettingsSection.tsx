@@ -3,6 +3,7 @@ import { SearchIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { NumberField } from '@/components/settings/NumberField';
+import { InfoTip } from '@/components/settings/InfoTip';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { protocolPreferenceSchema, searchPrioritySchema, searchFormSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
@@ -43,12 +44,12 @@ function toPayload(data: SearchFormData) {
   };
 }
 
-/** Two-line option explainer for the Search priority row — spans, not <p> (description sits inside a <p>). */
-function SearchPriorityDescription() {
+/** Two-line option explainer — lives in the Search-priority InfoTip; spans, not <p> (rendered inside a <p>). */
+function SearchPriorityExplainer() {
   return (
     <>
-      <span className="block"><span className="font-medium text-foreground/70">Audio Quality:</span> Prioritize higher bitrate releases. May download full cast or alternative narrator editions.</span>
-      <span className="block mt-0.5"><span className="font-medium text-foreground/70">Narrator Accuracy:</span> Prioritize releases matching the narrator from metadata. May result in lower quality audio.</span>
+      <span className="block"><span className="font-medium">Audio Quality:</span> Prioritize higher bitrate releases. May download full cast or alternative narrator editions.</span>
+      <span className="block mt-1"><span className="font-medium">Narrator Accuracy:</span> Prioritize releases matching the narrator from metadata. May result in lower quality audio.</span>
     </>
   );
 }
@@ -102,7 +103,16 @@ export function SearchSettingsSection() {
             />
           </SettingsRow>
 
-          <SettingsRow htmlFor="searchPriority" label="Search priority" description={<SearchPriorityDescription />}>
+          <SettingsRow
+            htmlFor="searchPriority"
+            label="Search priority"
+            description={
+              <>
+                Which trade-off wins when ranking search results.{' '}
+                <InfoTip label="Search priority options"><SearchPriorityExplainer /></InfoTip>
+              </>
+            }
+          >
             <div className="w-56">
               <SelectWithChevron id="searchPriority" {...register('searchPriority')}>
                 {searchPrioritySchema.options.map((prio) => (
@@ -121,29 +131,23 @@ export function SearchSettingsSection() {
               </SelectWithChevron>
             </div>
           </SettingsRow>
+          <SettingsRow htmlFor="rssEnabled" label="RSS sync" description="Poll indexer RSS feeds to discover releases for wanted books">
+            <ToggleSwitch id="rssEnabled" {...register('rssEnabled')} />
+          </SettingsRow>
+
+          <SettingsRow htmlFor="rssIntervalMinutes" label="RSS interval" description="How often to poll RSS feeds (5-1440 minutes).">
+            <NumberField
+              id="rssIntervalMinutes"
+              {...register('rssIntervalMinutes', { valueAsNumber: true })}
+              min={5}
+              max={1440}
+              step={1}
+              placeholder="30"
+              suffix="minutes"
+              error={errors.rssIntervalMinutes?.message}
+            />
+          </SettingsRow>
         </SettingsTable>
-
-        <div>
-          <h3 className="text-sm font-semibold mb-3">RSS Sync</h3>
-          <SettingsTable>
-            <SettingsRow htmlFor="rssEnabled" label="RSS sync" description="Poll indexer RSS feeds to discover releases for wanted books">
-              <ToggleSwitch id="rssEnabled" {...register('rssEnabled')} />
-            </SettingsRow>
-
-            <SettingsRow htmlFor="rssIntervalMinutes" label="RSS interval" description="How often to poll RSS feeds (5-1440 minutes).">
-              <NumberField
-                id="rssIntervalMinutes"
-                {...register('rssIntervalMinutes', { valueAsNumber: true })}
-                min={5}
-                max={1440}
-                step={1}
-                placeholder="30"
-                suffix="minutes"
-                error={errors.rssIntervalMinutes?.message}
-              />
-            </SettingsRow>
-          </SettingsTable>
-        </div>
 
         {isDirty && (
           <button

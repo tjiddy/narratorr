@@ -11,8 +11,11 @@ export function SettingsLayout() {
       <PageHeader title="Settings" subtitle="Configure your Narratorr installation" />
 
       <div className="flex flex-col lg:flex-row gap-8">
-        {/* Navigation Sidebar */}
-        <nav className="lg:w-56 shrink-0 animate-fade-in-up stagger-1">
+        {/* Navigation Sidebar — sticky on desktop so the nav stays usable while long pages
+            scroll. self-start is load-bearing: flex children stretch to row height by default,
+            and a full-height item has no room left to stick within. top-24 clears the app
+            header (sticky, sm:h-20 = 80px) with a 16px gap — top-8 would pin under it. */}
+        <nav className="lg:w-56 shrink-0 lg:sticky lg:top-24 lg:self-start animate-fade-in-up stagger-1">
           <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0">
             {settingsPageRegistry.map((item) => {
               const to = item.path ? `/settings/${item.path}` : '/settings';

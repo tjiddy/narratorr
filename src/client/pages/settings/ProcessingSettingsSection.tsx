@@ -7,6 +7,7 @@ import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { NumberField } from '@/components/settings/NumberField';
+import { InfoTip } from '@/components/settings/InfoTip';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
@@ -104,20 +105,32 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
     >
       <SettingsTable>
         <SettingsRow
+          layout="stacked"
           htmlFor="postProcessingScript"
           label="Post-processing script"
-          description={<>Absolute path to the script. Leave empty to disable. Runs with <EnvChip>NARRATORR_BOOK_TITLE</EnvChip>, <EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip>, <EnvChip>NARRATORR_IMPORT_PATH</EnvChip>, and <EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip> in its environment.</>}
+          description={
+            <>
+              Absolute path to the script. Leave empty to disable.{' '}
+              <InfoTip label="Script environment variables">
+                <span className="block mb-1.5">The script runs with these environment variables set:</span>
+                <span className="block space-y-1">
+                  <span className="block"><EnvChip>NARRATORR_BOOK_TITLE</EnvChip></span>
+                  <span className="block"><EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip></span>
+                  <span className="block"><EnvChip>NARRATORR_IMPORT_PATH</EnvChip></span>
+                  <span className="block"><EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip></span>
+                </span>
+              </InfoTip>
+            </>
+          }
         >
-          <div className="flex flex-col items-end gap-1">
-            <input
-              id="postProcessingScript"
-              type="text"
-              {...register('postProcessingScript')}
-              placeholder="/path/to/script.sh"
-              className={`w-72 max-w-full ${errorInputClass(!!errors.postProcessingScript)}`}
-            />
-            {errors.postProcessingScript && <span className="text-xs text-destructive">{errors.postProcessingScript.message}</span>}
-          </div>
+          <input
+            id="postProcessingScript"
+            type="text"
+            {...register('postProcessingScript')}
+            placeholder="/path/to/script.sh"
+            className={errorInputClass(!!errors.postProcessingScript)}
+          />
+          {errors.postProcessingScript && <span className="block mt-1 text-xs text-destructive">{errors.postProcessingScript.message}</span>}
         </SettingsRow>
 
         <SettingsRow
@@ -207,7 +220,15 @@ export function ProcessingSettingsSection() {
           <SettingsRow
             htmlFor="writeOpf"
             label="OPF metadata sidecar"
-            description={<>Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">metadata.opf</code> into each book folder on import. Using Audiobookshelf? Enable this and set “Prefer OPF metadata” in ABS.</>}
+            description={
+              <>
+                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">metadata.opf</code> into each book folder on import.{' '}
+                <InfoTip label="Audiobookshelf setup">
+                  Using Audiobookshelf? Enable this, then turn on “Prefer OPF metadata” in your ABS
+                  library settings so it reads the sidecar instead of the audio file’s tags.
+                </InfoTip>
+              </>
+            }
           >
             <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
           </SettingsRow>

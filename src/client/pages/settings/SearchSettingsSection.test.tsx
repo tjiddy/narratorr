@@ -326,6 +326,7 @@ describe('SearchSettingsSection', () => {
 
   describe('search priority dropdown (#439)', () => {
     it('renders search priority dropdown with both options and per-option descriptions', async () => {
+      const user = userEvent.setup();
       renderWithProviders(<SearchSettingsSection />);
 
       await waitFor(() => {
@@ -337,8 +338,12 @@ describe('SearchSettingsSection', () => {
       expect(options[0]).toHaveTextContent('Audio Quality');
       expect(options[1]).toHaveTextContent('Narrator Accuracy');
 
-      expect(screen.getByText(/Prioritize higher bitrate releases/)).toBeInTheDocument();
-      expect(screen.getByText(/Prioritize releases matching the narrator/)).toBeInTheDocument();
+      // The per-option explainer moved behind the row's InfoTip — open it, then assert both lines.
+      expect(screen.queryByText(/Prioritize higher bitrate releases/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Search priority options' }));
+      const tip = screen.getByRole('tooltip');
+      expect(tip).toHaveTextContent(/Prioritize higher bitrate releases/);
+      expect(tip).toHaveTextContent(/Prioritize releases matching the narrator/);
     });
 
     it('selecting quality and saving fires mutation with correct payload', async () => {
