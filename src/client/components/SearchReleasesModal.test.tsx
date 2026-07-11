@@ -320,8 +320,8 @@ describe('SearchReleasesModal', () => {
 
     it('does not double-submit: the confirm button is disabled while the replace is pending', async () => {
       const { user } = await openConfirm();
-      let resolveReplace!: (v: unknown) => void;
-      vi.mocked(api.searchGrab).mockImplementationOnce(() => new Promise((r) => { resolveReplace = r; }));
+      let resolveReplace!: (v: typeof successDownload) => void;
+      vi.mocked(api.searchGrab).mockImplementationOnce(() => new Promise<typeof successDownload>((r) => { resolveReplace = r; }));
       const confirmBtn = screen.getByRole('button', { name: 'Cancel & Replace' });
       await user.click(confirmBtn);
       await waitFor(() => expect(confirmBtn).toBeDisabled());
