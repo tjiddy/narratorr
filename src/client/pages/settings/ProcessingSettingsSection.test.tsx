@@ -37,7 +37,7 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Tag Embedding/)).toBeInTheDocument();
     expect(screen.getByLabelText('OPF metadata sidecar')).toBeInTheDocument();
-    expect(screen.getByLabelText('Post-Processing Script')).toBeInTheDocument();
+    expect(screen.getByLabelText('Post-processing script')).toBeInTheDocument();
   });
 
   it('enables the ffmpeg-dependent automations and shows the Audio Tools breadcrumb when ffmpeg is detected', async () => {
@@ -57,7 +57,7 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getAllByText(/see ffmpeg requirements in Audio Tools/).length).toBeGreaterThanOrEqual(2);
     // ffmpeg-free automations stay available.
     expect(screen.getByLabelText('OPF metadata sidecar')).toBeEnabled();
-    expect(screen.getByLabelText('Post-Processing Script')).toBeEnabled();
+    expect(screen.getByLabelText('Post-processing script')).toBeEnabled();
   });
 
   it('fails safe — gates auto-merge + Tag Embedding when the status query errors', async () => {

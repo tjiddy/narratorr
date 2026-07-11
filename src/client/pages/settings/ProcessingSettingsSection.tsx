@@ -2,11 +2,11 @@ import { type ReactNode } from 'react';
 import { type UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
 import { Link } from 'react-router-dom';
-import { ZapIcon, AlertTriangleIcon } from '@/components/icons';
-import { FormField } from '@/components/settings/FormField';
+import { ZapIcon, AlertTriangleIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
 import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
@@ -89,37 +89,59 @@ function AutoMergeDescription({ gated }: { gated: boolean }): ReactNode {
   );
 }
 
+/** A monospaced env-var chip for the script's description copy. */
+function EnvChip({ children }: { children: ReactNode }) {
+  return <code className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{children}</code>;
+}
+
 function CustomScriptSection({ register, errors }: Pick<UseFormReturn<ProcessingFormData>, 'register'> & { errors: UseFormReturn<ProcessingFormData>['formState']['errors'] }) {
   return (
-    <div className="pt-6 mt-6 border-t border-border">
-      <div className="mb-4">
-        <h3 className="text-sm font-semibold">Custom script</h3>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Run a custom script after each successful import. To run ffmpeg or other transforms on each downloaded book, configure a post-processing script here.
-        </p>
-      </div>
-      <div className="space-y-5">
-        <FormField
-          id="postProcessingScript"
-          label="Post-Processing Script"
-          registration={register('postProcessingScript')}
-          error={errors.postProcessingScript}
-          placeholder="/path/to/script.sh"
-          hint={<>Absolute path to a script. Leave empty to disable. Environment variables: <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_TITLE</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_AUTHOR</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_PATH</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_FILE_COUNT</code>.</>}
-        />
-        <FormField
-          id="postProcessingScriptTimeout"
-          label="Script Timeout (seconds)"
-          type="number"
-          registration={register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
-          error={errors.postProcessingScriptTimeout}
-          min={1}
-          step={1}
-          placeholder="300"
-          hint="Maximum time in seconds before the script is killed. Default: 300 (5 minutes)."
-        />
-      </div>
-    </div>
+    <SettingsSection
+      icon={<TerminalIcon className="w-5 h-5 text-primary" />}
+      title="Custom script"
+      description="Run a script after each successful import — hand off to another tool, or run ffmpeg and other transforms on every downloaded book."
+    >
+      <SettingsTable>
+        <SettingsRow
+          htmlFor="postProcessingScript"
+          label="Post-processing script"
+          description={<>Absolute path to the script. Leave empty to disable. Runs with <EnvChip>NARRATORR_BOOK_TITLE</EnvChip>, <EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip>, <EnvChip>NARRATORR_IMPORT_PATH</EnvChip>, and <EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip> in its environment.</>}
+        >
+          <div className="flex flex-col items-end gap-1">
+            <input
+              id="postProcessingScript"
+              type="text"
+              {...register('postProcessingScript')}
+              placeholder="/path/to/script.sh"
+              className={`w-72 max-w-full ${errorInputClass(!!errors.postProcessingScript)}`}
+            />
+            {errors.postProcessingScript && <span className="text-xs text-destructive">{errors.postProcessingScript.message}</span>}
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
+          htmlFor="postProcessingScriptTimeout"
+          label="Script timeout"
+          description="Maximum time before the script is killed. Default: 300 (5 minutes)."
+        >
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2">
+              <input
+                id="postProcessingScriptTimeout"
+                type="number"
+                {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
+                min={1}
+                step={1}
+                placeholder="300"
+                className={`w-24 text-center ${errorInputClass(!!errors.postProcessingScriptTimeout)}`}
+              />
+              <span className="text-sm text-muted-foreground">seconds</span>
+            </div>
+            {errors.postProcessingScriptTimeout && <span className="text-xs text-destructive">{errors.postProcessingScriptTimeout.message}</span>}
+          </div>
+        </SettingsRow>
+      </SettingsTable>
+    </SettingsSection>
   );
 }
 
@@ -144,12 +166,12 @@ export function ProcessingSettingsSection() {
   const autoMergeDownloads = watch('autoMergeDownloads');
 
   return (
-    <SettingsSection
-      icon={<ZapIcon className="w-5 h-5 text-primary" />}
-      title="Post Processing"
-      description="Automations that run on their own after a download lands. None run on Library or Manual Import."
-    >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+    <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-6">
+      <SettingsSection
+        icon={<ZapIcon className="w-5 h-5 text-primary" />}
+        title="Post Processing"
+        description="Automations that run on their own after a download lands. None run on Library or Manual Import."
+      >
         <SettingsTable>
           <SettingsRow
             htmlFor="autoMergeDownloads"
@@ -195,19 +217,19 @@ export function ProcessingSettingsSection() {
             <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
           </SettingsRow>
         </SettingsTable>
+      </SettingsSection>
 
-        <CustomScriptSection register={register} errors={errors} />
+      <CustomScriptSection register={register} errors={errors} />
 
-        {isDirty && (
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
-          >
-            {mutation.isPending ? 'Saving...' : 'Save'}
-          </button>
-        )}
-      </form>
-    </SettingsSection>
+      {isDirty && (
+        <button
+          type="submit"
+          disabled={mutation.isPending}
+          className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+        >
+          {mutation.isPending ? 'Saving...' : 'Save'}
+        </button>
+      )}
+    </form>
   );
 }
