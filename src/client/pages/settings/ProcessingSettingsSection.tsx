@@ -1,5 +1,4 @@
 import { type ReactNode } from 'react';
-import { type UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
 import { Link } from 'react-router-dom';
 import { ZapIcon, AlertTriangleIcon, TerminalIcon } from '@/components/icons';
@@ -15,35 +14,29 @@ import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
+const saveButtonClass = 'px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in';
+
 // Post Processing = the "when": automations that fire after a download. The merge/convert
-// ENGINE config (the "how") lives on the Audio Tools page. This form owns the processing
-// automation fields + the whole tagging category; each saves as a partial patch so it never
-// clobbers the Audio Tools engine subset.
-const processingFormSchema = z.object({
+// ENGINE config (the "how") lives on the Audio Tools page. TWO independent forms — one per card,
+// each with its own dirty-gated Save (the app-wide per-card convention). Each saves only its own
+// subset; the backend patch-merges categories, so the two forms (and the Audio Tools engine
+// subset) never clobber each other.
+
+// ─── Automations card (processing automations + the whole tagging category) ───
+
+const automationsFormSchema = z.object({
   autoMergeDownloads: z.boolean(),
-  postProcessingScript: z.string(),
-  postProcessingScriptTimeout: postProcessingScriptTimeoutField.optional(),
   taggingEnabled: z.boolean(),
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
   writeOpf: z.boolean(),
-}).superRefine((data, ctx) => {
-  if (data.postProcessingScript?.trim() && data.postProcessingScriptTimeout == null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['postProcessingScriptTimeout'],
-      message: 'Timeout is required when a post-processing script is configured',
-    });
-  }
 });
 
-type ProcessingFormData = z.infer<typeof processingFormSchema>;
+type AutomationsFormData = z.infer<typeof automationsFormSchema>;
 
-function toFormData(settings: AppSettings): ProcessingFormData {
+function toAutomationsFormData(settings: AppSettings): AutomationsFormData {
   return {
     autoMergeDownloads: settings.processing.autoMergeDownloads,
-    postProcessingScript: settings.processing.postProcessingScript,
-    postProcessingScriptTimeout: settings.processing.postProcessingScriptTimeout,
     taggingEnabled: settings.tagging.enabled,
     tagMode: settings.tagging.mode,
     embedCover: settings.tagging.embedCover,
@@ -51,12 +44,10 @@ function toFormData(settings: AppSettings): ProcessingFormData {
   };
 }
 
-function toPayload(data: ProcessingFormData) {
+function toAutomationsPayload(data: AutomationsFormData) {
   return {
     processing: {
       autoMergeDownloads: data.autoMergeDownloads,
-      postProcessingScript: data.postProcessingScript,
-      ...(data.postProcessingScriptTimeout !== undefined && { postProcessingScriptTimeout: data.postProcessingScriptTimeout }),
     },
     tagging: {
       enabled: data.taggingEnabled,
@@ -91,69 +82,7 @@ function AutoMergeDescription({ gated }: { gated: boolean }): ReactNode {
   );
 }
 
-/** A monospaced env-var chip for the script's description copy. */
-function EnvChip({ children }: { children: ReactNode }) {
-  return <code className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{children}</code>;
-}
-
-function CustomScriptSection({ register, errors }: Pick<UseFormReturn<ProcessingFormData>, 'register'> & { errors: UseFormReturn<ProcessingFormData>['formState']['errors'] }) {
-  return (
-    <SettingsSection
-      icon={<TerminalIcon className="w-5 h-5 text-primary" />}
-      title="Custom script"
-      description="Run a script after each successful import — hand off to another tool, or run ffmpeg and other transforms on every downloaded book."
-    >
-      <SettingsTable>
-        <SettingsRow
-          layout="stacked"
-          htmlFor="postProcessingScript"
-          label="Post-processing script"
-          description={
-            <>
-              Absolute path to the script. Leave empty to disable.{' '}
-              <InfoTip label="Script environment variables">
-                <span className="block mb-1.5">The script runs with these environment variables set:</span>
-                <span className="block space-y-1">
-                  <span className="block"><EnvChip>NARRATORR_BOOK_TITLE</EnvChip></span>
-                  <span className="block"><EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip></span>
-                  <span className="block"><EnvChip>NARRATORR_IMPORT_PATH</EnvChip></span>
-                  <span className="block"><EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip></span>
-                </span>
-              </InfoTip>
-            </>
-          }
-        >
-          <input
-            id="postProcessingScript"
-            type="text"
-            {...register('postProcessingScript')}
-            placeholder="/path/to/script.sh"
-            className={errorInputClass(!!errors.postProcessingScript)}
-          />
-          {errors.postProcessingScript && <span className="block mt-1 text-xs text-destructive">{errors.postProcessingScript.message}</span>}
-        </SettingsRow>
-
-        <SettingsRow
-          htmlFor="postProcessingScriptTimeout"
-          label="Script timeout"
-          description="Maximum time before the script is killed. Default: 300 (5 minutes)."
-        >
-          <NumberField
-            id="postProcessingScriptTimeout"
-            {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
-            min={1}
-            step={1}
-            placeholder="300"
-            suffix="seconds"
-            error={errors.postProcessingScriptTimeout?.message}
-          />
-        </SettingsRow>
-      </SettingsTable>
-    </SettingsSection>
-  );
-}
-
-export function ProcessingSettingsSection() {
+function AutomationsForm() {
   const ffmpegStatus = useFfmpegStatus();
   // Optimistic while the status query LOADS — avoids a flash of "needs ffmpeg" on a
   // normal (ffmpeg-present) install — but fail SAFE on a query error: an errored status
@@ -161,25 +90,25 @@ export function ProcessingSettingsSection() {
   // ffmpeg may be absent. Real enforcement is still the backend FFMPEG_NOT_CONFIGURED gate.
   const ffmpegAvailable = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
-  const { form, mutation, onSubmit } = useSettingsForm<ProcessingFormData>({
-    schema: processingFormSchema,
-    defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    select: toFormData,
-    toPayload,
+  const { form, mutation, onSubmit } = useSettingsForm<AutomationsFormData>({
+    schema: automationsFormSchema,
+    defaultValues: toAutomationsFormData({ ...DEFAULT_SETTINGS } as AppSettings),
+    select: toAutomationsFormData,
+    toPayload: toAutomationsPayload,
     successMessage: 'Post processing settings saved',
   });
 
-  const { register, handleSubmit, watch, formState: { errors, isDirty } } = form;
+  const { register, handleSubmit, watch, formState: { isDirty } } = form;
   const taggingEnabled = watch('taggingEnabled');
   const autoMergeDownloads = watch('autoMergeDownloads');
 
   return (
-    <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-6">
-      <SettingsSection
-        icon={<ZapIcon className="w-5 h-5 text-primary" />}
-        title="Post Processing"
-        description="Automations that run on their own after a download lands. None run on Library or Manual Import."
-      >
+    <SettingsSection
+      icon={<ZapIcon className="w-5 h-5 text-primary" />}
+      title="Post Processing"
+      description="Automations that run on their own after a download lands. None run on Library or Manual Import."
+    >
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <SettingsTable>
           <SettingsRow
             htmlFor="autoMergeDownloads"
@@ -233,19 +162,135 @@ export function ProcessingSettingsSection() {
             <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
           </SettingsRow>
         </SettingsTable>
-      </SettingsSection>
 
-      <CustomScriptSection register={register} errors={errors} />
+        {isDirty && (
+          <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
+            {mutation.isPending ? 'Saving...' : 'Save'}
+          </button>
+        )}
+      </form>
+    </SettingsSection>
+  );
+}
 
-      {isDirty && (
-        <button
-          type="submit"
-          disabled={mutation.isPending}
-          className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
-        >
-          {mutation.isPending ? 'Saving...' : 'Save'}
-        </button>
-      )}
-    </form>
+// ─── Custom script card (script path + timeout — its own form and Save) ───
+
+const customScriptFormSchema = z.object({
+  postProcessingScript: z.string(),
+  postProcessingScriptTimeout: postProcessingScriptTimeoutField.optional(),
+}).superRefine((data, ctx) => {
+  if (data.postProcessingScript?.trim() && data.postProcessingScriptTimeout == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['postProcessingScriptTimeout'],
+      message: 'Timeout is required when a post-processing script is configured',
+    });
+  }
+});
+
+type CustomScriptFormData = z.infer<typeof customScriptFormSchema>;
+
+function toCustomScriptFormData(settings: AppSettings): CustomScriptFormData {
+  return {
+    postProcessingScript: settings.processing.postProcessingScript,
+    postProcessingScriptTimeout: settings.processing.postProcessingScriptTimeout,
+  };
+}
+
+function toCustomScriptPayload(data: CustomScriptFormData) {
+  return {
+    processing: {
+      postProcessingScript: data.postProcessingScript,
+      ...(data.postProcessingScriptTimeout !== undefined && { postProcessingScriptTimeout: data.postProcessingScriptTimeout }),
+    },
+  };
+}
+
+/** A monospaced env-var chip for the script's description copy. */
+function EnvChip({ children }: { children: ReactNode }) {
+  return <code className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{children}</code>;
+}
+
+function CustomScriptForm() {
+  const { form, mutation, onSubmit } = useSettingsForm<CustomScriptFormData>({
+    schema: customScriptFormSchema,
+    defaultValues: toCustomScriptFormData({ ...DEFAULT_SETTINGS } as AppSettings),
+    select: toCustomScriptFormData,
+    toPayload: toCustomScriptPayload,
+    successMessage: 'Custom script settings saved',
+  });
+
+  const { register, handleSubmit, formState: { errors, isDirty } } = form;
+
+  return (
+    <SettingsSection
+      icon={<TerminalIcon className="w-5 h-5 text-primary" />}
+      title="Custom script"
+      description="Run a script after each successful import — hand off to another tool, or run ffmpeg and other transforms on every downloaded book."
+    >
+      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+        <SettingsTable>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="postProcessingScript"
+            label="Post-processing script"
+            description={
+              <>
+                Absolute path to the script. Leave empty to disable.{' '}
+                <InfoTip label="Script environment variables">
+                  <span className="block mb-1.5">The script runs with these environment variables set:</span>
+                  <span className="block space-y-1">
+                    <span className="block"><EnvChip>NARRATORR_BOOK_TITLE</EnvChip></span>
+                    <span className="block"><EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip></span>
+                    <span className="block"><EnvChip>NARRATORR_IMPORT_PATH</EnvChip></span>
+                    <span className="block"><EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip></span>
+                  </span>
+                </InfoTip>
+              </>
+            }
+          >
+            <input
+              id="postProcessingScript"
+              type="text"
+              {...register('postProcessingScript')}
+              placeholder="/path/to/script.sh"
+              className={errorInputClass(!!errors.postProcessingScript)}
+            />
+            {errors.postProcessingScript && <span className="block mt-1 text-xs text-destructive">{errors.postProcessingScript.message}</span>}
+          </SettingsRow>
+
+          <SettingsRow
+            htmlFor="postProcessingScriptTimeout"
+            label="Script timeout"
+            description="Maximum time before the script is killed. Default: 300 (5 minutes)."
+          >
+            <NumberField
+              id="postProcessingScriptTimeout"
+              {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
+              min={1}
+              step={1}
+              placeholder="300"
+              suffix="seconds"
+              error={errors.postProcessingScriptTimeout?.message}
+            />
+          </SettingsRow>
+        </SettingsTable>
+
+        {isDirty && (
+          <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
+            {mutation.isPending ? 'Saving...' : 'Save'}
+          </button>
+        )}
+      </form>
+    </SettingsSection>
+  );
+}
+
+export function ProcessingSettingsSection() {
+  return (
+    <div className="space-y-8">
+      <AutomationsForm />
+      <CustomScriptForm />
+    </div>
   );
 }

@@ -119,5 +119,27 @@ describe('ProcessingSettingsSection', () => {
     expect(payload.processing).not.toHaveProperty('mergeBehavior');
     expect(payload.processing).not.toHaveProperty('bitrate');
     expect(payload.processing).not.toHaveProperty('maxConcurrentProcessing');
+    // Script fields belong to the Custom Script card's OWN form (per-card Save split).
+    expect(payload.processing).not.toHaveProperty('postProcessingScript');
+    expect(payload.processing).not.toHaveProperty('postProcessingScriptTimeout');
+  });
+
+  it('Custom Script card saves independently with ONLY its script subset', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProcessingSettingsSection />);
+    await waitFor(() => expect(screen.getByLabelText('Post-processing script')).toBeInTheDocument());
+
+    await user.type(screen.getByLabelText('Post-processing script'), '/scripts/notify.sh');
+    const timeout = screen.getByLabelText('Script timeout');
+    await user.tripleClick(timeout);
+    await user.keyboard('120');
+    // Two forms live on this page — only the script card is dirty, so exactly one Save renders.
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalled());
+    const payload = mockApi.updateSettings.mock.calls[0]![0] as { processing: Record<string, unknown>; tagging?: Record<string, unknown> };
+    expect(payload.processing).toEqual({ postProcessingScript: '/scripts/notify.sh', postProcessingScriptTimeout: 120 });
+    // The automations/tagging subset is the OTHER form's payload — must be absent entirely.
+    expect(payload).not.toHaveProperty('tagging');
   });
 });
