@@ -243,23 +243,26 @@ function ApiKeySection({ apiKey }: { apiKey: string }) {
               {apiKey}
             </code>
             <button
+              type="button"
               onClick={handleCopy}
               className="shrink-0 p-3 rounded-xl border border-border hover:bg-muted hover:border-primary/30 transition-all duration-200 focus-ring"
+              aria-label="Copy API key to clipboard"
               title="Copy to clipboard"
             >
               <CopyIcon className="w-4 h-4" />
               {copied && <span className="sr-only">Copied!</span>}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowConfirm(true)}
+              disabled={mutation.isPending}
+              className="shrink-0 p-3 rounded-xl border border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 disabled:opacity-50 transition-all duration-200 focus-ring"
+              aria-label="Regenerate API key"
+              title="Regenerate API key"
+            >
+              <RefreshIcon className="w-4 h-4" />
+            </button>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setShowConfirm(true)}
-            className="mt-3 flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl hover:bg-amber-500/10 transition-all duration-200"
-          >
-            <RefreshIcon className="w-4 h-4" />
-            Regenerate API Key
-          </button>
         </SettingsRow>
       </SettingsTable>
       <ConfirmModal
