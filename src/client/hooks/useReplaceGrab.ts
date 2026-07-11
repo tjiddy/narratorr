@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
@@ -76,18 +76,30 @@ export function useReplaceGrab(onGrabSuccess: () => void, bookTitle: string): Us
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<PendingReplace | null>(null);
 
-  const reset = useCallback(() => setPending(null), []);
+  // Lifecycle generation (F17): every teardown — modal close / book change — bumps
+  // this. A grab's callbacks capture the generation at `onMutate` time and no-op if
+  // it has since changed, so a response that resolves AFTER the modal closed or its
+  // book switched can never repopulate a confirm for, or close/replace against, the
+  // wrong book. `reset()` is the teardown seam the modal already calls on both events.
+  const genRef = useRef(0);
+  const reset = useCallback(() => {
+    genRef.current += 1;
+    setPending(null);
+  }, []);
 
   const grabMutation = useMutation({
     mutationFn: (payload: GrabPayload) => api.searchGrab(payload),
-    onSuccess: () => {
+    onMutate: () => ({ gen: genRef.current }),
+    onSuccess: (_data, _vars, context: { gen: number }) => {
+      if (context.gen !== genRef.current) return; // stale response after close/book change
       toast.success('Download started! Check the Activity page.');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
       setPending(null);
       onGrabSuccess();
     },
-    onError: (err: Error, variables: GrabPayload) => {
+    onError: (err: Error, variables: GrabPayload, context: { gen: number } | undefined) => {
+      if (context && context.gen !== genRef.current) return; // stale response after close/book change
       const wasConfirmedRetry = variables.replace === true;
       if (err instanceof ApiError && err.status === 409) {
         const body = (err.body ?? {}) as ConflictBody;

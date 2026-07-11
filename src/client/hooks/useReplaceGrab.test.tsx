@@ -146,6 +146,43 @@ describe('useReplaceGrab (#1857)', () => {
     expect(result.current.confirm).toBeNull();
   });
 
+  // #1857 F17 — a response that resolves AFTER reset() (modal close / book change)
+  // must NOT act on the (now-stale) lifecycle. reset() is the shared teardown seam.
+  it('ignores a stale ACTIVE_DOWNLOAD_EXISTS that resolves after reset — no confirm repopulated', async () => {
+    let rejectGrab!: (e: unknown) => void;
+    searchGrab.mockImplementationOnce(() => new Promise((_res, rej) => { rejectGrab = rej; }));
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
+
+    await act(async () => { result.current.grab(payload); await new Promise((r) => setTimeout(r, 0)); }); // in-flight
+    expect(rejectGrab).toBeDefined();
+    act(() => result.current.reset());             // close / book change
+    await act(async () => {                          // stale 409 arrives afterwards
+      rejectGrab(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 1 }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(result.current.confirm).toBeNull();     // did not repopulate the confirm
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale success that resolves after reset — does not call onGrabSuccess or toast success', async () => {
+    let resolveGrab!: (v: unknown) => void;
+    searchGrab.mockImplementationOnce(() => new Promise((res) => { resolveGrab = res; }));
+    const onSuccess = vi.fn();
+    const { result } = renderHook(() => useReplaceGrab(onSuccess, BOOK_TITLE), { wrapper });
+
+    await act(async () => { result.current.grab(payload); await new Promise((r) => setTimeout(r, 0)); });
+    expect(resolveGrab).toBeDefined();
+    act(() => result.current.reset());
+    await act(async () => {
+      resolveGrab({ id: 1 });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
   it('reset clears a pending confirm (modal close / book change)', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 1 }));
     const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
