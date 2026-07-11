@@ -226,7 +226,7 @@ export function NamingSettingsSection() {
             description="Template for audiobook folder paths."
           >
             <FormatField
-              id="folderFormat" placeholder="{author}/{title}"
+              id="folderFormat" inputAriaLabel="Folder format" placeholder="{author}/{title}"
               error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} previewMultiEdition={folderPreviewMultiEdition} hasValue={!!folderFormat}
               previewNote={
                 <p className="mt-2 text-xs text-muted-foreground">
@@ -253,7 +253,7 @@ export function NamingSettingsSection() {
             description="Template for audio file names."
           >
             <FormatField
-              id="fileFormat" placeholder="{author} - {title}"
+              id="fileFormat" inputAriaLabel="File format" placeholder="{author} - {title}"
               error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewFileEdition={filePreviewEdition} previewSuffix=".m4b" previewSuffixMultiFile=".mp3" hasValue={!!fileFormat}
               onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
               onKeyDown={(e) => createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)(e)}

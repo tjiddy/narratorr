@@ -10,6 +10,9 @@ import type { TokenGroup } from '@core/utils/naming.js';
 
 export interface FormatFieldProps {
   id: string;
+  /** Accessible name for the input — the row header is a SPAN (it hosts the interactive "?"
+      button, which a <label> may not contain), so the input must label itself. */
+  inputAriaLabel: string;
   placeholder: string;
   error?: FieldError | undefined;
   preview: string;
@@ -51,13 +54,14 @@ export function FormatFieldHeader({ text, ariaLabel, onOpenTokenModal }: { text:
 // The label row lives in the wrapping SettingsRow header (span variant — a <label> may not
 // contain the "?" button, interactive content is invalid inside labels). FormatField renders
 // only the editor body: input, warnings, token panel, previews.
-export function FormatField({ id, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewFileEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
+export function FormatField({ id, inputAriaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewFileEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (
     <div>
       <input
         id={id}
         type="text"
+        aria-label={inputAriaLabel}
         {...registerProps}
         ref={inputRef}
         onKeyDown={onKeyDown}
