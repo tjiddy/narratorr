@@ -200,6 +200,16 @@ jobs:
             FFPROBE_EXECUTABLE=no
           fi
 
+          # Verify the ffmpeg third-party notice + project LICENSE shipped in the image and
+          # are non-empty (#1862). Substantive compliance validation is the docker-build gate;
+          # this is runtime deployment evidence that the files reached the published image.
+          if docker exec smoke-test test -s /app/THIRD_PARTY_NOTICES.md \
+            && docker exec smoke-test test -s /app/LICENSE; then
+            NOTICES_SHIPPED=yes
+          else
+            NOTICES_SHIPPED=no
+          fi
+
           docker stop smoke-test > /dev/null 2>&1 || true
           docker rm smoke-test > /dev/null 2>&1 || true
 
@@ -227,7 +237,12 @@ jobs:
             exit 1
           fi
 
-          echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION, ffmpeg major $FFMPEG_MAJOR, ffprobe $FFPROBE_PATH)"
+          if [ "$NOTICES_SHIPPED" != "yes" ]; then
+            echo "::error::third-party notice or LICENSE missing/empty in published image — expected non-empty /app/THIRD_PARTY_NOTICES.md and /app/LICENSE (#1862)"
+            exit 1
+          fi
+
+          echo "Smoke test passed (HTTP $HTTP_STATUS, Node $NODE_VERSION, ffmpeg major $FFMPEG_MAJOR, ffprobe $FFPROBE_PATH, notices $NOTICES_SHIPPED)"
 
       - name: Create GitHub Release
         if: github.ref_type == 'tag'

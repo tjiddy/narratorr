@@ -67,6 +67,29 @@ COPY --from=builder /app/drizzle ./drizzle
 # Copy package files for production install
 COPY pnpm-lock.yaml package.json ./
 
+# Ship the third-party notice and the project license alongside the bundled ffmpeg
+# binary + node_modules, so the GPL/LGPL + permissive-attribution obligations (and
+# Narratorr's own GPL-3.0-only LICENSE) travel to every image puller (#1862).
+COPY THIRD_PARTY_NOTICES.md LICENSE ./
+
+# License-compliance build gate (#1862): fail `docker build` — and therefore block the
+# atomic build-push — unless the shipped notice + LICENSE are present and non-empty,
+# the notice pins the *actually installed* ffmpeg version-release (catches any unpinned
+# Alpine 3.23 ffmpeg bump), and the notice mentions every covered component and every
+# distinct license heading + the FFmpeg attribution. Runs per-arch under buildx.
+RUN set -eu; \
+    test -s /app/THIRD_PARTY_NOTICES.md; \
+    test -s /app/LICENSE; \
+    V="$(apk info ffmpeg 2>/dev/null | head -n1 | sed -n 's/^ffmpeg-\(.*\) description:.*/\1/p')"; \
+    test -n "$V"; \
+    grep -q "$V" /app/THIRD_PARTY_NOTICES.md || { echo "notice does not pin installed ffmpeg version-release: $V" >&2; exit 1; }; \
+    for c in ffmpeg x264 x265 lame xvidcore aom dav1d libvpx libwebp libvorbis libtheora opus svt-av1 rav1e libjxl libva libvpl shaderc; do \
+      grep -q "$c" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing covered component: $c" >&2; exit 1; }; \
+    done; \
+    for h in 'GNU GENERAL PUBLIC LICENSE' 'GNU LESSER GENERAL PUBLIC LICENSE' 'GNU LIBRARY GENERAL PUBLIC LICENSE' 'Apache License' 'BSD 2-Clause' 'BSD 3-Clause' 'The Clear BSD License' 'MIT License' 'FFmpeg'; do \
+      grep -q "$h" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing license heading/attribution: $h" >&2; exit 1; }; \
+    done
+
 # Copy s6-overlay service definition
 COPY docker/root/ /
 

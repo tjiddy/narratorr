@@ -13,6 +13,9 @@ build/
 .vscode/
 *.md
 !README.md
+# The third-party notice must ship in the runner image (COPY below). The
+# extensionless LICENSE is already in context — *.md does not match it.
+!THIRD_PARTY_NOTICES.md
 
 # Environment
 .env
