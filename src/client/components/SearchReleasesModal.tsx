@@ -9,8 +9,10 @@ import { resolveBookQualityInputs, calculateQuality } from '@core/utils/index.js
 import { queryKeys } from '@/lib/queryKeys';
 import { XIcon, RefreshIcon } from '@/components/icons';
 import { Modal } from '@/components/Modal';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesContent } from '@/components/SearchReleasesContent';
 import { useSearchStream } from '@/hooks/useSearchStream';
+import { useReplaceGrab } from '@/hooks/useReplaceGrab';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 // ============================================================================
@@ -96,8 +98,10 @@ function SearchReleasesHeader({
 // Component
 // ============================================================================
 
-/** Fields from grabSchema that come from SearchResult (not from UI context). */
-const CONTEXT_KEYS = new Set(['bookId']);
+/** Fields from grabSchema that are NOT sourced from a SearchResult: `bookId` comes
+ *  from UI context, and `replace` (#1857) is set only on a user-confirmed replace —
+ *  excluding it here keeps the picker from treating it as a SearchResult field. */
+const CONTEXT_KEYS = new Set(['bookId', 'replace']);
 const GRAB_RESULT_KEYS = Object.keys(grabSchema.shape).filter(k => !CONTEXT_KEYS.has(k));
 
 /** Pick SearchResult-sourced grab-contract fields dynamically from grabSchema.shape.
@@ -168,25 +172,25 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     });
   };
 
-  const grabMutation = useMutation({
-    mutationFn: api.searchGrab,
-    onSuccess: () => {
-      toast.success('Download started! Check the Activity page.');
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-      onClose();
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to grab: ${getErrorMessage(err)}. If a download is already active for this book, cancel it manually from the Activity page first.`);
-    },
-  });
+  // Grab + cancel-&-replace state machine (#1857) — owns the multi-code 409
+  // branching, the confirm dialog, and pending-replace state.
+  const { grab, isGrabbing, confirm, reset: resetReplace } = useReplaceGrab(onClose);
+
+  // State hygiene: clear any pending-replace on modal close and on book change —
+  // every teardown path resets it (asymmetric cleanup here is a known bug pattern).
+  useEffect(() => {
+    if (!isOpen) resetReplace();
+  }, [isOpen, resetReplace]);
+  useEffect(() => {
+    resetReplace();
+  }, [book.id, resetReplace]);
 
   const handleGrab = (result: SearchResult) => {
     if (!result.downloadUrl) {
       toast.error('No download link available for this result');
       return;
     }
-    grabMutation.mutate({
+    grab({
       ...pickGrabFields(result),
       bookId: book.id,
     });
@@ -224,7 +228,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           searchResponse={state.results}
           resultKeys={resultKeys}
           book={book}
-          isGrabbing={grabMutation.isPending}
+          isGrabbing={isGrabbing}
           isBlacklisting={blacklistMutation.isPending}
           onCancelIndexer={actions.cancelIndexer}
           onShowResults={actions.showResults}
@@ -236,6 +240,18 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           onBlacklist={handleBlacklist}
         />
       </div>
+      {confirm && (
+        <ConfirmModal
+          isOpen={confirm.isOpen}
+          title={confirm.title}
+          message={confirm.message}
+          confirmLabel="Cancel & Replace"
+          cancelLabel="Keep Existing"
+          confirmDisabled={confirm.isPending}
+          onConfirm={confirm.onConfirm}
+          onCancel={confirm.onCancel}
+        />
+      )}
     </Modal>
   );
 }
