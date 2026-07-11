@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 import { BookOpenIcon } from '@/components/icons';
 import { TestButton } from '@/components/TestButton';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { inputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { api } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -80,42 +82,41 @@ export function MetadataSettingsSection() {
       description="Configure metadata providers for book details and series info."
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <div>
-          <label htmlFor="audibleRegion" className="block text-sm font-medium mb-2">Region</label>
-          <SelectWithChevron id="audibleRegion" {...register('audibleRegion')}>
-            {audibleRegionSchema.options.map((region) => (
-              <option key={region} value={region}>
-                {REGION_LABELS[region] ?? region}
-              </option>
-            ))}
-          </SelectWithChevron>
-          <p className="text-sm text-muted-foreground mt-2">
-            Select your Audible region for metadata lookups. Affects which catalog is searched for audiobook details, narrators, and cover art.
-          </p>
-        </div>
+        <SettingsTable>
+          <SettingsRow htmlFor="audibleRegion" label="Region" description="Select your Audible region for metadata lookups. Affects which catalog is searched for audiobook details, narrators, and cover art.">
+            <div className="w-56">
+              <SelectWithChevron id="audibleRegion" {...register('audibleRegion')}>
+                {audibleRegionSchema.options.map((region) => (
+                  <option key={region} value={region}>{REGION_LABELS[region] ?? region}</option>
+                ))}
+              </SelectWithChevron>
+            </div>
+          </SettingsRow>
 
-        <div>
-          <label htmlFor="hardcoverApiKey" className="block text-sm font-medium mb-2">Hardcover API Key</label>
-          <div className="flex gap-2">
-            <input
-              id="hardcoverApiKey"
-              type="password"
-              autoComplete="off"
-              {...register('hardcoverApiKey')}
-              className="flex-1 px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-              placeholder="Paste your Hardcover API key"
-            />
-            <TestButton
-              testing={testing}
-              onClick={handleTest}
-              variant="form"
-              disabled={!canTest}
-            />
-          </div>
-          <p className="text-sm text-muted-foreground mt-2">
-            Used to populate the Series card with Hardcover-canonical members. Leave blank to show only books from your library that share the series name.
-          </p>
-        </div>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="hardcoverApiKey"
+            label="Hardcover API key"
+            description="Used to populate the Series card with Hardcover-canonical members. Leave blank to show only books from your library that share the series name."
+          >
+            <div className="flex gap-2">
+              <input
+                id="hardcoverApiKey"
+                type="password"
+                autoComplete="off"
+                {...register('hardcoverApiKey')}
+                className={`flex-1 ${inputClass}`}
+                placeholder="Paste your Hardcover API key"
+              />
+              <TestButton
+                testing={testing}
+                onClick={handleTest}
+                variant="form"
+                disabled={!canTest}
+              />
+            </div>
+          </SettingsRow>
+        </SettingsTable>
 
         {isDirty && (
           <button

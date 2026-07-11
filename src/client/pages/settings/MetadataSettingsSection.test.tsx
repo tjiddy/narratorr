@@ -45,7 +45,7 @@ describe('MetadataSettingsSection', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Region')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Hardcover API Key')).toBeInTheDocument();
+    expect(screen.getByLabelText('Hardcover API key')).toBeInTheDocument();
   });
 
   it('renders stored key as masked sentinel', async () => {
@@ -57,7 +57,7 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('********');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('********');
     });
   });
 
@@ -65,7 +65,7 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
     const testButton = screen.getByRole('button', { name: /test/i });
     expect(testButton).toBeDisabled();
@@ -76,9 +76,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toBeInTheDocument();
+      expect(screen.getByLabelText('Hardcover API key')).toBeInTheDocument();
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, '   ');
     const testButton = screen.getByRole('button', { name: /test/i });
     expect(testButton).toBeDisabled();
@@ -89,9 +89,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toBeInTheDocument();
+      expect(screen.getByLabelText('Hardcover API key')).toBeInTheDocument();
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'my-new-key');
     const testButton = screen.getByRole('button', { name: /test/i });
     expect(testButton).not.toBeDisabled();
@@ -103,9 +103,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'my-new-key');
     await user.click(screen.getByRole('button', { name: /test/i }));
 
@@ -125,7 +125,7 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('********');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('********');
     });
     const testButton = screen.getByRole('button', { name: /test/i });
     expect(testButton).not.toBeDisabled();
@@ -142,9 +142,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'key');
     await user.click(screen.getByRole('button', { name: /test/i }));
 
@@ -159,9 +159,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'bad-key');
     await user.click(screen.getByRole('button', { name: /test/i }));
 
@@ -177,9 +177,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'key');
     const testButton = screen.getByRole('button', { name: /test/i });
     await user.click(testButton);
@@ -201,9 +201,9 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'plain-key');
     await user.click(screen.getByRole('button', { name: /test/i }));
 
@@ -259,10 +259,10 @@ describe('MetadataSettingsSection', () => {
     renderWithProviders(<MetadataSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Hardcover API Key')).toHaveValue('');
+      expect(screen.getByLabelText('Hardcover API key')).toHaveValue('');
     });
 
-    const input = screen.getByLabelText('Hardcover API Key');
+    const input = screen.getByLabelText('Hardcover API key');
     await user.type(input, 'sk-new-1234');
     await user.click(screen.getByRole('button', { name: /save/i }));
 

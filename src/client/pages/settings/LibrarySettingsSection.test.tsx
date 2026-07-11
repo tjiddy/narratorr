@@ -297,12 +297,14 @@ describe('LibrarySettingsSection', () => {
   });
 
   describe('card split — library card does NOT contain new-book defaults (#284)', () => {
-    it('does not render Search Immediately or Monitor for Upgrades toggles', async () => {
+    it('does not render Search immediately or Monitor for Upgrades toggles', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
         expect(screen.getByText('Library Path')).toBeInTheDocument();
       });
-      expect(screen.queryByLabelText('Search Immediately')).not.toBeInTheDocument();
+      // Label string must track the live NewBookDefaults label ('Search immediately' since the
+      // row-table conversion) or this NEGATIVE guard passes vacuously against a stale name.
+      expect(screen.queryByLabelText('Search immediately')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
     });
 
