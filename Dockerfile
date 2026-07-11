@@ -75,8 +75,9 @@ COPY THIRD_PARTY_NOTICES.md LICENSE ./
 # License-compliance build gate (#1862): fail `docker build` — and therefore block the
 # atomic build-push — unless the shipped notice + LICENSE are present and non-empty,
 # the notice pins the *actually installed* ffmpeg version-release (catches any unpinned
-# Alpine 3.23 ffmpeg bump), and the notice mentions every covered component and every
-# distinct license heading + the FFmpeg attribution. Runs per-arch under buildx.
+# Alpine 3.23 ffmpeg bump), mentions every covered component and every distinct license
+# family + the FFmpeg attribution + the AOM/rav1e patent grant, and contains NO SPDX
+# placeholder templates (each permissive component must carry its real notice). Per-arch.
 RUN set -eu; \
     test -s /app/THIRD_PARTY_NOTICES.md; \
     test -s /app/LICENSE; \
@@ -89,10 +90,13 @@ RUN set -eu; \
       grep -q "$c" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing covered component: $c" >&2; exit 1; }; \
     done; \
     for h in 'GNU GENERAL PUBLIC LICENSE' 'GNU LESSER GENERAL PUBLIC LICENSE' 'GNU LIBRARY GENERAL PUBLIC LICENSE' \
-             'Mozilla Public License' 'Apache License' 'BSD 2-Clause' 'BSD 3-Clause' 'The Clear BSD License' \
-             'MIT License' 'ISC License' 'X11 License' 'bzip2 License' 'WTFPL' 'FFmpeg'; do \
-      grep -q "$h" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing license heading/attribution: $h" >&2; exit 1; }; \
-    done
+             'Mozilla Public License' 'Apache License' 'BSD-2-Clause' 'BSD-3-Clause' 'BSD-3-Clause-Clear' \
+             'MIT' 'ISC' 'X11' 'bzip2' 'WTFPL' 'Alliance for Open Media Patent License' 'FFmpeg'; do \
+      grep -q "$h" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing license family/attribution: $h" >&2; exit 1; }; \
+    done; \
+    if grep -qE '<year>|<owner>|<copyright holders>|\[Owner Organization\]' /app/THIRD_PARTY_NOTICES.md; then \
+      echo "notice contains SPDX placeholder template(s) instead of real component notices" >&2; exit 1; \
+    fi
 
 # Copy s6-overlay service definition
 COPY docker/root/ /

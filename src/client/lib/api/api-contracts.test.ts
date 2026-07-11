@@ -713,6 +713,16 @@ describe('systemApi', () => {
     await systemApi.runSystemTask('cleanup');
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/cleanup/run', expect.objectContaining({ method: 'POST' }));
   });
+
+  it('getSystemInfo → GET /system/info', async () => {
+    await systemApi.getSystemInfo();
+    expect(mockFetchApi).toHaveBeenCalledWith('/system/info');
+  });
+
+  it('getThirdPartyNotices → GET /system/notices', async () => {
+    await systemApi.getThirdPartyNotices();
+    expect(mockFetchApi).toHaveBeenCalledWith('/system/notices');
+  });
 });
 
 // ============================================================================
@@ -802,6 +812,13 @@ describe('response pass-through', () => {
     const data = { version: '1.0', status: 'ok' };
     mockFetchApi.mockResolvedValue(data);
     const result = await systemApi.getSystemStatus();
+    expect(result).toBe(data);
+  });
+
+  it('systemApi.getThirdPartyNotices returns fetchApi response', async () => {
+    const data = { content: '# Third-Party Notices' };
+    mockFetchApi.mockResolvedValue(data);
+    const result = await systemApi.getThirdPartyNotices();
     expect(result).toBe(data);
   });
 

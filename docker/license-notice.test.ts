@@ -31,23 +31,28 @@ const COVERED_COMPONENTS = [
   'zimg', 'libzmq', 'libdrm', 'libvdpau', 'alsa-lib', 'libpulse', 'v4l-utils', 'libx11', 'libxcb',
 ];
 
-// Distinct license headings + the FFmpeg attribution the gate greps for.
+// Distinct license families + FFmpeg attribution + AOM/rav1e patent grant the gate greps for.
 const LICENSE_MARKERS = [
   'GNU GENERAL PUBLIC LICENSE',
   'GNU LESSER GENERAL PUBLIC LICENSE',
   'GNU LIBRARY GENERAL PUBLIC LICENSE',
   'Mozilla Public License',
   'Apache License',
-  'BSD 2-Clause',
-  'BSD 3-Clause',
-  'The Clear BSD License',
-  'MIT License',
-  'ISC License',
-  'X11 License',
-  'bzip2 License',
+  'BSD-2-Clause',
+  'BSD-3-Clause',
+  'BSD-3-Clause-Clear',
+  'MIT',
+  'ISC',
+  'X11',
+  'bzip2',
   'WTFPL',
+  'Alliance for Open Media Patent License',
   'FFmpeg',
 ];
+
+// SPDX placeholder tokens that must NOT appear — each permissive component must ship its
+// real upstream notice, not a template (F1).
+const PLACEHOLDER_TOKENS = ['<year>', '<owner>', '<copyright holders>', '[Owner Organization]'];
 
 describe('ffmpeg license-notice build gate (Dockerfile)', () => {
   const df = fs.readFileSync(dockerfile, 'utf-8');
@@ -81,10 +86,20 @@ describe('ffmpeg license-notice build gate (Dockerfile)', () => {
     }
   });
 
-  it('gates on every distinct license heading and the FFmpeg attribution', () => {
+  it('gates on every distinct license family and the FFmpeg attribution', () => {
     for (const m of LICENSE_MARKERS) {
       expect(df, `Dockerfile gate should reference license marker "${m}"`).toContain(m);
     }
+  });
+
+  it('gates against SPDX placeholder templates (F1) — real per-component notices only', () => {
+    // The gate fails the build if any placeholder token survives in the notice.
+    expect(df).toMatch(/grep -qE '<year>\|<owner>\|<copyright holders>\|\\\[Owner Organization\\\]'/);
+    expect(df).toContain('SPDX placeholder template');
+  });
+
+  it('gates on the AOM/rav1e custom patent-license text (F2)', () => {
+    expect(df).toContain('Alliance for Open Media Patent License');
   });
 });
 
@@ -115,6 +130,23 @@ describe('THIRD_PARTY_NOTICES.md content matches the gate', () => {
     expect(content).toContain('END OF TERMS AND CONDITIONS');
     // LGPL 2.1 distinctive clause wording
     expect(content).toContain('GNU LESSER GENERAL PUBLIC LICENSE');
+  });
+
+  it('reproduces real per-component copyright notices, not SPDX placeholder templates (F1)', () => {
+    for (const token of PLACEHOLDER_TOKENS) {
+      expect(content, `notice must not contain placeholder "${token}"`).not.toContain(token);
+    }
+    // Spot-check a few real upstream copyright statements are actually reproduced.
+    expect(content).toContain('Alliance for Open Media'); // aom
+    expect(content).toContain('VideoLAN'); // dav1d / librist
+    expect(content).toContain('Xiph.Org'); // opus / vorbis / theora
+    expect(content).toContain('Intel Corporation'); // libva
+  });
+
+  it('reproduces the full AOM/rav1e custom patent-license text, not just a link (F2)', () => {
+    expect(content).toContain('Alliance for Open Media Patent License 1.0');
+    // Distinctive body wording of the AOM Patent License grant.
+    expect(content).toMatch(/Patent Claims|patent license/i);
   });
 
   it('includes a corresponding-source contract for the copyleft set', () => {

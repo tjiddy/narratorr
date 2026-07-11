@@ -716,4 +716,22 @@ describe('#324 — restore modal contract change', () => {
       expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
     });
   });
+
+  // Page-level wiring: guards against deleting <ThirdPartyNotices /> from the returned
+  // tree (deletion heuristic — the isolated ThirdPartyNotices tests stay green if the
+  // parent stops composing it). The api mock resolves getThirdPartyNotices with notice text.
+  describe('licenses section composition (#1862)', () => {
+    it('composes the Licenses & Third-Party Notices section with its notice content', async () => {
+      mockApi.getBackups.mockResolvedValue([]);
+
+      renderWithProviders(<SystemSettings />);
+
+      // Section heading comes from the composed <ThirdPartyNotices /> SettingsSection.
+      await waitFor(() => {
+        expect(screen.getByText('Licenses & Third-Party Notices')).toBeInTheDocument();
+      });
+      // The mocked notice body is rendered, proving the child query actually ran in-page.
+      expect(screen.getByText(/FFmpeg/)).toBeInTheDocument();
+    });
+  });
 });
