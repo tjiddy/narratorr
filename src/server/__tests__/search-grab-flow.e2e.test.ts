@@ -21,6 +21,8 @@ import {
 const MAGNET_URI = `magnet:?xt=urn:btih:${TORRENT_HASH}&dn=The+Way+of+Kings`;
 const REPLACEMENT_HASH = 'bbf4c61ddcc5e8a2dabede0f3b482cd9aea9434e';
 const MAGNET_URI_2 = `magnet:?xt=urn:btih:${REPLACEMENT_HASH}&dn=Replacement+Release`;
+const REPLACEMENT_HASH_3 = 'ccf4c61ddcc5e8a2dabede0f3b482cd9aea9434f';
+const MAGNET_URI_3 = `magnet:?xt=urn:btih:${REPLACEMENT_HASH_3}&dn=Third+Release`;
 
 const mswServer = setupServer();
 
@@ -411,6 +413,21 @@ describe('Search → Grab flow E2E', () => {
       expect(newDl.json().status).toBe('downloading');
       const book = await e2e.app.inject({ method: 'GET', url: `/api/books/${replaceBookId}` });
       expect(book.json().status).toBe('downloading');
+
+      // A THIRD distinct-release confirmed replace RECLASSIFIES against the first
+      // replacement's result — it now sees Release B as the active-to-replace, and
+      // replaces it (Release B → failed, Release C → downloading).
+      const third = await e2e.app.inject({
+        method: 'POST', url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI_3, title: 'Release C', protocol: 'torrent', bookId: replaceBookId, indexerId, replace: true },
+      });
+      expect(third.statusCode).toBe(201);
+      const thirdId = third.json().id;
+      expect(thirdId).not.toBe(newId);
+      const bDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${newId}` });
+      expect(bDl.json().status).toBe('failed'); // Release B was reclassified as the active-to-replace
+      const cDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${thirdId}` });
+      expect(cDl.json().status).toBe('downloading');
     });
 
     it('a book with a pipeline-stage download returns PIPELINE_ACTIVE and cancels nothing', async () => {
