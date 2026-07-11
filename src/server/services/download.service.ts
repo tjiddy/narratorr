@@ -20,7 +20,7 @@ import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { resolveAdapterDownloadUrl } from './download-resolve-adapter-url.js';
-import { resolveArtifact, insertDownloadRecord } from './download-record.js';
+import { resolveArtifact, insertDownloadRecordOrCompensate } from './download-record.js';
 import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 
 import type { BookRow, DownloadRow } from './types.js';
@@ -337,45 +337,15 @@ export class DownloadService {
     const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
     this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    const result = await this.insertOrCompensate(params, { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId });
+    // On insert failure after a successful client-add, best-effort compensate the
+    // orphaned tracked download (delete-files) or log it for recovery (#1857 F1/F5/F18).
+    const result = await insertDownloadRecordOrCompensate(
+      this.db, this.log, params,
+      { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId },
+      (id) => this.downloadClientService.getAdapter(id),
+    );
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
     return this.getById(result[0]!.id) as Promise<DownloadWithBook>;
-  }
-
-  /**
-   * Insert the download row; on insert failure AFTER a successful client-add,
-   * best-effort compensate a tracked download (`removeDownload(externalId, true)`
-   * — delete-files, matching the cancel path, NOT the adapter default `false`,
-   * F30) before rethrowing, so the just-admitted payload is not left orphaned
-   * (F5). The no-orphan guarantee is best-effort, not absolute: if compensation
-   * ALSO fails, the untracked external download is logged with its `externalId`
-   * for operator recovery (F18). Blackhole (null externalId) has no id to
-   * compensate — the handoff file may remain (pre-existing behavior).
-   */
-  private async insertOrCompensate(
-    params: Parameters<typeof insertDownloadRecord>[2],
-    ctx: Parameters<typeof insertDownloadRecord>[3],
-  ): Promise<{ id: number }[]> {
-    try {
-      return await insertDownloadRecord(this.db, this.log, params, ctx);
-    } catch (insertError: unknown) {
-      if (ctx.externalId) {
-        try {
-          const adapter = await this.downloadClientService.getAdapter(ctx.clientId);
-          // A null adapter means compensation cannot run — treat it as a
-          // compensation FAILURE (not a silent skip), so the orphaned external
-          // download is still logged for operator recovery (#1857 F1/F18).
-          if (!adapter) throw new Error('download client adapter unavailable for compensation');
-          await adapter.removeDownload(ctx.externalId, true);
-        } catch (compError: unknown) {
-          this.log.warn(
-            { error: serializeError(compError), externalId: ctx.externalId, clientId: ctx.clientId },
-            'Download insert failed AND compensation removeDownload failed — orphaned external download (operator recovery needed)',
-          );
-        }
-      }
-      throw insertError;
-    }
   }
 
   async updateProgress(id: number, progress: number, _bookId?: number): Promise<void> {

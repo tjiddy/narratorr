@@ -6,6 +6,7 @@ import type { DownloadProtocol } from '../../core/index.js';
 import { DownloadUrl, type LanAllowlist } from '../../core/utils/download-url.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
+import { serializeError } from '../utils/serialize-error.js';
 
 /** Resolve a downloadUrl into a typed artifact. HTTP grabs (torrent *and*
  *  usenet) need the LAN allowlist: torrent fetches the bytes here, while the
@@ -42,6 +43,62 @@ export interface InsertDownloadRecordCtx {
   clientId: number;
   clientType: string;
   externalId: string | null;
+}
+
+/** Minimal adapter shape the insert-failure compensation needs. */
+interface CompensationAdapter {
+  removeDownload(externalId: string, deleteFiles: boolean): Promise<unknown>;
+}
+
+/**
+ * Insert the download row; on insert failure AFTER a successful client-add,
+ * best-effort compensate a tracked download via `removeDownload(externalId, true)`
+ * (delete-files, matching the cancel path — NOT the adapter default `false`, F30)
+ * before rethrowing, so the just-admitted payload is not left orphaned (F5). The
+ * no-orphan guarantee is best-effort, not absolute (#1857 F1/F18): BOTH a null
+ * adapter (compensation cannot run) AND a throwing `removeDownload` leave a live
+ * untracked external download — either way the orphaned `externalId` is logged for
+ * operator recovery. Blackhole (null externalId) has no id to compensate.
+ */
+export async function insertDownloadRecordOrCompensate(
+  db: Db,
+  log: FastifyBaseLogger,
+  params: InsertDownloadRecordParams,
+  ctx: InsertDownloadRecordCtx,
+  getAdapter: (clientId: number) => Promise<CompensationAdapter | null>,
+): Promise<{ id: number }[]> {
+  try {
+    return await insertDownloadRecord(db, log, params, ctx);
+  } catch (insertError: unknown) {
+    if (ctx.externalId) await compensateOrphanedDownload(log, getAdapter, ctx.clientId, ctx.externalId);
+    throw insertError;
+  }
+}
+
+async function compensateOrphanedDownload(
+  log: FastifyBaseLogger,
+  getAdapter: (clientId: number) => Promise<CompensationAdapter | null>,
+  clientId: number,
+  externalId: string,
+): Promise<void> {
+  try {
+    const adapter = await getAdapter(clientId);
+    if (adapter) {
+      await adapter.removeDownload(externalId, true);
+      return;
+    }
+  } catch (compError: unknown) {
+    log.warn(
+      { error: serializeError(compError), externalId, clientId },
+      'Download insert failed AND compensation removeDownload failed — orphaned external download (operator recovery needed)',
+    );
+    return;
+  }
+  // Adapter was null — compensation could not run; the orphan still needs logging.
+  log.warn(
+    { externalId, clientId },
+    'Download insert failed AND compensation adapter unavailable — orphaned external download (operator recovery needed)',
+  );
 }
 
 export async function insertDownloadRecord(
