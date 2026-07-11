@@ -169,14 +169,11 @@ function stagedTxDb(returningSeq: Array<Array<{ id: number }>>, recheckRows: Dow
         });
       })(),
     };
-    try {
-      const r = await cb(tx);
-      committed.push(...staged); // commit
-      return r;
-    } catch (e) {
-      // rollback — staged writes are discarded (never pushed to committed)
-      throw e;
-    }
+    // If cb throws (ClaimMissError), the await propagates and `committed.push`
+    // below never runs → staged writes are discarded (rollback). On resolve, commit.
+    const r = await cb(tx);
+    committed.push(...staged);
+    return r;
   });
   return { db: db as unknown as Db, committed, wherePredicates };
 }
