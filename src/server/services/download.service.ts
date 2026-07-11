@@ -21,6 +21,7 @@ import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { resolveAdapterDownloadUrl } from './download-resolve-adapter-url.js';
 import { resolveArtifact, insertDownloadRecord } from './download-record.js';
+import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 
 import type { BookRow, DownloadRow } from './types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
@@ -229,7 +230,40 @@ export class DownloadService {
     return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
   }
 
-  private async checkDuplicateDownloads(bookId: number): Promise<void> {
+  /**
+   * Duplicate/blocker guard with a per-call classification mode (#1857 F7):
+   *   - `legacy` (default) — the historical behavior: first replaceable row →
+   *     `ACTIVE_DOWNLOAD_EXISTS`, else non-replaceable → `PIPELINE_ACTIVE`, plus
+   *     the pending-auto-job guard. v1 + all auto callers keep this mode so their
+   *     `error.code` (and v1's serialized envelope bytes) are unchanged.
+   *   - `gatherAllBlockers` — only the internal `POST /api/search/grab` route:
+   *     gather ALL blockers, give `PIPELINE_ACTIVE` precedence, and populate the
+   *     structured `details` the route shapes into its 409 bodies. "Safely
+   *     replaceable" narrows to client-stage only (see `download-blockers.ts`).
+   */
+  private async checkDuplicateDownloads(
+    bookId: number,
+    mode: 'legacy' | 'gatherAllBlockers' = 'legacy',
+  ): Promise<void> {
+    if (mode === 'gatherAllBlockers') {
+      const classification = classifyBlockers(await gatherBookBlockers(this.db, bookId));
+      if (classification.kind === 'pipeline') {
+        throw new DuplicateDownloadError(
+          `Book ${bookId} has a download in the import pipeline`,
+          'PIPELINE_ACTIVE',
+          { reason: classification.reason },
+        );
+      }
+      if (classification.kind === 'replaceable') {
+        throw new DuplicateDownloadError(
+          `Book ${bookId} already has an active download`,
+          'ACTIVE_DOWNLOAD_EXISTS',
+          { active: classification.active },
+        );
+      }
+      return;
+    }
+
     const allActive = await this.getActiveByBookId(bookId);
     // Derive replaceability straight from the canonical `(clientStatus,
     // pipelineStage)` axes (S2b) rather than re-deriving the display status and
@@ -272,11 +306,13 @@ export class DownloadService {
     guid?: string | undefined;
     isFreeleech?: boolean | undefined;
     skipDuplicateCheck?: boolean | undefined;
+    classificationMode?: 'legacy' | 'gatherAllBlockers' | undefined;
+    infoHash?: string | undefined;
     source?: CreateEventInput['source'] | undefined;
     bookStatusAtGrab?: BookStatus | null | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
-      await this.checkDuplicateDownloads(params.bookId);
+      await this.checkDuplicateDownloads(params.bookId, params.classificationMode ?? 'legacy');
     }
 
     const protocol = params.protocol ?? 'torrent';
