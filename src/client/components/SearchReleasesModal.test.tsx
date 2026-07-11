@@ -274,6 +274,114 @@ describe('SearchReleasesModal', () => {
     });
   });
 
+  // #1857 F13 — the confirm-&-replace flow, driven as a real user interaction chain.
+  describe('cancel-&-replace confirm flow (#1857 F13)', () => {
+    const successDownload = {
+      id: 2, title: 'The Way of Kings [Unabridged]', protocol: 'torrent' as const,
+      status: 'queued' as const, clientStatus: 'queued' as const, pipelineStage: 'idle' as const,
+      progress: 0, addedAt: '2024-01-01T00:00:00Z', indexerName: null, seeders: null, completedAt: null,
+    };
+    const active409 = new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Existing Grab' }, count: 1 });
+
+    async function openConfirm(onClose = vi.fn()) {
+      setStreamResults(mockResults);
+      vi.mocked(api.searchGrab).mockRejectedValueOnce(active409);
+      const user = userEvent.setup();
+      renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />);
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]!);
+      await screen.findByText('Replace active download?');
+      return { user, onClose };
+    }
+
+    it('opens a ConfirmModal naming the active download + selected release on ACTIVE_DOWNLOAD_EXISTS', async () => {
+      await openConfirm();
+      // The confirm message is a single node carrying BOTH the active + selected titles.
+      const message = screen.getByText(/Existing Grab/);
+      expect(message).toHaveTextContent('The Way of Kings [Unabridged]');
+    });
+
+    it('declining ("Keep Existing") closes ONLY the confirm — Releases stays open, no replace issued', async () => {
+      const { user, onClose } = await openConfirm();
+      await user.click(screen.getByRole('button', { name: 'Keep Existing' }));
+      await waitFor(() => expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument());
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(api.searchGrab).toHaveBeenCalledTimes(1); // only the initial grab
+    });
+
+    it('confirming re-issues the grab with replace: true and closes the modal on success', async () => {
+      const { user, onClose } = await openConfirm();
+      vi.mocked(api.searchGrab).mockResolvedValueOnce(successDownload);
+      await user.click(screen.getByRole('button', { name: 'Cancel & Replace' }));
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(vi.mocked(api.searchGrab).mock.calls[1]![0]).toEqual(expect.objectContaining({ bookId: 1, replace: true }));
+    });
+
+    it('does not double-submit: the confirm button is disabled while the replace is pending', async () => {
+      const { user } = await openConfirm();
+      let resolveReplace!: (v: unknown) => void;
+      vi.mocked(api.searchGrab).mockImplementationOnce(() => new Promise((r) => { resolveReplace = r; }));
+      const confirmBtn = screen.getByRole('button', { name: 'Cancel & Replace' });
+      await user.click(confirmBtn);
+      await waitFor(() => expect(confirmBtn).toBeDisabled());
+      await user.click(confirmBtn); // second click is a no-op on a disabled button
+      resolveReplace(successDownload);
+      // Exactly one replace grab (call 2); no third call.
+      await waitFor(() => expect(api.searchGrab).toHaveBeenCalledTimes(2));
+    });
+
+    it('Escape with the confirm open closes ONLY the confirm dialog (Releases stays)', async () => {
+      const { user, onClose } = await openConfirm();
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument());
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('a confirmed replace that fails generically closes the confirm but leaves Releases OPEN', async () => {
+      const { user, onClose } = await openConfirm();
+      vi.mocked(api.searchGrab).mockRejectedValueOnce(new Error('client offline'));
+      await user.click(screen.getByRole('button', { name: 'Cancel & Replace' }));
+      await waitFor(() => expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument());
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled(); // user can pick another release
+    });
+
+    it('PIPELINE_ACTIVE shows a book-named toast and NO dialog', async () => {
+      setStreamResults(mockResults);
+      vi.mocked(api.searchGrab).mockRejectedValueOnce(new MockApiError(409, { code: 'PIPELINE_ACTIVE', reason: 'processing' }));
+      const user = userEvent.setup();
+      renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]!);
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('The Way of Kings')));
+      expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument();
+    });
+
+    it('clears pending confirm on book change', async () => {
+      setStreamResults(mockResults);
+      vi.mocked(api.searchGrab).mockRejectedValueOnce(active409);
+      const user = userEvent.setup();
+      // Render manually with a shared client so rerender keeps the providers.
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const wrap = (b: typeof mockBook) => (
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <SearchReleasesModal isOpen={true} book={b} onClose={vi.fn()} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+      const { rerender } = render(wrap(mockBook));
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]!);
+      await screen.findByText('Replace active download?');
+
+      rerender(wrap({ ...mockBook, id: 999, title: 'Different Book' }));
+      await waitFor(() => expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument());
+    });
+  });
+
   it('does not call onClose when backdrop is clicked (backdrop-click dismissal removed)', async () => {
     setStreamResults([]);
     const onClose = vi.fn();
