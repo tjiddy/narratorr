@@ -837,6 +837,46 @@ describe('DownloadService', () => {
       ).rejects.toThrow('UNIQUE constraint failed');
     });
 
+    // #1857 AC6/F5/F30 — client-add succeeded, insert failed → best-effort compensate
+    // the just-admitted tracked download with delete-files (externalId, true).
+    it('compensates a tracked download with removeDownload(externalId, true) when insert fails, then rethrows', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-456'),
+        removeDownload: vi.fn().mockResolvedValue(undefined),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        service.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-456', true);
+    });
+
+    it('logs an operator-recoverable orphan (not absolute no-orphan) when compensation ALSO fails', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+        removeDownload: vi.fn().mockRejectedValue(new Error('client offline')),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      // Insert error still surfaces even though compensation failed.
+      await expect(
+        svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-789' }),
+        expect.stringContaining('orphaned external download'),
+      );
+    });
+
     it('uses usenet protocol when specified', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('nzb-123'),
