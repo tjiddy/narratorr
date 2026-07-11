@@ -427,7 +427,7 @@ describe('runSearchJob', () => {
       seeders: 10,
       downloadUrl: 'magnet:?xt=urn:btih:french',
       language: 'french',
-      size: 500000,
+      size: 500_000_000,
     };
     const englishResult: SearchResult = {
       title: 'Book One',
@@ -436,7 +436,7 @@ describe('runSearchJob', () => {
       seeders: 10,
       downloadUrl: 'magnet:?xt=urn:btih:english',
       language: 'english',
-      size: 500000,
+      size: 500_000_000,
     };
     const indexer = createMockIndexerService([frenchResult, englishResult]);
     const download = createMockDownloadOrchestrator();
@@ -592,7 +592,9 @@ describe('searchAllWanted', () => {
   it('grabFloor=0 disables quality filtering (all results eligible)', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 600 }];
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
-    const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' } });
+    // minDownloadSize: 0 explicitly — this test proves grabFloor=0 disables MB/hr filtering on a
+    // deliberately tiny release; the (now 50MB) default size gate must not mask that premise.
+    const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 0 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
@@ -757,7 +759,7 @@ describe('searchAllWanted', () => {
       seeders: 10,
       downloadUrl: 'magnet:?xt=urn:btih:french',
       language: 'french',
-      size: 500000,
+      size: 500_000_000,
     };
     const indexer = createMockIndexerService([frenchResult]);
     const download = createMockDownloadOrchestrator();
@@ -782,7 +784,7 @@ describe('searchAllWanted', () => {
       seeders: 10,
       downloadUrl: 'magnet:?xt=urn:btih:english',
       language: 'english',
-      size: 500000,
+      size: 500_000_000,
     };
     const frenchResult: SearchResult = {
       title: 'Book One',
@@ -791,7 +793,7 @@ describe('searchAllWanted', () => {
       seeders: 10,
       downloadUrl: 'magnet:?xt=urn:btih:french',
       language: 'french',
-      size: 500000,
+      size: 500_000_000,
     };
     const indexer = createMockIndexerService([frenchResult, englishResult]);
     const download = createMockDownloadOrchestrator();
