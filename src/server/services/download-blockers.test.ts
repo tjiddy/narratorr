@@ -9,9 +9,10 @@ import {
   type BookBlockers,
 } from './download-blockers.js';
 import { ClaimMissError } from './download-errors.js';
-import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb } from '../__tests__/helpers.js';
+import { and, eq } from 'drizzle-orm';
+import { downloads } from '../../db/schema.js';
 import type { Db } from '../../db/index.js';
-import type { Mock } from 'vitest';
 import type { DownloadRow } from './types.js';
 
 function dl(partial: Partial<DownloadRow>): DownloadRow {
@@ -123,43 +124,102 @@ describe('hasNonReplaceableBlocker', () => {
   });
 });
 
-describe('claimReplaceableTargets (#1857 F17/F21/F63)', () => {
+/**
+ * Stateful staged/rollback transaction fixture (#1857 F4). Models what
+ * `createMockDb` cannot: a transaction that COMMITS staged writes on resolve and
+ * DISCARDS them on throw. Each guarded `transitionDownloadState` write is only
+ * staged when its `.returning()` resolves a non-empty row (the guard matched),
+ * driven by `returningSeq`; the recorded `where` predicates let the test prove the
+ * `expected` guard is present (deletion heuristic). `committed` is empty after a
+ * rollback — proving every original row is left unchanged.
+ */
+function stagedTxDb(returningSeq: Array<Array<{ id: number }>>, recheckRows: DownloadRow[] = [], recheckJobs: Array<{ id: number }> = []) {
+  const committed: Array<Record<string, unknown>> = [];
+  const wherePredicates: unknown[] = [];
+  let updateCall = 0;
+  const db = createMockDb();
+  db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+    const staged: Array<Record<string, unknown>> = [];
+    const tx = {
+      update: () => ({
+        set: (payload: Record<string, unknown>) => ({
+          where: (cond: unknown) => {
+            wherePredicates.push(cond);
+            return {
+              returning: async () => {
+                const rows = returningSeq[updateCall++] ?? [];
+                if (rows.length > 0) staged.push(payload); // would-be committed write
+                return rows;
+              },
+            };
+          },
+        }),
+      }),
+      // in-tx recheck gather: first select → rows, second → pending auto jobs
+      select: (() => {
+        let sel = 0;
+        return () => ({
+          from: () => ({
+            where: (_c: unknown) => ({
+              orderBy: async () => recheckRows,
+              limit: async () => recheckJobs,
+            }),
+          }),
+          _sel: sel++, // keep distinct
+        });
+      })(),
+    };
+    try {
+      const r = await cb(tx);
+      committed.push(...staged); // commit
+      return r;
+    } catch (e) {
+      // rollback — staged writes are discarded (never pushed to committed)
+      throw e;
+    }
+  });
+  return { db: db as unknown as Db, committed, wherePredicates };
+}
+
+describe('claimReplaceableTargets (#1857 F4/F17/F21/F63)', () => {
   const targets = [
     { id: 10, expected: { clientStatus: 'downloading' as const, pipelineStage: 'idle' as const } },
     { id: 11, expected: { clientStatus: 'queued' as const, pipelineStage: 'idle' as const } },
   ];
 
   it('guard-claims every target to (failed, idle) with the reason written atomically, then commits', async () => {
-    const db = createMockDb();
-    const updateChain = mockDbChain([{ id: 1 }]); // every guarded claim lands
-    db.update.mockReturnValue(updateChain);
-    // In-tx recheck: no rows, no pending auto job → no blocker.
-    db.select.mockReturnValueOnce(mockDbChain([])).mockReturnValueOnce(mockDbChain([]));
+    const { db, committed, wherePredicates } = stagedTxDb([[{ id: 1 }], [{ id: 1 }]]); // both land, recheck empty
+    await claimReplaceableTargets(db, 5, targets, 'Replaced by "New"');
 
-    await claimReplaceableTargets(db as unknown as Db, 5, targets, 'Replaced by "New"');
-
-    const setCalls = (updateChain.set as Mock).mock.calls.map((c) => c[0] as Record<string, unknown>);
-    // The sanctioned failure tuple + the replace reason land in the SAME statement (F63).
-    expect(setCalls).toContainEqual(expect.objectContaining({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Replaced by "New"' }));
-    expect((db.update as Mock).mock.calls.length).toBe(2); // one guarded claim per target
+    // Both rows committed with the sanctioned failure tuple + the replace reason (F63).
+    expect(committed).toHaveLength(2);
+    expect(committed[0]).toMatchObject({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Replaced by "New"' });
+    // Each claim carried the EXACT guarded predicate (id + observed tuple) — deletion heuristic.
+    expect(wherePredicates[0]).toEqual(and(eq(downloads.id, 10), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')));
+    expect(wherePredicates[1]).toEqual(and(eq(downloads.id, 11), eq(downloads.clientStatus, 'queued'), eq(downloads.pipelineStage, 'idle')));
   });
 
-  it('throws ClaimMissError (rolls back) when a claim guard-misses', async () => {
-    const db = createMockDb();
-    // First target lands, second misses (returning() empty).
-    db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }])).mockReturnValueOnce(mockDbChain([]));
+  it('second claim guard-miss throws ClaimMissError and ROLLS BACK the first (nothing committed)', async () => {
+    const { db, committed, wherePredicates } = stagedTxDb([[{ id: 1 }], []]); // first lands, second misses
 
-    await expect(claimReplaceableTargets(db as unknown as Db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
+    await expect(claimReplaceableTargets(db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
+
+    // The first row was STAGED but the sentinel rolled the whole tx back → 0 committed.
+    expect(committed).toHaveLength(0);
+    // Both guarded predicates were still issued (the guard IS present on both claims).
+    expect(wherePredicates[0]).toEqual(and(eq(downloads.id, 10), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')));
+    expect(wherePredicates[1]).toEqual(and(eq(downloads.id, 11), eq(downloads.clientStatus, 'queued'), eq(downloads.pipelineStage, 'idle')));
   });
 
-  it('throws ClaimMissError when the in-tx recheck finds a new non-replaceable blocker', async () => {
-    const db = createMockDb();
-    db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // all claims land
-    // Recheck: a pipeline-stage (importing) row appeared → blocker.
-    db.select
-      .mockReturnValueOnce(mockDbChain([dl({ id: 99, clientStatus: 'completed', pipelineStage: 'importing', externalId: 'e' })]))
-      .mockReturnValueOnce(mockDbChain([])); // no pending auto job
+  it('in-tx recheck finding a new non-replaceable blocker throws ClaimMissError and rolls back all claims', async () => {
+    // Both claims land, but the recheck finds an importing row → blocker → rollback.
+    const { db, committed } = stagedTxDb(
+      [[{ id: 1 }], [{ id: 1 }]],
+      [dl({ id: 99, clientStatus: 'completed', pipelineStage: 'importing', externalId: 'e' })],
+      [],
+    );
 
-    await expect(claimReplaceableTargets(db as unknown as Db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
+    await expect(claimReplaceableTargets(db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
+    expect(committed).toHaveLength(0); // every claimed row rolled back
   });
 });

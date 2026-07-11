@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import { and, eq } from 'drizzle-orm';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { downloads } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { DownloadClientService } from '../services/download-client.service.js';
@@ -80,31 +83,59 @@ describe('monitor job', () => {
   });
 
   // #1857 — guarded monitor transitions cannot resurrect a cancelled (replaced) row.
+  // Deletion-heuristic teeth: each test asserts the EXACT guarded WHERE predicate
+  // (id + the polled (clientStatus, pipelineStage) tuple). If `expected` were removed
+  // from the production transition, the WHERE would collapse to id-only and these
+  // assertions fail — the stale-writer suppression would no longer hold.
   describe('guarded transitions (#1857 F2/F14)', () => {
-    it('main branch: guard miss suppresses completion side effects (cancel landed between read and write)', async () => {
+    it('main branch: guard miss suppresses completion side effects AND writes the exact guarded predicate', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 7, progress: 0.5 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/dl', name: 'book', size: 1 });
-      // Guarded update misses (row already transitioned to (failed, idle) by a replace).
-      db.update.mockReturnValue(mockDbChain([]));
+      // Guarded update misses (row already transitioned to (failed, idle) by a replace):
+      // returning() resolves [] ONLY because the guarded predicate didn't match.
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
 
       await runMonitor();
 
+      // The write targets id + the polled tuple — removing `expected` breaks this.
+      expect((chain.where as Mock)).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
+      );
       // The stale completion write is skipped → no completion notification.
       expect(notifierService.notify).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith({ id: 1 }, 'Monitor update skipped — row changed since poll (guarded)');
     });
 
-    it('missing-item branch: guard miss returns before any failure/notify side effect', async () => {
+    it('main branch: an unchanged row (guard MATCHES) still lands and fires completion (proves the write is not dead)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 7, progress: 0.5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/dl', name: 'book', size: 1 });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guard matches → write lands
+
+      await runMonitor();
+
+      // Completion side effects DO fire when the guard matches (stale-writer guard is
+      // scoped to a genuine change, not a blanket suppression).
+      expect(notifierService.notify).toHaveBeenCalled();
+    });
+
+    it('missing-item branch: guard miss returns before any failure/notify side effect AND writes the exact guarded predicate', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 7, title: 'Replaced Book' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null); // replacement removed the client item
-      db.update.mockReturnValue(mockDbChain([])); // guarded failed-write misses (row already (failed, idle))
+      const chain = mockDbChain([]); // guarded failed-write misses (row already (failed, idle))
+      db.update.mockReturnValue(chain);
 
       await runMonitor();
 
+      expect((chain.where as Mock)).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
+      );
       // No failure notification, and the replaced row is NOT deleted.
       expect(notifierService.notify).not.toHaveBeenCalled();
       expect(db.delete).not.toHaveBeenCalled();
