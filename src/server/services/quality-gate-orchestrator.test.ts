@@ -10,6 +10,8 @@ import { QualityGateOrchestrator, type QualityGateOrchestratorOptionalDeps } fro
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
+import type { DownloadRow } from './types.js';
 import type { Db } from '../../db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -2399,4 +2401,47 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
+});
+
+// #1857 F15 / AC8 — cross-owner invariant: a confirmed replace can NEVER cancel a
+// row the quality gate owns or is about to claim, because such rows classify as
+// PIPELINE_ACTIVE (not replaceable). This is the ROOT reason the QG needs no new
+// guards for this feature: replace's classification, not a QG change, is what keeps
+// the gate's atomicClaim / eager `importing` promotion / decision / SSE / enqueue
+// running exactly as the rest of this suite asserts. These tests pin that classifier
+// so the invariant can't silently regress.
+describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
+  const qgRow = (over: Partial<DownloadRow>): DownloadRow => ({
+    id: 1, title: 'QG-owned', clientStatus: 'completed', pipelineStage: 'idle',
+    externalId: 'ext-1', downloadClientId: 1, bookId: 5, bookStatusAtGrab: 'wanted',
+    infoHash: 'h', guid: 'g', addedAt: new Date('2026-01-01'), ...over,
+  } as DownloadRow);
+
+  async function classifyFor(rows: DownloadRow[]) {
+    const db = createMockDb();
+    // gatherBookBlockers: rows select (orderBy), then pending-auto-jobs select (limit).
+    db.select.mockReturnValueOnce(mockDbChain(rows)).mockReturnValueOnce(mockDbChain([]));
+    return classifyBlockers(await gatherBookBlockers(db as unknown as Db, 5));
+  }
+
+  it.each([
+    ['checking', qgRow({ pipelineStage: 'checking' })],
+    ['pending_review', qgRow({ pipelineStage: 'pending_review' })],
+    ['importing', qgRow({ pipelineStage: 'importing' })],
+    ['tracked completed awaiting the gate', qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-1' })],
+  ] as const)('classifies a %s download as PIPELINE_ACTIVE — replace cancels nothing, QG keeps the row', async (_label, row) => {
+    const classification = await classifyFor([row]);
+    // PIPELINE_ACTIVE means the confirmed replace throws and cancels NOTHING — the row
+    // stays for the quality gate, whose decision path is therefore unaffected.
+    expect(classification.kind).toBe('pipeline');
+    if (classification.kind === 'pipeline') {
+      // A held review directs to Activity; anything else is 'processing'.
+      expect(classification.reason).toBe(row.pipelineStage === 'pending_review' ? 'awaiting_review' : 'processing');
+    }
+  });
+
+  it('a Blackhole handoff (completed, externalId null) is NOT a QG row and does NOT block replace', async () => {
+    const classification = await classifyFor([qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: null })]);
+    expect(classification.kind).toBe('clear'); // terminal, not QG-eligible → replace may proceed
+  });
 });
