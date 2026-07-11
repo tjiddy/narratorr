@@ -52,10 +52,16 @@ export function SettingsRow({ label, description, children, htmlFor, muted, layo
   );
 }
 
-/** Bordered container that turns a stack of `SettingsRow`s into the row-table look. */
+/**
+ * Bordered container that turns a stack of `SettingsRow`s into the row-table look.
+ * Deliberately NOT overflow-hidden: rows carry no background (the container paints bg-card/40
+ * itself, so the rounded corners need no clipping), and clipping would decapitate absolutely-
+ * positioned popovers escaping a row (an InfoTip in a top row opens upward past the table edge).
+ * If a row ever gains its own background, round/clip that row — don't re-add overflow here.
+ */
 export function SettingsTable({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-border overflow-hidden bg-card/40 divide-y divide-border">
+    <div className="rounded-xl border border-border bg-card/40 divide-y divide-border">
       {children}
     </div>
   );

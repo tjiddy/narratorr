@@ -37,7 +37,7 @@ export function ToggleSwitch({ size = 'full', className, disabled, ref, ...input
         {...inputProps}
       />
       <div
-        className={`${s.track} relative bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50' : ''}`}
+        className={`${s.track} relative bg-muted rounded-full peer peer-checked:bg-primary transition-colors duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-transform after:duration-200 after:ease-out${disabled ? ' opacity-50' : ''}`}
       />
     </label>
   );
