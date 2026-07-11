@@ -38,6 +38,7 @@ export interface DownloadWithBook extends DownloadRow {
 export type RetryResult =
   | { status: 'retried'; download: DownloadWithBook }
   | { status: 'no_candidates' }
+  | { status: 'already_active' }
   | { status: 'retry_error'; error: string };
 
 // Back-compat: these error classes now live in the dependency-free leaf module
@@ -480,6 +481,12 @@ export class DownloadService {
         await this.db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, id));
         this.log.info({ id }, 'Manual retry found no candidates');
         return { status: 'no_candidates' };
+      }
+      case 'already_active': {
+        // The book is already served by a live download (a replacement's winner).
+        // Leave the old failed row + its errorMessage UNTOUCHED and do NOT delete it (#1857 AC17).
+        this.log.info({ id }, 'Manual retry: book already has an active download — not retrying');
+        return { status: 'already_active' };
       }
       case 'retry_error': {
         await this.db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, id));

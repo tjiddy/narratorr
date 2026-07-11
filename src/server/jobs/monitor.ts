@@ -395,6 +395,12 @@ async function handleDownloadFailure(
         await db.update(downloads).set({ errorMessage: 'Retries exhausted' }).where(eq(downloads.id, downloadId));
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'exhausted';
+      case 'already_active':
+        // Book already served by a live download (a replacement's winner). Leave the
+        // failed row + errorMessage untouched and do NOT recoverBookStatus — the book
+        // keeps the winner's status (#1857 AC17).
+        log.info({ downloadId, bookId }, 'Retry skipped — book already has an active download');
+        return 'already_active';
       case 'no_candidates':
         await db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, downloadId));
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);

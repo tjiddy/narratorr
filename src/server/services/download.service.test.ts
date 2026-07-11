@@ -1289,7 +1289,7 @@ describe('DownloadService', () => {
       let mockRetryDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1304,7 +1304,11 @@ describe('DownloadService', () => {
         mockRetryDeps = {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
+          downloadOrchestrator: {
+            grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
+            grabForRetry: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
+            hasActiveInProgress: vi.fn().mockResolvedValue(false),
+          },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, path: null, author: { name: 'Sanderson' } }) },
           settingsService: createMockSettingsService(),

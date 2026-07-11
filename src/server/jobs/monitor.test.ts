@@ -713,7 +713,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -729,7 +729,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -869,7 +869,7 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grab).toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).toHaveBeenCalled();
       expect(db.delete).toHaveBeenCalled();
     });
 
@@ -953,7 +953,7 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.retryBudget.hasRemaining(42)).toBe(budgetBefore);
     });
@@ -1083,7 +1083,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1099,7 +1099,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -1246,7 +1246,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1262,7 +1262,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
