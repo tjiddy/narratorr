@@ -1,4 +1,4 @@
-import { and, eq, or, type SQL } from 'drizzle-orm';
+import { and, eq, isNotNull, or, type SQL } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
 import type { DbOrTx } from '../../db/index.js';
 import type { ClientStatus, DownloadStatus, PipelineStage } from '../../shared/schemas/activity.js';
@@ -7,6 +7,7 @@ import {
   getTerminalStatuses,
   getCompletedStatuses,
   getClientPolledStatuses,
+  deriveDisplayStatus,
 } from '../../shared/download-status-registry.js';
 
 // ============================================================================
@@ -121,6 +122,33 @@ export function completedCountDownloadCondition(): SQL {
 /** Rows that display as `completed` — the canonical pipeline entry point `(completed, idle)`. */
 export function completedDisplayDownloadCondition(): SQL {
   return displayStatusCondition('completed');
+}
+
+// ============================================================================
+// Quality-gate eligibility — ONE home for a safety-critical semantic decision (#1857 F16)
+//
+// "A tracked `completed`-display download (non-null `externalId`) is a download
+// the quality gate WILL pick up." This answer is load-bearing in two places that
+// must never drift: the QG's own batch query (which rows it claims) and the
+// replace blocker classification (which rows replace must NOT cancel). If they
+// disagreed, replace could cancel a row the QG is about to import. The SQL
+// condition and its in-memory twin live here together, bound by a consistency
+// test (`download-state.test.ts`), so both decision sites share one source.
+// ============================================================================
+
+/** SQL: downloads the quality gate is eligible to claim — `completed` display AND
+ *  a non-null `externalId` (mirrors the QG batch query + import eligibility). A
+ *  Blackhole handoff (`completed`, `externalId` null) is deliberately excluded. */
+export function qualityGateEligibleDownloadCondition(): SQL {
+  return and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId))!;
+}
+
+/** In-memory twin of {@link qualityGateEligibleDownloadCondition}: does this row
+ *  display as `completed` with a non-null `externalId`? Kept beside the SQL form
+ *  so row-level classification (replace blockers) and query-level selection (QG)
+ *  can never encode the eligibility rule differently. */
+export function isQualityGateEligibleRow(row: { clientStatus: ClientStatus; pipelineStage: PipelineStage; externalId: string | null }): boolean {
+  return deriveDisplayStatus(row.clientStatus, row.pipelineStage) === 'completed' && row.externalId !== null;
 }
 
 /** Rows that should be polled from their external download client. */

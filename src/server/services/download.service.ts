@@ -20,7 +20,8 @@ import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { resolveAdapterDownloadUrl } from './download-resolve-adapter-url.js';
-import { resolveArtifact, insertDownloadRecord } from './download-record.js';
+import { resolveArtifact, insertDownloadRecordOrCompensate } from './download-record.js';
+import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 
 import type { BookRow, DownloadRow } from './types.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
@@ -37,6 +38,7 @@ export interface DownloadWithBook extends DownloadRow {
 export type RetryResult =
   | { status: 'retried'; download: DownloadWithBook }
   | { status: 'no_candidates' }
+  | { status: 'already_active' }
   | { status: 'retry_error'; error: string };
 
 // Back-compat: these error classes now live in the dependency-free leaf module
@@ -229,7 +231,40 @@ export class DownloadService {
     return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
   }
 
-  private async checkDuplicateDownloads(bookId: number): Promise<void> {
+  /**
+   * Duplicate/blocker guard with a per-call classification mode (#1857 F7):
+   *   - `legacy` (default) — the historical behavior: first replaceable row →
+   *     `ACTIVE_DOWNLOAD_EXISTS`, else non-replaceable → `PIPELINE_ACTIVE`, plus
+   *     the pending-auto-job guard. v1 + all auto callers keep this mode so their
+   *     `error.code` (and v1's serialized envelope bytes) are unchanged.
+   *   - `gatherAllBlockers` — only the internal `POST /api/search/grab` route:
+   *     gather ALL blockers, give `PIPELINE_ACTIVE` precedence, and populate the
+   *     structured `details` the route shapes into its 409 bodies. "Safely
+   *     replaceable" narrows to client-stage only (see `download-blockers.ts`).
+   */
+  private async checkDuplicateDownloads(
+    bookId: number,
+    mode: 'legacy' | 'gatherAllBlockers' = 'legacy',
+  ): Promise<void> {
+    if (mode === 'gatherAllBlockers') {
+      const classification = classifyBlockers(await gatherBookBlockers(this.db, bookId));
+      if (classification.kind === 'pipeline') {
+        throw new DuplicateDownloadError(
+          `Book ${bookId} has a download in the import pipeline`,
+          'PIPELINE_ACTIVE',
+          { reason: classification.reason },
+        );
+      }
+      if (classification.kind === 'replaceable') {
+        throw new DuplicateDownloadError(
+          `Book ${bookId} already has an active download`,
+          'ACTIVE_DOWNLOAD_EXISTS',
+          { active: classification.active },
+        );
+      }
+      return;
+    }
+
     const allActive = await this.getActiveByBookId(bookId);
     // Derive replaceability straight from the canonical `(clientStatus,
     // pipelineStage)` axes (S2b) rather than re-deriving the display status and
@@ -272,11 +307,13 @@ export class DownloadService {
     guid?: string | undefined;
     isFreeleech?: boolean | undefined;
     skipDuplicateCheck?: boolean | undefined;
+    classificationMode?: 'legacy' | 'gatherAllBlockers' | undefined;
+    infoHash?: string | undefined;
     source?: CreateEventInput['source'] | undefined;
     bookStatusAtGrab?: BookStatus | null | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
-      await this.checkDuplicateDownloads(params.bookId);
+      await this.checkDuplicateDownloads(params.bookId, params.classificationMode ?? 'legacy');
     }
 
     const protocol = params.protocol ?? 'torrent';
@@ -300,7 +337,13 @@ export class DownloadService {
     const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
     this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    const result = await insertDownloadRecord(this.db, this.log, params, { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId });
+    // On insert failure after a successful client-add, best-effort compensate the
+    // orphaned tracked download (delete-files) or log it for recovery (#1857 F1/F5/F18).
+    const result = await insertDownloadRecordOrCompensate(
+      this.db, this.log, params,
+      { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId },
+      (id) => this.downloadClientService.getAdapter(id),
+    );
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
     return this.getById(result[0]!.id) as Promise<DownloadWithBook>;
   }
@@ -334,21 +377,29 @@ export class DownloadService {
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
+  /**
+   * Best-effort removal of a download's external client item (delete files),
+   * matching the cancel path's `removeDownload(externalId, true)`. Failure is
+   * logged, never thrown. Used by the replace claim-first cleanup, whose DB row
+   * transition has ALREADY committed (so removal cannot be destructive-first).
+   */
+  async removeExternalItem(download: Pick<DownloadRow, 'id' | 'downloadClientId' | 'externalId'>): Promise<void> {
+    if (!download.downloadClientId || !download.externalId) return;
+    try {
+      const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+      if (adapter) await adapter.removeDownload(download.externalId, true);
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error), id: download.id }, 'Failed to remove download from client');
+    }
+  }
+
   async cancel(id: number, reason = 'Cancelled by user'): Promise<boolean> {
     const download = await this.getById(id);
     if (!download) return false;
 
-    // Remove from download client if possible
-    if (download.downloadClientId && download.externalId) {
-      try {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        if (adapter) {
-          await adapter.removeDownload(download.externalId, true);
-        }
-      } catch (error: unknown) {
-        this.log.error({ error: serializeError(error), id }, 'Failed to remove download from client');
-      }
-    }
+    // Remove from download client if possible (destructive-first for the plain
+    // cancel path — the guarded-claim replace path inverts this ordering).
+    await this.removeExternalItem(download);
 
     // Cancellation → write the sanctioned failure tuple atomically. Resetting
     // `pipelineStage` to 'idle' is required so a row cancelled mid-pipeline
@@ -404,6 +455,12 @@ export class DownloadService {
         await this.db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, id));
         this.log.info({ id }, 'Manual retry found no candidates');
         return { status: 'no_candidates' };
+      }
+      case 'already_active': {
+        // The book is already served by a live download (a replacement's winner).
+        // Leave the old failed row + its errorMessage UNTOUCHED and do NOT delete it (#1857 AC17).
+        this.log.info({ id }, 'Manual retry: book already has an active download — not retrying');
+        return { status: 'already_active' };
       }
       case 'retry_error': {
         await this.db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, id));

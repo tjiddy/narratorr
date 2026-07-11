@@ -251,6 +251,16 @@ describe('activity routes', () => {
       expect(JSON.parse(res.payload).status).toBe('retry_error');
     });
 
+    // #1857 F12 — the book is already served by a live download (a replacement's winner).
+    it('returns exactly 200 { status: "already_active" } when the book already has an active download', async () => {
+      (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'already_active' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ status: 'already_active' });
+    });
+
     it('returns 404 when download not found', async () => {
       (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 999 not found', 'NOT_FOUND'));
 

@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import { and, eq } from 'drizzle-orm';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { downloads } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { DownloadClientService } from '../services/download-client.service.js';
@@ -70,13 +73,74 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle' },
     ]));
     adapter.getDownload.mockResolvedValueOnce(null);
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
     expect(adapter.getDownload).toHaveBeenCalledWith('ext-1');
     expect(db.update).toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+  });
+
+  // #1857 — guarded monitor transitions cannot resurrect a cancelled (replaced) row.
+  // Deletion-heuristic teeth: each test asserts the EXACT guarded WHERE predicate
+  // (id + the polled (clientStatus, pipelineStage) tuple). If `expected` were removed
+  // from the production transition, the WHERE would collapse to id-only and these
+  // assertions fail — the stale-writer suppression would no longer hold.
+  describe('guarded transitions (#1857 F2/F14)', () => {
+    it('main branch: guard miss suppresses completion side effects AND writes the exact guarded predicate', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 7, progress: 0.5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/dl', name: 'book', size: 1 });
+      // Guarded update misses (row already transitioned to (failed, idle) by a replace):
+      // returning() resolves [] ONLY because the guarded predicate didn't match.
+      const chain = mockDbChain([]);
+      db.update.mockReturnValue(chain);
+
+      await runMonitor();
+
+      // The write targets id + the polled tuple — removing `expected` breaks this.
+      expect((chain.where as Mock)).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
+      );
+      // The stale completion write is skipped → no completion notification.
+      expect(notifierService.notify).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith({ id: 1 }, 'Monitor update skipped — row changed since poll (guarded)');
+    });
+
+    it('main branch: an unchanged row (guard MATCHES) still lands and fires completion (proves the write is not dead)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 7, progress: 0.5 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/dl', name: 'book', size: 1 });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guard matches → write lands
+
+      await runMonitor();
+
+      // Completion side effects DO fire when the guard matches (stale-writer guard is
+      // scoped to a genuine change, not a blanket suppression).
+      expect(notifierService.notify).toHaveBeenCalled();
+    });
+
+    it('missing-item branch: guard miss returns before any failure/notify side effect AND writes the exact guarded predicate', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 7, title: 'Replaced Book' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null); // replacement removed the client item
+      const chain = mockDbChain([]); // guarded failed-write misses (row already (failed, idle))
+      db.update.mockReturnValue(chain);
+
+      await runMonitor();
+
+      expect((chain.where as Mock)).toHaveBeenCalledWith(
+        and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
+      );
+      // No failure notification, and the replaced row is NOT deleted.
+      expect(notifierService.notify).not.toHaveBeenCalled();
+      expect(db.delete).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith({ id: 1 }, 'Missing-item handling skipped — row changed since poll (guarded)');
+    });
   });
 
   it('updates progress and status from adapter', async () => {
@@ -87,7 +151,7 @@ describe('monitor job', () => {
       progress: 50,
       status: 'downloading',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -101,7 +165,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', progress: 0.3, completedAt: null, bookId: null },
     ]));
     adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-    const chain = mockDbChain();
+    const chain = mockDbChain([{ id: 1 }]);
     db.update.mockReturnValue(chain);
 
     await runMonitor();
@@ -115,7 +179,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', progress: 0.5, completedAt: null, bookId: null },
     ]));
     adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-    const chain = mockDbChain();
+    const chain = mockDbChain([{ id: 1 }]);
     db.update.mockReturnValue(chain);
 
     await runMonitor();
@@ -134,7 +198,7 @@ describe('monitor job', () => {
       progress: 100,
       status: 'completed',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -149,7 +213,7 @@ describe('monitor job', () => {
       progress: 100,
       status: 'completed',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -165,7 +229,7 @@ describe('monitor job', () => {
       progress: 100,
       status: 'completed',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -181,7 +245,7 @@ describe('monitor job', () => {
     adapter.getDownload
       .mockRejectedValueOnce(new Error('Connection refused'))
       .mockResolvedValueOnce({ progress: 25, status: 'downloading' });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -214,7 +278,7 @@ describe('monitor job', () => {
       progress: 80,
       status: 'seeding',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -230,7 +294,7 @@ describe('monitor job', () => {
       progress: 30,
       status: 'error',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -242,7 +306,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null },
     ]));
     adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error' });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -254,7 +318,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null },
     ]));
     adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error' });
-    const chain = mockDbChain();
+    const chain = mockDbChain([{ id: 1 }]);
     db.update.mockReturnValue(chain);
 
     await runMonitor();
@@ -270,7 +334,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'Test Book' },
     ]));
     adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error', savePath: '/downloads/test', size: 1000 });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -282,7 +346,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null },
     ]));
     adapter.getDownload.mockResolvedValueOnce({ progress: 0, status: 'error', errorMessage: 'CRC mismatch in article 42' });
-    const chain = mockDbChain();
+    const chain = mockDbChain([{ id: 1 }]);
     db.update.mockReturnValue(chain);
 
     await runMonitor();
@@ -302,7 +366,7 @@ describe('monitor job', () => {
       progress: 100,
       status: 'completed',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -321,7 +385,7 @@ describe('monitor job', () => {
       progress: 0,
       status: 'downloading',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -340,7 +404,7 @@ describe('monitor job', () => {
       .mockResolvedValueOnce({ progress: 50, status: 'downloading' })   // id:1 ok
       .mockRejectedValueOnce(new Error('Timeout'))                        // id:2 throws
       .mockResolvedValueOnce({ progress: 75, status: 'downloading' });   // id:3 ok
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -360,7 +424,7 @@ describe('monitor job', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', title: 'My Audiobook' },
     ]));
     adapter.getDownload.mockResolvedValueOnce(null);
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -381,7 +445,7 @@ describe('monitor job', () => {
       savePath: '/downloads/finished',
       size: 123456,
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -400,7 +464,7 @@ describe('monitor job', () => {
       progress: 60,
       status: 'paused',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
@@ -505,7 +569,7 @@ describe('monitor job', () => {
         // Other active downloads check: one other active
         .mockReturnValueOnce(mockDbChain([{ id: 2, bookId: 42, status: 'queued' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -527,7 +591,7 @@ describe('monitor job', () => {
       adapter.getDownload
         .mockResolvedValueOnce(null)  // download 1 not found
         .mockResolvedValueOnce({ progress: 50, status: 'downloading' }); // download 2 ok
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -550,7 +614,7 @@ describe('monitor job', () => {
         // Other active downloads check: one in queued status
         .mockReturnValueOnce(mockDbChain([{ id: 3, bookId: 42, status: 'queued' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -569,7 +633,7 @@ describe('monitor job', () => {
         // Other active downloads check: one in paused status
         .mockReturnValueOnce(mockDbChain([{ id: 3, bookId: 42, status: 'paused' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -587,7 +651,7 @@ describe('monitor job', () => {
         // Other active downloads: one in checking status
         .mockReturnValueOnce(mockDbChain([{ id: 5, bookId: 42, status: 'checking' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -605,7 +669,7 @@ describe('monitor job', () => {
         // Other active downloads: one in pending_review status
         .mockReturnValueOnce(mockDbChain([{ id: 6, bookId: 42, status: 'pending_review' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -623,7 +687,7 @@ describe('monitor job', () => {
         // Other active downloads: one in importing status
         .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 42, status: 'importing' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -641,7 +705,7 @@ describe('monitor job', () => {
         // Other active downloads: one in completed status (awaiting import)
         .mockReturnValueOnce(mockDbChain([{ id: 8, bookId: 42, status: 'completed' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
@@ -680,7 +744,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -696,7 +760,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -711,8 +775,8 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -721,12 +785,31 @@ describe('monitor job', () => {
       );
     });
 
+    // #1857 F12 — when the book is already served by a live download (a replacement's
+    // winner), handleDownloadFailure returns 'already_active': the failed row is NOT
+    // deleted and NO competing download is added.
+    it('already_active: does not delete the failed row or add a competing download', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null); // missing-item → failed → handleDownloadFailure
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guarded failed-write lands
+      // Book already has an in-progress download → retrySearch short-circuits to already_active.
+      retryDeps.retrySearchDeps.downloadOrchestrator.hasActiveInProgress.mockResolvedValue(true);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      // The failed row is preserved and no replacement grab is issued.
+      expect(db.delete).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    });
+
     it('blacklists by guid when infoHash is absent (Usenet)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: null, guid: 'https://indexer.com/details/abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -740,7 +823,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: null, guid: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -753,7 +836,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
       // recoverBookStatus selects
       db.select
@@ -776,7 +859,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
       // recoverBookStatus selects
       db.select
@@ -797,9 +880,9 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
-      db.delete.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -814,7 +897,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
@@ -831,12 +914,12 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grab).toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).toHaveBeenCalled();
       expect(db.delete).toHaveBeenCalled();
     });
 
@@ -847,7 +930,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -866,9 +949,9 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'Test Book', infoHash: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 0, status: 'error', errorMessage: 'CRC mismatch' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
-      db.delete.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -914,13 +997,13 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Imported Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       const budgetBefore = retryDeps.retrySearchDeps.retryBudget.hasRemaining(42);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grab).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.retryBudget.hasRemaining(42)).toBe(budgetBefore);
     });
@@ -933,7 +1016,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -948,7 +1031,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', downloadSpeed: 2_000_000 });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -963,7 +1046,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', downloadSpeed: 0 });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -978,7 +1061,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -993,7 +1076,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -1010,7 +1093,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await expect(
         monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
@@ -1033,7 +1116,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -1050,7 +1133,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1066,7 +1149,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -1083,7 +1166,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       // recoverBookStatus selects: no other active downloads, then the book
       db.select
         .mockReturnValueOnce(mockDbChain([]))
@@ -1126,7 +1209,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
       db.select
         .mockReturnValueOnce(mockDbChain([]))
@@ -1151,8 +1234,8 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1195,8 +1278,8 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1213,7 +1296,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1229,7 +1312,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -1244,7 +1327,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1258,8 +1341,8 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1273,8 +1356,8 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 30, status: 'error' });
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1292,7 +1375,7 @@ describe('monitor job', () => {
         .mockRejectedValueOnce(new Error('Connection refused'))
         .mockResolvedValueOnce({ progress: 50, status: 'downloading' });
       retryDeps.blacklistService.create.mockRejectedValueOnce(new Error('DB constraint error'));
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1311,8 +1394,8 @@ describe('monitor job', () => {
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
       retryDeps.blacklistService.create.mockRejectedValueOnce(new Error('DB constraint error'));
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1330,8 +1413,8 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
-      db.update.mockReturnValue(mockDbChain());
-      db.delete.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
@@ -1357,7 +1440,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, outputPath: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/downloads', name: 'my-book', size: 1000 });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
@@ -1372,7 +1455,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, outputPath: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/remote/downloads', name: 'my-book', size: 1000 });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       const remotePathMappingService = {
@@ -1390,7 +1473,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, outputPath: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/downloads', name: 'my-book', size: 1000 });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       const remotePathMappingService = {
@@ -1410,7 +1493,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, outputPath: '/already/set' },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/downloads', name: 'my-book', size: 1000 });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
@@ -1426,7 +1509,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, outputPath: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/downloads', name: 'my-book', size: 1000 });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
@@ -1448,7 +1531,7 @@ describe('monitor job', () => {
     it('returns mapped path when getByClientId returns mappings', async () => {
       db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
       adapter.getDownload.mockResolvedValueOnce(baseItem);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       const remotePathMappingService = {
@@ -1464,7 +1547,7 @@ describe('monitor job', () => {
     it('returns undefined when getByClientId throws (lookup failure)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
       adapter.getDownload.mockResolvedValueOnce(baseItem);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       const remotePathMappingService = {
@@ -1483,7 +1566,7 @@ describe('monitor job', () => {
     it('returns raw joined path when getByClientId returns empty array', async () => {
       db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
       adapter.getDownload.mockResolvedValueOnce(baseItem);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       const remotePathMappingService = {
@@ -1500,7 +1583,7 @@ describe('monitor job', () => {
     it('returns raw path when remotePathMappingService is undefined', async () => {
       db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
       adapter.getDownload.mockResolvedValueOnce(baseItem);
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, undefined);
@@ -1518,7 +1601,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 5 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
@@ -1535,7 +1618,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 5 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -1548,7 +1631,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
@@ -1581,7 +1664,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1593,7 +1676,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1605,7 +1688,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error', errorMessage: 'disk full' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1617,7 +1700,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'completed', pipelineStage: 'idle', completedAt: new Date(), bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1633,7 +1716,7 @@ describe('monitor job', () => {
       adapter.getDownload
         .mockResolvedValueOnce({ progress: 100, status: 'completed' })
         .mockResolvedValueOnce({ progress: 50, status: 'downloading' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1646,7 +1729,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitorWithQG();
@@ -1684,7 +1767,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'downloading' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitorWithQG();
@@ -1698,7 +1781,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitorWithQG();
@@ -1712,7 +1795,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'seeding' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitorWithQG();
@@ -1726,7 +1809,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 99, status: 'completed' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitorWithQG();
@@ -1740,7 +1823,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'paused' });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitorWithQG();
@@ -1754,7 +1837,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'downloading' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1766,7 +1849,7 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
-      db.update.mockReturnValue(mockDbChain());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
@@ -1785,7 +1868,7 @@ describe('monitor job', () => {
         savePath: '/downloads/complete',
         name: 'My Audiobook',
       });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitor();
@@ -1804,7 +1887,7 @@ describe('monitor job', () => {
         savePath: '/downloads/incomplete',
         name: 'My Audiobook',
       });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitor();
@@ -1823,7 +1906,7 @@ describe('monitor job', () => {
         savePath: '/downloads/complete',
         name: 'My Audiobook',
       });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       const remotePathMappingService = {
@@ -1856,7 +1939,7 @@ describe('monitor job', () => {
         savePath: '',
         name: 'My Audiobook',
       });
-      const chain = mockDbChain();
+      const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
 
       await runMonitor();
@@ -1894,7 +1977,7 @@ describe('#537 monitor download_failed event recording', () => {
       { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Missing Book' },
     ]));
     adapter.getDownload.mockResolvedValueOnce(null);
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await monitorDownloads(
       inject<Db>(db), inject<DownloadClientService>(downloadClientService),
@@ -1916,7 +1999,7 @@ describe('#537 monitor download_failed event recording', () => {
     adapter.getDownload.mockResolvedValueOnce({
       progress: 50, status: 'error', savePath: '/tmp', name: 'file', size: 1000, errorMessage: 'Disk full',
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await monitorDownloads(
       inject<Db>(db), inject<DownloadClientService>(downloadClientService),
@@ -1938,7 +2021,7 @@ describe('#537 monitor download_failed event recording', () => {
     adapter.getDownload.mockResolvedValueOnce({
       progress: 10, status: 'error', savePath: '/tmp', name: 'file', size: 500,
     });
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await monitorDownloads(
       inject<Db>(db), inject<DownloadClientService>(downloadClientService),
@@ -1956,7 +2039,7 @@ describe('#537 monitor download_failed event recording', () => {
       { id: 4, externalId: 'ext-4', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: null, title: 'Orphan' },
     ]));
     adapter.getDownload.mockResolvedValueOnce(null);
-    db.update.mockReturnValue(mockDbChain());
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await monitorDownloads(
       inject<Db>(db), inject<DownloadClientService>(downloadClientService),

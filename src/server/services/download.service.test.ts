@@ -837,6 +837,67 @@ describe('DownloadService', () => {
       ).rejects.toThrow('UNIQUE constraint failed');
     });
 
+    // #1857 AC6/F5/F30 — client-add succeeded, insert failed → best-effort compensate
+    // the just-admitted tracked download with delete-files (externalId, true).
+    it('compensates a tracked download with removeDownload(externalId, true) when insert fails, then rethrows', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-456'),
+        removeDownload: vi.fn().mockResolvedValue(undefined),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        service.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-456', true);
+    });
+
+    it('logs an operator-recoverable orphan (not absolute no-orphan) when compensation ALSO fails', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+        removeDownload: vi.fn().mockRejectedValue(new Error('client offline')),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      // Insert error still surfaces even though compensation failed.
+      await expect(
+        svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-789' }),
+        expect.stringContaining('orphaned external download'),
+      );
+    });
+
+    // #1857 F1 — a NULL adapter (compensation cannot run) must NOT silently skip the
+    // recovery log; the orphaned externalId still has to be logged for the operator.
+    it('logs the orphan when the compensation adapter is unavailable (getAdapter → null)', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock)
+        .mockResolvedValueOnce({ addDownload: vi.fn().mockResolvedValue('ext-null') }) // add succeeds
+        .mockResolvedValueOnce(null); // compensation lookup returns no adapter
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-null' }),
+        expect.stringContaining('orphaned external download'),
+      );
+    });
+
     it('uses usenet protocol when specified', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('nzb-123'),
@@ -1289,7 +1350,7 @@ describe('DownloadService', () => {
       let mockRetryDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1304,7 +1365,11 @@ describe('DownloadService', () => {
         mockRetryDeps = {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
+          downloadOrchestrator: {
+            grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
+            grabForRetry: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
+            hasActiveInProgress: vi.fn().mockResolvedValue(false),
+          },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, path: null, author: { name: 'Sanderson' } }) },
           settingsService: createMockSettingsService(),
@@ -1342,6 +1407,27 @@ describe('DownloadService', () => {
 
         expect(result.status).toBe('no_candidates');
         expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+      });
+
+      // #1857 F12 — the book is already served by a live download (a replacement's
+      // winner). retry() must map to { status: 'already_active' } WITHOUT deleting the
+      // old failed row or touching its errorMessage.
+      it('returns already_active and preserves the old failed row (not deleted, errorMessage untouched)', async () => {
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const, errorMessage: 'Original failure' };
+        // Early precheck sees an in-progress download for the book → retrySearch returns already_active.
+        mockRetryDeps.downloadOrchestrator.hasActiveInProgress.mockResolvedValue(true);
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('already_active');
+        // Old row NOT deleted, errorMessage NOT rewritten, indexer search never run.
+        expect(db.delete).not.toHaveBeenCalled();
+        expect(chain.set).not.toHaveBeenCalled();
+        expect(mockRetryDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
       });
 
       it('returns no_candidates and updates errorMessage when budget exhausted', async () => {

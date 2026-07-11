@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { searchQuerySchema, grabSchema } from './search.js';
+import { searchQuerySchema, grabSchema, grabBodySchema } from './search.js';
 
 describe('searchQuerySchema', () => {
   it('transforms limit string to number', () => {
@@ -183,5 +183,69 @@ describe('grabSchema — trim behavior', () => {
   it('accepts valid downloadUrl and title', () => {
     const result = grabSchema.safeParse(validGrab);
     expect(result.success).toBe(true);
+  });
+});
+
+describe('grabSchema — replace + infoHash (#1857)', () => {
+  it('defaults replace to false when omitted', () => {
+    const result = grabSchema.safeParse(validGrab);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.replace).toBe(false);
+  });
+
+  it('accepts replace: true', () => {
+    const result = grabSchema.safeParse({ ...validGrab, bookId: 1, replace: true });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.replace).toBe(true);
+  });
+
+  it('rejects non-boolean replace', () => {
+    const result = grabSchema.safeParse({ ...validGrab, replace: 'yes' });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts optional infoHash', () => {
+    const result = grabSchema.safeParse({ ...validGrab, infoHash: 'abc123' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.infoHash).toBe('abc123');
+  });
+
+  it('omits infoHash from output when not provided', () => {
+    const result = grabSchema.safeParse(validGrab);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.infoHash).toBeUndefined();
+  });
+
+  it('still rejects the legacy replaceExisting key even alongside replace', () => {
+    const result = grabSchema.safeParse({ ...validGrab, replace: true, replaceExisting: true });
+    expect(result.success).toBe(false);
+  });
+
+  it('exposes .shape (base object schema, not a ZodEffects) for the client picker', () => {
+    // The client's pickGrabFields reads grabSchema.shape — guard that .shape survives.
+    expect(Object.keys(grabSchema.shape)).toContain('replace');
+    expect(Object.keys(grabSchema.shape)).toContain('infoHash');
+  });
+});
+
+describe('grabBodySchema — replace requires bookId (#1857)', () => {
+  it('accepts replace: true with a bookId', () => {
+    const result = grabBodySchema.safeParse({ ...validGrab, bookId: 7, replace: true });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects replace: true without a bookId (→ 400)', () => {
+    const result = grabBodySchema.safeParse({ ...validGrab, replace: true });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts replace omitted without a bookId (ordinary orphan grab)', () => {
+    const result = grabBodySchema.safeParse(validGrab);
+    expect(result.success).toBe(true);
+  });
+
+  it('still rejects replaceExisting through the refined body schema', () => {
+    const result = grabBodySchema.safeParse({ ...validGrab, replaceExisting: true });
+    expect(result.success).toBe(false);
   });
 });

@@ -128,6 +128,9 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
           return reply.status(201).send(result.download);
         case 'no_candidates':
           return reply.status(200).send({ status: 'no_candidates' });
+        case 'already_active':
+          // #1857 — book already served by a live download (a replacement's winner).
+          return reply.status(200).send({ status: 'already_active' });
         case 'retry_error':
           return reply.status(200).send({ status: 'retry_error' });
       }
