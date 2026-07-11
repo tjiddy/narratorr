@@ -35,6 +35,7 @@ import {
 } from '../utils/download-side-effects.js';
 import { revertBookStatus, transitionBookStatus } from '../utils/book-status.js';
 import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import { hasInFlightReplace, canonicalReleaseIdentity } from './book-admission.js';
 import type { DownloadRow } from './types.js';
 
 function inject<T>(partial: Record<string, unknown>): T {
@@ -672,6 +673,147 @@ describe('DownloadOrchestrator', () => {
 
       expect(result).toBe(mockDownload);
       expect(emitBookStatusChangeOnGrab).toHaveBeenCalledTimes(1); // exactly one truthful event
+    });
+  });
+
+  // ── #1857 F18 — the FULL AC5 single-flight enumerated contracts ──
+  describe('single-flight enumerated contracts (F18/AC5)', () => {
+    it('terminal Blackhole winner: two identical confirmed replaces coalesce to ONE handoff (one client-add), both share it', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([])); // clear book
+      asMock(ds.grab).mockResolvedValue(handoffDownload); // externalId null (terminal handoff)
+      asMock(ds.getById).mockResolvedValue(handoffDownload);
+      const p = { downloadUrl: 'm', title: 'BH', bookId: 850, replace: true, guid: 'bh-id' };
+
+      const [a, b] = await Promise.all([orch.grabInternal(p), orch.grabInternal(p)]);
+
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // exactly one row-insert / client-add
+      expect(a).toBe(handoffDownload);
+      expect(b).toBe(handoffDownload); // the waiter shares the one terminal handoff
+    });
+
+    it('no self-deadlock: a single confirmed replace acquires the book key ONCE and completes under a timeout', async () => {
+      const { db, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await Promise.race([
+        orch.grabInternal({ downloadUrl: 'm', title: 'Solo', bookId: 851, replace: true, guid: 'solo' }),
+        new Promise((_r, reject) => setTimeout(() => reject(new Error('self-deadlock timeout')), 1000)),
+      ]);
+      expect(result).toBe(mockDownload);
+    });
+
+    it('distinct sections do NOT overlap: two different-release confirmed replaces on one book serialize', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([]));
+      let releaseFirst!: (v: unknown) => void;
+      asMock(ds.grab)
+        .mockImplementationOnce(() => new Promise((r) => { releaseFirst = r; }))
+        .mockImplementationOnce(() => Promise.resolve(mockDownload));
+      const p1 = orch.grabInternal({ downloadUrl: 'm', title: 'A', bookId: 852, replace: true, guid: 'a' });
+      const p2 = orch.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 852, replace: true, guid: 'b' });
+      await flush();
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // second section has not entered its grab
+      releaseFirst(mockDownload);
+      await Promise.all([p1, p2]);
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(2);
+    });
+
+    it('A→B→A settled: a re-issued A after the first A settled runs a FRESH admission (no post-settlement coalescing)', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([]));
+      const pA = { downloadUrl: 'm', title: 'A', bookId: 853, replace: true, guid: 'a' };
+      await orch.grabInternal(pA); // A1 settles
+      await orch.grabInternal({ downloadUrl: 'm', title: 'B', bookId: 853, replace: true, guid: 'b' }); // B
+      await orch.grabInternal(pA); // A2 after A1 settled → fresh (entry evicted)
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(3); // no stale coalescing
+    });
+
+    it('A→B→A pending: A2 joins A1 while B is queued; A2 shares A1 outcome and B still runs', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([]));
+      const a1dl = { ...mockDownload, id: 100 } as typeof mockDownload;
+      const bdl = { ...mockDownload, id: 200 } as typeof mockDownload;
+      let releaseA1!: (v: unknown) => void;
+      asMock(ds.grab)
+        .mockImplementationOnce(() => new Promise((r) => { releaseA1 = r; })) // A1 deferred
+        .mockImplementationOnce(() => Promise.resolve(bdl));                   // B
+      asMock(ds.getById).mockImplementation((id: number) => Promise.resolve(id === 200 ? bdl : a1dl));
+      const pA = { downloadUrl: 'm', title: 'A', bookId: 854, replace: true, guid: 'a' };
+      const pB = { downloadUrl: 'm', title: 'B', bookId: 854, replace: true, guid: 'b' };
+
+      const a1 = orch.grabInternal(pA); // A1 starts, holds the book mutex
+      const b = orch.grabInternal(pB);  // B queued behind on the book mutex
+      await flush();
+      const a2 = orch.grabInternal(pA); // A2 joins A1's still-pending promise
+      await flush();
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1); // only A1 has grabbed; A2 coalesced, B queued
+
+      releaseA1(a1dl);
+      const [r1, r2] = await Promise.all([a1, a2]);
+      await b;
+      expect(r1.id).toBe(100);
+      expect(r2.id).toBe(100); // A2 shared A1's outcome
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(2); // A1 + B ran; A2 did not add a third
+    });
+  });
+
+  // ── #1857 F19 — shared admission mutex proven across EVERY book-scoped entry path ──
+  describe('shared admission mutex across entry paths (F19/AC13/AC17)', () => {
+    it('a confirmed replace and a concurrent legacy grab() (v1/RSS/search-pipeline representative) do NOT overlap', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([]));
+      let releaseReplace!: (v: unknown) => void;
+      asMock(ds.grab)
+        .mockImplementationOnce(() => new Promise((r) => { releaseReplace = r; }))
+        .mockImplementationOnce(() => Promise.resolve(mockDownload));
+      const replace = orch.grabInternal({ downloadUrl: 'm', title: 'R', bookId: 860, replace: true, guid: 'r' });
+      const legacy = orch.grab({ downloadUrl: 'm', title: 'L', bookId: 860 }); // the shared grab() path
+      await flush();
+      // Removing the lock from grab() would let legacy fire immediately → count 2 here.
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
+      releaseReplace(mockDownload);
+      await Promise.all([replace, legacy]);
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(2);
+    });
+
+    it('a confirmed replace and a concurrent grabForRetry on the same book do NOT overlap', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.select.mockReturnValue(mockDbChain([]));
+      asMock(ds.getActiveByBookId).mockResolvedValue([]); // retry would proceed to grab
+      let releaseReplace!: (v: unknown) => void;
+      asMock(ds.grab)
+        .mockImplementationOnce(() => new Promise((r) => { releaseReplace = r; }))
+        .mockImplementationOnce(() => Promise.resolve(mockDownload));
+      const replace = orch.grabInternal({ downloadUrl: 'm', title: 'R', bookId: 861, replace: true, guid: 'r' });
+      const retry = orch.grabForRetry({ downloadUrl: 'm', title: 'Retry', bookId: 861 });
+      await flush();
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
+      releaseReplace(mockDownload);
+      await Promise.all([replace, retry]);
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ── #1857 F21 — Blackhole post-insert commit boundary (AC14) ──
+  describe('Blackhole post-insert commit boundary (F21/AC14)', () => {
+    it('persistent status-write failure → grab SUCCEEDS, one handoff, concurrent waiter shares it, degraded logged, entry evicted on settle', async () => {
+      const { db, ds, orch } = makeReplaceOrch();
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // claim lands (replaceable path → bestEffort book status)
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow()])).mockReturnValue(mockDbChain([]));
+      asMock(ds.grab).mockResolvedValue(handoffDownload); // terminal handoff winner
+      asMock(ds.getById).mockResolvedValue(handoffDownload);
+      asMock(transitionBookStatus).mockRejectedValue(new Error('db unwritable')); // every retry fails
+
+      const p = { downloadUrl: 'm', title: 'BH', bookId: 870, replace: true, guid: 'bh' };
+      const [a, b] = await Promise.all([orch.grabInternal(p), orch.grabInternal(p)]);
+
+      expect(a).toBe(handoffDownload); // handoff already committed → grab still succeeds
+      expect(b).toBe(handoffDownload); // concurrent waiter shares the ONE handoff
+      expect(asMock(ds.grab)).toHaveBeenCalledTimes(1);
+      expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled(); // no false SSE (F29)
+      expect(log.warn).toHaveBeenCalled(); // operator-visible degraded state logged
+      // Registry entry evicts on settle — a later re-grab is fresh (no post-settlement dedup, F36).
+      expect(hasInFlightReplace(`870::${canonicalReleaseIdentity(p)}`)).toBe(false);
     });
   });
 });
