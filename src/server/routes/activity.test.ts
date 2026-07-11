@@ -251,8 +251,10 @@ describe('activity routes', () => {
       expect(JSON.parse(res.payload).status).toBe('retry_error');
     });
 
-    // #1857 F12 — the book is already served by a live download (a replacement's winner).
-    it('returns exactly 200 { status: "already_active" } when the book already has an active download', async () => {
+    // #1857 F12 / #1861 — the book is already served by a grab blocker (a live
+    // download / replacement winner, a QG-eligible completed row, or a pending auto
+    // import job); the response literal stays `already_active`.
+    it('returns exactly 200 { status: "already_active" } when the book already has a grab blocker', async () => {
       (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'already_active' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });

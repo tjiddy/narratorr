@@ -132,8 +132,8 @@ describe('retrySearch', () => {
     it('in-lock detection: returns already_active having consumed ONE accepted attempt (no refund)', async () => {
       const deps = createDeps({
         downloadOrchestrator: inject<DownloadOrchestrator>({
-          // Not active at the early precheck, but became active during the search →
-          // grabForRetry reports already_active from inside the mutex.
+          // No blocker at the early precheck, but a grab blocker appears during the
+          // search → grabForRetry reports already_active from inside the mutex.
           hasGrabBlocker: vi.fn().mockResolvedValue(false),
           grabForRetry: vi.fn().mockResolvedValue('already_active'),
         }),
@@ -145,6 +145,13 @@ describe('retrySearch', () => {
       expect(deps.indexerSearchService.searchAll).toHaveBeenCalled();
       // One attempt consumed and NOT refunded (max 1 → now exhausted).
       expect(deps.retryBudget.hasRemaining(1, 1)).toBe(false);
+      // #1861 F6 — the in-lock diagnostic is blocker-neutral (the outcome now also
+      // covers a QG-eligible completed row or a pending auto import job, not only a
+      // live download that "became active").
+      expect(deps.log.info).toHaveBeenCalledWith(
+        { bookId: 1, attempt: 1 },
+        'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)',
+      );
     });
   });
 

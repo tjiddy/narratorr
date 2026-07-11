@@ -785,9 +785,10 @@ describe('monitor job', () => {
       );
     });
 
-    // #1857 F12 — when the book is already served by a live download (a replacement's
-    // winner), handleDownloadFailure returns 'already_active': the failed row is NOT
-    // deleted and NO competing download is added.
+    // #1857 F12 / #1861 — when the book is already served by a grab blocker (a live
+    // download / replacement winner, a QG-eligible completed row, or a pending auto
+    // import job), handleDownloadFailure returns 'already_active': the failed row is
+    // NOT deleted and NO competing download is added.
     it('already_active: does not delete the failed row or add a competing download', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },

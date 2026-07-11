@@ -129,7 +129,8 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         case 'no_candidates':
           return reply.status(200).send({ status: 'no_candidates' });
         case 'already_active':
-          // #1857 — book already served by a live download (a replacement's winner).
+          // #1857/#1861 — book already served by a grab blocker (a live download /
+          // replacement winner, a QG-eligible completed row, or a pending auto import job).
           return reply.status(200).send({ status: 'already_active' });
         case 'retry_error':
           return reply.status(200).send({ status: 'retry_error' });

@@ -148,14 +148,15 @@ export async function retrySearch(
     }
 
     // Grab the best candidate via the retry seam: acquires the per-book admission
-    // mutex ONCE and rechecks for an in-progress download inside it (#1857 AC17).
+    // mutex ONCE and rechecks for ANY grab blocker inside it (#1857 AC17 / #1861 — a
+    // live download, a QG-eligible completed row, or a pending auto import job).
     // `skipDuplicateCheck` bypasses the duplicate guard, so the mutex alone would
     // leave two live downloads — the in-lock recheck is what dedups sequentially.
     const grabResult = await downloadOrchestrator.grabForRetry(
       buildGrabPayload(best, book.id, { ...(best.guid !== undefined && { guid: best.guid }), skipDuplicateCheck: true }),
     );
     if (grabResult === 'already_active') {
-      log.info({ bookId, attempt }, 'Retry search: book became active during search — skipping (attempt consumed, not refunded)');
+      log.info({ bookId, attempt }, 'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)');
       return { outcome: 'already_active' };
     }
 
