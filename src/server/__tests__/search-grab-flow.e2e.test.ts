@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
+import { downloads } from '../../db/schema.js';
+import { generatePublicId } from '../utils/public-id.js';
 import {
   INDEXER_BASE,
   WEBHOOK_URL,
@@ -10,12 +12,15 @@ import {
   qbLoginHandler,
   qbAddTorrentHandler,
   qbAddTorrentErrorHandler,
+  qbDeleteTorrentHandler,
   qbLoginErrorHandler,
   webhookCaptureHandler,
   waitForRequests,
 } from './msw-handlers.js';
 
 const MAGNET_URI = `magnet:?xt=urn:btih:${TORRENT_HASH}&dn=The+Way+of+Kings`;
+const REPLACEMENT_HASH = 'bbf4c61ddcc5e8a2dabede0f3b482cd9aea9434e';
+const MAGNET_URI_2 = `magnet:?xt=urn:btih:${REPLACEMENT_HASH}&dn=Replacement+Release`;
 
 const mswServer = setupServer();
 
@@ -357,6 +362,75 @@ describe('Search → Grab flow E2E', () => {
       });
       expect(res.statusCode).toBe(500);
       expect(res.json()).toEqual({ error: '[object Object]' });
+    });
+  });
+
+  // #1857 F14 — end-to-end confirm-&-replace + PIPELINE_ACTIVE-cancels-nothing,
+  // driven through route → orchestrator → claim transaction → download client → DB.
+  describe('cancel-&-replace flow (#1857 F14)', () => {
+    async function seedBook(title: string): Promise<number> {
+      const res = await e2e.app.inject({ method: 'POST', url: '/api/books', payload: { title, authors: [{ name: 'Author' }] } });
+      expect(res.statusCode).toBe(201);
+      return res.json().id;
+    }
+
+    it('initial 409 ACTIVE_DOWNLOAD_EXISTS → confirmed replace cancels the old download and grabs the new one', async () => {
+      mswServer.use(qbLoginHandler(), qbAddTorrentHandler(), qbDeleteTorrentHandler());
+      const replaceBookId = await seedBook('Replace Flow Book');
+
+      // First grab → a live downloading download.
+      const first = await e2e.app.inject({
+        method: 'POST', url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI, title: 'Release A', protocol: 'torrent', bookId: replaceBookId, indexerId },
+      });
+      expect(first.statusCode).toBe(201);
+      const firstId = first.json().id;
+
+      // Second grab for the same book WITHOUT replace → structured 409 conflict.
+      const conflict = await e2e.app.inject({
+        method: 'POST', url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI_2, title: 'Release B', protocol: 'torrent', bookId: replaceBookId, indexerId },
+      });
+      expect(conflict.statusCode).toBe(409);
+      expect(conflict.json()).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Release A' }, count: 1 });
+
+      // Confirmed replace → 201, a NEW download row.
+      const replace = await e2e.app.inject({
+        method: 'POST', url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI_2, title: 'Release B', protocol: 'torrent', bookId: replaceBookId, indexerId, replace: true },
+      });
+      expect(replace.statusCode).toBe(201);
+      const newId = replace.json().id;
+      expect(newId).not.toBe(firstId);
+      expect(replace.json().infoHash).toBe(REPLACEMENT_HASH);
+
+      // Old download claim-cancelled (failed), new one downloading, book still downloading.
+      const oldDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${firstId}` });
+      expect(oldDl.json().status).toBe('failed');
+      const newDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${newId}` });
+      expect(newDl.json().status).toBe('downloading');
+      const book = await e2e.app.inject({ method: 'GET', url: `/api/books/${replaceBookId}` });
+      expect(book.json().status).toBe('downloading');
+    });
+
+    it('a book with a pipeline-stage download returns PIPELINE_ACTIVE and cancels nothing', async () => {
+      const pipelineBookId = await seedBook('Pipeline Book');
+      // Insert a download already in the import pipeline (checking) directly.
+      const [inserted] = await e2e.db.insert(downloads).values({
+        publicId: generatePublicId('dl'), bookId: pipelineBookId, downloadClientId, title: 'In Pipeline',
+        protocol: 'torrent', clientStatus: 'completed', pipelineStage: 'checking', progress: 1, externalId: 'ext-checking',
+      }).returning();
+
+      const res = await e2e.app.inject({
+        method: 'POST', url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI, title: 'New', protocol: 'torrent', bookId: pipelineBookId, indexerId, replace: true },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ code: 'PIPELINE_ACTIVE', reason: 'processing' });
+
+      // The pipeline download is untouched — replace cancelled nothing.
+      const dl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${inserted!.id}` });
+      expect(dl.json().status).toBe('checking');
     });
   });
 });
