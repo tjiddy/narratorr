@@ -143,7 +143,7 @@ describe('GeneralSettings', () => {
   });
 });
 
-describe('Show Welcome Message — local-only toggle (#165)', () => {
+describe('Show welcome message — local-only toggle (#165)', () => {
   it('welcome modal is not visible on initial Settings page load', async () => {
     renderWithProviders(<GeneralSettings />);
 

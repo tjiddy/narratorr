@@ -78,12 +78,12 @@ describe('NamingSettingsSection', () => {
       expect(screen.getByText('Configure how audiobook files and folders are named')).toBeInTheDocument();
     });
 
-    it('renders Folder Format and File Format fields', async () => {
+    it('renders Folder format and File format fields', async () => {
       renderWithProviders(<NamingSettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('Folder Format')).toBeInTheDocument();
+        expect(screen.getByText('Folder format')).toBeInTheDocument();
       });
-      expect(screen.getByText('File Format')).toBeInTheDocument();
+      expect(screen.getByText('File format')).toBeInTheDocument();
     });
 
     it('renders ? buttons with cursor-pointer for folder and file format', async () => {

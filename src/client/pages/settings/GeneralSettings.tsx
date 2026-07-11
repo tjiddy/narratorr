@@ -6,6 +6,7 @@ import { NetworkSettingsSection } from './NetworkSettingsSection';
 import { AppearanceSettingsSection } from './AppearanceSettingsSection';
 import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
 import { SettingsSection } from './SettingsSection';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { WelcomeModal } from '@/components/WelcomeModal';
 
 function EyeIcon({ className = '' }: { className?: string }) {
@@ -42,16 +43,17 @@ export function GeneralSettings() {
         title="Onboarding"
         description="Re-display the welcome modal"
       >
-        <p className="text-sm text-muted-foreground">
-          Show the welcome modal again to review key defaults and feature highlights.
-        </p>
-        <button
-          type="button"
-          onClick={() => setShowWelcome(true)}
-          className="px-4 py-2.5 border border-border font-medium rounded-xl hover:bg-muted disabled:opacity-50 transition-all text-sm focus-ring"
-        >
-          Show Welcome Message
-        </button>
+        <SettingsTable>
+          <SettingsRow label="Welcome tour" description="Review key defaults and feature highlights.">
+            <button
+              type="button"
+              onClick={() => setShowWelcome(true)}
+              className="px-4 py-2.5 border border-border font-medium rounded-xl hover:bg-muted disabled:opacity-50 transition-all text-sm focus-ring"
+            >
+              Show welcome message
+            </button>
+          </SettingsRow>
+        </SettingsTable>
       </SettingsSection>
       <WelcomeModal isOpen={showWelcome} onDismiss={() => setShowWelcome(false)} />
     </div>

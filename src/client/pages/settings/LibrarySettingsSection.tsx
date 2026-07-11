@@ -12,6 +12,7 @@ import { getErrorMessage } from '@/lib/error-message.js';
 import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -84,20 +85,23 @@ export function LibrarySettingsSection() {
       title="Library"
       description="Configure where audiobooks are stored"
     >
-      <div>
-        <label htmlFor="libraryPath" className="text-sm font-medium mb-2 block">Library Path</label>
-        <PathInput
-          id="libraryPath"
-          value={pathValue ?? ''}
-          onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
-          registration={{ ...pathRegistration, onBlur: handlePathBlur }}
-          error={errors.path}
-          placeholder="/audiobooks"
-        />
-        <p className="text-sm text-muted-foreground mt-2">
-          The root folder where imported audiobooks will be stored
-        </p>
-      </div>
+      <SettingsTable>
+        <SettingsRow
+          layout="stacked"
+          htmlFor="libraryPath"
+          label="Library path"
+          description="The root folder where imported audiobooks will be stored"
+        >
+          <PathInput
+            id="libraryPath"
+            value={pathValue ?? ''}
+            onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
+            registration={{ ...pathRegistration, onBlur: handlePathBlur }}
+            error={errors.path}
+            placeholder="/audiobooks"
+          />
+        </SettingsRow>
+      </SettingsTable>
       <ConfirmModal
         isOpen={showRescanPrompt}
         title="Refresh Library?"
