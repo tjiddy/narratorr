@@ -14,7 +14,7 @@ const sizeStyles = {
   },
   compact: {
     track: 'w-9 h-5',
-    thumb: 'after:h-4 after:w-4 peer-checked:after:translate-x-4 relative',
+    thumb: 'after:h-4 after:w-4 peer-checked:after:translate-x-4',
   },
 } as const;
 
@@ -31,7 +31,7 @@ export function ToggleSwitch({ size = 'full', className, disabled, ref, ...input
         {...inputProps}
       />
       <div
-        className={`${s.track} bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50 cursor-not-allowed' : ''}`}
+        className={`${s.track} relative bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50 cursor-not-allowed' : ''}`}
       />
     </>
   );
