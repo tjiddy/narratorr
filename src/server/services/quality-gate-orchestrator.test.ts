@@ -11,7 +11,9 @@ import type { QualityGateService, QualityDecision } from './quality-gate.service
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
+import { runReplaceWorkflow, type ReplaceCtx } from './download-replace-workflow.js';
 import type { DownloadRow } from './types.js';
+import type { DownloadService as DownloadServiceType } from './download.service.js';
 import type { Db } from '../../db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -2443,5 +2445,57 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
   it('a Blackhole handoff (completed, externalId null) is NOT a QG row and does NOT block replace', async () => {
     const classification = await classifyFor([qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: null })]);
     expect(classification.kind).toBe('clear'); // terminal, not QG-eligible → replace may proceed
+  });
+
+  // AC8 — a CONCURRENT confirmed-replace attempt while the QG actually runs its
+  // claim → promotion → decision → enqueue path. The replace must classify
+  // PIPELINE_ACTIVE and cancel nothing; the QG must complete unaffected.
+  it('a confirmed replace attempt during a live QG decision returns PIPELINE_ACTIVE and cancels nothing while the QG claims/promotes/decides/enqueues', async () => {
+    // This suite is outside the main describe's beforeEach — set the probe/scan mocks
+    // the QG decision path needs.
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+    vi.mocked(resolveSavePath).mockResolvedValue({ resolvedPath: '/downloads/test', originalPath: '/downloads/test' });
+    const { orchestrator, qualityGateService } = createOrchestrator();
+    const completedDownload = { ...baseDownload, status: 'completed' as const, bookId: 1 };
+    const downloadingBook = { ...baseBook, status: 'downloading' as const };
+    qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
+
+    // A confirmed replace on the SAME book, exercised through the REAL classification.
+    const replaceDb = createMockDb();
+    // gatherBookBlockers: the book's tracked-completed (QG-eligible) row + no jobs.
+    replaceDb.select
+      .mockReturnValueOnce(mockDbChain([qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-1' })]))
+      .mockReturnValueOnce(mockDbChain([]));
+    const replaceGrab = vi.fn().mockResolvedValue({ id: 42 });
+    const removeExternalItem = vi.fn().mockResolvedValue(undefined);
+    const ctx: ReplaceCtx = {
+      db: replaceDb as unknown as Db,
+      log: inject<FastifyBaseLogger>(createMockLogger()),
+      downloadService: inject<DownloadServiceType>({ removeExternalItem }),
+      blacklistService: inject({ create: vi.fn().mockResolvedValue(undefined) }),
+      broadcaster: inject({}),
+      eventHistory: inject({}),
+      grab: replaceGrab,
+      safe: (fn) => fn(),
+    };
+    const replaceParams = { downloadUrl: 'm', title: 'New Release', bookId: 1, replace: true };
+
+    // Run BOTH concurrently.
+    const [, replaceResult] = await Promise.allSettled([
+      orchestrator.processOneDownload(1),
+      runReplaceWorkflow(ctx, replaceParams),
+    ]);
+
+    // The QG ran its claim + promotion + decision + enqueue, unaffected by the replace.
+    expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
+    expect(qualityGateService.processDownload).toHaveBeenCalled();
+    expect(transitionBookStatus).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({ status: 'importing' }));
+    expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 1, 1, expect.any(Function), expect.anything());
+
+    // The replace threw PIPELINE_ACTIVE and cancelled NOTHING (no grab, no external removal).
+    expect(replaceResult.status).toBe('rejected');
+    expect((replaceResult as PromiseRejectedResult).reason).toMatchObject({ code: 'PIPELINE_ACTIVE' });
+    expect(replaceGrab).not.toHaveBeenCalled();
+    expect(removeExternalItem).not.toHaveBeenCalled();
   });
 });
