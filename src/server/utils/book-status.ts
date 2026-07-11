@@ -98,3 +98,33 @@ export async function revertBookStatus(
   await transitionBookStatus(db, book.id, { status: revertStatus });
   return revertStatus;
 }
+
+/**
+ * Guarded revert for the manual replace workflow (#1857). Resolves the shared
+ * `REVERT_FALLBACK_STATUS` fallback like {@link revertBookStatus}, but applies an
+ * equality guard on `expectedStatus` (the status the replace workflow itself
+ * owns — `'downloading'` for a client-stage tracked grab) so it lands ONLY while
+ * the book is still in that state.
+ *
+ * Neither existing helper does all three things at once: `revertBookStatus`
+ * resolves the fallback but transitions unconditionally (would clobber a late
+ * `importing` promotion, stranding a live import — #1857 F61); `transitionBookStatus`
+ * applies the equality guard and reports the miss but does NOT resolve the
+ * fallback and supports only equality (not "any status but importing", which is
+ * the wrong guard anyway). This co-located sibling composes both and returns
+ * `landed` so the caller can suppress the `book_status_change` SSE on a miss
+ * (F67) — the SSE must not announce a transition the guard skipped.
+ *
+ * Exported (like its siblings) so the orchestrator, in a different module, can
+ * import it (F68).
+ */
+export async function guardedRevertBookStatus(
+  db: DbOrTx,
+  book: { id: number },
+  priorStatus: BookStatus | null,
+  expectedStatus: BookStatus,
+): Promise<{ landed: boolean; status: BookStatus }> {
+  const status = priorStatus ?? REVERT_FALLBACK_STATUS;
+  const landed = await transitionBookStatus(db, book.id, { status, expected: { status: expectedStatus } });
+  return { landed, status };
+}
