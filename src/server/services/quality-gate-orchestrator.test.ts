@@ -2447,12 +2447,11 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
     expect(classification.kind).toBe('clear'); // terminal, not QG-eligible → replace may proceed
   });
 
-  // AC8 — a CONCURRENT confirmed-replace attempt while the QG actually runs its
-  // claim → promotion → decision → enqueue path. The replace must classify
-  // PIPELINE_ACTIVE and cancel nothing; the QG must complete unaffected.
-  it('a confirmed replace attempt during a live QG decision returns PIPELINE_ACTIVE and cancels nothing while the QG claims/promotes/decides/enqueues', async () => {
-    // This suite is outside the main describe's beforeEach — set the probe/scan mocks
-    // the QG decision path needs.
+  // AC8 (#1857 F25) — the confirmed replace runs WHILE the QG is HELD at a defined
+  // decision barrier (proving live interleaving, not accidental sequencing). The QG
+  // must complete FULFILLED (claim → promotion → decision → enqueue); the replace must
+  // reject PIPELINE_ACTIVE and cancel nothing.
+  it('replace runs while the QG is held mid-decision: QG completes fulfilled, replace rejects PIPELINE_ACTIVE (cancels nothing)', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
     vi.mocked(resolveSavePath).mockResolvedValue({ resolvedPath: '/downloads/test', originalPath: '/downloads/test' });
     const { orchestrator, qualityGateService } = createOrchestrator();
@@ -2460,11 +2459,25 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
     const downloadingBook = { ...baseBook, status: 'downloading' as const };
     qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
-    // A confirmed replace on the SAME book, exercised through the REAL classification.
+    // Barrier: hold the QG at its decision (processDownload) — it has already claimed +
+    // promoted the book to importing and is now deciding — until the replace has run.
+    let signalAtDecision!: () => void;
+    const atDecision = new Promise<void>((res) => { signalAtDecision = res; });
+    let releaseDecision!: () => void;
+    const held = new Promise<void>((res) => { releaseDecision = res; });
+    qualityGateService.processDownload.mockImplementation(async () => {
+      signalAtDecision();
+      await held;
+      return { action: 'imported', reason: { action: 'imported', holdReasons: [] }, statusTransition: { from: 'checking', to: 'completed' } };
+    });
+
+    const qgPromise = orchestrator.processOneDownload(1);
+    await atDecision; // the QG is now provably held mid-decision
+
+    // The book's QG-owned row is still present (checking-equivalent, QG-eligible).
     const replaceDb = createMockDb();
-    // gatherBookBlockers: the book's tracked-completed (QG-eligible) row + no jobs.
     replaceDb.select
-      .mockReturnValueOnce(mockDbChain([qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-1' })]))
+      .mockReturnValueOnce(mockDbChain([qgRow({ clientStatus: 'completed', pipelineStage: 'checking', externalId: 'ext-1' })]))
       .mockReturnValueOnce(mockDbChain([]));
     const replaceGrab = vi.fn().mockResolvedValue({ id: 42 });
     const removeExternalItem = vi.fn().mockResolvedValue(undefined);
@@ -2478,24 +2491,22 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
       grab: replaceGrab,
       safe: (fn) => fn(),
     };
-    const replaceParams = { downloadUrl: 'm', title: 'New Release', bookId: 1, replace: true };
 
-    // Run BOTH concurrently.
-    const [, replaceResult] = await Promise.allSettled([
-      orchestrator.processOneDownload(1),
-      runReplaceWorkflow(ctx, replaceParams),
-    ]);
-
-    // The QG ran its claim + promotion + decision + enqueue, unaffected by the replace.
-    expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
-    expect(qualityGateService.processDownload).toHaveBeenCalled();
-    expect(transitionBookStatus).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({ status: 'importing' }));
-    expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 1, 1, expect.any(Function), expect.anything());
-
-    // The replace threw PIPELINE_ACTIVE and cancelled NOTHING (no grab, no external removal).
-    expect(replaceResult.status).toBe('rejected');
-    expect((replaceResult as PromiseRejectedResult).reason).toMatchObject({ code: 'PIPELINE_ACTIVE' });
+    // Replace runs entirely while the QG is held → rejects PIPELINE_ACTIVE, cancels nothing.
+    const replaceOutcome = await runReplaceWorkflow(ctx, { downloadUrl: 'm', title: 'New Release', bookId: 1, replace: true })
+      .then(() => ({ ok: true }))
+      .catch((e: unknown) => ({ ok: false, error: e }));
+    expect(replaceOutcome).toMatchObject({ ok: false, error: { code: 'PIPELINE_ACTIVE' } });
     expect(replaceGrab).not.toHaveBeenCalled();
     expect(removeExternalItem).not.toHaveBeenCalled();
+    // Ordering proof: the QG has NOT enqueued yet — it is genuinely mid-flight, held.
+    expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1); // claim already happened
+    expect(transitionBookStatus).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({ status: 'importing' })); // promotion happened
+    expect(enqueueAutoImport).not.toHaveBeenCalled(); // enqueue is downstream of the held decision
+
+    // Release the QG → it MUST complete fulfilled (unaffected by the replace).
+    releaseDecision();
+    await expect(qgPromise).resolves.toBeUndefined();
+    expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 1, 1, expect.any(Function), expect.anything());
   });
 });
