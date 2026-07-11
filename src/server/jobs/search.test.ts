@@ -228,7 +228,7 @@ describe('runSearchJob', () => {
 
     // grab throws duplicate error
     vi.mocked(download.grab).mockRejectedValueOnce(
-      new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS'),
+      new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }),
     );
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -237,7 +237,7 @@ describe('runSearchJob', () => {
     expect(result.grabbed).toBe(0);
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
-      'Skipping grab — book already has active download',
+      'Skipping grab — book already has a blocking download or import',
     );
   });
 
@@ -502,7 +502,7 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
-    vi.mocked(download.grab).mockRejectedValueOnce(new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS'));
+    vi.mocked(download.grab).mockRejectedValueOnce(new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
@@ -565,7 +565,7 @@ describe('searchAllWanted', () => {
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never)
-      .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'))
+      .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }))
       .mockResolvedValueOnce({ id: 2 } as never);
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -639,7 +639,7 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?aaa')]);
     const download = createMockDownloadOrchestrator();
-    vi.mocked(download.grab).mockRejectedValue(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+    vi.mocked(download.grab).mockRejectedValue(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
@@ -694,7 +694,7 @@ describe('searchAllWanted', () => {
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never) // Book A
-      .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS')); // Book C
+      .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } })); // Book C
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 

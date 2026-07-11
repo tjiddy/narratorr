@@ -19,6 +19,7 @@ import {
 import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock, singleFlightReplace, canonicalReleaseIdentity } from './book-admission.js';
 import { runReplaceWorkflow, type ReplaceCtx } from './download-replace-workflow.js';
+import { gatherBookBlockers, classifyBlockers } from './download-blockers.js';
 
 
 export interface GrabParams {
@@ -40,8 +41,6 @@ export interface GrabParams {
 
 /** Per-grab knobs for the unlocked inner grab primitive (#1857). */
 export interface GrabInnerOpts {
-  /** Duplicate-check classification mode passed through to DownloadService. */
-  classificationMode?: 'legacy' | 'gatherAllBlockers' | undefined;
   /** When set, inherit this snapshot instead of capturing the book's current
    *  status (the replace winner inherits the replaced row's snapshot, F6). */
   bookStatusAtGrabOverride?: BookStatus | null | undefined;
@@ -63,49 +62,55 @@ export class DownloadOrchestrator {
   ) {}
 
   /**
-   * Grab for v1 / RSS / retrySearch / search-pipeline callers (`legacy`
-   * classification, propagating post-insert failures). Serialized by the
-   * per-`bookId` admission mutex around the shared check→add→insert (AC17).
+   * Grab for v1 / RSS / retrySearch / search-pipeline callers (propagating
+   * post-insert failures). Serialized by the per-`bookId` admission mutex around
+   * the shared check→add→insert (AC17). Since #1861 every caller runs the ONE
+   * consolidated blocker classification in `DownloadService.checkDuplicateDownloads`.
    */
   async grab(params: GrabParams): Promise<DownloadWithBook> {
-    if (!params.bookId) return this.grabWithinAdmissionLock(params, { classificationMode: 'legacy' });
-    return withBookAdmissionLock(params.bookId, () => this.grabWithinAdmissionLock(params, { classificationMode: 'legacy' }));
+    if (!params.bookId) return this.grabWithinAdmissionLock(params, {});
+    return withBookAdmissionLock(params.bookId, () => this.grabWithinAdmissionLock(params, {}));
   }
 
   /**
-   * Grab for the internal `POST /api/search/grab` route (#1857): `gatherAllBlockers`
-   * classification, and — with `replace: true` — the confirmed cancel-&-replace
-   * workflow (single-flight coalescing + per-book mutex + claim-first protocol).
+   * Grab for the internal `POST /api/search/grab` route (#1857): the same
+   * consolidated blocker classification as every other caller and — with
+   * `replace: true` — the confirmed cancel-&-replace workflow (single-flight
+   * coalescing + per-book mutex + claim-first protocol).
    */
   async grabInternal(params: GrabParams): Promise<DownloadWithBook> {
     if (!params.bookId) {
-      // Orphan grab — no book to lock; gatherAllBlockers is a no-op without a bookId.
-      return this.grabWithinAdmissionLock(params, { classificationMode: 'gatherAllBlockers' });
+      // Orphan grab — no book to lock; the blocker classification is a no-op without a bookId.
+      return this.grabWithinAdmissionLock(params, {});
     }
     if (params.replace) return this.grabWithReplace(params);
-    return withBookAdmissionLock(params.bookId, () => this.grabWithinAdmissionLock(params, { classificationMode: 'gatherAllBlockers' }));
+    return withBookAdmissionLock(params.bookId, () => this.grabWithinAdmissionLock(params, {}));
   }
 
   /**
-   * Retry-search grab (#1857 AC17): acquire the book mutex ONCE, recheck for an
-   * in-progress download inside it, and either report `'already_active'` (the book
-   * is already served) or grab via the UNLOCKED inner primitive (no self-deadlock,
+   * Retry-search grab (#1857 AC17): acquire the book mutex ONCE, recheck for any
+   * grab blocker inside it, and either report `'already_active'` (the book is
+   * already served — a live download, a QG-eligible completed row, or a pending
+   * auto import job) or grab via the UNLOCKED inner primitive (no self-deadlock,
    * since `skipDuplicateCheck` bypasses the guard the mutex protects).
    */
   async grabForRetry(params: GrabParams): Promise<DownloadWithBook | 'already_active'> {
     const bookId = params.bookId;
-    if (!bookId) return this.grabWithinAdmissionLock(params, { classificationMode: 'legacy' });
+    if (!bookId) return this.grabWithinAdmissionLock(params, {});
     return withBookAdmissionLock(bookId, async () => {
-      const active = await this.downloadService.getActiveByBookId(bookId);
-      if (active.length > 0) return 'already_active';
-      return this.grabWithinAdmissionLock(params, { classificationMode: 'legacy' });
+      if (await this.hasGrabBlocker(bookId)) return 'already_active';
+      return this.grabWithinAdmissionLock(params, {});
     });
   }
 
-  /** True when the book already has an in-progress download (early precheck seam). */
-  async hasActiveInProgress(bookId: number): Promise<boolean> {
-    const active = await this.downloadService.getActiveByBookId(bookId);
-    return active.length > 0;
+  /**
+   * True when the book has ANY grab blocker (#1861): a client-stage replaceable
+   * row, a pipeline-stage row, a QG-eligible completed row, OR a pending/processing
+   * auto import job — the exact set the consolidated classifier treats as
+   * non-`clear`. The early retry precheck seam AND the retry in-lock recheck.
+   */
+  async hasGrabBlocker(bookId: number): Promise<boolean> {
+    return classifyBlockers(await gatherBookBlockers(this.db, bookId)).kind !== 'clear';
   }
 
   private async grabWithReplace(params: GrabParams): Promise<DownloadWithBook> {
@@ -152,7 +157,7 @@ export class DownloadOrchestrator {
     }
 
     // Core grab — let errors (including duplicate detection) propagate
-    const download = await this.downloadService.grab({ ...params, bookStatusAtGrab, ...(opts.classificationMode !== undefined && { classificationMode: opts.classificationMode }) });
+    const download = await this.downloadService.grab({ ...params, bookStatusAtGrab });
 
     // Side effects — each independently guarded, errors don't affect grab result
     const isHandoff = !download.externalId;

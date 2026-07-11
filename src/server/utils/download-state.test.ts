@@ -115,6 +115,13 @@ describe('isQualityGateEligibleRow (QG-eligibility twin, #1857 F16)', () => {
     expect(isQualityGateEligibleRow(row('completed', 'idle', null))).toBe(false);
   });
 
+  it('excludes an empty-string externalId identically to null (#1861 truthiness alignment)', () => {
+    // A pre-existing `external_id = ''` row must NOT be gate-eligible — otherwise it
+    // strands as a permanent blocker the gate never drains. Aligned with the QG
+    // orchestrator's `!row.externalId` skip and the insert handoff.
+    expect(isQualityGateEligibleRow(row('completed', 'idle', ''))).toBe(false);
+  });
+
   it('excludes non-completed-display rows regardless of externalId', () => {
     expect(isQualityGateEligibleRow(row('downloading', 'idle', 'ext-1'))).toBe(false);
     expect(isQualityGateEligibleRow(row('queued', 'idle', 'ext-1'))).toBe(false);

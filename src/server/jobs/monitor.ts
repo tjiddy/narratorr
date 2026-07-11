@@ -396,10 +396,11 @@ async function handleDownloadFailure(
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'exhausted';
       case 'already_active':
-        // Book already served by a live download (a replacement's winner). Leave the
-        // failed row + errorMessage untouched and do NOT recoverBookStatus — the book
-        // keeps the winner's status (#1857 AC17).
-        log.info({ downloadId, bookId }, 'Retry skipped — book already has an active download');
+        // Book already served by a grab blocker — a live download (a replacement's
+        // winner), a QG-eligible completed row, or a pending auto import job (#1861).
+        // Leave the failed row + errorMessage untouched and do NOT recoverBookStatus —
+        // the book keeps the blocker's status (#1857 AC17).
+        log.info({ downloadId, bookId }, 'Retry skipped — book already has a blocking download or import');
         return 'already_active';
       case 'no_candidates':
         await db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, downloadId));

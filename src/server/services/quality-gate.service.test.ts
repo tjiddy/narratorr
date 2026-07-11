@@ -5,7 +5,7 @@ import { QualityGateService, QualityGateServiceError } from './quality-gate.serv
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
-import { completedDisplayDownloadCondition } from '../utils/download-state.js';
+import { completedDisplayDownloadCondition, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
 
 function createService() {
   const db = createMockDb();
@@ -75,9 +75,9 @@ describe('QualityGateService', () => {
 
       expect(result).toEqual(expected);
       const chain = db.select.mock.results[0]!.value;
-      expect(chain.where).toHaveBeenCalledWith(
-        and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId)),
-      );
+      // Assert the shared eligibility condition directly so this can't drift from
+      // its internals (now `completed display AND externalId non-null AND != ''`, #1861).
+      expect(chain.where).toHaveBeenCalledWith(qualityGateEligibleDownloadCondition());
     });
 
     it('returns empty array when no completed downloads exist', async () => {

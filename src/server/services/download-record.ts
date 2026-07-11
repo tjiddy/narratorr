@@ -132,7 +132,10 @@ export async function insertDownloadRecord(
       clientStatus,
       progress: downloadProgress,
       completedAt: downloadCompletedAt,
-      externalId: ctx.externalId ?? undefined,
+      // Normalize '' → null at the insert seam so an adapter returning an empty
+      // external id can never persist a `''` that would strand as a permanent
+      // QG/import blocker no consumer drains (#1861). Matches `isHandoff` above.
+      externalId: ctx.externalId || null,
       bookStatusAtGrab: params.bookStatusAtGrab ?? null,
     })
     .returning();

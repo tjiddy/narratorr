@@ -744,7 +744,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -760,7 +760,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -785,23 +785,30 @@ describe('monitor job', () => {
       );
     });
 
-    // #1857 F12 — when the book is already served by a live download (a replacement's
-    // winner), handleDownloadFailure returns 'already_active': the failed row is NOT
-    // deleted and NO competing download is added.
+    // #1857 F12 / #1861 — when the book is already served by a grab blocker (a live
+    // download / replacement winner, a QG-eligible completed row, or a pending auto
+    // import job), handleDownloadFailure returns 'already_active': the failed row is
+    // NOT deleted and NO competing download is added.
     it('already_active: does not delete the failed row or add a competing download', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
       adapter.getDownload.mockResolvedValueOnce(null); // missing-item → failed → handleDownloadFailure
       db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guarded failed-write lands
-      // Book already has an in-progress download → retrySearch short-circuits to already_active.
-      retryDeps.retrySearchDeps.downloadOrchestrator.hasActiveInProgress.mockResolvedValue(true);
+      // Book already has a grab blocker → retrySearch short-circuits to already_active.
+      retryDeps.retrySearchDeps.downloadOrchestrator.hasGrabBlocker.mockResolvedValue(true);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       // The failed row is preserved and no replacement grab is issued.
       expect(db.delete).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+      // #1861 F1 — the scheduled-retry diagnostic is blocker-neutral (the outcome now
+      // also covers QG-completed rows and pending auto import jobs, not just live downloads).
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42 }),
+        'Retry skipped — book already has a blocking download or import',
+      );
     });
 
     it('blacklists by guid when infoHash is absent (Usenet)', async () => {
@@ -1133,7 +1140,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1149,7 +1156,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -1296,7 +1303,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
-        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasActiveInProgress: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn>; grabForRetry: ReturnType<typeof vi.fn>; hasGrabBlocker: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -1312,7 +1319,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerSearchService: { searchAll: vi.fn().mockResolvedValue([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
-          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasActiveInProgress: vi.fn().mockResolvedValue(false) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, path: null, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),

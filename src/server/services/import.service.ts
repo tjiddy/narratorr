@@ -23,7 +23,7 @@ import {
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 import { removeOrDeferTorrent, type TorrentRemovalResult } from './torrent-removal.helpers.js';
-import { transitionDownloadState, completedDisplayDownloadCondition } from '../utils/download-state.js';
+import { transitionDownloadState, qualityGateEligibleDownloadCondition } from '../utils/download-state.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 
@@ -246,14 +246,18 @@ export class ImportService {
   /**
    * Query eligible downloads for import enqueueing.
    * Returns download IDs + bookIds. No slot admission — caller enqueues to import_jobs.
+   *
+   * Consumes the shared `qualityGateEligibleDownloadCondition()` (completed display
+   * + non-empty `externalId`) so this third eligibility path can never diverge from
+   * the QG batch query and the replace blocker classifier (#1861); the extra
+   * `completedAt`/`bookId` guards remain import-specific.
    */
   async getEligibleDownloads(): Promise<Array<{ id: number; bookId: number }>> {
     const eligibleDownloads = await this.db
       .select({ id: downloads.id, bookId: downloads.bookId })
       .from(downloads)
       .where(and(
-        completedDisplayDownloadCondition(),
-        isNotNull(downloads.externalId),
+        qualityGateEligibleDownloadCondition(),
         isNotNull(downloads.completedAt),
         isNotNull(downloads.bookId),
       ))

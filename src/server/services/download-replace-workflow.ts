@@ -109,9 +109,10 @@ async function coordinateReplaceRevert(ctx: ReplaceCtx, bookId: number, snapshot
   }
 }
 
-/** Ordinary grab within the mutex (nothing to replace) — gatherAllBlockers mode. */
+/** Ordinary grab within the mutex (nothing to replace) — the consolidated
+ *  blocker classification runs inside `DownloadService.checkDuplicateDownloads`. */
 async function grabAsOrdinary(ctx: ReplaceCtx, params: GrabParams): Promise<number> {
-  const dl = await ctx.grab(params, { classificationMode: 'gatherAllBlockers' });
+  const dl = await ctx.grab(params, {});
   return dl.id;
 }
 

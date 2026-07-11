@@ -1992,14 +1992,14 @@ describe('books routes', () => {
       mockStreamingSearch([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500_000_000, seeders: 10, indexerId: 1 },
       ]);
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.result).toBe('skipped');
-      expect(body.reason).toBe('already_has_active_download');
+      expect(body.reason).toBe('grab_blocked');
     });
 
     it('returns 404 when book ID does not exist', async () => {

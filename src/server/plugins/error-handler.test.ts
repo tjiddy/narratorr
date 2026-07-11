@@ -48,8 +48,8 @@ function createTestApp() {
   app.get('/throw-download-invalid-status', async () => { throw new DownloadError('Download 1 is not in failed state', 'INVALID_STATUS'); });
   app.get('/throw-task-not-found', async () => { throw new TaskRegistryError('Task "foo" not found', 'NOT_FOUND'); });
   app.get('/throw-task-already-running', async () => { throw new TaskRegistryError('Task "foo" is already running', 'ALREADY_RUNNING'); });
-  app.get('/throw-duplicate-active', async () => { throw new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'); });
-  app.get('/throw-duplicate-pipeline', async () => { throw new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE'); });
+  app.get('/throw-duplicate-active', async () => { throw new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }); });
+  app.get('/throw-duplicate-pipeline', async () => { throw new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE', { reason: 'processing' }); });
   app.get('/throw-cover-not-found', async () => { throw new CoverUploadError('Book not found', 'NOT_FOUND'); });
   app.get('/throw-cover-invalid-mime', async () => { throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME'); });
   app.get('/throw-cover-no-path', async () => { throw new CoverUploadError('Book has no path on disk', 'NO_PATH'); });

@@ -80,10 +80,14 @@ describe('SearchActivityCard', () => {
   });
 
   describe('skipped outcome', () => {
-    it('shows "Already has an active download" when skipped', () => {
+    it('shows a blocker-neutral message + "blocked" label when skipped (#1861)', () => {
       const state = makeState({ outcome: 'skipped' });
       render(<SearchActivityCard state={state} />);
-      expect(screen.getByText(/Already has an active download/)).toBeInTheDocument();
+      // Neutral wording — a skip can now be any grab blocker (in-progress download,
+      // QG-completed row, or a pending import), not only an "active download".
+      expect(screen.getByText(/Blocked by an in-progress download or import/)).toBeInTheDocument();
+      expect(screen.queryByText(/active download/i)).not.toBeInTheDocument();
+      expect(screen.getByText('blocked')).toBeInTheDocument();
     });
   });
 

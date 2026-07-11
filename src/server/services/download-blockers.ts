@@ -8,7 +8,7 @@ import {
   isQualityGateEligibleRow,
   transitionDownloadState,
 } from '../utils/download-state.js';
-import { ClaimMissError } from './download-errors.js';
+import { ClaimMissError, type PipelineActiveReason } from './download-errors.js';
 import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
 import type { DownloadRow } from './types.js';
 
@@ -22,18 +22,17 @@ import type { DownloadRow } from './types.js';
 // between the gather and the recheck would reopen the gather→claim race.
 // ============================================================================
 
-/** Reason discriminator carried on a `PIPELINE_ACTIVE` conflict (F60/F64). */
-export type PipelineActiveReason = 'processing' | 'awaiting_review';
-
 type BlockerFields = Pick<DownloadRow, 'clientStatus' | 'pipelineStage' | 'externalId'>;
 
 /**
  * A download is **safely replaceable** ONLY when it is purely at the client
  * stage: `pipelineStage === 'idle' && clientStatus ∈ {queued, downloading,
  * paused}`. Anything that has entered the import pipeline is NOT replaceable
- * (see {@link isPipelineBlocker}). Narrower than the legacy `isReplaceableState`
- * (which also treats `checking`/`pending_review` as replaceable) — the narrowing
- * is what guarantees replace never cancels a row the quality gate owns.
+ * (see {@link isPipelineBlocker}). Narrower than a status-set replaceability rule
+ * that also treats `checking`/`pending_review` as replaceable — the narrowing is
+ * what guarantees replace never cancels a row the quality gate owns. This is now
+ * the SOLE grab-time replaceability decision (#1861 consolidated the legacy
+ * `isReplaceableState`/`REPLACEABLE_STATUSES` registry pair away).
  */
 export function isClientStageReplaceable(d: Pick<DownloadRow, 'clientStatus' | 'pipelineStage'>): boolean {
   return d.pipelineStage === 'idle'

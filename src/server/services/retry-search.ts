@@ -19,9 +19,10 @@ export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
   | { outcome: 'exhausted' }
   | { outcome: 'no_candidates' }
-  // #1857 — the book already has an in-progress download (a replacement's winner
-  // or a prior retry's grab). retrySearch exists to replace a *failed* row (never
-  // in-progress), so an in-progress download means the book is already served.
+  // #1857/#1861 — the book already has a grab blocker: a live download (a
+  // replacement's winner or a prior retry's grab), a QG-eligible completed row, or a
+  // pending auto import job. retrySearch exists to replace a *failed* row, so any
+  // such blocker means the book is already served.
   | { outcome: 'already_active' }
   | { outcome: 'retry_error'; error: string };
 
@@ -91,13 +92,14 @@ export async function retrySearch(
     return { outcome: 'no_candidates' };
   }
 
-  // Early `already_active` precheck (#1857 F43/F47): if the book already has an
-  // in-progress download (a replacement's winner), short-circuit BEFORE consuming
-  // a budget attempt — the common case costs nothing, and there is no
-  // generation-crossing refund to reason about. The authoritative in-lock recheck
-  // (grabForRetry) still catches an active that appears during the network search.
-  if (await downloadOrchestrator.hasActiveInProgress(bookId)) {
-    log.debug({ bookId, title: book.title }, 'Retry search skipped — book already has an in-progress download (early)');
+  // Early `already_active` precheck (#1857 F43/F47 / #1861): if the book already
+  // has ANY grab blocker (a replacement's winner, a QG-eligible completed row, or a
+  // pending auto import job), short-circuit BEFORE consuming a budget attempt — the
+  // common case costs nothing, and there is no generation-crossing refund to reason
+  // about. The authoritative in-lock recheck (grabForRetry) still catches a blocker
+  // that appears during the network search.
+  if (await downloadOrchestrator.hasGrabBlocker(bookId)) {
+    log.debug({ bookId, title: book.title }, 'Retry search skipped — book already has a grab blocker (early)');
     return { outcome: 'already_active' };
   }
 
@@ -146,14 +148,15 @@ export async function retrySearch(
     }
 
     // Grab the best candidate via the retry seam: acquires the per-book admission
-    // mutex ONCE and rechecks for an in-progress download inside it (#1857 AC17).
+    // mutex ONCE and rechecks for ANY grab blocker inside it (#1857 AC17 / #1861 — a
+    // live download, a QG-eligible completed row, or a pending auto import job).
     // `skipDuplicateCheck` bypasses the duplicate guard, so the mutex alone would
     // leave two live downloads — the in-lock recheck is what dedups sequentially.
     const grabResult = await downloadOrchestrator.grabForRetry(
       buildGrabPayload(best, book.id, { ...(best.guid !== undefined && { guid: best.guid }), skipDuplicateCheck: true }),
     );
     if (grabResult === 'already_active') {
-      log.info({ bookId, attempt }, 'Retry search: book became active during search — skipping (attempt consumed, not refunded)');
+      log.info({ bookId, attempt }, 'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)');
       return { outcome: 'already_active' };
     }
 
