@@ -12,6 +12,8 @@ import { ClaimMissError } from './download-errors.js';
 import { createMockDb } from '../__tests__/helpers.js';
 import { and, eq } from 'drizzle-orm';
 import { downloads } from '../../db/schema.js';
+import { clientStatusSchema, pipelineStageSchema } from '../../shared/schemas/activity.js';
+import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 import type { Db } from '../../db/index.js';
 import type { DownloadRow } from './types.js';
 
@@ -218,5 +220,46 @@ describe('claimReplaceableTargets (#1857 F4/F17/F21/F63)', () => {
 
     await expect(claimReplaceableTargets(db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
     expect(committed).toHaveLength(0); // every claimed row rolled back
+  });
+});
+
+// Exhaustive tuple-product coverage migrated from download-status-registry.test
+// when the legacy `isReplaceableState`/`REPLACEABLE_STATUSES` pair was deleted
+// (#1861). The consolidated grab-time predicates now own replaceability + blocking.
+describe('grab-time predicates over the full (clientStatus, pipelineStage) product (#1861, migrated)', () => {
+  const clientStatuses = clientStatusSchema.options;
+  const pipelineStages = pipelineStageSchema.options;
+
+  it('isClientStageReplaceable is true iff pipelineStage=idle AND clientStatus ∈ {queued,downloading,paused}', () => {
+    const clientReplaceable = new Set<string>(['queued', 'downloading', 'paused']);
+    for (const c of clientStatuses) {
+      for (const p of pipelineStages) {
+        expect(isClientStageReplaceable({ clientStatus: c, pipelineStage: p }))
+          .toBe(p === 'idle' && clientReplaceable.has(c));
+      }
+    }
+  });
+
+  it('a download with pipelineStage=importing is NEVER client-stage replaceable (load-bearing invariant)', () => {
+    for (const c of clientStatuses) {
+      expect(isClientStageReplaceable({ clientStatus: c, pipelineStage: 'importing' })).toBe(false);
+    }
+  });
+
+  it('isPipelineBlocker (tracked, non-empty externalId) blocks non-idle pipeline stages + QG-eligible completed rows', () => {
+    for (const c of clientStatuses) {
+      for (const p of pipelineStages) {
+        const blocked = isPipelineBlocker({ clientStatus: c, pipelineStage: p, externalId: 'ext-1' });
+        const isNonIdlePipeline = p === 'checking' || p === 'pending_review' || p === 'importing';
+        const isQgEligible = deriveDisplayStatus(c, p) === 'completed'; // tracked → gate-eligible
+        expect(blocked).toBe(isNonIdlePipeline || isQgEligible);
+      }
+    }
+  });
+
+  it('a Blackhole handoff (completed, idle, externalId null OR empty) is NOT a pipeline blocker', () => {
+    for (const ext of [null, ''] as const) {
+      expect(isPipelineBlocker({ clientStatus: 'completed', pipelineStage: 'idle', externalId: ext })).toBe(false);
+    }
   });
 });

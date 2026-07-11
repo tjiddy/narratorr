@@ -243,6 +243,13 @@ Narratorr exposes two HTTP API surfaces with deliberately different stability gu
 
 **Documented contract exception — Prowlarr/Readarr compatibility shim.** The endpoints `/api/v1/indexer*` and `/api/v1/system/status` (`src/server/routes/prowlarr-compat.ts`) live under the `/api/v1/` prefix but are **not** native v1. They impersonate Prowlarr/Readarr so those tools can manage narratorr as an indexer target, and their shapes are dictated by the external product, not by narratorr's v1 conventions. Treat them as a named exception; do not mistake them for, or align them with, the native v1 contract.
 
+**Documented breaking-change exception — grab-conflict classification (#1861).** `POST /api/v1/books/:publicId/grab` returns a `409` whose `code` discriminator is derived from one consolidated grab-blocker classifier (`src/server/services/download-blockers.ts`). #1861 unified this classifier across every caller (v1 included), which changes the v1 grab 409 on two reachable paths — a deliberate, maintainer-reviewed break, not a silent change:
+
+- **`checking` / `pending_review` active:** was `409 ACTIVE_DOWNLOAD_EXISTS`, now `409 PIPELINE_ACTIVE`. The prior legacy rule counted these pipeline states as replaceable; they are not.
+- **Quality-gate-eligible completed row (completed display + tracked `externalId`):** was **admitted (`200`)**, now `409 PIPELINE_ACTIVE`. This closes a two-live-downloads dupe window during the completed→QG-pickup handoff; it cannot be preserved on v1 without leaving that duplicate-admission defect open.
+
+The `PIPELINE_ACTIVE` 409 message is also blocker-neutral and id-free ("Book already has a download in the import pipeline") since it now represents QG-completed rows and pending auto import jobs, not only in-flight downloads. This exception entry is the governance artifact for the change; maintainer sign-off is the normal PR review of this amendment. A future rejection of the break is a re-scope to `/api/v2/*`, tracked separately — no code path is conditioned on sign-off.
+
 ### v1 conventions (ADR)
 
 These decisions are locked by S0 (#1442, part of the Public API v1 epic #1441) and codified in `src/shared/schemas/v1/common.ts`. Downstream stories import those types rather than re-deriving them.

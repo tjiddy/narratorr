@@ -34,14 +34,15 @@ export async function searchRoutes(
         return await reply.status(201).send(download);
       } catch (error: unknown) {
         if (error instanceof DuplicateDownloadError) {
-          // Shape both conflict codes from the structured error `details` the
-          // gatherAllBlockers classification populated — no internal ids, no raw
-          // messages, no re-querying (the decision stayed in the service, #1857 F60).
-          if (error.code === 'ACTIVE_DOWNLOAD_EXISTS') {
-            const active = error.details?.active ?? { title: data.title, count: 1 };
+          // Shape both conflict codes from the REQUIRED code-discriminated error
+          // `details` the classifier populated — no internal ids, no raw messages,
+          // no re-querying, no fallback (the decision stayed in the service, #1857
+          // F60 / #1861).
+          if ('active' in error.details) {
+            const { active } = error.details;
             return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: active.title }, count: active.count });
           }
-          return reply.status(409).send({ code: 'PIPELINE_ACTIVE', reason: error.details?.reason ?? 'processing' });
+          return reply.status(409).send({ code: 'PIPELINE_ACTIVE', reason: error.details.reason });
         }
         if (error instanceof DownloadClientError) {
           // Typed download-client errors propagate to error-handler plugin

@@ -43,7 +43,7 @@ function IndexerRow({ state }: { state: IndexerState }) {
 const STATUS_LABELS: Record<string, string> = {
   grabbed: 'grabbed',
   no_results: 'no results',
-  skipped: 'already downloading',
+  skipped: 'blocked',
   grab_error: 'grab failed',
 };
 
@@ -76,7 +76,7 @@ export function SearchActivityCard({ state }: { state: SearchCardState }) {
         <p className="text-sm text-muted-foreground mb-2">No results found</p>
       )}
       {state.outcome === 'skipped' && (
-        <p className="text-sm text-muted-foreground mb-2">Already has an active download</p>
+        <p className="text-sm text-muted-foreground mb-2">Blocked by an in-progress download or import</p>
       )}
       {state.outcome === 'grab_error' && (
         <p className="text-sm text-destructive mb-2">Grab failed</p>

@@ -1,10 +1,10 @@
-import { eq, desc, inArray, and, or, count, sql } from 'drizzle-orm';
+import { eq, desc, and, or, count, sql } from 'drizzle-orm';
 import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, indexers, importJobs } from '../../db/schema.js';
+import { downloads, books, indexers } from '../../db/schema.js';
 import type { DownloadProtocol } from '../../core/index.js';
 import type { DownloadArtifact } from '../../core/download-clients/types.js';
-import { isTerminalState, isReplaceableState, deriveDisplayStatus } from '../../shared/download-status-registry.js';
+import { isTerminalState, deriveDisplayStatus } from '../../shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
   terminalDownloadCondition,
@@ -232,67 +232,30 @@ export class DownloadService {
   }
 
   /**
-   * Duplicate/blocker guard with a per-call classification mode (#1857 F7):
-   *   - `legacy` (default) — the historical behavior: first replaceable row →
-   *     `ACTIVE_DOWNLOAD_EXISTS`, else non-replaceable → `PIPELINE_ACTIVE`, plus
-   *     the pending-auto-job guard. v1 + all auto callers keep this mode so their
-   *     `error.code` (and v1's serialized envelope bytes) are unchanged.
-   *   - `gatherAllBlockers` — only the internal `POST /api/search/grab` route:
-   *     gather ALL blockers, give `PIPELINE_ACTIVE` precedence, and populate the
-   *     structured `details` the route shapes into its 409 bodies. "Safely
-   *     replaceable" narrows to client-stage only (see `download-blockers.ts`).
+   * The ONE grab-time duplicate/blocker guard (#1861 consolidated the legacy
+   * classification away — every caller, v1 included, now runs this single path).
+   * Gather ALL blockers, give `PIPELINE_ACTIVE` precedence over
+   * `ACTIVE_DOWNLOAD_EXISTS` (mixed blockers never report replaceable), and
+   * populate the code-discriminated structured `details` the grab routes shape
+   * into their 409 bodies without re-querying. "Safely replaceable" is
+   * client-stage only; a QG-eligible completed row and a pending auto import job
+   * both block (see `download-blockers.ts`).
    */
-  private async checkDuplicateDownloads(
-    bookId: number,
-    mode: 'legacy' | 'gatherAllBlockers' = 'legacy',
-  ): Promise<void> {
-    if (mode === 'gatherAllBlockers') {
-      const classification = classifyBlockers(await gatherBookBlockers(this.db, bookId));
-      if (classification.kind === 'pipeline') {
-        throw new DuplicateDownloadError(
-          `Book ${bookId} has a download in the import pipeline`,
-          'PIPELINE_ACTIVE',
-          { reason: classification.reason },
-        );
-      }
-      if (classification.kind === 'replaceable') {
-        throw new DuplicateDownloadError(
-          `Book ${bookId} already has an active download`,
-          'ACTIVE_DOWNLOAD_EXISTS',
-          { active: classification.active },
-        );
-      }
-      return;
+  private async checkDuplicateDownloads(bookId: number): Promise<void> {
+    const classification = classifyBlockers(await gatherBookBlockers(this.db, bookId));
+    if (classification.kind === 'pipeline') {
+      throw new DuplicateDownloadError(
+        `Book ${bookId} has a download in the import pipeline`,
+        'PIPELINE_ACTIVE',
+        { reason: classification.reason },
+      );
     }
-
-    const allActive = await this.getActiveByBookId(bookId);
-    // Derive replaceability straight from the canonical `(clientStatus,
-    // pipelineStage)` axes (S2b) rather than re-deriving the display status and
-    // doing a set membership check — same result, one fewer indirection.
-    const replaceableActive = allActive.filter((dl) => isReplaceableState(dl.clientStatus, dl.pipelineStage));
-
-    if (replaceableActive.length > 0) {
-      throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${replaceableActive[0]!.id})`, 'ACTIVE_DOWNLOAD_EXISTS');
-    }
-
-    const pipelineActive = allActive.filter((dl) => !isReplaceableState(dl.clientStatus, dl.pipelineStage));
-    if (pipelineActive.length > 0) {
-      throw new DuplicateDownloadError(`Book ${bookId} already has an active download (id: ${pipelineActive[0]!.id})`, 'PIPELINE_ACTIVE');
-    }
-
-    // Guard the window where the download is already `completed` (terminal,
-    // so filtered out above) but an auto import_jobs row is pending/processing.
-    const pendingAutoJobs = await this.db
-      .select({ id: importJobs.id })
-      .from(importJobs)
-      .where(and(
-        eq(importJobs.bookId, bookId),
-        eq(importJobs.type, 'auto'),
-        inArray(importJobs.status, ['pending', 'processing']),
-      ))
-      .limit(1);
-    if (pendingAutoJobs.length > 0) {
-      throw new DuplicateDownloadError(`Book ${bookId} already has an active auto import job (id: ${pendingAutoJobs[0]!.id})`, 'PIPELINE_ACTIVE');
+    if (classification.kind === 'replaceable') {
+      throw new DuplicateDownloadError(
+        `Book ${bookId} already has an active download`,
+        'ACTIVE_DOWNLOAD_EXISTS',
+        { active: classification.active },
+      );
     }
   }
 
@@ -307,13 +270,12 @@ export class DownloadService {
     guid?: string | undefined;
     isFreeleech?: boolean | undefined;
     skipDuplicateCheck?: boolean | undefined;
-    classificationMode?: 'legacy' | 'gatherAllBlockers' | undefined;
     infoHash?: string | undefined;
     source?: CreateEventInput['source'] | undefined;
     bookStatusAtGrab?: BookStatus | null | undefined;
   }): Promise<DownloadWithBook> {
     if (params.bookId && !params.skipDuplicateCheck) {
-      await this.checkDuplicateDownloads(params.bookId, params.classificationMode ?? 'legacy');
+      await this.checkDuplicateDownloads(params.bookId);
     }
 
     const protocol = params.protocol ?? 'torrent';

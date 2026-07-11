@@ -95,7 +95,7 @@ describe('runReplaceWorkflow (#1857)', () => {
     queueGathers(db, {});
     const id = await runReplaceWorkflow(ctx, params);
     expect(id).toBe(42);
-    expect(grab).toHaveBeenCalledWith(params, { classificationMode: 'gatherAllBlockers' });
+    expect(grab).toHaveBeenCalledWith(params, {});
   });
 
   it('replaceable: claims, cleans up the old row, then grabs the replacement inheriting the snapshot', async () => {
@@ -255,7 +255,7 @@ describe('runReplaceWorkflow (#1857)', () => {
 
       const id = await runReplaceWorkflow(ctx, params);
       expect(id).toBe(42);
-      expect(grab).toHaveBeenCalledWith(params, { classificationMode: 'gatherAllBlockers' });
+      expect(grab).toHaveBeenCalledWith(params, {});
     });
 
     it('post-miss still-replaceable → bounded single retry, then ACTIVE_DOWNLOAD_EXISTS on a second miss', async () => {

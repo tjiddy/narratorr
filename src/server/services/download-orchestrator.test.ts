@@ -187,7 +187,7 @@ describe('DownloadOrchestrator', () => {
     });
 
     it('propagates DuplicateDownloadError unchanged to caller', async () => {
-      (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new DuplicateDownloadError('Book 2 already has an active download (id: 1)', 'ACTIVE_DOWNLOAD_EXISTS'));
+      (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new DuplicateDownloadError('Book 2 already has an active download (id: 1)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
       await expect(orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 }))
         .rejects.toThrow(DuplicateDownloadError);
       // No side effects should fire on error
@@ -601,15 +601,23 @@ describe('DownloadOrchestrator', () => {
       expect(downloadService.grab).toHaveBeenCalledTimes(2);
     });
 
-    it('grabForRetry rechecks IN-LOCK: skips the grab when the book already has an active download', async () => {
-      asMock(downloadService.getActiveByBookId).mockResolvedValue([mockDownload]);
+    it('grabForRetry rechecks IN-LOCK via hasGrabBlocker: skips the grab when the book already has a blocker', async () => {
+      // #1861 — the in-lock recheck runs the consolidated blocker classification
+      // (gatherBookBlockers → classifyBlockers) against the db, not getActiveByBookId.
+      const replaceableRow = { id: 1, title: 'X', clientStatus: 'queued', pipelineStage: 'idle', externalId: 'e', addedAt: new Date() };
+      (mockDb as Record<string, unknown>).select = vi.fn()
+        .mockReturnValueOnce(mockDbChain([replaceableRow])) // downloads (blocker present)
+        .mockReturnValueOnce(mockDbChain([]));              // importJobs
       const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 901 });
       expect(result).toBe('already_active');
       expect(downloadService.grab).not.toHaveBeenCalled();
     });
 
-    it('grabForRetry grabs when no in-progress download exists for the book', async () => {
-      asMock(downloadService.getActiveByBookId).mockResolvedValue([]);
+    it('grabForRetry grabs when no grab blocker exists for the book', async () => {
+      (mockDb as Record<string, unknown>).select = vi.fn()
+        .mockReturnValueOnce(mockDbChain([])) // downloads (no blocker)
+        .mockReturnValueOnce(mockDbChain([])) // importJobs (no auto job)
+        .mockReturnValue(mockDbChain([{ status: 'wanted' }])); // books.status capture in grabWithinAdmissionLock
       const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 902 });
       expect(result).toBe(mockDownload);
       expect(downloadService.grab).toHaveBeenCalled();

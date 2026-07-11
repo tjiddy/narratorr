@@ -8,23 +8,31 @@ export class DownloadError extends Error {
   }
 }
 
-/** Reason discriminator on a `PIPELINE_ACTIVE` conflict (#1857 F60/F64). */
+/** Reason discriminator on a `PIPELINE_ACTIVE` conflict (#1857 F60/F64). The
+ *  single server-side home — `download-blockers.ts` imports this (#1861). */
 export type PipelineActiveReason = 'processing' | 'awaiting_review';
 
-/**
- * Structured conflict details the internal `POST /api/search/grab` route shapes
- * into its 409 bodies WITHOUT re-querying (#1857). Only populated by the
- * `gatherAllBlockers` classification mode; the `legacy` mode (v1 + auto callers)
- * leaves it undefined, so those paths' error bytes stay byte-identical.
- *   - `active` — most-recent replaceable download's `title` + total `count`
- *     (ACTIVE_DOWNLOAD_EXISTS). No ids — informational only.
- *   - `reason` — deterministic aggregate over the whole blocker set
- *     (PIPELINE_ACTIVE).
- */
-export interface DuplicateDownloadDetails {
-  active?: { title: string; count: number };
-  reason?: PipelineActiveReason;
+/** `ACTIVE_DOWNLOAD_EXISTS` details — most-recent replaceable download's `title`
+ *  + total `count` (no ids, informational only). */
+export interface ActiveDownloadDetails {
+  active: { title: string; count: number };
 }
+
+/** `PIPELINE_ACTIVE` details — deterministic reason aggregate over the whole
+ *  blocker set. */
+export interface PipelineActiveDetails {
+  reason: PipelineActiveReason;
+}
+
+/**
+ * Structured conflict details the grab routes shape into their 409 bodies
+ * WITHOUT re-querying (#1857/#1861). Now REQUIRED and code-discriminated — every
+ * production throw supplies the shape matching its `code`, so a route can read
+ * `details` without a fallback:
+ *   - `ACTIVE_DOWNLOAD_EXISTS ⇒ { active }`
+ *   - `PIPELINE_ACTIVE ⇒ { reason }`
+ */
+export type DuplicateDownloadDetails = ActiveDownloadDetails | PipelineActiveDetails;
 
 /**
  * Typed sentinel thrown INSIDE the replace claim transaction (#1857) when a
@@ -42,12 +50,22 @@ export class ClaimMissError extends Error {
 }
 
 export class DuplicateDownloadError extends Error {
+  public code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE';
+  public details: DuplicateDownloadDetails;
+
+  // Overloads correlate `code` with `details` at construction: an
+  // `ACTIVE_DOWNLOAD_EXISTS` MUST carry `{ active }`, a `PIPELINE_ACTIVE` MUST
+  // carry `{ reason }`. `details` is required — routes read it without a fallback.
+  constructor(message: string, code: 'ACTIVE_DOWNLOAD_EXISTS', details: ActiveDownloadDetails);
+  constructor(message: string, code: 'PIPELINE_ACTIVE', details: PipelineActiveDetails);
   constructor(
     message: string,
-    public code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE',
-    public details?: DuplicateDownloadDetails,
+    code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE',
+    details: DuplicateDownloadDetails,
   ) {
     super(message);
     this.name = 'DuplicateDownloadError';
+    this.code = code;
+    this.details = details;
   }
 }

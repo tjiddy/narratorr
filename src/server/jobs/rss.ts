@@ -183,7 +183,7 @@ export async function runRssJob(
       log.info({ bookId, title: best.title }, 'RSS grabbed');
     } catch (grabError: unknown) {
       if (grabError instanceof DuplicateDownloadError) {
-        log.debug({ bookId }, 'Skipping RSS grab — book already has active download');
+        log.debug({ bookId }, 'Skipping RSS grab — book already has a blocking download or import');
       } else {
         const message = getErrorMessage(grabError);
         log.info({ bookId, error: message }, 'RSS grab failed (possible concurrent race)');

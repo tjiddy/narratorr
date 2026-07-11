@@ -616,7 +616,7 @@ describe('v1 action routes (search + grab)', () => {
       app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: body });
 
     it('surfaces a DuplicateDownloadError for a different active release as a 409 v1 envelope (ACTIVE_DOWNLOAD_EXISTS)', async () => {
-      (downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+      (downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
 
       const res = await grab();
 
@@ -624,6 +624,23 @@ describe('v1 action routes (search + grab)', () => {
       const body = res.json();
       expectV1Envelope(body);
       expect(body.error.code).toBe('ACTIVE_DOWNLOAD_EXISTS');
+      expect(body.error.message).toBe('Book already has an active download');
+    });
+
+    it('surfaces a PIPELINE_ACTIVE DuplicateDownloadError as a 409 with a blocker-neutral, id-free message (#1861)', async () => {
+      // The consolidated classifier can now raise PIPELINE_ACTIVE on v1 (e.g. a
+      // QG-eligible completed row); the mapper's message must be code-aware and
+      // must NOT claim "active download" for a pipeline blocker.
+      (downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book has a download in the import pipeline', 'PIPELINE_ACTIVE', { reason: 'processing' }));
+
+      const res = await grab();
+
+      expect(res.statusCode).toBe(409);
+      const body = res.json();
+      expectV1Envelope(body);
+      expect(body.error.code).toBe('PIPELINE_ACTIVE');
+      expect(body.error.message).toBe('Book already has a download in the import pipeline');
+      expect(body.error.message).not.toContain('active download');
     });
 
     it.each([

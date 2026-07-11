@@ -76,7 +76,7 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
     downloadOrchestrator: inject<DownloadOrchestrator>({
       grab: vi.fn().mockResolvedValue(mockDownload),
       grabForRetry: vi.fn().mockResolvedValue(mockDownload),
-      hasActiveInProgress: vi.fn().mockResolvedValue(false),
+      hasGrabBlocker: vi.fn().mockResolvedValue(false),
     }),
     blacklistService: inject<BlacklistService>({
       getBlacklistedHashes: vi.fn().mockResolvedValue(new Set<string>()),
@@ -117,7 +117,7 @@ describe('retrySearch', () => {
       const deps = createDeps({
         downloadOrchestrator: inject<DownloadOrchestrator>({
           grabForRetry: vi.fn().mockResolvedValue(mockDownload),
-          hasActiveInProgress: vi.fn().mockResolvedValue(true), // replacement present before retry starts
+          hasGrabBlocker: vi.fn().mockResolvedValue(true), // replacement present before retry starts
         }),
       });
 
@@ -134,7 +134,7 @@ describe('retrySearch', () => {
         downloadOrchestrator: inject<DownloadOrchestrator>({
           // Not active at the early precheck, but became active during the search →
           // grabForRetry reports already_active from inside the mutex.
-          hasActiveInProgress: vi.fn().mockResolvedValue(false),
+          hasGrabBlocker: vi.fn().mockResolvedValue(false),
           grabForRetry: vi.fn().mockResolvedValue('already_active'),
         }),
       });

@@ -395,7 +395,7 @@ describe('search routes', () => {
     // #197 — DuplicateDownloadError route handling (ERR-1)
     it('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS } when DuplicateDownloadError has ACTIVE_DOWNLOAD_EXISTS code', async () => {
       (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
-        new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'),
+        new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }),
       );
 
       const res = await app.inject({
@@ -408,9 +408,9 @@ describe('search routes', () => {
       });
 
       expect(res.statusCode).toBe(409);
-      // #1857 — coded body carries the active title + count (no ids); falls back to
-      // the request title + count 1 when the error lacks structured details.
-      expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Test' }, count: 1 });
+      // #1857/#1861 — coded body carries the active title + count from the REQUIRED
+      // structured details (no ids, no request-title fallback — that fallback was deleted).
+      expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'A Book' }, count: 1 });
     });
 
     it('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS, active, count } from the error details (#1857)', async () => {
@@ -446,9 +446,9 @@ describe('search routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ code: 'PIPELINE_ACTIVE', reason: 'awaiting_review' });
     });
 
-    it('defaults PIPELINE_ACTIVE reason to processing when the error lacks details', async () => {
+    it('shapes PIPELINE_ACTIVE reason=processing from the required error details', async () => {
       (services.downloadOrchestrator.grabInternal as Mock).mockRejectedValue(
-        new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE'),
+        new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE', { reason: 'processing' }),
       );
 
       const res = await app.inject({

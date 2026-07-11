@@ -91,13 +91,14 @@ export async function retrySearch(
     return { outcome: 'no_candidates' };
   }
 
-  // Early `already_active` precheck (#1857 F43/F47): if the book already has an
-  // in-progress download (a replacement's winner), short-circuit BEFORE consuming
-  // a budget attempt — the common case costs nothing, and there is no
-  // generation-crossing refund to reason about. The authoritative in-lock recheck
-  // (grabForRetry) still catches an active that appears during the network search.
-  if (await downloadOrchestrator.hasActiveInProgress(bookId)) {
-    log.debug({ bookId, title: book.title }, 'Retry search skipped — book already has an in-progress download (early)');
+  // Early `already_active` precheck (#1857 F43/F47 / #1861): if the book already
+  // has ANY grab blocker (a replacement's winner, a QG-eligible completed row, or a
+  // pending auto import job), short-circuit BEFORE consuming a budget attempt — the
+  // common case costs nothing, and there is no generation-crossing refund to reason
+  // about. The authoritative in-lock recheck (grabForRetry) still catches a blocker
+  // that appears during the network search.
+  if (await downloadOrchestrator.hasGrabBlocker(bookId)) {
+    log.debug({ bookId, title: book.title }, 'Retry search skipped — book already has a grab blocker (early)');
     return { outcome: 'already_active' };
   }
 
