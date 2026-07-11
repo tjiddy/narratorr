@@ -26,6 +26,21 @@ export interface DuplicateDownloadDetails {
   reason?: PipelineActiveReason;
 }
 
+/**
+ * Typed sentinel thrown INSIDE the replace claim transaction (#1857) when a
+ * guarded claim guard-misses or the in-transaction blocker recheck trips. Throwing
+ * (rather than returning `false`) rolls the whole claim set back, so every
+ * target's original tuple is preserved and zero external/adapter/blacklist/event/
+ * book-status side effects have run. The replace workflow catches it and
+ * re-classifies against the fresh state (F17, F20).
+ */
+export class ClaimMissError extends Error {
+  constructor(message = 'Replace claim guard missed') {
+    super(message);
+    this.name = 'ClaimMissError';
+  }
+}
+
 export class DuplicateDownloadError extends Error {
   constructor(
     message: string,

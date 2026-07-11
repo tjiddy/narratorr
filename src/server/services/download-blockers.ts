@@ -1,11 +1,14 @@
 import { and, desc, eq, inArray, isNotNull, or } from 'drizzle-orm';
-import type { DbOrTx } from '../../db/index.js';
+import type { Db, DbOrTx } from '../../db/index.js';
 import { downloads, importJobs } from '../../db/schema.js';
 import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
   completedDisplayDownloadCondition,
+  transitionDownloadState,
 } from '../utils/download-state.js';
+import { ClaimMissError } from './download-errors.js';
+import type { ClientStatus, PipelineStage } from '../../shared/schemas/activity.js';
 import type { DownloadRow } from './types.js';
 
 // ============================================================================
@@ -113,6 +116,40 @@ export async function gatherBookBlockers(db: DbOrTx, bookId: number): Promise<Bo
 /** True when the book has any non-replaceable blocker (download or auto job). */
 export function hasNonReplaceableBlocker(b: BookBlockers): boolean {
   return b.pipelineDownloads.length > 0 || b.hasPendingAutoJob;
+}
+
+/** A replace claim target: the row id + the exact `(clientStatus, idle)` tuple
+ *  observed at gather time (the guard precondition, F17). */
+export interface ClaimTarget {
+  id: number;
+  expected: { clientStatus: ClientStatus; pipelineStage: PipelineStage };
+}
+
+/**
+ * Claim-first cancellation (#1857): in ONE transaction, guard-claim every
+ * client-stage target to the sanctioned failure tuple `(failed, idle)` with the
+ * replace-specific `errorMessage` written in the SAME statement (F63). A guard
+ * miss throws {@link ClaimMissError} INSIDE the tx so the whole set rolls back —
+ * every target's original tuple is preserved and NO external side effects have
+ * run (F17). After the claims, the non-replaceable-blocker query is re-run in the
+ * SAME tx; a blocker that appeared since gather also throws to roll back (closes
+ * the download-row half of the gather→recheck race, F21). External removal,
+ * blacklist, SSE, and events are the orchestrator's post-commit concern.
+ */
+export async function claimReplaceableTargets(db: Db, bookId: number, targets: ClaimTarget[], reason: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (const t of targets) {
+      const landed = await transitionDownloadState(tx, t.id, {
+        expected: t.expected,
+        clientStatus: 'failed',
+        pipelineStage: 'idle',
+        errorMessage: reason,
+      });
+      if (!landed) throw new ClaimMissError();
+    }
+    const recheck = await gatherBookBlockers(tx, bookId);
+    if (hasNonReplaceableBlocker(recheck)) throw new ClaimMissError();
+  });
 }
 
 /**

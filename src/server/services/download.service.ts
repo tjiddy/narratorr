@@ -336,9 +336,41 @@ export class DownloadService {
     const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
     this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    const result = await insertDownloadRecord(this.db, this.log, params, { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId });
+    const result = await this.insertOrCompensate(params, { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId });
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
     return this.getById(result[0]!.id) as Promise<DownloadWithBook>;
+  }
+
+  /**
+   * Insert the download row; on insert failure AFTER a successful client-add,
+   * best-effort compensate a tracked download (`removeDownload(externalId, true)`
+   * — delete-files, matching the cancel path, NOT the adapter default `false`,
+   * F30) before rethrowing, so the just-admitted payload is not left orphaned
+   * (F5). The no-orphan guarantee is best-effort, not absolute: if compensation
+   * ALSO fails, the untracked external download is logged with its `externalId`
+   * for operator recovery (F18). Blackhole (null externalId) has no id to
+   * compensate — the handoff file may remain (pre-existing behavior).
+   */
+  private async insertOrCompensate(
+    params: Parameters<typeof insertDownloadRecord>[2],
+    ctx: Parameters<typeof insertDownloadRecord>[3],
+  ): Promise<{ id: number }[]> {
+    try {
+      return await insertDownloadRecord(this.db, this.log, params, ctx);
+    } catch (insertError: unknown) {
+      if (ctx.externalId) {
+        try {
+          const adapter = await this.downloadClientService.getAdapter(ctx.clientId);
+          if (adapter) await adapter.removeDownload(ctx.externalId, true);
+        } catch (compError: unknown) {
+          this.log.warn(
+            { error: serializeError(compError), externalId: ctx.externalId, clientId: ctx.clientId },
+            'Download insert failed AND compensation removeDownload failed — orphaned external download (operator recovery needed)',
+          );
+        }
+      }
+      throw insertError;
+    }
   }
 
   async updateProgress(id: number, progress: number, _bookId?: number): Promise<void> {
@@ -370,21 +402,29 @@ export class DownloadService {
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
+  /**
+   * Best-effort removal of a download's external client item (delete files),
+   * matching the cancel path's `removeDownload(externalId, true)`. Failure is
+   * logged, never thrown. Used by the replace claim-first cleanup, whose DB row
+   * transition has ALREADY committed (so removal cannot be destructive-first).
+   */
+  async removeExternalItem(download: Pick<DownloadRow, 'id' | 'downloadClientId' | 'externalId'>): Promise<void> {
+    if (!download.downloadClientId || !download.externalId) return;
+    try {
+      const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
+      if (adapter) await adapter.removeDownload(download.externalId, true);
+    } catch (error: unknown) {
+      this.log.error({ error: serializeError(error), id: download.id }, 'Failed to remove download from client');
+    }
+  }
+
   async cancel(id: number, reason = 'Cancelled by user'): Promise<boolean> {
     const download = await this.getById(id);
     if (!download) return false;
 
-    // Remove from download client if possible
-    if (download.downloadClientId && download.externalId) {
-      try {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        if (adapter) {
-          await adapter.removeDownload(download.externalId, true);
-        }
-      } catch (error: unknown) {
-        this.log.error({ error: serializeError(error), id }, 'Failed to remove download from client');
-      }
-    }
+    // Remove from download client if possible (destructive-first for the plain
+    // cancel path — the guarded-claim replace path inverts this ordering).
+    await this.removeExternalItem(download);
 
     // Cancellation → write the sanctioned failure tuple atomically. Resetting
     // `pipelineStage` to 'idle' is required so a row cancelled mid-pipeline
