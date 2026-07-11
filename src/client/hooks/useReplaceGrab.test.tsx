@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
+import { queryKeys } from '@/lib/queryKeys';
 import { useReplaceGrab } from './useReplaceGrab';
 
 const { MockApiError } = vi.hoisted(() => {
@@ -165,22 +166,32 @@ describe('useReplaceGrab (#1857)', () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it('ignores a stale success that resolves after reset — does not call onGrabSuccess or toast success', async () => {
+  it('a stale success suppresses toast/close but STILL reconciles the server-state caches (F23)', async () => {
     let resolveGrab!: (v: unknown) => void;
     searchGrab.mockImplementationOnce(() => new Promise((res) => { resolveGrab = res; }));
     const onSuccess = vi.fn();
-    const { result } = renderHook(() => useReplaceGrab(onSuccess, BOOK_TITLE), { wrapper });
+    // Spy on the actual client so we can assert cache invalidation regardless of lifecycle.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const localWrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useReplaceGrab(onSuccess, BOOK_TITLE), { wrapper: localWrapper });
 
     await act(async () => { result.current.grab(payload); await new Promise((r) => setTimeout(r, 0)); });
     expect(resolveGrab).toBeDefined();
-    act(() => result.current.reset());
+    act(() => result.current.reset()); // modal closed / book changed mid-flight
     await act(async () => {
-      resolveGrab({ id: 1 });
+      resolveGrab({ id: 1 });          // the grab succeeded server-side, but arrives stale
       await new Promise((r) => setTimeout(r, 0));
     });
 
+    // Lifecycle-local effects are suppressed for the stale generation...
     expect(onSuccess).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
+    // ...but the two server-state caches are STILL reconciled (the grab did happen).
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
   });
 
   it('reset clears a pending confirm (modal close / book change)', async () => {

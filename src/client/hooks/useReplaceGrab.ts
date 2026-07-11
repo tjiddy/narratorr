@@ -91,10 +91,14 @@ export function useReplaceGrab(onGrabSuccess: () => void, bookTitle: string): Us
     mutationFn: (payload: GrabPayload) => api.searchGrab(payload),
     onMutate: () => ({ gen: genRef.current }),
     onSuccess: (_data, _vars, context: { gen: number }) => {
-      if (context.gen !== genRef.current) return; // stale response after close/book change
-      toast.success('Download started! Check the Activity page.');
+      // The grab DID succeed server-side — ALWAYS reconcile the two server-state
+      // caches, even for a generation-stale response (close/book change mid-flight),
+      // so book status + Activity don't stay cached as if the grab never happened (F23).
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
+      // Lifecycle-LOCAL effects (toast, pending clear, close) only for the live context.
+      if (context.gen !== genRef.current) return; // stale response after close/book change
+      toast.success('Download started! Check the Activity page.');
       setPending(null);
       onGrabSuccess();
     },
