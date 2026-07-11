@@ -18,10 +18,17 @@ const notice = path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md');
  */
 
 // The covered components the build gate greps for (must match the Dockerfile loop AND
-// appear in the notice). Copyleft + permissive, arch-union incl. amd64-only libvpl.
+// appear in the notice). The full ffmpeg-added linked set — codec + support libraries —
+// arch-union across linux/amd64 + linux/arm64 (incl. amd64-only libvpl), with base-image
+// libraries (musl, zlib, openssl) subtracted. Copyleft AND permissive.
 const COVERED_COMPONENTS = [
+  // codec / encode-decode
   'ffmpeg', 'x264', 'x265', 'lame', 'xvidcore', 'aom', 'dav1d', 'libvpx', 'libwebp',
   'libvorbis', 'libtheora', 'opus', 'svt-av1', 'rav1e', 'libjxl', 'libva', 'libvpl', 'shaderc',
+  // filter / muxer / protocol / device support
+  'libass', 'libbluray', 'libbz2', 'fontconfig', 'freetype', 'fribidi', 'harfbuzz', 'lilv',
+  'libopenmpt', 'libplacebo', 'librist', 'soxr', 'libsrt', 'libssh', 'vidstab', 'libxml2',
+  'zimg', 'libzmq', 'libdrm', 'libvdpau', 'alsa-lib', 'libpulse', 'v4l-utils', 'libx11', 'libxcb',
 ];
 
 // Distinct license headings + the FFmpeg attribution the gate greps for.
@@ -29,11 +36,16 @@ const LICENSE_MARKERS = [
   'GNU GENERAL PUBLIC LICENSE',
   'GNU LESSER GENERAL PUBLIC LICENSE',
   'GNU LIBRARY GENERAL PUBLIC LICENSE',
+  'Mozilla Public License',
   'Apache License',
   'BSD 2-Clause',
   'BSD 3-Clause',
   'The Clear BSD License',
   'MIT License',
+  'ISC License',
+  'X11 License',
+  'bzip2 License',
+  'WTFPL',
   'FFmpeg',
 ];
 

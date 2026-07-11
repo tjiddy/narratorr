@@ -83,10 +83,14 @@ RUN set -eu; \
     V="$(apk info ffmpeg 2>/dev/null | head -n1 | sed -n 's/^ffmpeg-\(.*\) description:.*/\1/p')"; \
     test -n "$V"; \
     grep -q "$V" /app/THIRD_PARTY_NOTICES.md || { echo "notice does not pin installed ffmpeg version-release: $V" >&2; exit 1; }; \
-    for c in ffmpeg x264 x265 lame xvidcore aom dav1d libvpx libwebp libvorbis libtheora opus svt-av1 rav1e libjxl libva libvpl shaderc; do \
+    for c in ffmpeg x264 x265 lame xvidcore aom dav1d libvpx libwebp libvorbis libtheora opus svt-av1 rav1e libjxl libva libvpl shaderc \
+             libass libbluray libbz2 fontconfig freetype fribidi harfbuzz lilv libopenmpt libplacebo librist soxr libsrt libssh vidstab \
+             libxml2 zimg libzmq libdrm libvdpau alsa-lib libpulse v4l-utils libx11 libxcb; do \
       grep -q "$c" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing covered component: $c" >&2; exit 1; }; \
     done; \
-    for h in 'GNU GENERAL PUBLIC LICENSE' 'GNU LESSER GENERAL PUBLIC LICENSE' 'GNU LIBRARY GENERAL PUBLIC LICENSE' 'Apache License' 'BSD 2-Clause' 'BSD 3-Clause' 'The Clear BSD License' 'MIT License' 'FFmpeg'; do \
+    for h in 'GNU GENERAL PUBLIC LICENSE' 'GNU LESSER GENERAL PUBLIC LICENSE' 'GNU LIBRARY GENERAL PUBLIC LICENSE' \
+             'Mozilla Public License' 'Apache License' 'BSD 2-Clause' 'BSD 3-Clause' 'The Clear BSD License' \
+             'MIT License' 'ISC License' 'X11 License' 'bzip2 License' 'WTFPL' 'FFmpeg'; do \
       grep -q "$h" /app/THIRD_PARTY_NOTICES.md || { echo "notice missing license heading/attribution: $h" >&2; exit 1; }; \
     done
 
