@@ -19,9 +19,10 @@ export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
   | { outcome: 'exhausted' }
   | { outcome: 'no_candidates' }
-  // #1857 — the book already has an in-progress download (a replacement's winner
-  // or a prior retry's grab). retrySearch exists to replace a *failed* row (never
-  // in-progress), so an in-progress download means the book is already served.
+  // #1857/#1861 — the book already has a grab blocker: a live download (a
+  // replacement's winner or a prior retry's grab), a QG-eligible completed row, or a
+  // pending auto import job. retrySearch exists to replace a *failed* row, so any
+  // such blocker means the book is already served.
   | { outcome: 'already_active' }
   | { outcome: 'retry_error'; error: string };
 

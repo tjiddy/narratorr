@@ -622,6 +622,47 @@ describe('DownloadOrchestrator', () => {
       expect(result).toBe(mockDownload);
       expect(downloadService.grab).toHaveBeenCalled();
     });
+
+    // #1861 F3 — a tracked QG-eligible completed row (completed display + non-empty
+    // externalId) is a blocker at the REAL orchestrator seam. A regression narrowing
+    // hasGrabBlocker back to only-replaceable rows would reopen the tracked-completed
+    // retry-admission window while the boolean-mocking retry tests stayed green.
+    it('grabForRetry treats a tracked QG-completed row as already_active (real gather seam)', async () => {
+      const qgRow = { id: 3, title: 'Tracked', clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-tracked', addedAt: new Date() };
+      (mockDb as Record<string, unknown>).select = vi.fn()
+        .mockReturnValueOnce(mockDbChain([qgRow])) // downloads (QG-eligible completed)
+        .mockReturnValueOnce(mockDbChain([]));     // importJobs (none)
+      const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 903 });
+      expect(result).toBe('already_active');
+      expect(downloadService.grab).not.toHaveBeenCalled();
+    });
+
+    it('hasGrabBlocker is true for a tracked QG-completed row (real gather seam)', async () => {
+      const qgRow = { id: 3, title: 'Tracked', clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-tracked', addedAt: new Date() };
+      (mockDb as Record<string, unknown>).select = vi.fn()
+        .mockReturnValueOnce(mockDbChain([qgRow]))
+        .mockReturnValueOnce(mockDbChain([]));
+      expect(await orchestrator.hasGrabBlocker(903)).toBe(true);
+    });
+
+    // #1861 F4 — a pending/processing auto import job is a blocker even when NO
+    // download row matches. A regression dropping the auto-job half of the gather
+    // would pass the boolean-mocking retry tests but fail here.
+    it('grabForRetry treats a pending auto import job as already_active (real gather seam)', async () => {
+      (mockDb as Record<string, unknown>).select = vi.fn()
+        .mockReturnValueOnce(mockDbChain([]))          // downloads (none)
+        .mockReturnValueOnce(mockDbChain([{ id: 77 }])); // importJobs (pending auto job)
+      const result = await orchestrator.grabForRetry({ downloadUrl: 'm', title: 'A', bookId: 904 });
+      expect(result).toBe('already_active');
+      expect(downloadService.grab).not.toHaveBeenCalled();
+    });
+
+    it('hasGrabBlocker is true for a pending auto import job with no download rows (real gather seam)', async () => {
+      (mockDb as Record<string, unknown>).select = vi.fn()
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ id: 77 }]));
+      expect(await orchestrator.hasGrabBlocker(904)).toBe(true);
+    });
   });
 
   describe('single-flight through grabWithReplace (F6)', () => {

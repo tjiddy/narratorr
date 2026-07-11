@@ -419,9 +419,11 @@ export class DownloadService {
         return { status: 'no_candidates' };
       }
       case 'already_active': {
-        // The book is already served by a live download (a replacement's winner).
-        // Leave the old failed row + its errorMessage UNTOUCHED and do NOT delete it (#1857 AC17).
-        this.log.info({ id }, 'Manual retry: book already has an active download — not retrying');
+        // The book is already served by a grab blocker — a live download (a
+        // replacement's winner), a QG-eligible completed row, or a pending auto import
+        // job (#1861). Leave the old failed row + its errorMessage UNTOUCHED and do NOT
+        // delete it (#1857 AC17).
+        this.log.info({ id }, 'Manual retry: book already has a blocking download or import — not retrying');
         return { status: 'already_active' };
       }
       case 'retry_error': {

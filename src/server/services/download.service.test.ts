@@ -1351,6 +1351,7 @@ describe('DownloadService', () => {
       let retryBudget: any;
       let retryService: DownloadService;
       let retryLog: ReturnType<typeof createMockLogger>;
+      let retryServiceLog: ReturnType<typeof createMockLogger>;
       let mockRetryDeps: {
         indexerSearchService: { searchAll: ReturnType<typeof vi.fn> };
         indexerService: { getLanAllowlist: ReturnType<typeof vi.fn> };
@@ -1380,7 +1381,8 @@ describe('DownloadService', () => {
           retryBudget,
           log: retryLog,
         };
-        retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
+        retryServiceLog = createMockLogger();
+        retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(retryServiceLog));
         retryService.wire({ retrySearchDeps: mockRetryDeps as never, indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) } as never });
       });
 
@@ -1432,6 +1434,12 @@ describe('DownloadService', () => {
         expect(db.delete).not.toHaveBeenCalled();
         expect(chain.set).not.toHaveBeenCalled();
         expect(mockRetryDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+        // #1861 F2 — the manual-retry diagnostic is blocker-neutral (the outcome now also
+        // covers QG-completed rows and pending auto import jobs, not just live downloads).
+        expect(retryServiceLog.info).toHaveBeenCalledWith(
+          { id: 1 },
+          'Manual retry: book already has a blocking download or import — not retrying',
+        );
       });
 
       it('returns no_candidates and updates errorMessage when budget exhausted', async () => {
@@ -1973,6 +1981,44 @@ describe('DownloadService', () => {
       const { sql, params } = toSQL(whereArg);
       expect(sql).toMatch(/"status" in \(\?, \?\)/i);
       expect(params).toEqual([42, 'auto', 'pending', 'processing']);
+    });
+
+    // #1861 F5 — mixed-blocker precedence at the REAL DownloadService seam. If
+    // checkDuplicateDownloads reintroduced first-row/replaceable precedence (or
+    // otherwise bypassed the aggregate classifier), a single-blocker-class test would
+    // still pass; seeding BOTH a replaceable row AND a pipeline row proves the service
+    // gives PIPELINE_ACTIVE precedence.
+    it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) when a replaceable row AND a pipeline row both exist', async () => {
+      const replaceableRow = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
+      const pipelineRow = { ...mockDownload, id: 6, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow, pipelineRow])); // gatherBookBlockers: downloads
+      db.select.mockReturnValueOnce(mockDbChain([]));                            // importJobs (none)
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) when a replaceable row AND a pending auto job both exist', async () => {
+      const replaceableRow = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow]));   // gatherBookBlockers: downloads (replaceable)
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 91 }]));       // importJobs (pending auto job)
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('proceeds when no active downloads and no pending auto import jobs exist for the book', async () => {

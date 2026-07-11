@@ -794,7 +794,7 @@ describe('monitor job', () => {
       ]));
       adapter.getDownload.mockResolvedValueOnce(null); // missing-item → failed → handleDownloadFailure
       db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guarded failed-write lands
-      // Book already has an in-progress download → retrySearch short-circuits to already_active.
+      // Book already has a grab blocker → retrySearch short-circuits to already_active.
       retryDeps.retrySearchDeps.downloadOrchestrator.hasGrabBlocker.mockResolvedValue(true);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
@@ -802,6 +802,12 @@ describe('monitor job', () => {
       // The failed row is preserved and no replacement grab is issued.
       expect(db.delete).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+      // #1861 F1 — the scheduled-retry diagnostic is blocker-neutral (the outcome now
+      // also covers QG-completed rows and pending auto import jobs, not just live downloads).
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42 }),
+        'Retry skipped — book already has a blocking download or import',
+      );
     });
 
     it('blacklists by guid when infoHash is absent (Usenet)', async () => {
