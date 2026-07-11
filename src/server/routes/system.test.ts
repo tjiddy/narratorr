@@ -759,6 +759,37 @@ describe('system routes', () => {
       exitSpy.mockRestore();
     });
   });
+
+  describe('GET /api/system/notices (#1862 — third-party license notices)', () => {
+    it('returns 200 with { content } read from the notice at the process cwd', async () => {
+      // Exercises the real file at the runner's cwd (repo root under vitest) — this guards
+      // against a hardcoded /app path that would pass in Docker but 500 in dev/CI.
+      const res = await app.inject({ method: 'GET', url: '/api/system/notices' });
+
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      expect(typeof payload.content).toBe('string');
+      expect(payload.content).toContain('Third-Party Notices');
+      expect(payload.content).toContain('FFmpeg');
+    });
+
+    it('returns exactly 500 { error } with a serialized log when the read fails', async () => {
+      const readSpy = vi
+        .spyOn(fsp, 'readFile')
+        .mockRejectedValueOnce(Object.assign(new Error('ENOENT: no notice'), { code: 'ENOENT' }));
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/notices' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Failed to load third-party notices' });
+      expect(logSpies.error).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.objectContaining({ message: 'ENOENT: no notice', type: 'Error' }) }),
+        'Failed to load third-party notices',
+      );
+
+      readSpy.mockRestore();
+    });
+  });
 });
 
 // ── POST /api/system/restore (multipart upload) ────────────────────────────
