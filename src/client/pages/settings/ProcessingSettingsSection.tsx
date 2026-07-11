@@ -6,6 +6,7 @@ import { ZapIcon, AlertTriangleIcon, TerminalIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
+import { NumberField } from '@/components/settings/NumberField';
 import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
@@ -124,21 +125,15 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
           label="Script timeout"
           description="Maximum time before the script is killed. Default: 300 (5 minutes)."
         >
-          <div className="flex flex-col items-end gap-1">
-            <div className="flex items-center gap-2">
-              <input
-                id="postProcessingScriptTimeout"
-                type="number"
-                {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
-                min={1}
-                step={1}
-                placeholder="300"
-                className={`w-24 text-center ${errorInputClass(!!errors.postProcessingScriptTimeout)}`}
-              />
-              <span className="text-sm text-muted-foreground">seconds</span>
-            </div>
-            {errors.postProcessingScriptTimeout && <span className="text-xs text-destructive">{errors.postProcessingScriptTimeout.message}</span>}
-          </div>
+          <NumberField
+            id="postProcessingScriptTimeout"
+            {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
+            min={1}
+            step={1}
+            placeholder="300"
+            suffix="seconds"
+            error={errors.postProcessingScriptTimeout?.message}
+          />
         </SettingsRow>
       </SettingsTable>
     </SettingsSection>

@@ -3,7 +3,7 @@ import { HeadphonesIcon, CheckCircleIcon, AlertCircleIcon } from '@/components/i
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
-import { errorInputClass } from '@/components/settings/formStyles';
+import { NumberField } from '@/components/settings/NumberField';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { FORMAT_LABELS, MERGE_LABELS } from '@/lib/constants';
 import { outputFormatSchema, mergeBehaviorSchema, bitrateField, maxConcurrentProcessingField, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
@@ -116,17 +116,16 @@ export function AudioToolsSettings() {
           </SettingsRow>
 
           <SettingsRow htmlFor="bitrate" label="Target bitrate" description="The bitrate to encode to — active only when Keep original is off." muted={keepOriginalBitrate}>
-            <input
+            <NumberField
               id="bitrate"
-              type="number"
               {...register('bitrate', { valueAsNumber: true })}
               disabled={keepOriginalBitrate}
               min={32}
               max={512}
               step={1}
-              className={`w-24 text-center ${errorInputClass(!!errors.bitrate && !keepOriginalBitrate)} disabled:cursor-not-allowed disabled:opacity-50`}
+              suffix="kbps"
+              error={keepOriginalBitrate ? undefined : errors.bitrate?.message}
             />
-            <span className="text-sm text-muted-foreground">kbps</span>
           </SettingsRow>
 
           <SettingsRow htmlFor="mergeBehavior" label="Merge behavior" description="When multiple audio files get combined into one chaptered file.">
@@ -140,14 +139,13 @@ export function AudioToolsSettings() {
           </SettingsRow>
 
           <SettingsRow htmlFor="maxConcurrentProcessing" label="Max concurrent jobs" description="Manual and auto-merge share this cap. Higher uses more CPU and disk I/O.">
-            <input
+            <NumberField
               id="maxConcurrentProcessing"
-              type="number"
               {...register('maxConcurrentProcessing', { valueAsNumber: true })}
               min={1}
               max={8}
               step={1}
-              className={`w-24 text-center ${errorInputClass(!!errors.maxConcurrentProcessing)}`}
+              error={errors.maxConcurrentProcessing?.message}
             />
           </SettingsRow>
         </SettingsTable>
