@@ -18,6 +18,7 @@ import { BackupScheduleForm } from './BackupScheduleForm';
 import { HealthDashboard } from './HealthDashboard';
 import { ScheduledTasks } from './ScheduledTasks';
 import { SystemInfo } from './SystemInfo';
+import { ThirdPartyNotices } from './ThirdPartyNotices';
 import { GeneralSettingsForm } from './GeneralSettingsForm';
 
 function RestoreModal({ isOpen, restoreInfo, onConfirm, onClose }: {
@@ -210,6 +211,8 @@ export function SystemSettings() {
       </SettingsSection>
 
       <SystemInfo />
+
+      <ThirdPartyNotices />
 
       <GeneralSettingsForm />
 

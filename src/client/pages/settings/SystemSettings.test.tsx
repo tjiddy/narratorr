@@ -31,6 +31,7 @@ vi.mock('@/lib/api', async () => {
       getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
       getSystemTasks: vi.fn().mockResolvedValue([]),
       getSystemInfo: vi.fn().mockResolvedValue({ version: '0.1.0', commit: 'unknown', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 }),
+      getThirdPartyNotices: vi.fn().mockResolvedValue({ content: '# Third-Party Notices\n\nFFmpeg ...' }),
     },
   };
 });
