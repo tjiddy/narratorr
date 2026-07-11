@@ -10,7 +10,8 @@ export const qualitySettingsSchema = z.object({
   grabFloor: z.number().nonnegative().default(0),
   protocolPreference: protocolPreferenceSchema.default('none'),
   minSeeders: z.number().int().nonnegative().default(1),
-  minDownloadSize: z.number().nonnegative().default(0),
+  // 50 MB filters tracker-test uploads / single-track previews out of the box; 0 disables.
+  minDownloadSize: z.number().nonnegative().default(50),
   maxDownloadSize: z.number().nonnegative().default(5),
   searchImmediately: z.boolean().default(false),
   rejectWords: z.string().default(DEFAULT_REJECT_WORDS),

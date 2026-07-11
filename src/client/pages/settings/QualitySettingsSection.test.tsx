@@ -142,7 +142,7 @@ describe('QualitySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        quality: { grabFloor: 100, minSeeders: 3, minDownloadSize: 0, maxDownloadSize: 5 },
+        quality: { grabFloor: 100, minSeeders: 3, minDownloadSize: 50, maxDownloadSize: 5 },
       });
     });
 
@@ -302,16 +302,18 @@ describe('QualitySettingsSection', () => {
       expect(screen.getByLabelText('Min download size')).toBeInTheDocument();
     });
 
+    // 75, not the 50 default — typing the value the field already holds leaves the form clean
+    // (no Save button) and would prove nothing about the payload.
     const input = screen.getByLabelText('Min download size');
     await user.tripleClick(input);
-    await user.keyboard('50');
+    await user.keyboard('75');
 
     await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
-          quality: expect.objectContaining({ minDownloadSize: 50 }),
+          quality: expect.objectContaining({ minDownloadSize: 75 }),
         }),
       );
     });

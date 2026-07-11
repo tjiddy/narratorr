@@ -62,13 +62,13 @@ export function QualitySettingsSection() {
             />
           </SettingsRow>
 
-          <SettingsRow htmlFor="minDownloadSize" label="Min download size" description="Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Try 50 to start. Set to 0 to disable.">
+          <SettingsRow htmlFor="minDownloadSize" label="Min download size" description="Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Set to 0 to disable.">
             <NumberField
               id="minDownloadSize"
               {...register('minDownloadSize', { valueAsNumber: true })}
               min={0}
               step="any"
-              placeholder="0"
+              placeholder="50"
               suffix="MB"
               error={errors.minDownloadSize?.message}
             />

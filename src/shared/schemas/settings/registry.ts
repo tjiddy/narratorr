@@ -74,7 +74,7 @@ export const settingsRegistry = {
       grabFloor: 0,
       protocolPreference: 'none' as const,
       minSeeders: 1,
-      minDownloadSize: 0,
+      minDownloadSize: 50,
       maxDownloadSize: 5,
       searchImmediately: false,
       rejectWords: DEFAULT_REJECT_WORDS,

@@ -272,7 +272,7 @@ describe('settingsRegistry', () => {
         grabFloor: 0,
         protocolPreference: 'none',
         minSeeders: 1,
-        minDownloadSize: 0,
+        minDownloadSize: 50,
         maxDownloadSize: 5,
         searchImmediately: false,
         rejectWords: 'Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged',
@@ -849,11 +849,11 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
-    it('qualitySettingsSchema parses empty input with default minDownloadSize: 0', () => {
+    it('qualitySettingsSchema parses empty input with default minDownloadSize: 50', () => {
       const result = settingsRegistry.quality.schema.safeParse({});
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.minDownloadSize).toBe(0);
+        expect(result.data.minDownloadSize).toBe(50);
       }
     });
 
