@@ -5,8 +5,13 @@ import {
   classifyBlockers,
   pipelineActiveReason,
   hasNonReplaceableBlocker,
+  claimReplaceableTargets,
   type BookBlockers,
 } from './download-blockers.js';
+import { ClaimMissError } from './download-errors.js';
+import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import type { Db } from '../../db/index.js';
+import type { Mock } from 'vitest';
 import type { DownloadRow } from './types.js';
 
 function dl(partial: Partial<DownloadRow>): DownloadRow {
@@ -115,5 +120,46 @@ describe('hasNonReplaceableBlocker', () => {
   });
   it('is false when only replaceable rows exist', () => {
     expect(hasNonReplaceableBlocker(blockers({ replaceable: [dl({ clientStatus: 'queued' })] }))).toBe(false);
+  });
+});
+
+describe('claimReplaceableTargets (#1857 F17/F21/F63)', () => {
+  const targets = [
+    { id: 10, expected: { clientStatus: 'downloading' as const, pipelineStage: 'idle' as const } },
+    { id: 11, expected: { clientStatus: 'queued' as const, pipelineStage: 'idle' as const } },
+  ];
+
+  it('guard-claims every target to (failed, idle) with the reason written atomically, then commits', async () => {
+    const db = createMockDb();
+    const updateChain = mockDbChain([{ id: 1 }]); // every guarded claim lands
+    db.update.mockReturnValue(updateChain);
+    // In-tx recheck: no rows, no pending auto job → no blocker.
+    db.select.mockReturnValueOnce(mockDbChain([])).mockReturnValueOnce(mockDbChain([]));
+
+    await claimReplaceableTargets(db as unknown as Db, 5, targets, 'Replaced by "New"');
+
+    const setCalls = (updateChain.set as Mock).mock.calls.map((c) => c[0] as Record<string, unknown>);
+    // The sanctioned failure tuple + the replace reason land in the SAME statement (F63).
+    expect(setCalls).toContainEqual(expect.objectContaining({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Replaced by "New"' }));
+    expect((db.update as Mock).mock.calls.length).toBe(2); // one guarded claim per target
+  });
+
+  it('throws ClaimMissError (rolls back) when a claim guard-misses', async () => {
+    const db = createMockDb();
+    // First target lands, second misses (returning() empty).
+    db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }])).mockReturnValueOnce(mockDbChain([]));
+
+    await expect(claimReplaceableTargets(db as unknown as Db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
+  });
+
+  it('throws ClaimMissError when the in-tx recheck finds a new non-replaceable blocker', async () => {
+    const db = createMockDb();
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // all claims land
+    // Recheck: a pipeline-stage (importing) row appeared → blocker.
+    db.select
+      .mockReturnValueOnce(mockDbChain([dl({ id: 99, clientStatus: 'completed', pipelineStage: 'importing', externalId: 'e' })]))
+      .mockReturnValueOnce(mockDbChain([])); // no pending auto job
+
+    await expect(claimReplaceableTargets(db as unknown as Db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
   });
 });
