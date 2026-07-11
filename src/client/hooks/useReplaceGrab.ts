@@ -43,11 +43,14 @@ export interface ReplaceConfirm {
   onCancel: () => void;
 }
 
-function pipelineActiveMessage(reason: PipelineActiveReason | undefined): string {
+function pipelineActiveMessage(reason: PipelineActiveReason | undefined, bookTitle: string): string {
+  // AC10 requires a book-NAMED toast (no transport vocabulary). Name the book by
+  // title; fall back to "This book" only when a title is somehow unavailable.
+  const name = bookTitle ? `“${bookTitle}”` : 'This book';
   if (reason === 'awaiting_review') {
-    return 'This book has a download awaiting your review — approve or reject it on the Activity page.';
+    return `${name} has a download awaiting your review — approve or reject it on the Activity page.`;
   }
-  return 'This book is already being imported — wait for it to finish.';
+  return `${name} is already being imported — wait for it to finish.`;
 }
 
 function confirmMessage(pending: PendingReplace): string {
@@ -69,7 +72,7 @@ export interface UseReplaceGrabResult {
   reset: () => void;
 }
 
-export function useReplaceGrab(onGrabSuccess: () => void): UseReplaceGrabResult {
+export function useReplaceGrab(onGrabSuccess: () => void, bookTitle: string): UseReplaceGrabResult {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<PendingReplace | null>(null);
 
@@ -92,7 +95,7 @@ export function useReplaceGrab(onGrabSuccess: () => void): UseReplaceGrabResult 
         // on the initial grab AND on a confirmed replace that lost the race.
         if (body.code === 'PIPELINE_ACTIVE') {
           setPending(null);
-          toast.error(pipelineActiveMessage(body.reason));
+          toast.error(pipelineActiveMessage(body.reason, bookTitle));
           return;
         }
         // ACTIVE_DOWNLOAD_EXISTS on the INITIAL grab → offer confirm→replace.

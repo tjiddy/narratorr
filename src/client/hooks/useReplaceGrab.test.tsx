@@ -40,6 +40,7 @@ function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
+const BOOK_TITLE = 'Words of Radiance';
 const payload = { downloadUrl: 'magnet:?x', title: 'The Chosen Release', bookId: 5 };
 
 describe('useReplaceGrab (#1857)', () => {
@@ -48,7 +49,7 @@ describe('useReplaceGrab (#1857)', () => {
   it('success: toasts, calls onGrabSuccess, leaves no confirm pending', async () => {
     searchGrab.mockResolvedValue({ id: 1 });
     const onSuccess = vi.fn();
-    const { result } = renderHook(() => useReplaceGrab(onSuccess), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(onSuccess, BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
 
@@ -59,7 +60,7 @@ describe('useReplaceGrab (#1857)', () => {
 
   it('ACTIVE_DOWNLOAD_EXISTS: opens a confirm naming the active + selected release', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old Grab' }, count: 1 }));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
 
@@ -71,7 +72,7 @@ describe('useReplaceGrab (#1857)', () => {
 
   it('ACTIVE_DOWNLOAD_EXISTS: plural copy when count > 1', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 3 }));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
 
@@ -82,7 +83,7 @@ describe('useReplaceGrab (#1857)', () => {
   it('confirming re-issues the grab with replace: true', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 1 }));
     const onSuccess = vi.fn();
-    const { result } = renderHook(() => useReplaceGrab(onSuccess), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(onSuccess, BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
     await waitFor(() => expect(result.current.confirm).not.toBeNull());
@@ -97,27 +98,34 @@ describe('useReplaceGrab (#1857)', () => {
 
   it('PIPELINE_ACTIVE processing: honest toast, no confirm', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'PIPELINE_ACTIVE', reason: 'processing' }));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
 
+    // AC10/F2 — the toast NAMES the book and carries no transport vocabulary.
     await waitFor(() => expect(toastError).toHaveBeenCalledWith(expect.stringContaining('being imported')));
+    const msg = toastError.mock.calls.at(-1)![0] as string;
+    expect(msg).toContain(BOOK_TITLE);
+    expect(msg).not.toMatch(/409|PIPELINE_ACTIVE|job/);
     expect(result.current.confirm).toBeNull();
   });
 
-  it('PIPELINE_ACTIVE awaiting_review: directs the user to Activity to approve/reject', async () => {
+  it('PIPELINE_ACTIVE awaiting_review: names the book and directs the user to Activity to approve/reject', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'PIPELINE_ACTIVE', reason: 'awaiting_review' }));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith(expect.stringContaining('awaiting your review')));
+    const msg = toastError.mock.calls.at(-1)![0] as string;
+    expect(msg).toContain(BOOK_TITLE);
+    expect(msg).not.toMatch(/409|PIPELINE_ACTIVE|job/);
     expect(result.current.confirm).toBeNull();
   });
 
   it('confirmed replace that loses the race (PIPELINE_ACTIVE) clears pending + toasts', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 1 }));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
     act(() => result.current.grab(payload));
     await waitFor(() => expect(result.current.confirm).not.toBeNull());
 
@@ -130,7 +138,7 @@ describe('useReplaceGrab (#1857)', () => {
 
   it('generic error: generic toast, no confirm', async () => {
     searchGrab.mockRejectedValueOnce(new Error('boom'));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
 
     act(() => result.current.grab(payload));
 
@@ -140,7 +148,7 @@ describe('useReplaceGrab (#1857)', () => {
 
   it('reset clears a pending confirm (modal close / book change)', async () => {
     searchGrab.mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Old' }, count: 1 }));
-    const { result } = renderHook(() => useReplaceGrab(vi.fn()), { wrapper });
+    const { result } = renderHook(() => useReplaceGrab(vi.fn(), BOOK_TITLE), { wrapper });
     act(() => result.current.grab(payload));
     await waitFor(() => expect(result.current.confirm).not.toBeNull());
 

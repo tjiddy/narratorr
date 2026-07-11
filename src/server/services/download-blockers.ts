@@ -1,10 +1,11 @@
-import { and, desc, eq, inArray, isNotNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, or } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import { downloads, importJobs } from '../../db/schema.js';
 import { deriveDisplayStatus } from '../../shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
-  completedDisplayDownloadCondition,
+  qualityGateEligibleDownloadCondition,
+  isQualityGateEligibleRow,
   transitionDownloadState,
 } from '../utils/download-state.js';
 import { ClaimMissError } from './download-errors.js';
@@ -58,8 +59,9 @@ export function isPipelineBlocker(d: BlockerFields): boolean {
   if (d.pipelineStage === 'checking' || d.pipelineStage === 'pending_review' || d.pipelineStage === 'importing') {
     return true;
   }
-  const display = deriveDisplayStatus(d.clientStatus, d.pipelineStage);
-  return display === 'completed' && d.externalId !== null;
+  // Tracked completed row awaiting the gate — via the SHARED eligibility twin so
+  // this can never drift from the QG's own query (#1857 F16).
+  return isQualityGateEligibleRow(d);
 }
 
 export interface BookBlockers {
@@ -79,7 +81,7 @@ function bookBlockerRowsCondition(bookId: number) {
     eq(downloads.bookId, bookId),
     or(
       inProgressDownloadCondition(),
-      and(completedDisplayDownloadCondition(), isNotNull(downloads.externalId)),
+      qualityGateEligibleDownloadCondition(), // shared with the QG batch query (#1857 F16)
     ),
   );
 }

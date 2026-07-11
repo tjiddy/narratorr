@@ -362,7 +362,11 @@ export class DownloadService {
       if (ctx.externalId) {
         try {
           const adapter = await this.downloadClientService.getAdapter(ctx.clientId);
-          if (adapter) await adapter.removeDownload(ctx.externalId, true);
+          // A null adapter means compensation cannot run — treat it as a
+          // compensation FAILURE (not a silent skip), so the orphaned external
+          // download is still logged for operator recovery (#1857 F1/F18).
+          if (!adapter) throw new Error('download client adapter unavailable for compensation');
+          await adapter.removeDownload(ctx.externalId, true);
         } catch (compError: unknown) {
           this.log.warn(
             { error: serializeError(compError), externalId: ctx.externalId, clientId: ctx.clientId },

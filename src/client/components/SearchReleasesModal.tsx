@@ -174,7 +174,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
   // Grab + cancel-&-replace state machine (#1857) — owns the multi-code 409
   // branching, the confirm dialog, and pending-replace state.
-  const { grab, isGrabbing, confirm, reset: resetReplace } = useReplaceGrab(onClose);
+  const { grab, isGrabbing, confirm, reset: resetReplace } = useReplaceGrab(onClose, book.title);
 
   // State hygiene: clear any pending-replace on modal close and on book change —
   // every teardown path resets it (asymmetric cleanup here is a known bug pattern).

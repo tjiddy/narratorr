@@ -877,6 +877,27 @@ describe('DownloadService', () => {
       );
     });
 
+    // #1857 F1 — a NULL adapter (compensation cannot run) must NOT silently skip the
+    // recovery log; the orphaned externalId still has to be logged for the operator.
+    it('logs the orphan when the compensation adapter is unavailable (getAdapter → null)', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock)
+        .mockResolvedValueOnce({ addDownload: vi.fn().mockResolvedValue('ext-null') }) // add succeeds
+        .mockResolvedValueOnce(null); // compensation lookup returns no adapter
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-null' }),
+        expect.stringContaining('orphaned external download'),
+      );
+    });
+
     it('uses usenet protocol when specified', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('nzb-123'),
