@@ -1409,6 +1409,27 @@ describe('DownloadService', () => {
         expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
       });
 
+      // #1857 F12 — the book is already served by a live download (a replacement's
+      // winner). retry() must map to { status: 'already_active' } WITHOUT deleting the
+      // old failed row or touching its errorMessage.
+      it('returns already_active and preserves the old failed row (not deleted, errorMessage untouched)', async () => {
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const, errorMessage: 'Original failure' };
+        // Early precheck sees an in-progress download for the book → retrySearch returns already_active.
+        mockRetryDeps.downloadOrchestrator.hasActiveInProgress.mockResolvedValue(true);
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('already_active');
+        // Old row NOT deleted, errorMessage NOT rewritten, indexer search never run.
+        expect(db.delete).not.toHaveBeenCalled();
+        expect(chain.set).not.toHaveBeenCalled();
+        expect(mockRetryDeps.indexerSearchService.searchAll).not.toHaveBeenCalled();
+      });
+
       it('returns no_candidates and updates errorMessage when budget exhausted', async () => {
         const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         retryBudget.consumeAttempt(1);

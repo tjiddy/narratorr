@@ -785,6 +785,25 @@ describe('monitor job', () => {
       );
     });
 
+    // #1857 F12 — when the book is already served by a live download (a replacement's
+    // winner), handleDownloadFailure returns 'already_active': the failed row is NOT
+    // deleted and NO competing download is added.
+    it('already_active: does not delete the failed row or add a competing download', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null); // missing-item → failed → handleDownloadFailure
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guarded failed-write lands
+      // Book already has an in-progress download → retrySearch short-circuits to already_active.
+      retryDeps.retrySearchDeps.downloadOrchestrator.hasActiveInProgress.mockResolvedValue(true);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      // The failed row is preserved and no replacement grab is issued.
+      expect(db.delete).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    });
+
     it('blacklists by guid when infoHash is absent (Usenet)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: null, guid: 'https://indexer.com/details/abc123' },
