@@ -37,9 +37,7 @@ export function ImportSettingsSection() {
               Remove torrent from download client after files are imported
             </p>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="deleteAfterImport" {...register('deleteAfterImport')} />
-          </label>
+          <ToggleSwitch id="deleteAfterImport" {...register('deleteAfterImport')} />
         </div>
 
         <div>
@@ -89,9 +87,7 @@ export function ImportSettingsSection() {
               Automatically search for and attempt to download a different release when a download fails
             </p>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
-          </label>
+          <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
         </div>
 
         <div>

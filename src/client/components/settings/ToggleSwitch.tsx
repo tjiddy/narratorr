@@ -18,11 +18,17 @@ const sizeStyles = {
   },
 } as const;
 
+/**
+ * The visible track is a plain <div>; only this wrapping <label> forwards clicks on it to the
+ * sr-only checkbox. The component owns that label so a bare `<ToggleSwitch />` is always clickable
+ * — call sites must NOT add their own wrapping <label> (nested labels are invalid HTML). A
+ * separate text label may still target the input via htmlFor/id.
+ */
 export function ToggleSwitch({ size = 'full', className, disabled, ref, ...inputProps }: ToggleSwitchProps) {
   const s = sizeStyles[size];
 
   return (
-    <>
+    <label className={`inline-flex items-center ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
       <input
         type="checkbox"
         ref={ref}
@@ -31,8 +37,8 @@ export function ToggleSwitch({ size = 'full', className, disabled, ref, ...input
         {...inputProps}
       />
       <div
-        className={`${s.track} relative bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50 cursor-not-allowed' : ''}`}
+        className={`${s.track} relative bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full ${s.thumb} after:transition-all${disabled ? ' opacity-50' : ''}`}
       />
-    </>
+    </label>
   );
 }

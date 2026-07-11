@@ -34,9 +34,7 @@ export function NewBookDefaultsSection() {
               Trigger a search as soon as a book is added
             </p>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
-          </label>
+          <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
         </div>
 
         {isDirty && (

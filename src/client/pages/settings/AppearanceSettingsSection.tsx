@@ -22,14 +22,12 @@ export function AppearanceSettingsSection() {
             Switch between light and dark theme
           </p>
         </div>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <ToggleSwitch
-            id="darkMode"
-            checked={theme === 'dark'}
-            onChange={toggleTheme}
-            aria-label="Dark Mode"
-          />
-        </label>
+        <ToggleSwitch
+          id="darkMode"
+          checked={theme === 'dark'}
+          onChange={toggleTheme}
+          aria-label="Dark Mode"
+        />
       </div>
     </SettingsSection>
   );

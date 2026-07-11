@@ -43,9 +43,7 @@ export function DiscoverySettingsSection() {
               Automatically generate book recommendations based on your library
             </p>
           </label>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
-          </label>
+          <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
         </div>
 
         {/* Refresh Interval */}

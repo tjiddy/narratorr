@@ -114,10 +114,10 @@ function ImportListFormFooter({
 }) {
   return (
     <div className="flex items-center justify-between pt-2">
-      <label htmlFor="il-enabled" className="flex items-center gap-2 cursor-pointer">
+      <div className="flex items-center gap-2">
         <ToggleSwitch id="il-enabled" size="compact" checked={enabled} onChange={(e) => onEnabledChange(e.target.checked)} />
-        <span className="text-sm">Enabled</span>
-      </label>
+        <label htmlFor="il-enabled" className="text-sm cursor-pointer">Enabled</label>
+      </div>
       <div className="flex items-center gap-3">
         {onCancel && (
           <button type="button" onClick={onCancel} className="px-4 py-2 border border-border rounded-lg text-muted-foreground hover:bg-muted transition-all">
