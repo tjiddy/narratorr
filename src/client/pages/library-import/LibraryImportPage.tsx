@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
+import { ImportCard, ImportSummaryBar, BookEditModal, MatchPausedBanner } from '@/components/manual-import';
 import { HeldReviewPanel } from '@/components/held-review';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { PageHeader } from '@/components/PageHeader.js';
@@ -15,7 +15,6 @@ export function LibraryImportPage() {
     hasLibraryPath,
     scanError,
     emptyResult,
-    matchJobError,
     rows,
     editIndex,
     setEditIndex,
@@ -24,13 +23,19 @@ export function LibraryImportPage() {
     chunkProgress,
     libraryRoot,
     heldReview,
+    recovering,
+    paused,
+    pausedReason,
+    matchRemaining,
+    matchTotal,
     handleToggle,
     handleSelectAll,
     handleEdit,
     handleRegister,
     handleReconfirmHeld,
     handleRetry,
-    handleRetryMatch,
+    handleRestartMatch,
+    handleResumeMatch,
     registerMutation,
     selectedCount,
     selectedUnmatchedCount,
@@ -129,19 +134,18 @@ export function LibraryImportPage() {
         </div>
       )}
 
-      {/* Match job error */}
-      {matchJobError && step === 'review' && !scanError && (
-        <div className="glass-card rounded-xl p-6 flex flex-col items-center gap-3 text-center">
-          <AlertCircleIcon className="w-8 h-8 text-amber-400" />
-          <p className="text-sm text-muted-foreground">Matching failed: {matchJobError}</p>
-          <button
-            type="button"
-            onClick={handleRetryMatch}
-            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring"
-          >
-            Retry matching
-          </button>
-        </div>
+      {/* Match-phase recovery banner (#1864) — inline recovery that retains the
+          still-useful review list. Resume re-matches only the remainder; Restart
+          rebuilds from current row values. */}
+      {paused && pausedReason && step === 'review' && !scanError && (
+        <MatchPausedBanner
+          reason={pausedReason}
+          remaining={matchRemaining}
+          total={matchTotal}
+          onResume={handleResumeMatch}
+          onRestart={handleRestartMatch}
+          busy={recovering}
+        />
       )}
 
       {/* Held for recording review (#1711) — items the server could not confirm as
@@ -213,7 +217,7 @@ export function LibraryImportPage() {
               onImport={handleRegister}
               importing={registerMutation.isPending}
               hideMode
-              disabled={!!matchJobError}
+              disabled={paused || recovering}
               registerLabel={
                 registerMutation.isPending
                   ? (chunkProgress && chunkProgress.chunks > 1

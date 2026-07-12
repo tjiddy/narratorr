@@ -456,11 +456,14 @@ describe('library-scan routes', () => {
 
   describe('GET /api/library/import/match/:jobId', () => {
     it('returns job status when found', async () => {
+      // Fixture corrected to the real MatchJobStatus contract (#1864 F8): the
+      // status is one of matching/completed/failed/cancelled and progress is
+      // `matched`, not `running`/`completed`.
       const mockStatus = {
         id: 'job-abc-123',
-        status: 'running',
+        status: 'matching',
         total: 5,
-        completed: 2,
+        matched: 2,
         results: [],
       };
 
@@ -475,8 +478,35 @@ describe('library-scan routes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.id).toBe('job-abc-123');
-      expect(body.status).toBe('running');
+      expect(body.status).toBe('matching');
       expect(services.matchJob.getJob).toHaveBeenCalledWith('job-abc-123');
+    });
+
+    it('returns a terminal failed job at 200 with error + retained results (#1864 F8)', async () => {
+      const failedStatus = {
+        id: 'job-failed-1',
+        status: 'failed',
+        total: 3,
+        matched: 1,
+        results: [{ path: '/a', confidence: 'high', bestMatch: null, alternatives: [] }],
+        error: 'orchestration boom',
+      };
+      (services.matchJob.getJob as ReturnType<typeof vi.fn>).mockReturnValue(failedStatus);
+
+      const res = await app.inject({ method: 'GET', url: '/api/library/import/match/job-failed-1' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.status).toBe('failed');
+      expect(body.error).toBe('orchestration boom');
+      expect(body.results).toHaveLength(1);
+    });
+
+    it('returns 404 once the failed job is removed post-TTL', async () => {
+      // After TTL the service drops the job — the poll then 404s (not a stale 200).
+      (services.matchJob.getJob as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      const res = await app.inject({ method: 'GET', url: '/api/library/import/match/job-failed-1' });
+      expect(res.statusCode).toBe(404);
     });
 
     it('returns 404 when job not found', async () => {

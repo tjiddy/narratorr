@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
+import { ImportCard, ImportSummaryBar, BookEditModal, MatchPausedBanner } from '@/components/manual-import';
 import { HeldReviewPanel } from '@/components/held-review';
 import {
   ArrowLeftIcon,
@@ -22,8 +22,8 @@ export function ManualImportPage() {
   const libraryPath = settings?.library?.path ?? '';
 
   const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
-  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview } = state;
-  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, handleReconfirmHeld } = actions;
+  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress, chunkProgress, heldReview, recovering, paused, pausedReason, matchRemaining, matchTotal } = state;
+  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack, handleReconfirmHeld, handleRestartMatch, handleResumeMatch } = actions;
   const { scanMutation, importMutation } = mutations;
   const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, selectedPendingCount, duplicateCount, allSelected } = counts;
 
@@ -79,6 +79,19 @@ export function ManualImportPage() {
         isPending={importMutation.isPending}
       />
 
+      {/* Match-phase recovery banner (#1864) — manual import now surfaces match
+          failures (previously silently dropped) with inline Resume/Restart. */}
+      {paused && pausedReason && step === 'review' && (
+        <MatchPausedBanner
+          reason={pausedReason}
+          remaining={matchRemaining}
+          total={matchTotal}
+          onResume={handleResumeMatch}
+          onRestart={handleRestartMatch}
+          busy={recovering}
+        />
+      )}
+
       {/* Step 2: Review Cards */}
       {step === 'review' && (
         <div className="animate-fade-in-up stagger-1">
@@ -128,6 +141,7 @@ export function ManualImportPage() {
               onModeChange={setMode}
               onImport={handleImport}
               importing={importMutation.isPending}
+              disabled={paused || recovering}
               {...(importMutation.isPending && chunkProgress && chunkProgress.chunks > 1
                 ? { registerLabel: `Registering ${chunkProgress.current} of ${chunkProgress.total}…` }
                 : {})}

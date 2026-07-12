@@ -5,13 +5,22 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ManualImportPage } from './ManualImportPage';
 import type { MatchResult, DiscoveredBook, ScanResult } from '@/lib/api';
+import type { PausedReason } from '@/hooks/match-recovery';
 import type { FolderEntry } from './useFolderHistory.js';
 
-// Track match job state for controlled polling — fresh per test via makeMatchState()
+// Track match job state for controlled polling — fresh per test via makeMatchState().
+// Widened to the #1864 paused/recovery contract (paused/reason/remaining/recovering + restart/resume).
 type MatchState = {
   results: MatchResult[];
   isMatching: boolean;
+  recovering: boolean;
+  paused: boolean;
+  reason: PausedReason | null;
+  remaining: number;
+  total: number;
   startMatching: ReturnType<typeof vi.fn>;
+  restart: ReturnType<typeof vi.fn>;
+  resume: ReturnType<typeof vi.fn>;
   cancelMatching: ReturnType<typeof vi.fn>;
 };
 
@@ -19,7 +28,14 @@ function makeMatchState(): MatchState {
   return {
     results: [],
     isMatching: false,
+    recovering: false,
+    paused: false,
+    reason: null,
+    remaining: 0,
+    total: 0,
     startMatching: vi.fn(),
+    restart: vi.fn(),
+    resume: vi.fn(),
     cancelMatching: vi.fn(),
   };
 }
@@ -29,9 +45,17 @@ let matchState = makeMatchState();
 vi.mock('@/hooks/useMatchJob', () => ({
   useMatchJob: () => ({
     results: matchState.results,
-    progress: { matched: matchState.results.length, total: 0 },
+    progress: { matched: matchState.results.length, total: matchState.total },
     isMatching: matchState.isMatching,
+    recovering: matchState.recovering,
+    paused: matchState.paused,
+    reason: matchState.reason,
+    remaining: matchState.remaining,
+    matchedCount: matchState.results.length,
+    total: matchState.total,
     startMatching: matchState.startMatching,
+    restart: matchState.restart,
+    resume: matchState.resume,
     cancel: matchState.cancelMatching,
   }),
 }));
@@ -553,6 +577,76 @@ describe('ManualImportPage', () => {
       const btn = screen.getByRole('button', { name: /Import 2/ });
       expect(btn).toBeDisabled();
       expect(btn).toHaveAttribute('title', '1 selected book needs a match, 1 still matching');
+    });
+  });
+
+  describe('match-phase recovery banner (#1864)', () => {
+    it('surfaces the paused banner on manual import — previously a silent no-op', async () => {
+      matchState.paused = true;
+      matchState.reason = 'run-expired';
+      matchState.remaining = 1;
+      matchState.total = 2;
+
+      await scanAndReview();
+
+      expect(screen.getByText(/matching paused/i)).toBeInTheDocument();
+      expect(screen.getByText(/matching ended before every book/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /resume remaining/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /restart all/i })).toBeInTheDocument();
+    });
+
+    it('Import stays disabled while paused even after deselecting every pending row', async () => {
+      // Book A matched (ready), Book B pending. Paused.
+      matchState.paused = true;
+      matchState.reason = 'run-expired';
+      matchState.results = [makeMatchResult({ path: '/a/A', bestMatch: { title: 'Book A', authors: [{ name: 'A' }] } })];
+      matchState.total = 2;
+
+      const books = [
+        makeDiscoveredBook({ path: '/a/A', parsedTitle: 'Book A' }),
+        makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' }),
+      ];
+      await scanAndReview(books);
+
+      // Deselect the pending Book B — selectedPendingCount would drop to 0, which
+      // without the pause gate would enable Import on the matched Book A.
+      const deselects = screen.getAllByLabelText('Deselect');
+      await userEvent.click(deselects[1]!);
+
+      expect(screen.getByRole('button', { name: /Import/ })).toBeDisabled();
+    });
+
+    it('Import stays disabled while recovering (automatic retry/remainder) even after deselecting every pending row (F1)', async () => {
+      // recovering=true WITHOUT paused models an automatic retry/remainder in flight.
+      matchState.recovering = true;
+      matchState.results = [makeMatchResult({ path: '/a/A', bestMatch: { title: 'Book A', authors: [{ name: 'A' }] } })];
+      matchState.total = 2;
+
+      const books = [
+        makeDiscoveredBook({ path: '/a/A', parsedTitle: 'Book A' }),
+        makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' }),
+      ];
+      await scanAndReview(books);
+
+      // Deselect the pending Book B — without the recovering gate this would enable Import.
+      const deselects = screen.getAllByLabelText('Deselect');
+      await userEvent.click(deselects[1]!);
+
+      expect(screen.getByRole('button', { name: /Import/ })).toBeDisabled();
+    });
+
+    it('Resume/Restart buttons delegate to the hook actions', async () => {
+      matchState.paused = true;
+      matchState.reason = 'unreachable';
+      matchState.total = 1;
+      matchState.remaining = 1;
+
+      await scanAndReview();
+
+      await userEvent.click(screen.getByRole('button', { name: /resume remaining/i }));
+      expect(matchState.resume).toHaveBeenCalled();
+      await userEvent.click(screen.getByRole('button', { name: /restart all/i }));
+      expect(matchState.restart).toHaveBeenCalled();
     });
   });
 
