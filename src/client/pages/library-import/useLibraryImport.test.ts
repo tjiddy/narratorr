@@ -327,7 +327,7 @@ describe('useLibraryImport hook (#133)', () => {
     expect(result.current.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
-  it('match-job failure: matchJobError is set after startMatchJob rejects', async () => {
+  it('match-job start failure: pauses start-failed (no active job) instead of a raw error string (#1864)', async () => {
     mockStartMatchJob.mockRejectedValue(new Error('match server unavailable'));
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -335,12 +335,13 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     await waitFor(() => {
-      expect(result.current.matchJobError).toBe('match server unavailable');
+      expect(result.current.paused).toBe(true);
+      expect(result.current.pausedReason).toBe('start-failed');
     });
   });
 
-  it('handleRetryMatch: starts a new match job with non-duplicate candidates and clears error', async () => {
-    // Initial attempt fails
+  it('handleRestartMatch: starts a new logical run with non-duplicate candidates and clears the pause (#1864)', async () => {
+    // Initial attempt fails at start (paused start-failed)
     mockStartMatchJob
       .mockRejectedValueOnce(new Error('first failure'))
       .mockResolvedValue({ jobId: 'job-2' });
@@ -348,45 +349,94 @@ describe('useLibraryImport hook (#133)', () => {
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-    await waitFor(() => expect(result.current.matchJobError).toBe('first failure'));
+    await waitFor(() => expect(result.current.paused).toBe(true));
 
-    // Retry
-    act(() => result.current.handleRetryMatch());
+    // Restart — beginLogical clears the pause synchronously before the new start.
+    act(() => result.current.handleRestartMatch());
 
-    // Error clears immediately because startMatching sets error=null before the async call
-    await waitFor(() => expect(result.current.matchJobError).toBeNull());
+    await waitFor(() => expect(result.current.paused).toBe(false));
 
-    // startMatchJob called twice: initial scan + retry
+    // startMatchJob called twice: initial scan + restart
     expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
-    // Retry call contains the non-duplicate candidate
-    const retryCandidates = mockStartMatchJob.mock.calls[1]![0] as Array<{ path: string; title: string }>;
-    expect(retryCandidates).toEqual(expect.arrayContaining([
+    const restartCandidates = mockStartMatchJob.mock.calls[1]![0] as Array<{ path: string; title: string }>;
+    expect(restartCandidates).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: '/audiobooks/AuthorA/Book1', title: 'Book One' }),
     ]));
   });
 
-  // #1849 — handleRetryMatch threads the (possibly user-edited) seriesPosition into
-  // the re-match candidate so the position tiebreaker survives a retry. Pins position 0
+  // #1849 — Restart threads the (possibly user-edited) seriesPosition into the
+  // re-match candidate so the position tiebreaker survives a Restart. Pins position 0
   // (regression guard, #1028): deleting the spread at useLibraryImport.ts would drop it.
-  it('handleRetryMatch: threads edited seriesPosition (including 0) into retry candidates (#1849)', async () => {
+  it('handleRestartMatch: threads edited seriesPosition (including 0) into restart candidates (#1849)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
     const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
-    // Seed a genuine position-0 via edit so the retry builder must carry it.
+    // Seed a genuine position-0 via edit so the restart builder must carry it.
     act(() => {
       result.current.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Fablehaven', seriesPosition: 0 });
     });
 
-    // Isolate the retry call from the initial auto-scan match job.
+    // Isolate the restart call from the initial auto-scan match job.
     mockStartMatchJob.mockClear();
-    act(() => { result.current.handleRetryMatch(); });
+    act(() => { result.current.handleRestartMatch(); });
     await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
 
-    const retryCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string; seriesPosition?: number }>;
-    const seeded = retryCandidates.find(c => c.path === '/audiobooks/AuthorA/Book1');
+    const restartCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string; seriesPosition?: number }>;
+    const seeded = restartCandidates.find(c => c.path === '/audiobooks/AuthorA/Book1');
     expect(seeded?.seriesPosition).toBe(0);
   });
+
+  it('Restart CLEARS already-matched rows to pending immediately (#1864 §5b/F5)', async () => {
+    // Drain any leaked `*Once()` queue from a prior test (vitest-clearallmocks-once-queue).
+    mockGetMatchJob.mockReset();
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'X', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const idx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => expect(result.current.rows[idx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+
+    // Restart clears the stale match to pending BEFORE the new run's first result lands.
+    act(() => result.current.handleRestartMatch());
+    expect(result.current.rows[idx]!.matchResult).toBeUndefined();
+  });
+
+  it('Resume PRESERVES already-matched rows and only re-matches the remainder (#1864 §5b/F5)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/A/B1', parsedTitle: 'B1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+        { path: '/audiobooks/A/B2', parsedTitle: 'B2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+    const b1 = { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'B1', authors: [{ name: 'A' }] }, alternatives: [] };
+    const b2 = { path: '/audiobooks/A/B2', confidence: 'high', bestMatch: { title: 'B2', authors: [{ name: 'A' }] }, alternatives: [] };
+    // Drain any leaked `*Once()` queue from a prior test (vitest-clearallmocks-once-queue).
+    mockGetMatchJob.mockReset();
+    mockGetMatchJob
+      .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [b1] })   // B1 observed (partial)
+      .mockRejectedValueOnce(new ApiError(400, { error: 'bad' }))                                          // pause request-rejected, id retained
+      .mockResolvedValueOnce({ id: 'job-1', status: 'completed', total: 2, matched: 2, results: [b1, b2] }); // resume-entry probe completes
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.rows.length).toBe(2));
+
+    // B1 matches, then the run pauses — B1's match is kept.
+    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+    await waitFor(() => expect(result.current.paused).toBe(true), { timeout: 5000 });
+    expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
+
+    // Resume preserves B1 and fills in B2.
+    act(() => result.current.handleResumeMatch());
+    await waitFor(() => expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B2')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+    expect(result.current.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
+    expect(result.current.paused).toBe(false);
+  }, 20000);
 
   it('path-duplicate row: no edit-triggered recheck, row stays locked', async () => {
     mockGetBookIdentifiers.mockResolvedValue([
@@ -1002,12 +1052,12 @@ describe('match merge — selection behavior (#185)', () => {
     expect(result.current.rows[nonDupIdx]!.userEdited).toBe(true);
     expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
 
-    // Retry Match re-matches all non-dup rows; the re-result comes back medium.
+    // Restart re-matches all non-dup rows; the re-result comes back medium.
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Other', authors: [{ name: 'Author A' }] }, alternatives: [] }],
     });
-    act(() => result.current.handleRetryMatch());
+    act(() => result.current.handleRestartMatch());
 
     await waitFor(() => expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium'), { timeout: 5000 });
     expect(result.current.rows[nonDupIdx]!.selected).toBe(true);
@@ -1435,7 +1485,7 @@ describe('retry mechanics (#185)', () => {
     }, { timeout: 5000 });
   });
 
-  it('handleRetryMatch resets stale offset so new match results merge after retry', async () => {
+  it('handleRestartMatch resets stale offset so new match results merge after restart', async () => {
     // Phase 1: initial scan + match completes with none confidence
     mockScanDirectory.mockResolvedValue(mockScanResult);
     mockGetMatchJob.mockResolvedValue({
@@ -1451,14 +1501,14 @@ describe('retry mechanics (#185)', () => {
       expect(result.current.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
-    // Phase 2: retryMatch — new match job with different result
+    // Phase 2: Restart — new match job with different result
     mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
     mockGetMatchJob.mockResolvedValue({
       id: 'job-2', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Better Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
     });
 
-    act(() => { result.current.handleRetryMatch(); });
+    act(() => { result.current.handleRestartMatch(); });
 
     // Observable: post-retry result merged at index 0 — confidence upgraded and title changed
     await waitFor(() => {
@@ -1638,8 +1688,8 @@ describe('empty result edge case', () => {
       }, { timeout: 5000 });
     });
 
-    it('handleRetryMatch includes within-scan rows and excludes DB duplicates', async () => {
-      // Initial match attempt fails so we can trigger retry
+    it('handleRestartMatch includes within-scan rows and excludes DB duplicates', async () => {
+      // Initial match attempt fails at start (paused) so we can trigger Restart
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob
         .mockRejectedValueOnce(new Error('first failure'))
@@ -1648,21 +1698,21 @@ describe('empty result edge case', () => {
 
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
-      await waitFor(() => expect(result.current.matchJobError).toBe('first failure'));
+      await waitFor(() => expect(result.current.paused).toBe(true));
 
-      // Clear call history so we can assert only the retry call
+      // Clear call history so we can assert only the restart call
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-2' });
 
-      // Trigger retry
-      act(() => result.current.handleRetryMatch());
+      // Trigger Restart
+      act(() => result.current.handleRestartMatch());
 
       await waitFor(() => expect(mockStartMatchJob).toHaveBeenCalledTimes(1));
 
-      const retryCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string }>;
-      const retryPaths = retryCandidates.map((c: { path: string }) => c.path);
-      expect(retryPaths).toContain('/audiobooks/Author/Book');
-      expect(retryPaths).toContain('/audiobooks/Copy/Author/Book');
-      expect(retryPaths).not.toContain('/audiobooks/DbDup/Book');
+      const restartCandidates = mockStartMatchJob.mock.calls[0]![0] as Array<{ path: string }>;
+      const restartPaths = restartCandidates.map((c: { path: string }) => c.path);
+      expect(restartPaths).toContain('/audiobooks/Author/Book');
+      expect(restartPaths).toContain('/audiobooks/Copy/Author/Book');
+      expect(restartPaths).not.toContain('/audiobooks/DbDup/Book');
     });
   });
 

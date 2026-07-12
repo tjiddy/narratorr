@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useManualImport } from './useManualImport';
 import { ApiError } from '@/lib/api';
-import type { ScanResult, BookMetadata } from '@/lib/api';
+import type { ScanResult, BookMetadata, MatchResult } from '@/lib/api';
 
 const mockNavigate = vi.fn();
 
@@ -1044,7 +1044,6 @@ describe('useManualImport', () => {
     });
 
     it('parser-seeded parsedSeriesPosition survives a no-position best match merge (#1042)', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue({
           discoveries: [
@@ -1073,7 +1072,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(1); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
         expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(3);
 
@@ -1140,7 +1139,6 @@ describe('useManualImport', () => {
     });
 
     it('mergeMatchResults seeds edited narrators and seriesPosition from bestMatch (#1028)', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1166,7 +1164,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
         expect(result.current.state.rows[0]!.edited.narrators).toEqual(['Jim Dale']);
         expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(27);
@@ -1176,7 +1174,6 @@ describe('useManualImport', () => {
     });
 
     it('mergeMatchResults preserves seriesPosition: 0 (falsy regression at merge boundary) (#1028)', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1201,7 +1198,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
         expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(0);
       } finally {
@@ -1210,7 +1207,6 @@ describe('useManualImport', () => {
     });
 
     it('mergeMatchResults omits narrators/seriesPosition when bestMatch lacks them (#1028)', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1234,7 +1230,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
         expect(result.current.state.rows[0]!.edited).not.toHaveProperty('narrators');
         expect(result.current.state.rows[0]!.edited).not.toHaveProperty('seriesPosition');
@@ -1244,7 +1240,6 @@ describe('useManualImport', () => {
     });
 
     it('mergeMatchResults seeds edited.metadata.narrators from bestMatch.narrators on first arrival', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1266,7 +1261,7 @@ describe('useManualImport', () => {
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
         // Advance past the 2000ms poll interval so the first poll fires
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
         expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Stephen Fry']);
       } finally {
@@ -1276,7 +1271,6 @@ describe('useManualImport', () => {
   });
 
   it('readyCount decrements when a high-confidence row is deselected', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1298,7 +1292,7 @@ describe('useManualImport', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       // Advance past the 2000ms poll interval so match results arrive
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // Row 0 is high confidence and selected → ready count = 1
       expect(result.current.counts.readyCount).toBe(1);
@@ -1439,7 +1433,6 @@ describe('useManualImport', () => {
     });
 
     it('duplicate rows do not auto-select when match result arrives', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
         // Match job returns a result for the path of a duplicate row (edge case)
@@ -1461,7 +1454,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
         const dupRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Existing Book');
         expect(dupRow?.selected).toBe(false);
@@ -1595,7 +1588,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('bestMatch=null preserves existing edited state', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1613,7 +1605,7 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // Existing edited state preserved (not overwritten by null bestMatch)
       expect(result.current.state.rows[0]!.edited.title).toBe('Book A');
@@ -1625,7 +1617,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('bestMatch with empty authors array falls back to existing row.edited.author', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1643,7 +1634,7 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // Title from bestMatch, author falls back to original parsed value
       expect(result.current.state.rows[0]!.edited.title).toBe('Official Title');
@@ -1654,7 +1645,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('confidence=none auto-unchecks the row (selected → false)', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1675,7 +1665,7 @@ describe('match merge — boundary values (#185)', () => {
       // Row starts selected
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // After match merge with confidence=none, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
@@ -1688,7 +1678,6 @@ describe('match merge — boundary values (#185)', () => {
   it('confidence=medium (Review) auto-unchecks the row (selected → false)', async () => {
     // Medium-confidence rows must default to unchecked so a human reviews the
     // match before importing — only 'high' stays checked (#1318).
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1709,7 +1698,7 @@ describe('match merge — boundary values (#185)', () => {
       // Row starts selected
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // After match merge with confidence=medium, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
@@ -1726,7 +1715,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('high confidence does NOT re-select a row the user had deselected (#1318 parity)', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       // Job still matching while the user toggles the row off.
@@ -1746,7 +1734,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // High preserves the prior selection — a deselected row stays deselected.
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
@@ -1757,7 +1745,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('edit-during-matching preserves selection: a user-FIXED row stays checked when a later medium match merges (#1374)', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       // Job still matching when the user fixes the row.
@@ -1784,7 +1771,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // userEdited row keeps its selection despite the medium merge.
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
@@ -1796,7 +1783,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('edit-during-matching preserves manually-corrected fields when a later bestMatch merges (no metadata picked, #1374 F1)', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
@@ -1822,7 +1808,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Provider Title', authors: [{ name: 'Provider Author' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // The user's manual correction survives — userEdited gates auto-populate,
       // not edited.metadata alone.
@@ -1835,7 +1821,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('#1318 guard: a merely-toggled (not edited) row is still unchecked by a medium merge', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
@@ -1856,7 +1841,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       expect(result.current.state.rows[0]!.selected).toBe(false);
       expect(result.current.state.rows[0]!.userEdited).toBe(false);
@@ -1869,7 +1854,6 @@ describe('match merge — boundary values (#185)', () => {
   it('autoCheck re-checks a medium row deselected by the merge when metadata is supplied via edit', async () => {
     // A merge deselects the medium row; supplying metadata through the edit flow
     // is explicit user intent, so the row re-checks (#1318 / #185 autoCheck).
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1887,7 +1871,7 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
 
       // Merge deselected the medium row
       expect(result.current.state.rows[0]!.selected).toBe(false);
@@ -1981,7 +1965,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
   });
 
   it('row with matchResult confidence=none and new metadata — confidence upgrades to medium', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1999,7 +1982,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
       // Edit with metadata → confidence upgrades from 'none' to 'medium'
@@ -2018,7 +2001,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
 
   // ── #335 Manual match override: medium → high ──────────────────────────
   it('row with matchResult confidence=medium and NEW provider metadata → confidence upgrades to high', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2036,7 +2018,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Edit with a DIFFERENT metadata object (user explicitly re-selected) → upgrades to high
@@ -2055,7 +2037,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
   });
 
   it('row with matchResult confidence=medium saved with preloaded metadata (no re-selection) → stays medium', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2073,7 +2054,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Save with the SAME metadata reference (user opened modal and clicked Save without re-selecting)
@@ -2093,7 +2074,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
   });
 
   it('row with matchResult confidence=medium and explicit click on SAME current match → upgrades to high', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2111,7 +2091,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Simulate explicit click on the current match — applyMetadata spreads to new reference
@@ -2129,7 +2109,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
   });
 
   it('row with matchResult confidence=high and new metadata → confidence stays high', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2147,7 +2126,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
 
       // Edit with provider metadata → confidence stays 'high'
@@ -2254,7 +2233,6 @@ describe('grouped return shape (REACT-1 refactor)', () => {
   // ── #415 Match confidence reason passthrough ────────────────────────
   describe('confidence reason lifecycle (#415)', () => {
     it('mergeMatchResults preserves reason field from MatchResult onto ImportRow', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2273,7 +2251,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
         expect(result.current.state.rows[0]!.matchResult?.reason).toBe(
           'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
         );
@@ -2283,7 +2261,6 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     });
 
     it('medium → high upgrade clears reason to undefined', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2302,7 +2279,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
         expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
         expect(result.current.state.rows[0]!.matchResult?.reason).toBeDefined();
 
@@ -2323,7 +2300,6 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     });
 
     it('none → medium upgrade does not set a reason (user-initiated)', async () => {
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
         vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2341,7 +2317,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
         expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
         // Edit with metadata → upgrades to medium, but no system reason
@@ -2358,5 +2334,78 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         vi.useRealTimers();
       }
     });
+  });
+
+  // #1864 — manual import previously dropped match failures silently (:27 destructure
+  // omitted the recovery contract). It now surfaces the paused state with inline recovery.
+  describe('match-phase recovery (#1864)', () => {
+    // These tests sequence poll responses with `*Once()`. The file's `clearAllMocks`
+    // beforeEach does NOT drain those queues (vitest-clearallmocks-once-queue), so a
+    // prior test's leftover queued response would be consumed by our first poll. Reset
+    // the job mocks fully here before each test re-establishes its own sequence.
+    beforeEach(() => {
+      vi.mocked(api.getMatchJob).mockReset().mockResolvedValue({ id: 'job-123', status: 'matching', total: 0, matched: 0, results: [] });
+      vi.mocked(api.startMatchJob).mockReset().mockResolvedValue({ jobId: 'job-123' });
+      vi.mocked(api.cancelMatchJob).mockReset().mockResolvedValue(undefined as never);
+    });
+
+    it('a match-start failure surfaces paused state instead of failing silently', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.startMatchJob).mockRejectedValue(new Error('down'));
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await waitFor(() => {
+        expect(result.current.state.paused).toBe(true);
+        expect(result.current.state.pausedReason).toBe('start-failed');
+      });
+    });
+
+    it('handleRestartMatch clears matched rows to pending and starts a new run (F5)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', total: 2, matched: 1,
+        results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Book A', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+
+      // Restart clears the stale match to pending immediately.
+      vi.mocked(api.startMatchJob).mockClear();
+      act(() => { result.current.actions.handleRestartMatch(); });
+      expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult).toBeUndefined();
+      expect(api.startMatchJob).toHaveBeenCalled();
+    });
+
+    it('handleResumeMatch preserves matched rows and re-matches only the remainder (F5)', async () => {
+      const a: MatchResult = { path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Book A', authors: [{ name: 'Author A' }] }, alternatives: [] };
+      const b: MatchResult = { path: '/audiobooks/Book B', confidence: 'high', bestMatch: { title: 'Book B', authors: [] }, alternatives: [] };
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob)
+        .mockResolvedValueOnce({ id: 'job-123', status: 'matching', total: 2, matched: 1, results: [a] })
+        .mockRejectedValueOnce(new ApiError(400, { error: 'bad' })) // pause request-rejected, id retained
+        .mockResolvedValueOnce({ id: 'job-123', status: 'completed', total: 2, matched: 2, results: [a, b] }); // resume-entry probe
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+      await waitFor(() => expect(result.current.state.paused).toBe(true), { timeout: 5000 });
+
+      act(() => { result.current.actions.handleResumeMatch(); });
+      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book B')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+      // Book A's match is preserved across the resume.
+      expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high');
+      expect(result.current.state.paused).toBe(false);
+    }, 20000);
   });
 });
