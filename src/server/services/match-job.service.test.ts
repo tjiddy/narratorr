@@ -381,6 +381,35 @@ describe('MatchJobService', () => {
         spy.mockRestore();
       }
     });
+
+    it('failure-then-completion stays failed with the original error, results, and a single cleanup (F7)', async () => {
+      // run() terminalizes `failed` on the orchestration crash, then RESOLVES — so start()'s
+      // completion handler always fires afterward. That completion is the failure→completion
+      // matrix cell: it must no-op (write-once), leaving status/error/results owned by the
+      // failed transition and scheduling no second TTL cleanup.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('orchestration boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        // Flush the crash catch AND the subsequent completion handler (both microtasks).
+        for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
+
+        const status = service.getJob(id)!;
+        // The completion attempt no-oped: still failed, original error, retained results.
+        expect(status.status).toBe('failed');
+        expect(status.error).toBe('orchestration boom');
+        expect(Array.isArray(status.results)).toBe(true);
+
+        // Exactly one cleanup — the failed transition owns it; the no-op completion schedules none.
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        expect(service.getJob(id)).toBeNull();
+        const removals = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[1] === 'Match job expired and removed');
+        expect(removals).toHaveLength(1);
+      } finally {
+        spy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('cancelJob boolean semantics (#1864 F11)', () => {

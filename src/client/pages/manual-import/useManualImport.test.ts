@@ -2364,7 +2364,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       });
     });
 
-    it('handleRestartMatch clears matched rows to pending and starts a new run (F5)', async () => {
+    it('handleRestartMatch clears matched rows, resets offset, and rebuilds candidates from CURRENT edited rows incl seriesPosition:0 (F5/F6)', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
         id: 'job-123', status: 'completed', total: 2, matched: 1,
@@ -2377,11 +2377,38 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
       await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
 
-      // Restart clears the stale match to pending immediately.
+      // Edit Book A to genuinely-different values, including position 0 (regression-pinned).
+      act(() => {
+        result.current.actions.handleEdit(0, { title: 'Edited A', author: 'Edited Author', series: 'Fablehaven', seriesPosition: 0 });
+      });
+
       vi.mocked(api.startMatchJob).mockClear();
       act(() => { result.current.actions.handleRestartMatch(); });
+
+      // Restart clears the stale match to pending immediately (row-match clear).
       expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult).toBeUndefined();
-      expect(api.startMatchJob).toHaveBeenCalled();
+
+      // The Restart candidate payload reflects the CURRENT edited row values, not the
+      // original parsed fields — asserting the exact shape (replacing row.edited would fail this).
+      await waitFor(() => expect(api.startMatchJob).toHaveBeenCalled());
+      const candidates = vi.mocked(api.startMatchJob).mock.calls[0]![0];
+      const editedA = candidates.find(c => c.path === '/audiobooks/Book A');
+      expect(editedA).toEqual({ path: '/audiobooks/Book A', title: 'Edited A', author: 'Edited Author', seriesPosition: 0 });
+    });
+
+    it('recovering is true during an automatic retry backoff, activating the fail-closed gate (F1)', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockReset();
+      vi.mocked(api.getMatchJob)
+        .mockRejectedValueOnce(new Error('blip')) // first poll fails → backoff → recovering
+        .mockResolvedValue({ id: 'job-123', status: 'matching', total: 2, matched: 0, results: [] });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await waitFor(() => expect(result.current.state.recovering).toBe(true), { timeout: 5000 });
     });
 
     it('handleResumeMatch preserves matched rows and re-matches only the remainder (F5)', async () => {

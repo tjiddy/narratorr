@@ -616,6 +616,25 @@ describe('ManualImportPage', () => {
       expect(screen.getByRole('button', { name: /Import/ })).toBeDisabled();
     });
 
+    it('Import stays disabled while recovering (automatic retry/remainder) even after deselecting every pending row (F1)', async () => {
+      // recovering=true WITHOUT paused models an automatic retry/remainder in flight.
+      matchState.recovering = true;
+      matchState.results = [makeMatchResult({ path: '/a/A', bestMatch: { title: 'Book A', authors: [{ name: 'A' }] } })];
+      matchState.total = 2;
+
+      const books = [
+        makeDiscoveredBook({ path: '/a/A', parsedTitle: 'Book A' }),
+        makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' }),
+      ];
+      await scanAndReview(books);
+
+      // Deselect the pending Book B — without the recovering gate this would enable Import.
+      const deselects = screen.getAllByLabelText('Deselect');
+      await userEvent.click(deselects[1]!);
+
+      expect(screen.getByRole('button', { name: /Import/ })).toBeDisabled();
+    });
+
     it('Resume/Restart buttons delegate to the hook actions', async () => {
       matchState.paused = true;
       matchState.reason = 'unreachable';

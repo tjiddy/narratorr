@@ -387,6 +387,17 @@ describe('useLibraryImport hook (#133)', () => {
     expect(seeded?.seriesPosition).toBe(0);
   });
 
+  it('recovering is true during an automatic retry backoff, activating the fail-closed gate (#1864 F1)', async () => {
+    mockGetMatchJob.mockReset();
+    mockGetMatchJob
+      .mockRejectedValueOnce(new Error('blip')) // first poll fails → backoff → recovering
+      .mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+    await waitFor(() => expect(result.current.recovering).toBe(true), { timeout: 5000 });
+  });
+
   it('Restart CLEARS already-matched rows to pending immediately (#1864 §5b/F5)', async () => {
     // Drain any leaked `*Once()` queue from a prior test (vitest-clearallmocks-once-queue).
     mockGetMatchJob.mockReset();

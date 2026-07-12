@@ -423,6 +423,398 @@ describe('useMatchJob', () => {
     expect(result.current.recovering).toBe(true);
   });
 
+  // #1864 F1 — automatic recovery activates the fail-closed `recovering` gate.
+  describe('recovering gate during automatic recovery (F1)', () => {
+    it('is false during a healthy initial poll (keeps the selective-CTA #1102 behavior)', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValueOnce(matching('job-1', [R('/a')]));
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);
+      expect(result.current.isMatching).toBe(true);
+      expect(result.current.recovering).toBe(false);
+    });
+
+    it('is true during a transient retry backoff and clears when the retry succeeds', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new Error('blip'))
+        .mockResolvedValueOnce(matching('job-1', [R('/a')]));
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);   // poll fails → backoff scheduled
+      expect(result.current.recovering).toBe(true);
+      await advance(BACKOFF); // retry succeeds
+      expect(result.current.recovering).toBe(false);
+    });
+
+    it('is true throughout the automatic allowance remainder run', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })) // job-1 → allowance remainder
+        .mockResolvedValueOnce(matching('job-2'));                   // job-2 still matching
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);   // 404 → auto-remainder (job-2)
+      await advance(POLL);   // job-2 matching
+      expect(result.current.isMatching).toBe(true);
+      expect(result.current.recovering).toBe(true);
+    });
+  });
+
+  // #1864 F2 — duplicate candidate paths collapse to a defined, consistent shape.
+  describe('duplicate candidate paths (F2)', () => {
+    it('collapses duplicate paths first-occurrence-wins: total is unique, one request, consistent completion', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValueOnce(completed('job-1', [R('/dup')]));
+      const { result } = renderHook(() => useMatchJob());
+
+      await act(async () => {
+        result.current.startMatching([{ path: '/dup', title: 'First' }, { path: '/dup', title: 'Second' }]);
+      });
+      // Total reflects the unique path, not the raw candidate count.
+      expect(result.current.total).toBe(1);
+      const sent = mockStartMatchJob.mock.calls[0]![0] as MatchCandidate[];
+      expect(sent.map(c => c.path)).toEqual(['/dup']); // only the first occurrence is sent
+
+      await advance(POLL);
+      // One result satisfies the single logical candidate — matched === total, clean finish.
+      expect(result.current.progress).toEqual({ matched: 1, total: 1 });
+      expect(result.current.remaining).toBe(0);
+      expect(result.current.isMatching).toBe(false);
+      expect(result.current.paused).toBe(false);
+    });
+  });
+
+  // #1864 F3 — the three-context probe/allowance table (§3).
+  describe('probe table across contexts (F3)', () => {
+    // Reaches an automatic-entry PROBE: transport exhaustion (1 + 3) in the still-automatic
+    // initial run, then the 5th getMatchJob IS the probe whose outcome the caller queued.
+    async function reachAutomaticEntryProbe(result: { current: { startMatching: (c: MatchCandidate[]) => void } }) {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);       // poll1 fail (1)
+      await advance(BACKOFF);    // retry1 fail (2)
+      await advance(BACKOFF);    // retry2 fail (3)
+      await advance(BACKOFF);    // retry3 fail (4) → probe fires synchronously
+    }
+
+    describe('automatic-entry probe', () => {
+      it('matching → adopts the live job and resumes polling (resets failures)', async () => {
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockResolvedValueOnce(matching('job-1'))               // probe: alive
+          .mockResolvedValueOnce(completed('job-1', [R('/a')]));  // adopted poll completes
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutomaticEntryProbe(result);
+        expect(result.current.paused).toBe(false);
+        await advance(POLL);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(1); // no replacement
+      });
+
+      it('completed → ingests and advances to logical completion', async () => {
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockResolvedValueOnce(completed('job-1', [R('/a')]));
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutomaticEntryProbe(result);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(result.current.isMatching).toBe(false);
+        expect(result.current.paused).toBe(false);
+      });
+
+      it('failed/404 with unspent allowance → consumes it and starts a remainder', async () => {
+        // Persistent remainder job id; the initial once-`job-1` is queued in the helper.
+        mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockResolvedValueOnce(failed('job-1'))                 // probe: terminal-gone
+          .mockResolvedValueOnce(completed('job-2', [R('/a')]));
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutomaticEntryProbe(result);
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // remainder started
+        await advance(POLL);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(result.current.paused).toBe(false);
+      });
+
+      it('cancelled → pauses cancelled with NO resurrection', async () => {
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockResolvedValueOnce(cancelled('job-1'));
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutomaticEntryProbe(result);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('cancelled');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(1); // no replacement
+      });
+
+      it('transport/5xx inconclusive → pauses unreachable, retaining the job id', async () => {
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new ApiError(503, { error: 'busy' })); // probe: inconclusive
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutomaticEntryProbe(result);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('unreachable');
+        // id retained → a subsequent Resume probes it rather than blind-starting.
+        mockGetMatchJob.mockResolvedValueOnce(matching('job-1')).mockResolvedValueOnce(completed('job-1', [R('/a')]));
+        await act(async () => { result.current.resume(); });
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+      });
+
+      it('other 4xx → pauses request-rejected, retaining the job id', async () => {
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new ApiError(403, { error: 'no' }));
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutomaticEntryProbe(result);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('request-rejected');
+      });
+    });
+
+    describe('resume-entry probe', () => {
+      // Pause via a non-404 4xx poll so the job id is retained, then Resume → resume-entry probe.
+      async function pauseWithRetainedId(result: { current: { startMatching: (c: MatchCandidate[]) => void } }) {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+        mockGetMatchJob.mockRejectedValueOnce(new ApiError(400, { error: 'bad' }));
+        await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+        await advance(POLL);
+      }
+
+      it('completed → ingests and finishes without a replacement start', async () => {
+        const { result } = renderHook(() => useMatchJob());
+        await pauseWithRetainedId(result);
+        mockGetMatchJob.mockResolvedValueOnce(completed('job-1', [R('/a')]));
+        await act(async () => { result.current.resume(); });
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(result.current.isMatching).toBe(false);
+        expect(result.current.paused).toBe(false);
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+      });
+
+      it('cancelled → starts a fresh human-authorized remainder', async () => {
+        mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' }); // remainder (persistent); initial once-job-1 in helper
+        const { result } = renderHook(() => useMatchJob());
+        await pauseWithRetainedId(result);
+        mockGetMatchJob.mockResolvedValueOnce(cancelled('job-1')).mockResolvedValueOnce(completed('job-2', [R('/a')]));
+        await act(async () => { result.current.resume(); });
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+        await advance(POLL);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(result.current.paused).toBe(false);
+      });
+
+      it('transport/5xx inconclusive → pauses unreachable, id retained (never replaces)', async () => {
+        const { result } = renderHook(() => useMatchJob());
+        await pauseWithRetainedId(result);
+        mockGetMatchJob.mockRejectedValueOnce(new Error('still down'));
+        await act(async () => { result.current.resume(); });
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('unreachable');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(1); // no replacement
+      });
+
+      it('other 4xx → pauses request-rejected, id retained', async () => {
+        const { result } = renderHook(() => useMatchJob());
+        await pauseWithRetainedId(result);
+        mockGetMatchJob.mockRejectedValueOnce(new ApiError(422, { error: 'nope' }));
+        await act(async () => { result.current.resume(); });
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('request-rejected');
+      });
+    });
+
+    describe('in-attempt (after the allowance is spent) never starts a second remainder', () => {
+      // Consume the allowance with a direct 404, landing in the auto-remainder run whose
+      // polls are in-attempt context.
+      async function reachAutoRemainder(result: { current: { startMatching: (c: MatchCandidate[]) => void } }, remainderJob = 'job-2') {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: remainderJob });
+        mockGetMatchJob.mockRejectedValueOnce(new ApiError(404, { error: 'gone' })); // job-1 → allowance
+        await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+        await advance(POLL);
+      }
+
+      it('failed/404 → pauses run-expired, no third job', async () => {
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutoRemainder(result);
+        mockGetMatchJob.mockRejectedValueOnce(new ApiError(404, { error: 'gone' }));
+        await advance(POLL); // job-2 poll 404 → in-attempt
+        expect(result.current.reason).toBe('run-expired');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // no job-3
+      });
+
+      it('cancelled → pauses cancelled, no third job', async () => {
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutoRemainder(result);
+        mockGetMatchJob.mockResolvedValueOnce(cancelled('job-2'));
+        await advance(POLL);
+        expect(result.current.reason).toBe('cancelled');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+      });
+
+      it('transport exhaustion → in-attempt probe pauses unreachable, no third job', async () => {
+        const { result } = renderHook(() => useMatchJob());
+        await reachAutoRemainder(result);
+        mockGetMatchJob
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+          .mockRejectedValueOnce(new Error('t')); // in-attempt probe also inconclusive
+        await advance(POLL); await advance(BACKOFF); await advance(BACKOFF); await advance(BACKOFF);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('unreachable');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // never a job-3
+      });
+    });
+
+    it('Restart resets the allowance; Resume never consumes it', async () => {
+      // Spend the allowance and pause run-expired.
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' }))  // job-1 → allowance
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })); // job-2 → in-attempt → run-expired
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL);
+      await advance(POLL);
+      expect(result.current.reason).toBe('run-expired');
+
+      // Resume authorizes ONE attempt via the allowance-independent human path — a resume
+      // remainder that 404s pauses again (never silently auto-loops on the spent allowance).
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-3' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' }))  // resume-entry probe on job-2 → fresh remainder
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })); // job-3 remainder poll → in-attempt
+      await act(async () => { result.current.resume(); });
+      await advance(POLL); // job-3 remainder 404 → in-attempt → pause
+      expect(result.current.reason).toBe('run-expired');
+
+      // Restart begins a NEW logical run and RESETS the allowance: a fresh 404 auto-resumes again.
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-4' }).mockResolvedValueOnce({ jobId: 'job-5' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })) // job-4 → allowance (reset)
+        .mockResolvedValueOnce(completed('job-5', [R('/a')]));
+      await act(async () => { result.current.restart([{ path: '/a', title: 'A' }]); });
+      await advance(POLL); // job-4 404 → allowance consumed again → job-5
+      await advance(POLL); // job-5 completes
+      expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+      expect(result.current.paused).toBe(false);
+    });
+  });
+
+  // #1864 F4 — the 1 + 3 retry budget is freshly reset after a successful poll.
+  describe('retry budget reset after success (F4)', () => {
+    it('a fail → success → sustained-fail sequence gets a full fresh 1 + 3 budget before probing', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob
+        .mockRejectedValueOnce(new Error('t'))          // 1st series: fail (count 1)
+        .mockResolvedValueOnce(matching('job-1'))        // success → resets failureCount to 0
+        .mockRejectedValueOnce(new Error('t'))          // 2nd series: fail (count 1)
+        .mockRejectedValueOnce(new Error('t'))          // fail (count 2)
+        .mockRejectedValueOnce(new Error('t'))          // fail (count 3)
+        .mockRejectedValueOnce(new Error('t'))          // fail (count 4) → exhausted → probe
+        .mockRejectedValueOnce(new Error('t'));         // probe inconclusive → pause
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+
+      await advance(POLL);     // fail (1)
+      await advance(BACKOFF);  // success — resets the counter
+      expect(result.current.paused).toBe(false);
+
+      await advance(POLL);     // 2nd series fail (1) — proves the counter was reset (else this is the 2nd of the old series)
+      expect(result.current.paused).toBe(false);
+      await advance(BACKOFF);  // fail (2)
+      expect(result.current.paused).toBe(false);
+      await advance(BACKOFF);  // fail (3)
+      expect(result.current.paused).toBe(false);
+      await advance(BACKOFF);  // fail (4) → probe → inconclusive → pause
+      expect(result.current.paused).toBe(true);
+      expect(result.current.reason).toBe('unreachable');
+      // 6 polls (1 + 1 + 4) + 1 probe = 7. If the reset were deleted, the 2nd series would
+      // pause after fewer polls (the old counter would already be near the limit).
+      expect(mockGetMatchJob).toHaveBeenCalledTimes(7);
+    });
+  });
+
+  // #1864 F5 / AC11 — epoch guards hold across backoff, probe, and replacement-start stages.
+  describe('stale guards across recovery stages (F5)', () => {
+    it('cancel during a retry backoff clears the pending timer — no further polls', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob.mockRejectedValueOnce(new Error('down'));
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL); // fail → backoff scheduled
+      expect(result.current.recovering).toBe(true);
+
+      act(() => { result.current.cancel(); });
+      mockGetMatchJob.mockClear();
+      await advance(BACKOFF * 2); // the backoff timer must have been cleared
+      expect(mockGetMatchJob).not.toHaveBeenCalled();
+      expect(result.current.paused).toBe(false);
+      expect(result.current.isMatching).toBe(false);
+    });
+
+    it('supersede during an in-flight probe drops the stale probe outcome', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+      let resolveProbe: ((s: MatchJobStatus) => void) | undefined;
+      mockGetMatchJob
+        .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+        .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+        .mockImplementationOnce(() => new Promise<MatchJobStatus>((resolve) => { resolveProbe = resolve; })) // probe in flight
+        .mockImplementation(() => new Promise<MatchJobStatus>(() => {})); // job-2 poll never resolves
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL); await advance(BACKOFF); await advance(BACKOFF); await advance(BACKOFF); // probe now pending
+
+      // Supersede while the probe is in flight.
+      await act(async () => { result.current.startMatching([{ path: '/b', title: 'B' }]); });
+      // The stale probe resolves terminal-gone — it must not pause or mutate the new run.
+      await act(async () => { resolveProbe?.(failed('job-1')); });
+      expect(result.current.paused).toBe(false);
+      expect(result.current.isMatching).toBe(true);
+    });
+
+    it('cancel during an in-flight replacement-start cancels the late job and does not mutate state', async () => {
+      let resolveStart: ((v: { jobId: string }) => void) | undefined;
+      mockStartMatchJob
+        .mockResolvedValueOnce({ jobId: 'job-1' })
+        .mockImplementationOnce(() => new Promise<{ jobId: string }>((resolve) => { resolveStart = resolve; })); // remainder start in flight
+      mockGetMatchJob.mockRejectedValueOnce(new ApiError(404, { error: 'gone' })); // job-1 → allowance → replacement start
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL); // 404 → beginRun(auto-remainder) → startMatchJob pending
+
+      act(() => { result.current.cancel(); });
+      // The replacement start resolves late — its job must be cancelled and ignored.
+      await act(async () => { resolveStart?.({ jobId: 'job-2' }); });
+      expect(mockCancelMatchJob).toHaveBeenCalledWith('job-2');
+      expect(result.current.isMatching).toBe(false);
+      expect(result.current.paused).toBe(false);
+    });
+
+    it('unmount disposes the engine — a late poll resolution is ignored', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      let resolvePoll: ((s: MatchJobStatus) => void) | undefined;
+      mockGetMatchJob.mockImplementationOnce(() => new Promise<MatchJobStatus>((resolve) => { resolvePoll = resolve; }));
+      const { result, unmount } = renderHook(() => useMatchJob());
+      await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+      await advance(POLL); // poll in flight
+
+      unmount();
+      // Late resolution after unmount must not throw or attempt a state update.
+      await act(async () => { resolvePoll?.(completed('job-1', [R('/a')])); });
+      expect(mockCancelMatchJob).toHaveBeenCalledWith('job-1'); // dispose abandoned the active job
+    });
+  });
+
   // #1831 — byte-budgeted packing (unchanged by the recovery rewrite).
   describe('packMatchCandidates (#1831)', () => {
     const bigCandidate = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(300 * 1024) });
