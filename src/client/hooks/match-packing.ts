@@ -20,14 +20,35 @@ const encoder = new TextEncoder();
  */
 const MATCH_ENVELOPE_BYTES = encoder.encode(JSON.stringify({ books: [] })).length;
 
-export function packMatchCandidates(candidates: MatchCandidate[]): MatchCandidate[][] {
+export interface PackedMatchCandidates {
+  /** Byte- and count-bounded chunks; every `{ books: chunk }` body is within budget. */
+  chunks: MatchCandidate[][];
+  /**
+   * Candidates whose OWN `{ books: [candidate] }` body already exceeds the budget (#1864 F15).
+   * These can never be sent within budget, so they are diverted here rather than emitted in an
+   * over-budget request that would 413 at the proxy. The engine surfaces them as unmatchable
+   * (a `none` result) instead of calling the API. Structurally remote — match candidates are
+   * `{ path, title, author }` from filesystem-bounded folder names — but the packer guarantees
+   * the budget contract unconditionally.
+   */
+  oversized: MatchCandidate[];
+}
+
+export function packMatchCandidates(candidates: MatchCandidate[]): PackedMatchCandidates {
   const chunks: MatchCandidate[][] = [];
+  const oversized: MatchCandidate[] = [];
   let current: MatchCandidate[] = [];
   // Track the serialized size of the whole `{ books: current }` body, not just the
   // summed candidate bytes — the wire body is `JSON.stringify({ books: chunk })` (#1833).
   let bodyBytes = MATCH_ENVELOPE_BYTES;
   for (const candidate of candidates) {
     const size = encoder.encode(JSON.stringify(candidate)).length;
+    // A candidate whose own single-item body (`{"books":[candidate]}` = envelope + size, no
+    // comma) already exceeds the budget can never fit any chunk — divert it (F15).
+    if (MATCH_ENVELOPE_BYTES + size > MATCH_CHUNK_BYTE_BUDGET) {
+      oversized.push(candidate);
+      continue;
+    }
     // Adding to a non-empty chunk also costs a separating comma.
     const wouldExceed = bodyBytes + size + 1 > MATCH_CHUNK_BYTE_BUDGET;
     if (current.length > 0 && (wouldExceed || current.length >= MATCH_CHUNK_MAX_ITEMS)) {
@@ -40,5 +61,5 @@ export function packMatchCandidates(candidates: MatchCandidate[]): MatchCandidat
     current.push(candidate);
   }
   if (current.length > 0) chunks.push(current);
-  return chunks;
+  return { chunks, oversized };
 }

@@ -729,6 +729,90 @@ describe('useMatchJob', () => {
       });
     });
 
+    // #1864 F11 — the same outcomes reached through the in-attempt PROBE branch
+    // (applyProbeOutcome / terminalGone / terminalCancelled with in-attempt context),
+    // i.e. after the auto-remainder run exhausts its own 1 + 3 retry budget. The direct-poll
+    // cases above exercise handleStatus/handlePollError; these exercise the probe path.
+    describe('in-attempt PROBE outcomes reached via exhaustion (F11)', () => {
+      // Queue [startMatchJob: job-1, job-2] and [getMatchJob: 404, t, t, t, t, <probe outcome…>]
+      // then drive to the in-attempt probe: job-1 404 → auto-remainder job-2 → its 1 + 3 exhausts.
+      async function driveToInAttemptProbe(result: { current: { startMatching: (c: MatchCandidate[]) => void } }) {
+        await act(async () => { result.current.startMatching([{ path: '/a', title: 'A' }]); });
+        await advance(POLL);    // job-1 404 → auto-remainder job-2
+        await advance(POLL);    // job-2 poll fail (1)
+        await advance(BACKOFF); // fail (2)
+        await advance(BACKOFF); // fail (3)
+        await advance(BACKOFF); // fail (4) → in-attempt probe fires
+      }
+
+      const exhaustionPrefix = () => mockGetMatchJob
+        .mockRejectedValueOnce(new ApiError(404, { error: 'gone' })) // job-1 → allowance → auto-remainder
+        .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t'))
+        .mockRejectedValueOnce(new Error('t')).mockRejectedValueOnce(new Error('t')); // job-2 1 + 3 exhausted
+
+      it('probe matching → adopts the live remainder job, no third job', async () => {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+        exhaustionPrefix()
+          .mockResolvedValueOnce(matching('job-2'))              // in-attempt probe: alive → adopt
+          .mockResolvedValueOnce(completed('job-2', [R('/a')])); // adopted poll completes
+        const { result } = renderHook(() => useMatchJob());
+        await driveToInAttemptProbe(result);
+        expect(result.current.paused).toBe(false);
+        await advance(POLL);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // no job-3
+      });
+
+      it('probe completed → ingests and finishes, no third job', async () => {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+        exhaustionPrefix().mockResolvedValueOnce(completed('job-2', [R('/a')]));
+        const { result } = renderHook(() => useMatchJob());
+        await driveToInAttemptProbe(result);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(result.current.isMatching).toBe(false);
+        expect(result.current.paused).toBe(false);
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // no job-3
+      });
+
+      it('probe failed → pauses run-expired, no third job', async () => {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+        exhaustionPrefix().mockResolvedValueOnce(failed('job-2'));
+        const { result } = renderHook(() => useMatchJob());
+        await driveToInAttemptProbe(result);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('run-expired');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // no job-3
+      });
+
+      it('probe cancelled → pauses cancelled, no third job', async () => {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+        exhaustionPrefix().mockResolvedValueOnce(cancelled('job-2'));
+        const { result } = renderHook(() => useMatchJob());
+        await driveToInAttemptProbe(result);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('cancelled');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2); // no job-3
+      });
+
+      it('probe other-4xx → pauses request-rejected, retaining the id (Resume probes it, no blind start)', async () => {
+        mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
+        exhaustionPrefix().mockRejectedValueOnce(new ApiError(422, { error: 'nope' })); // in-attempt probe rejects other-4xx
+        const { result } = renderHook(() => useMatchJob());
+        await driveToInAttemptProbe(result);
+        expect(result.current.paused).toBe(true);
+        expect(result.current.reason).toBe('request-rejected');
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+
+        // The id 'job-2' is retained → Resume probes it rather than blind-starting a replacement.
+        mockGetMatchJob.mockResolvedValueOnce(matching('job-2')).mockResolvedValueOnce(completed('job-2', [R('/a')]));
+        await act(async () => { result.current.resume(); });
+        expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+        await advance(POLL);
+        expect(result.current.results.map(r => r.path)).toEqual(['/a']);
+        expect(result.current.paused).toBe(false);
+      });
+    });
+
     it('Restart resets the allowance; Resume never consumes it', async () => {
       // Spend the allowance and pause run-expired.
       mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValueOnce({ jobId: 'job-2' });
@@ -910,18 +994,19 @@ describe('useMatchJob', () => {
     const bigCandidate = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(300 * 1024) });
 
     it('splits by byte budget, preserving order', () => {
-      const chunks = packMatchCandidates([bigCandidate('/a'), bigCandidate('/b'), bigCandidate('/c')]);
+      const { chunks, oversized } = packMatchCandidates([bigCandidate('/a'), bigCandidate('/b'), bigCandidate('/c')]);
       expect(chunks).toHaveLength(3);
       expect(chunks.flat().map(c => c.path)).toEqual(['/a', '/b', '/c']);
+      expect(oversized).toEqual([]);
     });
 
     it('packs small candidates into a single chunk', () => {
-      expect(packMatchCandidates([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }])).toHaveLength(1);
+      expect(packMatchCandidates([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }]).chunks).toHaveLength(1);
     });
 
     it('budgets UTF-8 bytes, not characters', () => {
       const mk = (p: string): MatchCandidate => ({ path: p, title: 'あ'.repeat(80 * 1024) });
-      expect(packMatchCandidates([mk('/a'), mk('/b')])).toHaveLength(2);
+      expect(packMatchCandidates([mk('/a'), mk('/b')]).chunks).toHaveLength(2);
     });
 
     it('every emitted { books } body stays within the byte budget', () => {
@@ -930,11 +1015,55 @@ describe('useMatchJob', () => {
         const overhead = new TextEncoder().encode(JSON.stringify({ path, title: '' })).length;
         return { path, title: 'x'.repeat(half - overhead) };
       };
-      const chunks = packMatchCandidates([mk('/p0'), mk('/p1')]);
+      const { chunks } = packMatchCandidates([mk('/p0'), mk('/p1')]);
       expect(chunks).toHaveLength(2);
       for (const chunk of chunks) {
         expect(new TextEncoder().encode(JSON.stringify({ books: chunk })).length).toBeLessThanOrEqual(MATCH_CHUNK_BYTE_BUDGET);
       }
+    });
+
+    // #1864 F14 — the secondary 1,000-item count bound at its inclusive/exclusive boundary.
+    describe('1,000-item count limit (F14)', () => {
+      const small = (i: number): MatchCandidate => ({ path: `/p${i}`, title: `t${i}` });
+
+      it('packs exactly 1,000 small candidates into a single chunk', () => {
+        const items = Array.from({ length: 1000 }, (_, i) => small(i));
+        const { chunks, oversized } = packMatchCandidates(items);
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]).toHaveLength(1000);
+        expect(oversized).toEqual([]);
+      });
+
+      it('splits 1,001 small candidates into 1,000 + 1, preserving order and the exact path union', () => {
+        const items = Array.from({ length: 1001 }, (_, i) => small(i));
+        const { chunks } = packMatchCandidates(items);
+        expect(chunks).toHaveLength(2);
+        expect(chunks[0]).toHaveLength(1000);
+        expect(chunks[1]).toHaveLength(1);
+        // Order preserved and the union is exactly the input paths (none dropped/duplicated).
+        expect(chunks.flat().map(c => c.path)).toEqual(items.map(c => c.path));
+      });
+    });
+
+    // #1864 F15 — an individually-oversized candidate is diverted, never emitted over budget.
+    describe('individually-oversized candidate (F15)', () => {
+      const oversizedCandidate = (path: string): MatchCandidate => ({ path, title: 'x'.repeat(410 * 1024) }); // > 400 KiB
+
+      it('diverts a lone oversized candidate to `oversized` with no emitted chunk', () => {
+        const { chunks, oversized } = packMatchCandidates([oversizedCandidate('/big')]);
+        expect(chunks).toEqual([]);
+        expect(oversized.map(c => c.path)).toEqual(['/big']);
+      });
+
+      it('diverts the oversized candidate while still packing the fitting ones within budget', () => {
+        const { chunks, oversized } = packMatchCandidates([oversizedCandidate('/big'), { path: '/a', title: 'A' }, { path: '/b', title: 'B' }]);
+        expect(oversized.map(c => c.path)).toEqual(['/big']);
+        expect(chunks.flat().map(c => c.path)).toEqual(['/a', '/b']);
+        // No emitted { books } body exceeds the budget.
+        for (const chunk of chunks) {
+          expect(new TextEncoder().encode(JSON.stringify({ books: chunk })).length).toBeLessThanOrEqual(MATCH_CHUNK_BYTE_BUDGET);
+        }
+      });
     });
 
     it('startMatching([]) is a no-op: no API call, idle state', async () => {
@@ -942,6 +1071,29 @@ describe('useMatchJob', () => {
       await act(async () => { result.current.startMatching([]); });
       expect(mockStartMatchJob).not.toHaveBeenCalled();
       expect(result.current.isMatching).toBe(false);
+    });
+
+    it('an oversized candidate is surfaced as an unmatchable none result, never sent to the API (F15)', async () => {
+      mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+      mockGetMatchJob.mockResolvedValueOnce(completed('job-1', [R('/small')]));
+      const { result } = renderHook(() => useMatchJob());
+      await act(async () => {
+        result.current.startMatching([{ path: '/big', title: 'x'.repeat(410 * 1024) }, { path: '/small', title: 'S' }]);
+      });
+
+      // The oversized candidate is surfaced immediately as a `none` result and is NOT in any request.
+      const oversizedResult = result.current.results.find(r => r.path === '/big');
+      expect(oversizedResult?.confidence).toBe('none');
+      const sent = mockStartMatchJob.mock.calls.flatMap(c => (c[0] as MatchCandidate[]).map(x => x.path));
+      expect(sent).not.toContain('/big');
+      expect(sent).toContain('/small');
+
+      await advance(POLL); // the fitting candidate completes normally
+      expect(result.current.results.find(r => r.path === '/small')?.confidence).toBe('high');
+      // Every emitted body stayed within budget (only the small candidate was sent).
+      for (const call of mockStartMatchJob.mock.calls) {
+        expect(new TextEncoder().encode(JSON.stringify({ books: call[0] })).length).toBeLessThanOrEqual(MATCH_CHUNK_BYTE_BUDGET);
+      }
     });
   });
 });

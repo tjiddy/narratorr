@@ -1,5 +1,6 @@
 import type { MatchCandidate, MatchJobStatus, MatchResult } from '@/lib/api';
 import { packMatchCandidates } from './match-packing.js';
+import { matchSetTimeout, matchClearTimeout } from './match-timer.js';
 import {
   classifyPollError,
   MATCH_POLL_INTERVAL_MS,
@@ -154,7 +155,12 @@ export class MatchEngine {
     // here, so an exhaustion probe that advances into more work never carries its stale
     // `failureCount` into the remainder (which would probe/pause after a single blip).
     this.failureCount = 0;
-    this.chunks = packMatchCandidates(candidates);
+    const { chunks, oversized } = packMatchCandidates(candidates);
+    // A candidate too large to ever fit a within-budget request (F15) is never sent — it is
+    // surfaced as an unmatchable `none` result so it leaves the remainder (no infinite loop)
+    // and the consumer shows a no-match row rather than a silently-dropped or 413'd book.
+    for (const candidate of oversized) this.ingestOversized(candidate);
+    this.chunks = chunks;
     this.chunkIndex = 0;
     this.paused = null;
     if (this.chunks.length === 0) {
@@ -164,6 +170,16 @@ export class MatchEngine {
     this.isMatching = true;
     this.emit();
     this.startNextChunk();
+  }
+
+  private ingestOversized(candidate: MatchCandidate): void {
+    this.observed.set(candidate.path, {
+      path: candidate.path,
+      confidence: 'none',
+      bestMatch: null,
+      alternatives: [],
+      error: 'Candidate too large to match',
+    });
   }
 
   private startNextChunk(): void {
@@ -216,12 +232,12 @@ export class MatchEngine {
 
   private schedulePoll(delay: number): void {
     this.clearPoll();
-    this.pollHandle = setTimeout(() => { void this.poll(); }, delay);
+    this.pollHandle = matchSetTimeout(() => { void this.poll(); }, delay);
   }
 
   private clearPoll(): void {
     if (this.pollHandle) {
-      clearTimeout(this.pollHandle);
+      matchClearTimeout(this.pollHandle);
       this.pollHandle = null;
     }
   }

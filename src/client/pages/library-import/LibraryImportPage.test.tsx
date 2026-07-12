@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, within, configure } from '@testing-library/react';
+import { screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibraryImportPage } from './LibraryImportPage';
 
-// The recovery engine polls on a real 2 s setTimeout (#1864 §0) — faking setTimeout
-// collides with TanStack Query (vitest-faketimers-react-query), so these Query-backed
-// tests use real timers and a longer async-util window than the 1 s default.
-configure({ asyncUtilTimeout: 5000 });
+// Deterministic engine clock (#1864 F13): the MatchEngine's poll timer is routed through
+// `@/hooks/match-timer`; mocking it advances polling without real-time waits or a raised
+// async-util timeout (globally faking setTimeout would deadlock Query —
+// vitest-faketimers-react-query). Query's own timers stay real.
+vi.mock('@/hooks/match-timer', async () => {
+  const { createMatchTimerMock } = await import('@/__tests__/match-timer-mock');
+  return createMatchTimerMock();
+});
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
@@ -33,6 +37,14 @@ vi.mock('@/lib/api', async (importOriginal) => {
 const { api } = await import('@/lib/api');
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
+const matchTimer = await import('@/hooks/match-timer');
+const engineClock = matchTimer as unknown as import('@/__tests__/match-timer-mock').MatchTimerMock;
+/** Wait for the engine to arm its next poll timer, then fire it deterministically. */
+async function firePoll(): Promise<void> {
+  await waitFor(() => expect(engineClock.__pending()).toBeGreaterThan(0));
+  await act(async () => { engineClock.__flushNext(); });
+}
+
 const mockSettingsWithPath = createMockSettings({
   library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
 });
@@ -43,6 +55,7 @@ const mockSettingsNoPath = createMockSettings({
 describe('LibraryImportPage (#133)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    engineClock.__reset();
     mockApi.getSettings!.mockResolvedValue(mockSettingsWithPath);
     mockApi.getBookIdentifiers!.mockResolvedValue([]);
     mockApi.scanDirectory!.mockResolvedValue({ discoveries: [], totalFolders: 0 });
@@ -176,8 +189,11 @@ describe('LibraryImportPage (#133)', () => {
       .mockRejectedValue(new (await import('@/lib/api')).ApiError(400, { error: 'bad' })); // pause request-rejected
 
     renderWithProviders(<LibraryImportPage />);
+    await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+    await firePoll(); // poll1: matching with [B1] partial
+    await firePoll(); // poll2: other-4xx → pause request-rejected
 
-    await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); }, { timeout: 5000 });
+    await waitFor(() => { expect(screen.getByText(/matching paused/i)).toBeInTheDocument(); });
 
     // Deselect every row (including the pending one).
     await userEvent.click(screen.getByRole('button', { name: /deselect all/i }));
@@ -210,13 +226,15 @@ describe('LibraryImportPage (#133)', () => {
 
     renderWithProviders(<LibraryImportPage />);
     await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+    await firePoll(); // poll1: matching with [B1] partial → B1 matched
+    await firePoll(); // poll2: 404 → allowance → remainder job-2 starts (recovering, not paused)
 
-    // Wait for the automatic remainder to start — the run is now recovering (not paused).
-    await waitFor(() => { expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2); }, { timeout: 8000 });
+    // The automatic remainder has started — the run is now recovering (not paused).
+    await waitFor(() => { expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2); });
     expect(screen.queryByText(/matching paused/i)).not.toBeInTheDocument();
 
     // B1 is matched, B2 pending — deselect the pending B2 row.
-    await waitFor(() => { expect(screen.getAllByLabelText('Deselect')).toHaveLength(2); }, { timeout: 8000 });
+    await waitFor(() => { expect(screen.getAllByLabelText('Deselect')).toHaveLength(2); });
     await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
 
     // Import stays disabled — the recovering gate is unconditional.
@@ -491,7 +509,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('NoMatch')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll — mergeMatchResults auto-deselects confidence=none rows
+      await firePoll(); // poll1 completed (none) → merge auto-deselects
 
       // Wait for the no-match badge to appear (confirms merge happened)
       await waitFor(() => {
@@ -534,6 +552,7 @@ describe('LibraryImportPage (#133)', () => {
       renderWithProviders(<LibraryImportPage />);
 
       await waitFor(() => { expect(screen.getByText('Matched')).toBeInTheDocument(); });
+      await firePoll(); // poll merges B1/B2 high-confidence results
 
       // 2 of 3 should show as ready (B1 + B2 high confidence + selected)
       await waitFor(() => { expect(screen.getByText('2 ready')).toBeInTheDocument(); });
@@ -573,7 +592,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Book 1')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll and complete matching
+      await firePoll(); // poll completes matching → row enabled
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /import/i })).not.toBeDisabled();
@@ -609,7 +628,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Parsed Title')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll, which merges match results
+      await firePoll(); // poll merges match results
 
       // Wait for match result to merge — the title should now show the matched title
       await waitFor(() => {
@@ -678,7 +697,7 @@ describe('LibraryImportPage (#133)', () => {
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => expect(screen.getByText('Held Book')).toBeInTheDocument());
 
-      // Advance the poll so the match merges and the Import button enables.
+      await firePoll(); // poll merges match → Import enables
       await waitFor(() => expect(screen.getByRole('button', { name: /import 1 book/i })).toBeEnabled());
 
       await user.click(screen.getByRole('button', { name: /import 1 book/i }));
@@ -738,7 +757,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('High Book')).toBeInTheDocument();
       });
 
-
+      await firePoll(); // poll merges high/medium/none results
       // readyCount = selected + non-dup + high → only B1 (selected + non-dup + high)
       await waitFor(() => {
         expect(screen.getByText('1 ready')).toBeInTheDocument();
@@ -764,7 +783,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('High Book')).toBeInTheDocument();
       });
 
-
+      await firePoll(); // poll merges high/medium/none results
       // reviewCount = all medium → 1 (B2). B2 is auto-deselected on merge (#1318),
       // but reviewCount is selection-independent so it still reports 1.
       await waitFor(() => {
@@ -808,7 +827,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('High Book')).toBeInTheDocument();
       });
 
-
+      await firePoll(); // poll merges high/medium/none results
       // noMatchCount = all none → 1 (B3)
       await waitFor(() => {
         expect(screen.getByText('1 no match')).toBeInTheDocument();
@@ -841,7 +860,7 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('Matched')).toBeInTheDocument();
       });
 
-
+      await firePoll(); // poll merges partial (B1 only) results
       // pendingCount = no matchResult + non-dup → 1 (B2 has no match result and is non-dup)
       await waitFor(() => {
         expect(screen.getByText('1 matching')).toBeInTheDocument();
@@ -872,11 +891,10 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   // Polling tests — fake only setInterval/clearInterval to avoid TanStack Query deadlock
-  describe('match-job polling (real timers)', () => {
-    // The recovery engine's poll loop is setTimeout-driven (#1864 §0). Faking
-    // setTimeout collides with TanStack Query's internal timers
-    // (vitest-faketimers-react-query), so these Query-backed page tests drive the
-    // real 2 s poll via `waitFor` with an extended timeout.
+  describe('match-job polling (deterministic engine clock)', () => {
+    // The recovery engine's poll loop is setTimeout-driven (#1864 §0) and routed through
+    // the mocked `@/hooks/match-timer`, so `firePoll()` advances the poll deterministically
+    // (no real-time wait), while TanStack Query's own timers stay real.
     it('Import button enabled after poll resolves with completed job', async () => {
       mockApi.confirmImport!.mockResolvedValue({ accepted: 1, heldReview: [], skipped: [], failed: [] });
       // Completed match job — return a high-confidence result so the row is no longer pending.
@@ -896,10 +914,11 @@ describe('LibraryImportPage (#133)', () => {
       await waitFor(() => {
         expect(screen.getByText('Book One')).toBeInTheDocument();
       });
+      await firePoll(); // completed poll merges the high-confidence result
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /import/i })).not.toBeDisabled();
-      }, { timeout: 5000 });
+      });
 
       await userEvent.click(screen.getByRole('button', { name: /import/i }));
 
@@ -934,7 +953,8 @@ describe('LibraryImportPage (#133)', () => {
 
       renderWithProviders(<LibraryImportPage />);
       await waitFor(() => { expect(screen.getByText('Book 1')).toBeInTheDocument(); });
-      await waitFor(() => { expect(screen.getByRole('button', { name: /import 2 books/i })).toBeEnabled(); }, { timeout: 5000 });
+      await firePoll(); // completed poll merges both high-confidence results
+      await waitFor(() => { expect(screen.getByRole('button', { name: /import 2 books/i })).toBeEnabled(); });
 
       await userEvent.click(screen.getByRole('button', { name: /import 2 books/i }));
 

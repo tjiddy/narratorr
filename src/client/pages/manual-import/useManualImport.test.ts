@@ -35,8 +35,27 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   },
 }));
 
+// Deterministic engine clock (#1864 F12): the MatchEngine's poll timer is routed through
+// `@/hooks/match-timer`; mocking it lets us advance polling without sleeping on real time
+// (globally faking setTimeout would deadlock Query — vitest-faketimers-react-query).
+vi.mock('@/hooks/match-timer', async () => {
+  const { createMatchTimerMock } = await import('@/__tests__/match-timer-mock');
+  return createMatchTimerMock();
+});
+
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import * as matchTimer from '@/hooks/match-timer';
+import type { MatchTimerMock } from '@/__tests__/match-timer-mock';
+
+const engineClock = matchTimer as unknown as MatchTimerMock;
+/** Advance the engine by one poll interval (fires the single pending poll/retry). */
+async function tickPoll(): Promise<void> {
+  await act(async () => { engineClock.__flushNext(); });
+}
+
+// Reset the deterministic clock before every test (clearAllMocks doesn't touch its closure state).
+beforeEach(() => { engineClock.__reset(); });
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -1072,7 +1091,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(1); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
 
         expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(3);
 
@@ -1164,7 +1183,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
 
         expect(result.current.state.rows[0]!.edited.narrators).toEqual(['Jim Dale']);
         expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(27);
@@ -1198,7 +1217,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
 
         expect(result.current.state.rows[0]!.edited.seriesPosition).toBe(0);
       } finally {
@@ -1230,7 +1249,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
 
         expect(result.current.state.rows[0]!.edited).not.toHaveProperty('narrators');
         expect(result.current.state.rows[0]!.edited).not.toHaveProperty('seriesPosition');
@@ -1261,7 +1280,7 @@ describe('useManualImport', () => {
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
         // Advance past the 2000ms poll interval so the first poll fires
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
 
         expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Stephen Fry']);
       } finally {
@@ -1292,7 +1311,7 @@ describe('useManualImport', () => {
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       // Advance past the 2000ms poll interval so match results arrive
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // Row 0 is high confidence and selected → ready count = 1
       expect(result.current.counts.readyCount).toBe(1);
@@ -1454,7 +1473,7 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
 
         const dupRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Existing Book');
         expect(dupRow?.selected).toBe(false);
@@ -1605,7 +1624,7 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // Existing edited state preserved (not overwritten by null bestMatch)
       expect(result.current.state.rows[0]!.edited.title).toBe('Book A');
@@ -1634,7 +1653,7 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // Title from bestMatch, author falls back to original parsed value
       expect(result.current.state.rows[0]!.edited.title).toBe('Official Title');
@@ -1665,7 +1684,7 @@ describe('match merge — boundary values (#185)', () => {
       // Row starts selected
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // After match merge with confidence=none, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
@@ -1698,7 +1717,7 @@ describe('match merge — boundary values (#185)', () => {
       // Row starts selected
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // After match merge with confidence=medium, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
@@ -1734,7 +1753,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // High preserves the prior selection — a deselected row stays deselected.
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
@@ -1771,7 +1790,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // userEdited row keeps its selection despite the medium merge.
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
@@ -1808,7 +1827,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Provider Title', authors: [{ name: 'Provider Author' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // The user's manual correction survives — userEdited gates auto-populate,
       // not edited.metadata alone.
@@ -1841,7 +1860,7 @@ describe('match merge — boundary values (#185)', () => {
         results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
       });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       expect(result.current.state.rows[0]!.selected).toBe(false);
       expect(result.current.state.rows[0]!.userEdited).toBe(false);
@@ -1871,7 +1890,7 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
 
       // Merge deselected the medium row
       expect(result.current.state.rows[0]!.selected).toBe(false);
@@ -1982,7 +2001,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
       // Edit with metadata → confidence upgrades from 'none' to 'medium'
@@ -2018,7 +2037,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Edit with a DIFFERENT metadata object (user explicitly re-selected) → upgrades to high
@@ -2054,7 +2073,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Save with the SAME metadata reference (user opened modal and clicked Save without re-selecting)
@@ -2091,7 +2110,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
       // Simulate explicit click on the current match — applyMetadata spreads to new reference
@@ -2126,7 +2145,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+      await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
 
       // Edit with provider metadata → confidence stays 'high'
@@ -2251,7 +2270,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
         expect(result.current.state.rows[0]!.matchResult?.reason).toBe(
           'Duration mismatch — scanned 10.0hrs vs expected 11.6hrs',
         );
@@ -2279,7 +2298,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
         expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
         expect(result.current.state.rows[0]!.matchResult?.reason).toBeDefined();
 
@@ -2317,7 +2336,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        await act(async () => { await new Promise(resolve => setTimeout(resolve, 2200)); });
+        await tickPoll();
         expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
         // Edit with metadata → upgrades to medium, but no system reason
@@ -2375,7 +2394,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       act(() => { result.current.state.setScanPath('/audiobooks'); });
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
-      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+      await tickPoll(); // fire poll1 → Book A completed/matched
+      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'));
 
       // Edit Book A to genuinely-different values, including position 0 (regression-pinned).
       act(() => {
@@ -2408,7 +2428,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await waitFor(() => expect(result.current.state.recovering).toBe(true), { timeout: 5000 });
+      await tickPoll(); // poll1 rejects (transport) → bounded backoff → recovering
+      expect(result.current.state.recovering).toBe(true);
     });
 
     it('handleResumeMatch preserves matched rows and re-matches only the remainder (F5)', async () => {
@@ -2425,14 +2446,17 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
-      await waitFor(() => expect(result.current.state.paused).toBe(true), { timeout: 5000 });
+      await tickPoll(); // poll1: matching with [Book A] partial → Book A matched
+      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'));
+      await tickPoll(); // poll2: other-4xx → pause request-rejected (id retained)
+      expect(result.current.state.paused).toBe(true);
 
-      act(() => { result.current.actions.handleResumeMatch(); });
-      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book B')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
+      // Resume-entry probe (fires getMatchJob immediately, no timer) → completed [a, b].
+      await act(async () => { result.current.actions.handleResumeMatch(); });
+      await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book B')?.matchResult?.confidence).toBe('high'));
       // Book A's match is preserved across the resume.
       expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high');
       expect(result.current.state.paused).toBe(false);
-    }, 20000);
+    });
   });
 });
