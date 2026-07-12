@@ -45,7 +45,11 @@ export interface ActivityCounts {
   completed: number;
 }
 
-export type RetryResponse = Download | { status: 'no_candidates' } | { status: 'retry_error' };
+export type RetryResponse =
+  | Download
+  | { status: 'no_candidates' }
+  | { status: 'retry_error' }
+  | { status: 'already_active' };
 
 export interface ActivityListParams {
   status?: string;
