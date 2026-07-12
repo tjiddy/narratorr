@@ -72,10 +72,13 @@ export interface MatchResult {
 
 export interface MatchJobStatus {
   id: string;
-  status: 'matching' | 'completed' | 'cancelled';
+  status: 'matching' | 'completed' | 'failed' | 'cancelled';
   total: number;
   matched: number;
   results: MatchResult[];
+  /** Present only on a terminal `'failed'` job (#1864). Mirrors the server
+   * `MatchJobStatus`. Never rendered raw — the recovery banner maps by reason. */
+  error?: string;
 }
 
 export const libraryScanApi = {

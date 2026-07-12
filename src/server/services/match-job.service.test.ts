@@ -67,12 +67,12 @@ function flushPromises(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 50));
 }
 
-/** Wait for a job to reach a terminal status */
+/** Wait for a job to reach a terminal status ('failed' is terminal too, #1864). */
 async function waitForJob(service: MatchJobService, id: string, maxMs = 2000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
     const status = service.getJob(id);
-    if (!status || status.status === 'completed' || status.status === 'cancelled') return;
+    if (!status || status.status === 'completed' || status.status === 'cancelled' || status.status === 'failed') return;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
@@ -284,6 +284,133 @@ describe('MatchJobService', () => {
         }),
         'Match job finished',
       );
+    });
+  });
+
+  // #1864 §6/§6a — deterministic terminalization + first-terminal-wins matrix.
+  describe('terminalization (#1864)', () => {
+    it('injected top-level run() crash → status failed with error, retained results, logged', async () => {
+      // The orchestration awaits Promise.allSettled; a rejection there is the only
+      // path that escapes the per-book catch (remote in practice). Spy so the job's
+      // first allSettled call — issued synchronously inside createJob — rejects.
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('orchestration boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+
+        const status = service.getJob(id)!;
+        expect(status.status).toBe('failed');
+        expect(status.error).toBe('orchestration boom');
+        expect(Array.isArray(status.results)).toBe(true); // partial results retained
+        expect(log.error).toHaveBeenCalledWith(
+          expect.objectContaining({ jobId: 'test-job-id' }),
+          'Match job failed unexpectedly',
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('a poll of a failed job still returns it (not gone) until TTL', async () => {
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+        // getJob returns the failed snapshot with error + retained results, not null.
+        const status = service.getJob(id);
+        expect(status).not.toBeNull();
+        expect(status!.status).toBe('failed');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('failed job schedules cleanup exactly once (removed after TTL)', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
+        expect(service.getJob(id)!.status).toBe('failed');
+
+        vi.advanceTimersByTime(10 * 60 * 1000);
+        expect(service.getJob(id)).toBeNull();
+        // Exactly one cleanup — the terminalizing transition owns the single schedule.
+        expect(log.debug).toHaveBeenCalledWith({ jobId: id }, 'Match job expired and removed');
+        const removals = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[1] === 'Match job expired and removed');
+        expect(removals).toHaveLength(1);
+      } finally {
+        spy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('completion-then-cancel stays completed (first terminal wins)', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+      expect(service.getJob(id)!.status).toBe('completed');
+
+      // A cancel after completion is a no-op — returns false, status unchanged.
+      expect(service.cancelJob(id)).toBe(false);
+      expect(service.getJob(id)!.status).toBe('completed');
+    });
+
+    it('cancel-then-completion stays cancelled (first terminal wins)', async () => {
+      const books: MatchCandidate[] = Array.from({ length: 20 }, (_, i) => ({ path: `/b-${i}`, title: `B${i}` }));
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return [];
+      });
+      const id = service.createJob(books);
+      expect(service.cancelJob(id)).toBe(true); // matching → cancelled transition
+      await waitForJob(service, id);
+      // The run resolves afterward but completion no-ops over the cancelled terminal.
+      expect(service.getJob(id)!.status).toBe('cancelled');
+    });
+
+    it('failure-then-cancel stays failed (terminal is immutable)', async () => {
+      const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('boom'));
+      try {
+        const id = service.createJob([sampleCandidate]);
+        await waitForJob(service, id);
+        expect(service.getJob(id)!.status).toBe('failed');
+        expect(service.cancelJob(id)).toBe(false);
+        expect(service.getJob(id)!.status).toBe('failed');
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  describe('cancelJob boolean semantics (#1864 F11)', () => {
+    it('returns true only on the matching→cancelled transition', () => {
+      const id = service.createJob([sampleCandidate]);
+      expect(service.getJob(id)!.status).toBe('matching');
+      expect(service.cancelJob(id)).toBe(true);
+      expect(service.getJob(id)!.status).toBe('cancelled');
+    });
+
+    it('returns false for an already-cancelled (terminal) job', () => {
+      const id = service.createJob([sampleCandidate]);
+      expect(service.cancelJob(id)).toBe(true);
+      expect(service.cancelJob(id)).toBe(false); // second cancel is a no-op
+    });
+
+    it('returns false for a completed (terminal) job', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+      expect(service.cancelJob(id)).toBe(false);
+    });
+
+    it('does not log the cancel line for a missing or terminal job', () => {
+      service.cancelJob('nonexistent');
+      const id = service.createJob([sampleCandidate]);
+      service.cancelJob(id);
+      (log.info as ReturnType<typeof vi.fn>).mockClear();
+      service.cancelJob(id); // already cancelled
+      expect(log.info).not.toHaveBeenCalledWith({ jobId: id }, 'Match job cancelled');
     });
   });
 
