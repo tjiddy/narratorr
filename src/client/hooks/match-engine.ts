@@ -149,6 +149,11 @@ export class MatchEngine {
 
   private beginRun(candidates: MatchCandidate[], phase: RunPhase): void {
     this.phase = phase;
+    // A fresh chunk run gets a fresh bounded-retry budget (F9). Every remainder start —
+    // completed-probe advance, allowance auto-remainder, or human-remainder — flows through
+    // here, so an exhaustion probe that advances into more work never carries its stale
+    // `failureCount` into the remainder (which would probe/pause after a single blip).
+    this.failureCount = 0;
     this.chunks = packMatchCandidates(candidates);
     this.chunkIndex = 0;
     this.paused = null;
