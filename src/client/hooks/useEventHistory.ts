@@ -57,12 +57,39 @@ export function useEventHistory(params?: EventHistoryParams) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['activity'] });
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-      if ('status' in data && data.status === 'no_candidates') {
-        toast.error('No matching releases found for retry');
-      } else if ('status' in data && data.status === 'retry_error') {
-        toast.error('Retry failed — search encountered an error');
-      } else {
+      // Fail closed: recognize the Download success shape FIRST, by numeric `id`.
+      // A sentinel response has no `id`; a real Download always does. Key presence
+      // alone is not enough — a malformed/evolved `{ id: 'x', status: '…' }` must not
+      // be misclassified as success (matches the repo's `typeof …id === 'number'`
+      // runtime guards, e.g. src/client/lib/api/books.ts). Only after ruling out the
+      // Download shape do we switch on the known sentinel statuses; anything else
+      // (unknown sentinel, non-numeric id, or a non-object like JSON `null`) reaches
+      // the guarded default fallback rather than the lying "Retry initiated" toast.
+      if (
+        typeof data === 'object' &&
+        data !== null &&
+        'id' in data &&
+        typeof (data as { id?: unknown }).id === 'number'
+      ) {
         toast.success('Retry initiated');
+        return;
+      }
+      const status =
+        typeof data === 'object' && data !== null
+          ? (data as { status?: unknown }).status
+          : undefined;
+      switch (status) {
+        case 'no_candidates':
+          toast.error('No matching releases found for retry');
+          break;
+        case 'retry_error':
+          toast.error('Retry failed — search encountered an error');
+          break;
+        case 'already_active':
+          toast.error('This book is already being processed — nothing to retry.');
+          break;
+        default:
+          toast.error('Retry failed — unexpected response');
       }
     },
     onError: (error: Error) => {
