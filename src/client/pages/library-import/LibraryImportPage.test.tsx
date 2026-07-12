@@ -186,6 +186,43 @@ describe('LibraryImportPage (#133)', () => {
     expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
   });
 
+  it('unconditional fail-closed: Import stays disabled during AUTOMATIC recovery (recovering, not paused) after deselecting the pending row (#1864 F10)', async () => {
+    // B1 matches, then a 404 consumes the automatic allowance and starts a remainder for
+    // B2 — the run is `recovering` (not paused). Deselecting the pending B2 would drop
+    // selectedPendingCount to 0 and, without the recovering branch of `disabled={paused ||
+    // recovering}`, re-enable Import. Deleting `recovering` would make this test fail.
+    const ApiError = (await import('@/lib/api')).ApiError;
+    mockApi.scanDirectory!.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/A/B1', parsedTitle: 'B1', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+        { path: '/audiobooks/A/B2', parsedTitle: 'B2', parsedAuthor: 'A', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+    mockApi.startMatchJob!.mockReset();
+    mockApi.startMatchJob!.mockResolvedValueOnce({ jobId: 'job-1' }).mockResolvedValue({ jobId: 'job-2' });
+    const b1 = { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'B1', authors: [{ name: 'A' }], asin: 'A1' }, alternatives: [] };
+    mockApi.getMatchJob!.mockReset();
+    mockApi.getMatchJob!
+      .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [b1] }) // B1 matches, still matching
+      .mockRejectedValueOnce(new ApiError(404, { error: 'gone' }))                                     // 404 → allowance → remainder
+      .mockResolvedValue({ id: 'job-2', status: 'matching', total: 2, matched: 0, results: [] });      // remainder keeps matching (recovering)
+
+    renderWithProviders(<LibraryImportPage />);
+    await waitFor(() => { expect(screen.getByText('B1')).toBeInTheDocument(); });
+
+    // Wait for the automatic remainder to start — the run is now recovering (not paused).
+    await waitFor(() => { expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2); }, { timeout: 8000 });
+    expect(screen.queryByText(/matching paused/i)).not.toBeInTheDocument();
+
+    // B1 is matched, B2 pending — deselect the pending B2 row.
+    await waitFor(() => { expect(screen.getAllByLabelText('Deselect')).toHaveLength(2); }, { timeout: 8000 });
+    await userEvent.click(screen.getAllByLabelText('Deselect')[1]!);
+
+    // Import stays disabled — the recovering gate is unconditional.
+    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+  });
+
   it('existing rows hidden by default, toggle shows them', async () => {
     mockApi.startMatchJob!.mockRejectedValue(new Error('skip'));
     mockApi.scanDirectory!.mockResolvedValue({
